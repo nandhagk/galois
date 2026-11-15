@@ -1,42 +1,1102 @@
-(** * Placeholder rule application
+(** * Rule plans, plan checking and saturation rounds
 
-    These operations provide the interfaces for planning and running engine rules.
-    For example, the placeholder run returns the input database at the iteration limit.
-    Builds on: RunSig. *)
+    The planner compiles each rule into join plans over shared index slots, the checker
+    validates a plan against its program, a round joins, filters and applies the plans of a
+    program, and a run drives rounds under its limits.
+    For example, the rule [path(x, z) :- path(x, y), edge(y, z)] joins the slots
+    [(path, [0; 1])] and [(edge, [0; 1])] on the join variable of [y].
+    Builds on: RunSig, Sorts, the binary trie, the self-delimiting codes and the binary-fuel
+    loop. *)
 
 From Stdlib Require Import List PArith NArith Bool Relations.Relation_Operators.
 From Argent Require Import Time Tactics Std.
-From Galois.Base Require Import Loop Trie.
+From Galois.Base Require Import Code Loop Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts RunSig.
 
 Import List.ListNotations.
 
+(** * Record readers *)
+
+(** A reader takes one field of a plan record by one record elimination. *)
+Definition plan_rule_ix {V : Type} (c : cplan V) : N :=
+  match c with
+  | CPlan _ ix _ _ _ _ => ix
+  end.
+TimeFun plan_rule_ix.
+
+Definition plan_join {V : Type} (c : cplan V) : jplan :=
+  match c with
+  | CPlan _ _ j _ _ _ => j
+  end.
+TimeFun plan_join.
+
+Definition plan_sources {V : Type} (c : cplan V) : list (source V) :=
+  match c with
+  | CPlan _ _ _ srcs _ _ => srcs
+  end.
+TimeFun plan_sources.
+
+Definition plan_vars {V : Type} (c : cplan V) : list positive :=
+  match c with
+  | CPlan _ _ _ _ vars _ => vars
+  end.
+TimeFun plan_vars.
+
+Definition plan_post {V : Type} (c : cplan V) : list nat :=
+  match c with
+  | CPlan _ _ _ _ _ post => post
+  end.
+TimeFun plan_post.
+
+Definition compiled_slots {V : Type} (cp : compiled V) : list (positive * list nat) :=
+  match cp with
+  | Compiled _ sl _ _ => sl
+  end.
+TimeFun compiled_slots.
+
+Definition compiled_naive {V : Type} (cp : compiled V) : list (cplan V) :=
+  match cp with
+  | Compiled _ _ nv _ => nv
+  end.
+TimeFun compiled_naive.
+
+Definition compiled_semi {V : Type} (cp : compiled V) : list (cplan V) :=
+  match cp with
+  | Compiled _ _ _ sn => sn
+  end.
+TimeFun compiled_semi.
+
+Definition limits_iter (lim : limits) : N :=
+  match lim with
+  | Limits it _ => it
+  end.
+TimeFun limits_iter.
+
+Definition limits_ids (lim : limits) : N :=
+  match lim with
+  | Limits _ ids => ids
+  end.
+TimeFun limits_ids.
+
+(** * Rule access and binding tries *)
+
+(** The rule at a binary position walks the list with a binary countdown, and a position past
+    the end gives the empty rule. *)
+Fixpoint rule_at {V : Type} (n : N) (rs : list (rule V)) : rule V :=
+  match rs with
+  | [] => Rule V [] []
+  | r :: rest =>
+      match n with
+      | N0 => r
+      | Npos _ => rule_at (N.pred n) rest
+      end
+  end.
+TimeFun rule_at.
+
+(** The binary walk finds the rule that unary indexing names. *)
+Lemma rule_at_nth : forall (V : Type) n (rs : list (rule V)),
+  rule_at n rs = nth (N.to_nat n) rs (Rule V [] []).
+Proof.
+  intros V n rs. revert n.
+  induction rs as [| r rest IH]; intro n.
+  - destruct (N.to_nat n); reflexivity.
+  - destruct n as [| p].
+    + reflexivity.
+    + cbn [rule_at]. rewrite IH, N2Nat.inj_pred.
+      change (N.to_nat (Npos p)) with (Pos.to_nat p).
+      destruct (Pos2Nat.is_succ p) as [m Hm]. rewrite Hm. reflexivity.
+Qed.
+
+(** The first binding of a name wins, as in [binding_env]. *)
+Fixpoint bind_cells {V : Type} (vars : list positive) (cells : list (cell V))
+    (t : ptrie (cell V)) : ptrie (cell V) :=
+  match vars, cells with
+  | x :: xs, c :: cs =>
+      match trie_get x t with
+      | Some _ => bind_cells xs cs t
+      | None => bind_cells xs cs (PTrieCode.set x c t)
+      end
+  | _, _ => t
+  end.
+TimeFun bind_cells.
+
+(** Binding onto a trie keeps its entries and adds the first binding of each new name. *)
+Lemma bind_cells_get : forall (V : Type) vars (cells : list (cell V)) t x,
+  trie_get x (bind_cells vars cells t) =
+    match trie_get x t with
+    | Some c => Some c
+    | None => binding_env vars cells x
+    end.
+Proof.
+  intros V vars. induction vars as [| v vs IH]; intros cells t x.
+  - cbn [bind_cells binding_env]. destruct (trie_get x t); reflexivity.
+  - destruct cells as [| c cs].
+    + cbn [bind_cells binding_env]. destruct (trie_get x t); reflexivity.
+    + cbn [bind_cells binding_env].
+      destruct (Pos.eqb_spec x v) as [Hxv | Hxv].
+      * subst v. destruct (trie_get x t) as [d |] eqn:Hget.
+        -- rewrite IH, Hget. reflexivity.
+        -- rewrite IH, PTrie.get_set_same. reflexivity.
+      * destruct (trie_get v t) as [d |] eqn:Hget.
+        -- apply IH.
+        -- rewrite IH, PTrie.get_set_other by congruence. reflexivity.
+Qed.
+
+(** * Post filters *)
+
+Definition cell_eqb {V : Type} (eqb : V -> V -> bool) (a b : cell V) : bool :=
+  match a, b with
+  | Id i, Id j => Pos.eqb i j
+  | Val v, Val w => eqb v w
+  | _, _ => false
+  end.
+TimeFun cell_eqb.
+
+(** A term of a primitive atom names a value of the binding trie. *)
+Definition trie_term {V : Type} (t : ptrie (cell V)) (x : term V) : option V :=
+  match x with
+  | Var y =>
+      match trie_get y t with
+      | Some (Val v) => Some v
+      | _ => None
+      end
+  | Lit v => Some v
+  end.
+TimeFun trie_term.
+
+Fixpoint trie_terms {V : Type} (t : ptrie (cell V)) (xs : list (term V)) : option (list V) :=
+  match xs with
+  | [] => Some []
+  | x :: rest =>
+      match trie_term t x with
+      | Some v =>
+          match trie_terms t rest with
+          | Some vs => Some (v :: vs)
+          | None => None
+          end
+      | None => None
+      end
+  end.
+TimeFun trie_terms.
+
+(** A primitive atom holds when its arguments are values and its result agrees with the
+    primitive. The known result value is the first operand of the comparison. *)
+Definition prim_holds {V : Type} (prim : positive -> list V -> option V)
+    (eqb : V -> V -> bool) (t : ptrie (cell V)) (p : positive) (args : list (term V))
+    (res : term V) : bool :=
+  match trie_terms t args with
+  | Some vs =>
+      match prim p vs with
+      | Some v =>
+          match trie_term t res with
+          | Some w => eqb w v
+          | None => false
+          end
+      | None => false
+      end
+  | None => false
+  end.
+TimeFun prim_holds.
+
+(** A later occurrence of a variable in one atom reads the next copy name of the plan, and the
+    copy cell must equal the cell of the variable. The result is the unread copy names. *)
+Fixpoint copies_ok {V : Type} (eqb : V -> V -> bool) (t : ptrie (cell V))
+    (seen : ptrie unit) (xs : list (term V)) (copies : list positive)
+    : option (list positive) :=
+  match xs with
+  | [] => Some copies
+  | Lit _ :: rest => copies_ok eqb t seen rest copies
+  | Var x :: rest =>
+      match trie_get x seen with
+      | Some _ =>
+          match copies with
+          | z :: more =>
+              match trie_get z t, trie_get x t with
+              | Some c, Some d =>
+                  if cell_eqb eqb c d then copies_ok eqb t seen rest more else None
+              | _, _ => None
+              end
+          | [] => None
+          end
+      | None => copies_ok eqb t (PTrieCode.set x tt seen) rest copies
+      end
+  end.
+TimeFun copies_ok.
+
+(** The post filter checks its listed atoms in order. It evaluates each primitive atom and
+    compares the copies of each function atom. *)
+Fixpoint keep_post {V : Type} (prim : positive -> list V -> option V) (eqb : V -> V -> bool)
+    (q : list (atom V)) (t : ptrie (cell V)) (post : list nat) (copies : list positive)
+    : bool :=
+  match post with
+  | [] => true
+  | i :: rest =>
+      match nth_error q i with
+      | Some (Prim _ p args res) =>
+          if prim_holds prim eqb t p args res then keep_post prim eqb q t rest copies
+          else false
+      | Some (Fun _ _ args res) =>
+          match copies_ok eqb t Empty (args ++ option_list res) copies with
+          | Some more => keep_post prim eqb q t rest more
+          | None => false
+          end
+      | None => false
+      end
+  end.
+TimeFun keep_post.
+
+(** * Action terms *)
+
+(** Variables bound by earlier actions shadow the binding environment. *)
+Definition look {V : Type} (s : positive -> option (cell V)) (locals : ptrie (cell V))
+    (x : positive) : option (cell V) :=
+  match trie_get x locals with
+  | Some c => Some c
+  | None => s x
+  end.
+TimeFun look.
+
+Definition term_cell {V : Type} (s : positive -> option (cell V)) (locals : ptrie (cell V))
+    (t : term V) : option (cell V) :=
+  match t with
+  | Var x => look s locals x
+  | Lit v => Some (Val v)
+  end.
+TimeFun term_cell.
+
+Fixpoint term_cells {V : Type} (s : positive -> option (cell V)) (locals : ptrie (cell V))
+    (ts : list (term V)) : option (list (cell V)) :=
+  match ts with
+  | [] => Some []
+  | t :: rest =>
+      match term_cell s locals t with
+      | Some c =>
+          match term_cells s locals rest with
+          | Some cs => Some (c :: cs)
+          | None => None
+          end
+      | None => None
+      end
+  end.
+TimeFun term_cells.
+
+Fixpoint term_values {V : Type} (s : positive -> option (cell V)) (locals : ptrie (cell V))
+    (ts : list (term V)) : option (list V) :=
+  match ts with
+  | [] => Some []
+  | t :: rest =>
+      match term_cell s locals t with
+      | Some (Val v) =>
+          match term_values s locals rest with
+          | Some vs => Some (v :: vs)
+          | None => None
+          end
+      | _ => None
+      end
+  end.
+TimeFun term_values.
+
+Definition result_cell {V : Type} (s : positive -> option (cell V)) (locals : ptrie (cell V))
+    (res : option (term V)) : option (option (cell V)) :=
+  match res with
+  | None => Some None
+  | Some t =>
+      match term_cell s locals t with
+      | Some c => Some (Some c)
+      | None => None
+      end
+  end.
+TimeFun result_cell.
+
+(** * Planning *)
+
+(** Slots are identified by a self-delimiting code of the function and the permutation. *)
+Fixpoint nat_code (n : nat) : positive :=
+  match n with
+  | O => xH
+  | S m => xO (nat_code m)
+  end.
+TimeFun nat_code.
+
+Definition slot_code (f : positive) (perm : list nat) : positive :=
+  glue f (list_code nat_code perm).
+TimeFun slot_code.
+
+Fixpoint count_from (start len : nat) : list nat :=
+  match len with
+  | O => []
+  | S len' => start :: count_from (S start) len'
+  end.
+TimeFun count_from.
+
+(** The planner's slot state maps slot codes to slot numbers and keeps the slots reversed. *)
+Inductive slot_state : Type :=
+  | SlotState (table : ptrie N) (next : N) (rows : list (positive * list nat)).
+
+(** A slot keeps the number of its first registration. *)
+Definition add_slot (f : positive) (perm : list nat) (st : slot_state) : N * slot_state :=
+  match st with
+  | SlotState table next rows =>
+      let key := slot_code f perm in
+      match trie_get key table with
+      | Some s => (s, st)
+      | None => (next, SlotState (PTrieCode.set key next table) (N.succ next) ((f, perm) :: rows))
+      end
+  end.
+TimeFun add_slot.
+
+(** Each identifier function, at its first declaration, gets the slot of all its positions in
+    declaration order. *)
+Fixpoint full_slots (ds : list decl) (seen : ptrie unit) (st : slot_state) : slot_state :=
+  match ds with
+  | [] => st
+  | Decl f ss o :: rest =>
+      match trie_get f seen with
+      | Some _ => full_slots rest seen st
+      | None =>
+          match o with
+          | OId =>
+              full_slots rest (PTrieCode.set f tt seen)
+                (snd (add_slot f (count_from 0 (S (length ss))) st))
+          | _ => full_slots rest (PTrieCode.set f tt seen) st
+          end
+      end
+  end.
+TimeFun full_slots.
+
+Definition pos_max (a b : positive) : positive :=
+  match Pos.compare a b with
+  | Lt => b
+  | _ => a
+  end.
+TimeFun pos_max.
+
+Definition term_max {V : Type} (t : term V) (m : positive) : positive :=
+  match t with
+  | Var x => pos_max x m
+  | Lit _ => m
+  end.
+TimeFun term_max.
+
+Fixpoint terms_max {V : Type} (ts : list (term V)) (m : positive) : positive :=
+  match ts with
+  | [] => m
+  | t :: rest => terms_max rest (term_max t m)
+  end.
+TimeFun terms_max.
+
+(** The largest variable of a query bounds the names of its plan's real variables. *)
+Fixpoint query_max {V : Type} (q : list (atom V)) (m : positive) : positive :=
+  match q with
+  | [] => m
+  | Fun _ _ args res :: rest => query_max rest (terms_max (args ++ option_list res) m)
+  | Prim _ _ args res :: rest => query_max rest (terms_max (res :: args) m)
+  end.
+TimeFun query_max.
+
+(** Later occurrences of a variable in one function atom need copies. *)
+Fixpoint term_copies {V : Type} (seen : ptrie unit) (ts : list (term V)) (n : nat) : nat :=
+  match ts with
+  | [] => n
+  | Lit _ :: rest => term_copies seen rest n
+  | Var x :: rest =>
+      match trie_get x seen with
+      | Some _ => term_copies seen rest (S n)
+      | None => term_copies (PTrieCode.set x tt seen) rest n
+      end
+  end.
+TimeFun term_copies.
+
+Fixpoint query_copies {V : Type} (q : list (atom V)) (n : nat) : nat :=
+  match q with
+  | [] => n
+  | Fun _ _ args res :: rest => query_copies rest (term_copies Empty (args ++ option_list res) n)
+  | Prim _ _ _ _ :: rest => query_copies rest n
+  end.
+TimeFun query_copies.
+
+(** The layout numbers the join variables of a rule. Copies come first, and real variables and
+    literals follow in the order of their first positions. Its name lists are reversed. *)
+Inductive var_layout : Type :=
+  | VarLayout (names : ptrie nat) (copies mains : nat) (fresh : positive)
+      (copy_names main_names : list positive).
+
+(** Each atom position receives a join variable. A literal and the first query occurrence of a
+    variable take the next main variable, a later occurrence in the same atom takes the next
+    copy, and any other occurrence reuses its variable. *)
+Fixpoint place_terms {V : Type} (base : nat) (ts : list (term V)) (pos : nat)
+    (seen : ptrie unit) (lay : var_layout) (pairs : list (nat * nat))
+    (lits : list (nat * V)) (copied : bool)
+    : var_layout * list (nat * nat) * list (nat * V) * bool :=
+  match ts with
+  | [] => (lay, pairs, lits, copied)
+  | t :: rest =>
+      match lay with
+      | VarLayout names nc nm fresh cn mn =>
+          match t with
+          | Lit v =>
+              let j := base + nm in
+              place_terms base rest (S pos) seen
+                (VarLayout names nc (S nm) (Pos.succ fresh) cn (fresh :: mn))
+                ((j, pos) :: pairs) ((j, v) :: lits) copied
+          | Var x =>
+              match trie_get x seen with
+              | Some _ =>
+                  place_terms base rest (S pos) seen
+                    (VarLayout names (S nc) nm (Pos.succ fresh) (fresh :: cn) mn)
+                    ((nc, pos) :: pairs) lits true
+              | None =>
+                  match trie_get x names with
+                  | Some j =>
+                      place_terms base rest (S pos) (PTrieCode.set x tt seen) lay
+                        ((j, pos) :: pairs) lits copied
+                  | None =>
+                      let j := base + nm in
+                      place_terms base rest (S pos) (PTrieCode.set x tt seen)
+                        (VarLayout (PTrieCode.set x j names) nc (S nm) fresh cn (x :: mn))
+                        ((j, pos) :: pairs) lits copied
+                  end
+              end
+          end
+      end
+  end.
+TimeFun place_terms.
+
+Fixpoint insert_pair (j pos : nat) (l : list (nat * nat)) : list (nat * nat) :=
+  match l with
+  | [] => [(j, pos)]
+  | (k, q) :: rest =>
+      if Nat.leb j k then (j, pos) :: l else (k, q) :: insert_pair j pos rest
+  end.
+TimeFun insert_pair.
+
+(** Sorting the positions of an atom by join variable gives its column and its permutation. *)
+Fixpoint sort_pairs (l : list (nat * nat)) : list (nat * nat) :=
+  match l with
+  | [] => []
+  | (j, pos) :: rest => insert_pair j pos (sort_pairs rest)
+  end.
+TimeFun sort_pairs.
+
+(** A planned function atom has a slot, a column and the literals of its positions. *)
+Inductive atom_plan (V : Type) : Type :=
+  | AtomPlan (slot : N) (col : list nat) (lits : list (nat * V)).
+
+Arguments AtomPlan {V}.
+
+(** Prim atoms and function atoms with copies enter the post filter in query order. *)
+Fixpoint plan_atoms {V : Type} (base : nat) (q : list (atom V)) (ai : nat)
+    (lay : var_layout) (st : slot_state) (outs : list (atom_plan V)) (post : list nat)
+    : var_layout * slot_state * list (atom_plan V) * list nat :=
+  match q with
+  | [] => (lay, st, outs, post)
+  | Prim _ _ _ _ :: rest => plan_atoms base rest (S ai) lay st outs (ai :: post)
+  | Fun _ f args res :: rest =>
+      let '(lay', pairs, lits, copied) :=
+        place_terms base (args ++ option_list res) 0 Empty lay [] [] false in
+      let sorted := sort_pairs pairs in
+      let '(s, st') := add_slot f (map snd sorted) st in
+      plan_atoms base rest (S ai) lay' st'
+        (AtomPlan s (map fst sorted) (rev_append lits []) :: outs)
+        (if copied then ai :: post else post)
+  end.
+TimeFun plan_atoms.
+
+Fixpoint literal_cols {V : Type} (lits : list (nat * V)) (tail : list (list nat))
+    : list (list nat) :=
+  match lits with
+  | [] => tail
+  | (j, _) :: rest => [j] :: literal_cols rest tail
+  end.
+TimeFun literal_cols.
+
+(** Each atom's column is followed by the columns of its literals in position order. *)
+Fixpoint plan_cols {V : Type} (atoms : list (atom_plan V)) : list (list nat) :=
+  match atoms with
+  | [] => []
+  | AtomPlan _ col lits :: rest => col :: literal_cols lits (plan_cols rest)
+  end.
+TimeFun plan_cols.
+
+Fixpoint literal_sources {V : Type} (lits : list (nat * V)) (tail : list (source V))
+    : list (source V) :=
+  match lits with
+  | [] => tail
+  | (_, v) :: rest => Const V (Val v) :: literal_sources rest tail
+  end.
+TimeFun literal_sources.
+
+Definition pivot_source {V : Type} (s : N) (pivot : option nat) : source V :=
+  match pivot with
+  | Some O => New V s
+  | _ => All V s
+  end.
+TimeFun pivot_source.
+
+Definition pivot_next (pivot : option nat) : option nat :=
+  match pivot with
+  | Some (S k) => Some k
+  | _ => None
+  end.
+TimeFun pivot_next.
+
+(** The atom at the pivot reads the new rows of its slot and every other atom reads all rows. *)
+Fixpoint plan_srcs {V : Type} (atoms : list (atom_plan V)) (pivot : option nat)
+    : list (source V) :=
+  match atoms with
+  | [] => []
+  | AtomPlan s _ lits :: rest =>
+      pivot_source s pivot :: literal_sources lits (plan_srcs rest (pivot_next pivot))
+  end.
+TimeFun plan_srcs.
+
+(** A rule has one semi-naive plan for each function atom. *)
+Fixpoint semi_plans {V : Type} (i : N) (j : jplan) (vars : list positive) (post : list nat)
+    (atoms : list (atom_plan V)) (m : nat) (todo : list (atom_plan V)) : list (cplan V) :=
+  match todo with
+  | [] => []
+  | _ :: rest =>
+      CPlan V i j (plan_srcs atoms (Some m)) vars post ::
+        semi_plans i j vars post atoms (S m) rest
+  end.
+TimeFun semi_plans.
+
+(** A rule's naive plan and its semi-naive plans share one layout. *)
+Definition plan_rule {V : Type} (i : N) (r : rule V) (st : slot_state)
+    : slot_state * cplan V * list (cplan V) :=
+  match r with
+  | Rule _ q _ =>
+      let base := query_copies q 0 in
+      let '(lay, st', outs, post) :=
+        plan_atoms base q 0 (VarLayout Empty 0 0 (Pos.succ (query_max q 1%positive)) [] [])
+          st [] [] in
+      match lay with
+      | VarLayout _ _ nm _ cn mn =>
+          let atoms := rev_append outs [] in
+          let vars := rev_append cn (rev_append mn []) in
+          let j := JPlan (base + nm) (plan_cols atoms) in
+          let ps := rev_append post [] in
+          (st', CPlan V i j (plan_srcs atoms None) vars ps, semi_plans i j vars ps atoms 0 atoms)
+      end
+  end.
+TimeFun plan_rule.
+
+Fixpoint plan_rules {V : Type} (rs : list (rule V)) (i : N) (st : slot_state)
+    (naive semi : list (cplan V)) : slot_state * list (cplan V) * list (cplan V) :=
+  match rs with
+  | [] => (st, naive, semi)
+  | r :: rest =>
+      let '(st', c, cs) := plan_rule i r st in
+      plan_rules rest (N.succ i) st' (c :: naive) (rev_append cs semi)
+  end.
+TimeFun plan_rules.
+
+(** The full slots come first, and the rules follow in program order. *)
+Definition plan_program {V : Type} (p : program V) : compiled V :=
+  match p with
+  | Program _ ds rs =>
+      let '(st, naive, semi) :=
+        plan_rules rs 0%N (full_slots ds Empty (SlotState Empty 0%N [])) [] [] in
+      match st with
+      | SlotState _ _ rows =>
+          Compiled V (rev_append rows []) (rev_append naive []) (rev_append semi [])
+      end
+  end.
+TimeFun plan_program.
+
+(** * Checking *)
+
+(** The first declaration of a name fixes its row width. *)
+Fixpoint decl_widths (ds : list decl) (t : ptrie nat) : ptrie nat :=
+  match ds with
+  | [] => t
+  | Decl f ss o :: rest =>
+      match trie_get f t with
+      | Some _ => decl_widths rest t
+      | None =>
+          let width := match o with
+            | ORel => length ss
+            | _ => S (length ss)
+            end in
+          decl_widths rest (PTrieCode.set f width t)
+      end
+  end.
+TimeFun decl_widths.
+
+(** A slot permutation lists distinct positions within the row width. *)
+Fixpoint perm_ok (width : nat) (perm : list nat) (seen : ptrie unit) : bool :=
+  match perm with
+  | [] => true
+  | i :: rest =>
+      let key := nat_code i in
+      match trie_get key seen with
+      | Some _ => false
+      | None =>
+          if Nat.leb (S i) width then perm_ok width rest (PTrieCode.set key tt seen) else false
+      end
+  end.
+TimeFun perm_ok.
+
+(** The slot table maps the code of each valid slot to its first number and its contents. *)
+Fixpoint slot_table (widths : ptrie nat) (sl : list (positive * list nat)) (next : N)
+    (table : ptrie (N * (positive * list nat)))
+    : option (ptrie (N * (positive * list nat))) :=
+  match sl with
+  | [] => Some table
+  | (f, perm) :: rest =>
+      match trie_get f widths with
+      | Some width =>
+          if perm_ok width perm Empty then
+            let key := slot_code f perm in
+            match trie_get key table with
+            | Some _ => slot_table widths rest (N.succ next) table
+            | None =>
+                slot_table widths rest (N.succ next)
+                  (PTrieCode.set key (next, (f, perm)) table)
+            end
+          else None
+      | None => None
+      end
+  end.
+TimeFun slot_table.
+
+(** The names of a plan are distinct, and each names its join variable. *)
+Fixpoint var_table (vars : list positive) (j : N) (t : ptrie N) : option (ptrie N) :=
+  match vars with
+  | [] => Some t
+  | x :: rest =>
+      match trie_get x t with
+      | Some _ => None
+      | None => var_table rest (N.succ j) (PTrieCode.set x j t)
+      end
+  end.
+TimeFun var_table.
+
+Fixpoint nat_n (n : nat) : N :=
+  match n with
+  | O => 0%N
+  | S m => N.succ (nat_n m)
+  end.
+TimeFun nat_n.
+
+Fixpoint nats_eqb (a b : list nat) : bool :=
+  match a, b with
+  | [], [] => true
+  | x :: xs, y :: ys => if Nat.eqb x y then nats_eqb xs ys else false
+  | _, _ => false
+  end.
+TimeFun nats_eqb.
+
+(** A column is nonempty, strictly increasing and below the variable count. *)
+Fixpoint column_ok (n : nat) (lv : list nat) (prev : option nat) : bool :=
+  match lv with
+  | [] =>
+      match prev with
+      | Some _ => true
+      | None => false
+      end
+  | l :: rest =>
+      let above := match prev with
+        | Some k => Nat.leb (S k) l
+        | None => true
+        end in
+      if above then if Nat.leb (S l) n then column_ok n rest (Some l) else false else false
+  end.
+TimeFun column_ok.
+
+(** Each position of an atom has a join variable. The first occurrence of a variable in the
+    atom has the variable of its name, a later occurrence has the next copy, and a literal has
+    the column of its constant source. The inverse table maps join variables to positions. *)
+Fixpoint check_terms {V : Type} (eqb : V -> V -> bool) (names : ptrie N)
+    (ts : list (term V)) (pos : nat) (seen : ptrie unit) (copy : N) (inv : ptrie nat)
+    (srcs : list (source V)) (cols : list (list nat)) (copied : bool)
+    : option (N * ptrie nat * list (source V) * list (list nat) * bool) :=
+  match ts with
+  | [] => Some (copy, inv, srcs, cols, copied)
+  | Lit v :: rest =>
+      match srcs, cols with
+      | Const _ (Val w) :: srcs', [l] :: cols' =>
+          if eqb w v then
+            check_terms eqb names rest (S pos) seen copy
+              (PTrieCode.set (N.succ_pos (nat_n l)) pos inv) srcs' cols' copied
+          else None
+      | _, _ => None
+      end
+  | Var x :: rest =>
+      match trie_get x seen with
+      | Some _ =>
+          check_terms eqb names rest (S pos) seen (N.succ copy)
+            (PTrieCode.set (N.succ_pos copy) pos inv) srcs cols true
+      | None =>
+          match trie_get x names with
+          | Some j =>
+              check_terms eqb names rest (S pos) (PTrieCode.set x tt seen) copy
+                (PTrieCode.set (N.succ_pos j) pos inv) srcs cols copied
+          | None => None
+          end
+      end
+  end.
+TimeFun check_terms.
+
+(** The column of an atom reads its permutation from the inverse table and counts the distinct
+    join variables that the plan uses. *)
+Fixpoint column_perm (inv : ptrie nat) (lv : list nat) (used : ptrie unit) (count : N)
+    : option (list nat * ptrie unit * N) :=
+  match lv with
+  | [] => Some ([], used, count)
+  | l :: rest =>
+      let key := N.succ_pos (nat_n l) in
+      match trie_get key inv with
+      | Some pos =>
+          let count' := match trie_get key used with
+            | Some _ => count
+            | None => N.succ count
+            end in
+          match column_perm inv rest (PTrieCode.set key tt used) count' with
+          | Some (perm, used', count'') => Some (pos :: perm, used', count'')
+          | None => None
+          end
+      | None => None
+      end
+  end.
+TimeFun column_perm.
+
+Definition slot_matches (table : ptrie (N * (positive * list nat))) (f : positive)
+    (perm : list nat) (s : N) : bool :=
+  match trie_get (slot_code f perm) table with
+  | Some (s', (f', perm')) =>
+      if N.eqb s' s then if Pos.eqb f' f then nats_eqb perm' perm else false else false
+  | None => false
+  end.
+TimeFun slot_matches.
+
+Definition source_slot {V : Type} (newok : bool) (src : source V) : option N :=
+  match src with
+  | All _ s => Some s
+  | New _ s => if newok then Some s else None
+  | Const _ _ => None
+  end.
+TimeFun source_slot.
+
+(** A function atom reads one slot source whose slot lays out its positions by join variable,
+    and then the constant sources of its literals. *)
+Definition check_atom {V : Type} (eqb : V -> V -> bool) (newok : bool) (names : ptrie N)
+    (n : nat) (table : ptrie (N * (positive * list nat))) (f : positive) (ts : list (term V))
+    (copy : N) (used : ptrie unit) (count : N) (srcs : list (source V))
+    (cols : list (list nat))
+    : option (N * ptrie unit * N * list (source V) * list (list nat) * bool) :=
+  match srcs, cols with
+  | src :: srcs', lv :: cols' =>
+      match source_slot newok src with
+      | Some s =>
+          if column_ok n lv None then
+            if Nat.eqb (length lv) (length ts) then
+              match check_terms eqb names ts 0 Empty copy Empty srcs' cols' false with
+              | Some (copy', inv, srcs'', cols'', copied) =>
+                  match column_perm inv lv used count with
+                  | Some (perm, used', count') =>
+                      if slot_matches table f perm s then
+                        Some (copy', used', count', srcs'', cols'', copied)
+                      else None
+                  | None => None
+                  end
+              | None => None
+              end
+            else None
+          else None
+      | None => None
+      end
+  | _, _ => None
+  end.
+TimeFun check_atom.
+
+(** The query check returns the count of used join variables, the unread sources and columns,
+    and the reversed post list that the query requires. *)
+Fixpoint check_query {V : Type} (eqb : V -> V -> bool) (newok : bool) (names : ptrie N)
+    (n : nat) (table : ptrie (N * (positive * list nat))) (q : list (atom V)) (ai : nat)
+    (copy : N) (used : ptrie unit) (count : N) (srcs : list (source V))
+    (cols : list (list nat)) (post : list nat)
+    : option (N * list (source V) * list (list nat) * list nat) :=
+  match q with
+  | [] => Some (count, srcs, cols, post)
+  | Prim _ _ _ _ :: rest =>
+      check_query eqb newok names n table rest (S ai) copy used count srcs cols (ai :: post)
+  | Fun _ f args res :: rest =>
+      match check_atom eqb newok names n table f (args ++ option_list res) copy used count
+          srcs cols with
+      | Some (copy', used', count', srcs', cols', copied) =>
+          check_query eqb newok names n table rest (S ai) copy' used' count' srcs' cols'
+            (if copied then ai :: post else post)
+      | None => None
+      end
+  end.
+TimeFun check_query.
+
+(** A plan names its rule, uses every join variable and lists the post filter of its query. *)
+Definition check_cplan {V : Type} (eqb : V -> V -> bool) (newok : bool)
+    (table : ptrie (N * (positive * list nat))) (i : N) (r : rule V) (c : cplan V) : bool :=
+  match r, c with
+  | Rule _ q _, CPlan _ ix (JPlan n cols) srcs vars post =>
+      if N.eqb ix i then
+        if Nat.eqb (length vars) n then
+          match var_table vars 0 Empty with
+          | Some names =>
+              match check_query eqb newok names n table q 0 0 Empty 0 srcs cols [] with
+              | Some (count, [], [], expected) =>
+                  if N.eqb count (nat_n n) then nats_eqb (rev_append expected []) post
+                  else false
+              | _ => false
+              end
+          | None => false
+          end
+        else false
+      else false
+  end.
+TimeFun check_cplan.
+
+Fixpoint fun_count {V : Type} (q : list (atom V)) : nat :=
+  match q with
+  | [] => O
+  | Fun _ _ _ _ :: rest => S (fun_count rest)
+  | Prim _ _ _ _ :: rest => fun_count rest
+  end.
+TimeFun fun_count.
+
+Fixpoint check_semis {V : Type} (eqb : V -> V -> bool)
+    (table : ptrie (N * (positive * list nat))) (i : N) (r : rule V) (k : nat)
+    (cs : list (cplan V)) : option (list (cplan V)) :=
+  match k with
+  | O => Some cs
+  | S k' =>
+      match cs with
+      | [] => None
+      | c :: rest =>
+          if check_cplan eqb true table i r c then check_semis eqb table i r k' rest else None
+      end
+  end.
+TimeFun check_semis.
+
+(** Each rule has one naive plan and one semi-naive plan per function atom, in rule order. *)
+Fixpoint check_rule_plans {V : Type} (eqb : V -> V -> bool)
+    (table : ptrie (N * (positive * list nat))) (rs : list (rule V)) (i : N)
+    (naive semi : list (cplan V)) : bool :=
+  match rs, naive with
+  | [], [] =>
+      match semi with
+      | [] => true
+      | _ :: _ => false
+      end
+  | r :: rest, c :: naive' =>
+      if check_cplan eqb false table i r c then
+        match r with
+        | Rule _ q _ =>
+            match check_semis eqb table i r (fun_count q) semi with
+            | Some semi' => check_rule_plans eqb table rest (N.succ i) naive' semi'
+            | None => false
+            end
+        end
+      else false
+  | _, _ => false
+  end.
+TimeFun check_rule_plans.
+
+(** The shape check validates the slots and then every plan against its rule. *)
+Definition check_shape_with {V : Type} (eqb : V -> V -> bool) (p : program V)
+    (cp : compiled V) : bool :=
+  match p, cp with
+  | Program _ ds rs, Compiled _ sl naive semi =>
+      match slot_table (decl_widths ds Empty) sl 0 Empty with
+      | Some table => check_rule_plans eqb table rs 0 naive semi
+      | None => false
+      end
+  end.
+TimeFun check_shape_with.
+
+(** * Finite universes *)
+
+(** Every tuple of a width over the listed values. *)
+Fixpoint value_tuples {V : Type} (n : nat) (vs : list V) : list (list (cell V)) :=
+  match n with
+  | O => [[]]
+  | S m => flat_map (fun v => map (fun k => Val v :: k) (value_tuples m vs)) vs
+  end.
+
+(** The first declaration of each relation name, with its arity. *)
+Fixpoint relation_arities (ds : list decl) (seen : list positive) : list (positive * nat) :=
+  match ds with
+  | [] => []
+  | Decl f ss o :: rest =>
+      if existsb (Pos.eqb f) seen then relation_arities rest seen
+      else
+        match o with
+        | ORel => (f, length ss) :: relation_arities rest (f :: seen)
+        | _ => relation_arities rest (f :: seen)
+        end
+  end.
+
+(** A value is kept unless an equal value was kept before it. *)
+Definition distinct_values {V : Type} (eqb : V -> V -> bool) (vs : list V) : list V :=
+  fold_left (fun acc v => if existsb (eqb v) acc then acc else v :: acc) vs [].
+
+Definition program_literals {V : Type} (p : program V) : list V :=
+  flat_map (fun t => match t with
+    | Lit v => [v]
+    | Var _ => []
+    end) (program_terms p).
+
 Module RunCode (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I)
     (D : DATABASE_OPS V I) <: RUN_OPS V I J D.
-  (* STUB-CODE *)
-  Definition plan (_ : program V.t) : compiled V.t := Compiled V.t [] [] [].
-  (* STUB-CODE *)
-  Definition check_plan (_ : program V.t) (_ : compiled V.t) : bool := false.
-  (* STUB-CODE *)
-  Definition load (_ : program V.t) (_ : compiled V.t) : D.t := D.init [] [].
-  (* STUB-CODE *)
-  Definition round (_ : program V.t) (_ : compiled V.t) (_ : bool) (db : D.t) : D.t := db.
-  (* STUB-CODE *)
-  Definition run (_ : program V.t) (_ : compiled V.t) (_ : limits) (db : D.t) : stop * D.t :=
-    (IterLimit, db).
+  Definition plan (p : program V.t) : compiled V.t := plan_program p.
+
+  Definition check_shape (p : program V.t) (cp : compiled V.t) : bool :=
+    check_shape_with V.eqb p cp.
+
+  Definition check_plan (p : program V.t) (cp : compiled V.t) : bool :=
+    check_program p && check_shape p cp.
+
+  Definition load (p : program V.t) (cp : compiled V.t) : D.t :=
+    D.init (decls V.t p) (compiled_slots cp).
+
+  (** Actions run in order. A failed term lookup or primitive ends the application, and a union
+      of two values changes nothing. *)
+  Fixpoint apply_go (acts : list (action V.t)) (s : Model.env (V := V.t))
+      (locals : ptrie (cell V.t)) (db : D.t) : D.t :=
+    match acts with
+    | [] => db
+    | Make x f args :: rest =>
+        match term_cells s locals args with
+        | Some cells =>
+            let '(i, db') := D.make f cells db in
+            apply_go rest s (PTrieCode.set x (Id i) locals) db'
+        | None => db
+        end
+    | Put f args res :: rest =>
+        match term_cells s locals args, result_cell s locals res with
+        | Some cells, Some out => apply_go rest s locals (D.put f cells out db)
+        | _, _ => db
+        end
+    | Union a b :: rest =>
+        match term_cell s locals a, term_cell s locals b with
+        | Some (Id i), Some (Id j) => apply_go rest s locals (D.union i j db)
+        | Some _, Some _ => apply_go rest s locals db
+        | _, _ => db
+        end
+    | Let x p args :: rest =>
+        match term_values s locals args with
+        | Some vs =>
+            match V.prim p vs with
+            | Some v => apply_go rest s (PTrieCode.set x (Val v) locals) db
+            | None => db
+            end
+        | None => db
+        end
+    end.
+
+  Definition apply (acts : list (action V.t)) (s : Model.env (V := V.t)) (db : D.t) : D.t :=
+    apply_go acts s Empty db.
+
+  Definition bind_trie (c : cplan V.t) (b : list (cell V.t)) : ptrie (cell V.t) :=
+    bind_cells (plan_vars c) b Empty.
+
+  (** The post filter reads the copy names at the front of the plan's variables. *)
+  Definition keep (p : program V.t) (c : cplan V.t) (t : ptrie (cell V.t)) : bool :=
+    match rule_at (plan_rule_ix c) (rules V.t p) with
+    | Rule _ q _ => keep_post V.prim V.eqb q t (plan_post c) (plan_vars c)
+    end.
+
+  Definition source_ix (db : D.t) (s : source V.t) : I.t :=
+    match s with
+    | All _ slot => D.index slot false db
+    | New _ slot => D.index slot true db
+    | Const _ c => I.insert [c] I.empty
+    end.
+
+  Definition plan_bindings (_ : compiled V.t) (c : cplan V.t) (db : D.t)
+      : list (list (cell V.t)) :=
+    J.run (plan_join c) (map (source_ix db) (plan_sources c)).
+
+  Definition jobs (p : program V.t) (cp : compiled V.t) (nv : bool) (db : D.t)
+      : list (cplan V.t * list (cell V.t)) :=
+    flat_map (fun c => map (fun b => (c, b))
+        (filter (fun b => keep p c (bind_trie c b)) (plan_bindings cp c db)))
+      (if nv then compiled_naive cp else compiled_semi cp).
+
+  (** Each job builds its binding trie once and applies the actions of its rule. *)
+  Fixpoint apply_all (p : program V.t) (js : list (cplan V.t * list (cell V.t))) (db : D.t)
+      : D.t :=
+    match js with
+    | [] => db
+    | (c, b) :: rest =>
+        let t := bind_trie c b in
+        apply_all p rest
+          (apply (actions V.t (rule_at (plan_rule_ix c) (rules V.t p)))
+            (fun x => trie_get x t) db)
+    end.
+
+  Definition round (p : program V.t) (cp : compiled V.t) (nv : bool) (db : D.t) : D.t :=
+    D.rebuild (apply_all p (jobs p cp nv db) db).
+
+  (** A quiet semi-naive round is followed by a naive round, and a quiet naive round saturates. *)
+  Definition driver (p : program V.t) (cp : compiled V.t) (lim : limits) (st : bool * D.t)
+      : (bool * D.t) + (stop * D.t) :=
+    let '(nv, db) := st in
+    let next := round p cp nv db in
+    if N.ltb (limits_ids lim) (D.ids next) then inr (IdLimit, next)
+    else if andb nv (negb (D.changed next)) then inr (Saturated, next)
+    else inl (negb (D.changed next), D.advance next).
+
+  (** The final rebuild makes the result canonical even when the fuel is zero. *)
+  Definition run (p : program V.t) (cp : compiled V.t) (lim : limits) (db : D.t)
+      : stop * D.t :=
+    match loopN (driver p cp lim) (limits_iter lim) (false, db) with
+    | inl (_, final) => (IterLimit, D.rebuild final)
+    | inr (st, final) => (st, D.rebuild final)
+    end.
 End RunCode.
 
 Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V I J D.
   Include RunCode V I J D.
   Include RUN_SPEC V I J D.
-  (* STUB-CODE *)
-  Definition universe (_ : program V.t) (_ : D.t) : list (positive * list (cell V.t)) := [].
+
+  (** The cells on the edges below a node, down to the slot's tuple width. *)
+  Fixpoint index_cells (fuel : nat) (ix : I.t) (n : positive) : list (cell V.t) :=
+    match fuel with
+    | O => []
+    | S fuel' =>
+        flat_map (fun c => c ::
+            match I.child ix n c with
+            | Some m => index_cells fuel' ix m
+            | None => []
+            end) (I.children ix n)
+    end.
+
+  (** The values stored in the full index of every slot from number [s] on. *)
+  Fixpoint slot_values (db : D.t) (s : nat) (sl : list (positive * list nat)) : list V.t :=
+    match sl with
+    | [] => []
+    | (_, perm) :: rest =>
+        let ix := D.index (N.of_nat s) false db in
+        flat_map (fun c => match c with
+            | Val v => [v]
+            | Id _ => []
+            end) (index_cells (length perm) ix (I.root ix)) ++
+          slot_values db (S s) rest
+    end.
+
+  (** The universe pairs each relation with every tuple of its arity over the distinct active
+      values. *)
+  Definition universe (p : program V.t) (db : D.t) : list (positive * list (cell V.t)) :=
+    let vs := distinct_values V.eqb (program_literals p ++ slot_values db 0 (D.slots db)) in
+    flat_map (fun fa => map (fun k => (fst fa, k)) (value_tuples (snd fa) vs))
+      (relation_arities (decls V.t p) []).
+
   Definition active_value (p : program V.t) (db : D.t) (v : V.t) : Prop :=
     In (Lit v) (program_terms p) \/
     exists s u, N.to_nat s < length (D.slots db) /\ I.mem (D.index s false db) u /\
       In (Val v) u.
-  (* STUB-CODE *)
-  Definition herbrand (_ : program V.t) (_ : D.t) : nat := 0.
+
+  Definition herbrand (p : program V.t) (db : D.t) : nat := length (universe p db).
+
   Lemma universe_spec : forall p db, D.wf db -> relational_fragment p = true ->
     prim_free p = true -> no_ids db ->
     NoDup (universe p db) /\
@@ -48,7 +1108,9 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Proof. Admitted. (* STUB *)
 
   Lemma herbrand_spec : forall p db, herbrand p db = length (universe p db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma check_plan_scope : forall p cp r pre a rest x, plans_ok p cp ->
     In r (rules V.t p) -> actions V.t r = pre ++ a :: rest ->
@@ -86,7 +1148,9 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
 
   Lemma load_spec : forall p cp,
     load p cp = D.init (decls V.t p) (Syntax.slots V.t cp).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma run_wf : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.wf (snd (run p cp lim db)) /\ D.canonical (snd (run p cp lim db)) /\
@@ -136,13 +1200,20 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     <: RUN_ALL V I J D.
   Include Run V I J D.
   TimeFun plan.
+  TimeFun check_shape.
   TimeFun check_plan.
   TimeFun load.
+  TimeFun apply_go.
+  TimeFun apply.
+  TimeFun bind_trie.
+  TimeFun keep.
+  TimeFun source_ix.
+  TimeFun plan_bindings.
+  TimeFun jobs.
+  TimeFun apply_all.
   TimeFun round.
+  TimeFun driver.
   TimeFun run.
-  (* STUB-CODE *)
-  Definition driver (_ : program V.t) (_ : compiled V.t) (_ : limits) (s : bool * D.t)
-      : (bool * D.t) + (stop * D.t) := inl s.
   Definition trace (p : program V.t) (cp : compiled V.t) (lim : limits) (db : D.t)
       : list (bool * D.t) :=
     driver_trace (driver p cp lim) (N.to_nat (max_iter lim)) (false, db).
@@ -250,19 +1321,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat (wbits p + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  (* STUB-CODE *)
-  Definition apply (_ : list (action V.t)) (_ : Model.env (V := V.t)) (db : D.t) : D.t := db.
   Definition query_vars (r : rule V.t) : list positive := flat_map atom_vars (query V.t r).
-  TimeFun apply.
-  (* STUB-CODE *)
-  Definition bind_trie (_ : cplan V.t) (_ : list (cell V.t)) : ptrie (cell V.t) := Empty.
-  TimeFun bind_trie.
-  (* STUB-CODE *)
-  Definition keep (_ : program V.t) (_ : cplan V.t) (_ : ptrie (cell V.t)) : bool := false.
-  TimeFun keep.
-  (* STUB-CODE *)
-  Definition jobs (_ : program V.t) (_ : compiled V.t) (_ : bool) (_ : D.t)
-      : list (cplan V.t * list (cell V.t)) := [].
   Fixpoint apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
       (db : D.t) : D.t :=
     match js with
@@ -282,7 +1341,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
             (apply (actions V.t (job_rule p c)) (fun x => trie_get x (bind_trie c b)) db))%N
     end.
 
-  TimeFun driver.
   Definition k_driver : N := 1. (* STUB *)
   Definition env_allocated (db : D.t) (s : Model.env (V := V.t)) : Prop :=
     forall x i, s x = Some (Id i) -> D.allocated db i.
@@ -298,9 +1356,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     (forall f k o, row (D.view db) f k o -> exists k' o',
       row (D.view db') f k' o' /\ Forall2 (cell_rel (same (D.view db'))) k k' /\
       D.out_le db' f (option_map (D.canon db') o) o').
-  (* STUB-CODE *)
-  Definition check_shape (_ : program V.t) (_ : compiled V.t) : bool := false.
-  TimeFun check_shape.
   Definition k_check : N := 1. (* STUB *)
   (** Two identifiers that occur in rows and are equal in the view are identical. *)
   Definition row_ids_unique (w : Model.view (V := V.t)) : Prop :=
@@ -388,7 +1443,12 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     | inl (_, db') => run p cp lim db = (IterLimit, D.rebuild db')
     | inr (st, db') => run p cp lim db = (st, D.rebuild db')
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db _ _ _. unfold run.
+    change (limits_iter lim) with (max_iter lim).
+    destruct (loopN (driver p cp lim) (max_iter lim) (false, db)) as [[nv db'] | [st db']];
+      reflexivity.
+  Qed.
 
   Lemma F11_derives_least : forall p db w f k, relational_fragment p = true ->
     no_ids db -> closed V.prim V.merge p w -> includes (D.view db) w ->
@@ -501,7 +1561,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
 
   Lemma F27_check_plan_split : forall p cp,
     check_plan p cp = check_program p && check_shape p cp.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma F28_plan_shape : forall p, program_ok p -> check_shape p (plan p) = true.
   Proof. Admitted. (* STUB *)
@@ -531,11 +1593,16 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       if N.ltb (max_ids lim) (D.ids next) then inr (IdLimit, next)
       else if andb nv (negb (D.changed next)) then inr (Saturated, next)
       else inl (negb (D.changed next), D.advance next).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   (** The trie of a binding gives the plan's binding environment. *)
   Lemma F30_bind_trie : forall c b x, trie_get x (bind_trie c b) = env_of c b x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros c b x. unfold bind_trie, env_of.
+    rewrite bind_cells_get, PTrie.get_empty. reflexivity.
+  Qed.
 
   (** Building the trie of a binding pays for the bits of the plan's variables. *)
   Lemma T6_bind_trie_le : forall c b,
@@ -557,7 +1624,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     jobs p cp nv db = flat_map (fun c => map (fun b => (c, b))
       (filter (fun b => keep p c (bind_trie c b)) (bindings cp c db)))
       (if nv then naive V.t cp else seminaive V.t cp).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   (** A checked plan names a rule of its program. *)
   Lemma F33_plan_rule : forall p cp c, plans_ok p cp -> In c (all_plans cp) ->
@@ -571,10 +1640,21 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     D.pending (apply (actions V.t r) s db) <= D.pending db + length (actions V.t r).
   Proof. Admitted. (* STUB *)
 
+  (** The job loop of a round applies the jobs as the plan's job application does. *)
+  Lemma apply_all_jobs : forall p js db, apply_all p js db = apply_jobs p js db.
+  Proof.
+    intros p js. induction js as [| [c b] rest IH]; intro db.
+    - reflexivity.
+    - cbn [apply_all apply_jobs]. rewrite IH.
+      unfold job_rule. rewrite rule_at_nth. reflexivity.
+  Qed.
+
   (** A round applies its jobs in order and rebuilds the resulting database once. *)
   Lemma F32_round_jobs : forall p cp nv db,
     round p cp nv db = D.rebuild (apply_jobs p (jobs p cp nv db) db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp nv db. unfold round. rewrite apply_all_jobs. reflexivity.
+  Qed.
 
   (** A round's time is bounded by its joins, job applications, rebuild and driver overhead. *)
   Lemma T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
