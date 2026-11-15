@@ -195,7 +195,9 @@ Theorem tnum_refine_equation : forall wps qs,
   | (w, a) :: rest, q :: tail => tnum_meet w a q :: tnum_refine rest tail
   | (_, a) :: rest, [] => a :: tnum_refine rest []
   end.
-Proof. Admitted. (* CONVERT: tnum_refine_equation: The reference tnum_refine_c was not found in the current environment. *)
+Proof.
+  intros [|[w a] rest] [|q tail]; reflexivity.
+Qed.
 Theorem tnum_refine_length : forall wps qs, length (tnum_refine wps qs) = length wps.
 Proof.
   intro wps. induction wps as [|[w a] rest IH]; intros [|q tail];
@@ -206,7 +208,12 @@ Qed.
 Theorem tnum_refine_refines : forall wps qs,
   Forall2 (fun wp q => tnum_leb (fst wp) q (snd wp) = true)
     wps (tnum_refine wps qs).
-Proof. Admitted. (* CONVERT: tnum_refine_refines: Unable to unify the Forall2 constructor with the empty case. *)
+Proof.
+  intro wps. induction wps as [|[w a] rest IH]; intros [|q tail];
+    rewrite tnum_refine_equation; constructor; try apply IH.
+  - apply tnum_leb_bits. split; auto.
+  - apply tnum_meet_lower_left.
+Qed.
 
 Definition kb_payload_sound (wp : width * tnum) (y : word) : Prop :=
   fst wp = fst y /\ is_word (fst y) (snd y) /\ tnum_gamma (fst wp) (snd wp) (snd y).
@@ -241,7 +248,16 @@ Definition tnum_projects (sw rw : width) (f g : Z -> Z) : Prop :=
 Theorem tnum_project_sound : forall sw rw f g q x,
   tnum_projects sw rw f g -> is_word sw x -> tnum_gamma rw q (f x) ->
   tnum_gamma sw (tnum_project sw rw g q) x.
-Proof. Admitted. (* CONVERT: tnum_project_sound: Found no subterm matching "Z.testbit (wrap ?M1535 ?M1536) ?M1537" *)
+Proof.
+  intros sw rw f g q x Hproject Hx Hq. apply tnum_gamma_bits in Hq.
+  destruct Hq as [Hz Ho]. apply tnum_gamma_bits. split; intros i Hi Hbit;
+    cbn [tnum_project zeros ones] in Hbit;
+    rewrite !tnum_wrap_agrees, tnum_wrap_bit in Hbit by exact Hi.
+  - destruct (Hproject i _ Hi (wrap_is_word rw _) Hbit) as [j [Hj [Hm Hcopy]]].
+    rewrite tnum_wrap_bit in Hm by exact Hj. rewrite <- Hcopy by exact Hx. now apply Hz.
+  - destruct (Hproject i _ Hi (wrap_is_word rw _) Hbit) as [j [Hj [Hm Hcopy]]].
+    rewrite tnum_wrap_bit in Hm by exact Hj. rewrite <- Hcopy by exact Hx. now apply Ho.
+Qed.
 
 Lemma tnum_inverse_source : forall o w k i j,
   tnum_shift_op o -> 0 <= k -> 0 <= i < Zpos w ->
@@ -321,12 +337,34 @@ Qed.
 Theorem tnum_and_back_sound : forall w q b x y,
   tnum_gamma w b y -> tnum_gamma w q (wand w x y) ->
   tnum_gamma w (tnum_and_back w q b) x.
-Proof. Admitted. (* CONVERT: tnum_and_back_sound: Found no subterm matching *)
+Proof.
+  intros w q b x y Hb Hq. apply tnum_gamma_bits in Hb, Hq.
+  destruct Hb as [Hbz Hbo], Hq as [Hqz Hqo]. apply tnum_gamma_bits.
+  split; intros i Hi Hbit; cbn [tnum_and_back zeros ones] in Hbit.
+  - rewrite tnum_wand_agrees, tnum_and_bit in Hbit by exact Hi.
+    apply andb_true_iff in Hbit as [Hq Hb].
+    specialize (Hqz i Hi Hq). rewrite tnum_and_bit, (Hbo i Hi Hb), andb_true_r
+      in Hqz by exact Hi. exact Hqz.
+  - rewrite tnum_wrap_agrees, tnum_wrap_bit in Hbit by exact Hi.
+    specialize (Hqo i Hi Hbit).
+    rewrite tnum_and_bit in Hqo by exact Hi. apply andb_true_iff in Hqo. tauto.
+Qed.
 
 Theorem tnum_or_back_sound : forall w q b x y,
   tnum_gamma w b y -> tnum_gamma w q (wor w x y) ->
   tnum_gamma w (tnum_or_back w q b) x.
-Proof. Admitted. (* CONVERT: tnum_or_back_sound: Found no subterm matching "Z.testbit (wrap ?M1555 ?M1556) ?M1557" *)
+Proof.
+  intros w q b x y Hb Hq. apply tnum_gamma_bits in Hb, Hq.
+  destruct Hb as [Hbz Hbo], Hq as [Hqz Hqo]. apply tnum_gamma_bits.
+  split; intros i Hi Hbit; cbn [tnum_or_back zeros ones] in Hbit.
+  - rewrite tnum_wrap_agrees, tnum_wrap_bit in Hbit by exact Hi.
+    specialize (Hqz i Hi Hbit).
+    rewrite tnum_or_bit in Hqz by exact Hi. apply orb_false_iff in Hqz. tauto.
+  - rewrite tnum_wand_agrees, tnum_and_bit in Hbit by exact Hi.
+    apply andb_true_iff in Hbit as [Hq Hb].
+    specialize (Hqo i Hi Hq). rewrite tnum_or_bit, (Hbz i Hi Hb), orb_false_r
+      in Hqo by exact Hi. exact Hqo.
+Qed.
 
 Lemma tnum_xor_zero : forall w x, is_word w x -> wxor w x 0 = x.
 Proof.
@@ -378,7 +416,13 @@ Theorem tnum_sub_back_sound : forall w q a b x y,
   is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
   tnum_gamma w q (wsub w x y) ->
   tnum_gamma w (tnum_add w q b) x /\ tnum_gamma w (tnum_sub w a q) y.
-Proof. Admitted. (* CONVERT: tnum_sub_back_sound: wsub has function type but binary_tag is expected. *)
+Proof.
+  intros w q a b x y Hx Hy Ha Hb Hq. split.
+  - rewrite <- (proj1 (proj2 (tnum_add_sub_cancel w x y Hx Hy))). now apply tnum_add_sound.
+  - rewrite <- (proj2 (proj2 (tnum_add_sub_cancel w x y Hx Hy))).
+    apply tnum_sub_sound;
+      [exact (word_fun2_is_word bvsub BSub w x y eq_refl)|exact Ha|exact Hq].
+Qed.
 
 Lemma tnum_high_set_bit : forall rw m n,
   is_word rw m -> 0 <= n -> Z.shiftr m n <> 0 ->
@@ -455,7 +499,12 @@ Qed.
 
 Lemma tnum_lower_sound : forall w l x,
   is_word w x -> 0 <= l <= x -> tnum_gamma w (tnum_lower w l) x.
-Proof. Admitted. (* CONVERT: tnum_lower_sound: Tactic failure: Cannot find witness. *)
+Proof.
+  intros w l x Hx Hl. unfold tnum_lower. rewrite tnum_wnot_agrees.
+  assert (Hlword : is_word w l) by (unfold is_word in *; lia).
+  rewrite <- (wnot_involutive w x Hx). apply tnum_not_sound, tnum_upper_sound.
+  rewrite !tnum_not_value by assumption. unfold is_word in Hx. lia.
+Qed.
 
 Theorem tnum_order_back_sound : forall (strict : bool) w q a b x y,
   is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
