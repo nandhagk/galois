@@ -1622,6 +1622,226 @@ Qed.
 
 Local Transparent loopN.
 
+(** Width rejection reads at most the permitted prefix of a candidate identifier. *)
+Lemma wto_key_fits_clock width v :
+  (T_wto_key_fits width v <= 2 * N.of_nat (width + 1))%N.
+Proof.
+  revert v. induction width as [|width IH]; intro v; destruct v;
+    time_step; specialize (IH v); lia.
+Qed.
+
+Lemma wto_key_fits_width width v : wto_key_fits width v = true -> Pos.size_nat v <= width.
+Proof.
+  revert v. induction width as [|width IH]; intro v; destruct v;
+    cbn [wto_key_fits Pos.size_nat]; try discriminate; intros Hfit; try lia;
+    specialize (IH _ Hfit); lia.
+Qed.
+
+(** Every processed index vertex is listed, even for a rejected or truncated candidate. *)
+Lemma wto_index_vertices g whole st :
+  wto_index_invariant whole (listed_of g) st ->
+  NoDup (wto_check_vertices st) /\
+  incl (wto_check_vertices st) (nodes g) /\
+  Forall (fun v => Pos.size_nat v <= graph_width (base g)) (wto_check_vertices st).
+Proof.
+  intros Hinv. destruct Hinv as [Hseen Hnext Horder Hranks Horigins Hscopes Hactive Hintervals].
+  destruct Hseen as [Hunique [Hrank Hlisted]].
+  assert (Hincl : incl (wto_check_vertices st) (nodes g)).
+  { intros v Hin. destruct (Hlisted v Hin) as [b Hget].
+    apply (proj1 (scc_listed_lookup (nodes g) v)). exists b. exact Hget. }
+  split; [exact Hunique|]. split; [exact Hincl|].
+  apply Forall_forall. intros v Hin. apply scc_node_width. now apply Hincl.
+Qed.
+
+Lemma wto_index_vertex_count g whole st :
+  wto_index_invariant whole (listed_of g) st ->
+  length (wto_check_vertices st) <= graph_n (base g).
+Proof.
+  intro Hinv. destruct (wto_index_vertices g whole st Hinv) as [Hunique [Hincl Hwidth]].
+  pose proof (NoDup_incl_length Hunique Hincl) as Hlength.
+  destruct g as [[vertices adjacency] predecessors n e]. exact Hlength.
+Qed.
+
+(** A processed-vertex counter needs at most one bit beyond its distinct identifier keys. *)
+Lemma wto_counter_width width vertices n :
+  NoDup vertices -> Forall (fun v => Pos.size_nat v <= width) vertices ->
+  (n <= N.of_nat (S (length vertices)))%N -> N.size_nat n <= width + 1.
+Proof.
+  intros Hunique Hwidth Hcount. destruct n as [|p]; [cbn; lia|].
+  cbn [N.size_nat]. apply (tarjan_counter_width width vertices p Hunique Hwidth).
+  change (N.to_nat (N.pos p) <= S (length vertices)). lia.
+Qed.
+
+Lemma wto_index_counter_width g whole st :
+  wto_index_invariant whole (listed_of g) st ->
+  N.size_nat (wto_check_next st) <= graph_width (base g) + 1.
+Proof.
+  intro Hinv. destruct (wto_index_vertices g whole st Hinv) as [Hunique [Hincl Hwidth]].
+  destruct Hinv as [Hseen Hnext Horder Hranks Horigins Hscopes Hactive Hintervals].
+  apply (wto_counter_width _ _ _ Hunique Hwidth). rewrite Hnext. lia.
+Qed.
+
+Lemma wto_index_rank_width g whole st v r :
+  wto_index_invariant whole (listed_of g) st ->
+  trie_get v (wto_check_ranks st) = Some r -> N.size_nat r <= graph_width (base g) + 1.
+Proof.
+  intros Hinv Hget.
+  destruct (wto_index_vertices g whole st Hinv) as [Hunique [Hincl Hwidth]].
+  destruct Hinv as [Hseen Hnext Horder Hranks Horigins Hscopes Hactive Hintervals].
+  destruct (Hranks v r Hget) as [i [Hnth [Heq Hbound]]].
+  apply (wto_counter_width _ _ _ Hunique Hwidth). rewrite Heq. lia.
+Qed.
+
+Lemma wto_index_close_width g whole st h :
+  wto_index_invariant whole (listed_of g) st ->
+  In (WtoCheckClose h) (wto_check_tasks st) -> Pos.size_nat h <= graph_width (base g).
+Proof.
+  intros Hinv Hclose.
+  destruct (wto_index_vertices g whole st Hinv) as [Hunique [Hincl Hwidth]].
+  destruct Hinv as [Hseen Hnext Horder Hranks Horigins Hscopes Hactive Hintervals].
+  destruct (Hactive h Hclose) as [lo [Hget Hencloses]].
+  destruct Hseen as [_ [Hpresent _]].
+  apply scc_node_width. apply Hincl. apply (proj2 (Hpresent h)). now exists lo.
+Qed.
+
+(** Nonterminal candidate transitions read bounded keys and one bounded counter. *)
+Lemma wto_check_nonempty_clock g whole st :
+  wto_index_invariant whole (listed_of g) st -> wto_check_tasks st <> [] ->
+  (T_wto_check_step (graph_width (base g)) (listed_of g) st <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros Hinv Hnonempty.
+  pose proof (wto_index_counter_width g whole st Hinv) as Hcounter.
+  destruct st as [[|task tasks] next ranks intervals vs]; [contradiction Hnonempty; reflexivity|].
+  cbn [wto_check_next] in Hcounter. destruct task as [tree|h].
+  - destruct tree as [|v tail|h body tail].
+    + time_unfold @T_wto_check_step. time_cbn. nia.
+    + pose proof (wto_key_fits_clock (graph_width (base g)) v) as Hfit.
+      destruct (wto_key_fits (graph_width (base g)) v) eqn:Hfits.
+      * pose proof (wto_key_fits_width _ _ Hfits) as Hv.
+        pose proof (PTrieT.trie_get_clock bool v (listed_of g)) as Hlisted.
+        pose proof (PTrieT.trie_get_clock N v ranks) as Hranks.
+        pose proof (PTrieT.T_set_le N v next ranks) as Hset.
+        pose proof (N.T_succ_le next) as Hsucc.
+        time_unfold @T_wto_check_step. rewrite Hfits. time_cbn.
+        destruct (trie_get v (listed_of g)); destruct (trie_get v ranks);
+          time_cbn; rewrite ?Hlisted, ?Hranks; rewrite !Nat2N.inj_add in *; nia.
+      * time_unfold @T_wto_check_step. rewrite Hfits. time_cbn.
+        rewrite !Nat2N.inj_add in *. nia.
+    + pose proof (wto_key_fits_clock (graph_width (base g)) h) as Hfit.
+      destruct (wto_key_fits (graph_width (base g)) h) eqn:Hfits.
+      * pose proof (wto_key_fits_width _ _ Hfits) as Hh.
+        pose proof (PTrieT.trie_get_clock bool h (listed_of g)) as Hlisted.
+        pose proof (PTrieT.trie_get_clock N h ranks) as Hranks.
+        pose proof (PTrieT.T_set_le N h next ranks) as Hset.
+        pose proof (N.T_succ_le next) as Hsucc.
+        time_unfold @T_wto_check_step. rewrite Hfits. time_cbn.
+        destruct (trie_get h (listed_of g)); destruct (trie_get h ranks);
+          time_cbn; rewrite ?Hlisted, ?Hranks; rewrite !Nat2N.inj_add in *; nia.
+      * time_unfold @T_wto_check_step. rewrite Hfits. time_cbn.
+        rewrite !Nat2N.inj_add in *. nia.
+  - pose proof (wto_index_close_width g whole _ h Hinv (or_introl eq_refl)) as Hh.
+    pose proof (PTrieT.trie_get_clock N h ranks) as Hget.
+    destruct (trie_get h ranks) as [lo|] eqn:Hlo.
+    + pose proof (PTrieT.T_set_le (N * N) h (lo, next) intervals) as Hset.
+      time_unfold @T_wto_check_step. rewrite Hlo. time_cbn. rewrite Hget.
+      rewrite !Nat2N.inj_add in *. nia.
+    + time_unfold @T_wto_check_step. rewrite Hlo. time_cbn. rewrite Hget.
+      rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+Lemma wto_check_continuing_clock g whole st next :
+  wto_index_invariant whole (listed_of g) st ->
+  wto_check_step (graph_width (base g)) (listed_of g) st = inl next ->
+  (T_wto_check_step (graph_width (base g)) (listed_of g) st <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros Hinv Hstep. apply (wto_check_nonempty_clock g whole st Hinv).
+  destruct st as [tasks next0 ranks intervals vs]. cbn [wto_check_tasks].
+  intros Heq. subst tasks. discriminate Hstep.
+Qed.
+
+Lemma wto_check_terminal_clock g whole st :
+  wto_index_invariant whole (listed_of g) st ->
+  (T_wto_check_step (graph_width (base g)) (listed_of g) st <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1) +
+    4 * N.of_nat (graph_n (base g) + 1))%N.
+Proof.
+  intro Hinv. destruct (wto_check_tasks st) as [|task tasks] eqn:Htasks.
+  - pose proof (wto_index_vertex_count g whole st Hinv) as Hvertices.
+    destruct st as [tasks0 next ranks intervals vs]. cbn [wto_check_tasks] in Htasks.
+    subst tasks0. cbn [wto_check_vertices] in Hvertices.
+    pose proof (List.T_rev_append_le vs []) as Hrev.
+    time_unfold @T_wto_check_step. time_cbn. nia.
+  - pose proof (wto_check_nonempty_clock g whole st Hinv
+      ltac:(rewrite Htasks; discriminate)) as Hstep. lia.
+Qed.
+
+(** A recorded path preserves the existing index invariant at every transition and at its end. *)
+Lemma wto_index_path g whole st states last :
+  search_machine_path (wto_check_step (graph_width (base g)) (listed_of g)) st states last ->
+  wto_index_invariant whole (listed_of g) st ->
+  Forall (fun current => wto_index_invariant whole (listed_of g) current /\
+    exists next, wto_check_step (graph_width (base g)) (listed_of g) current = inl next) states /\
+  wto_index_invariant whole (listed_of g) last.
+Proof.
+  intro Hpath. induction Hpath as [st|st next states last Hstep Hpath IH]; intro Hinv.
+  - split; [constructor|exact Hinv].
+  - pose proof (wto_index_step whole (graph_width (base g)) (listed_of g) st Hinv) as Hnext.
+    rewrite Hstep in Hnext. destruct (IH Hnext) as [Hstates Hlast].
+    split; [constructor|exact Hlast]; [split; [exact Hinv|now exists next]|exact Hstates].
+Qed.
+
+Local Opaque loopN.
+
+(** The fuel-bounded index pays for at most four transitions per listed occurrence. *)
+Lemma wto_check_index_clock g whole :
+  (1 + T_wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+      [WtoCheckVisit whole] 0 Empty Empty [] <=
+    4096 * (PTrieT.c_trie + 1) * N.of_nat (graph_n (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  destruct (search_loop_trace_clock
+    (wto_check_step (graph_width (base g)) (listed_of g))
+    (fun st => T_wto_check_step (graph_width (base g)) (listed_of g) st)
+    (check_fuel g) (WtoCheckState [WtoCheckVisit whole] 0 Empty Empty []))
+    as [states [last [Hpath [Hlength Hclock]]]].
+  destruct (wto_index_path g whole _ _ _ Hpath (wto_index_initial whole (listed_of g)))
+    as [Hstates Hlast].
+  assert (Hcost : forall st, In st states ->
+      (T_wto_check_step (graph_width (base g)) (listed_of g) st <=
+        128 * (PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1))%N).
+  { intros st Hin. rewrite Forall_forall in Hstates.
+    destruct (Hstates st Hin) as [Hinv [next Hstep]].
+    now apply (wto_check_continuing_clock g whole st next). }
+  assert (Hcostall : Forall (fun st =>
+    (T_wto_check_step (graph_width (base g)) (listed_of g) st <=
+      128 * (PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1))%N) states).
+  { apply Forall_forall. exact Hcost. }
+  pose proof (search_sum_clock_bound
+    (fun st => T_wto_check_step (graph_width (base g)) (listed_of g) st) states
+    (128 * (PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1))%N Hcostall) as Hsum.
+  pose proof (wto_check_terminal_clock g whole last Hlast) as Hterminal.
+  pose proof (search_N_size_value (check_fuel g)) as Hbits.
+  assert (Hfuel : N.to_nat (check_fuel g) = 4 * graph_n (base g) + 2).
+  { unfold check_fuel. rewrite !N.double_spec. lia. }
+  rewrite Hfuel in Hlength, Hbits.
+  assert (HlengthN : (N.of_nat (length states) <= 4 * N.of_nat (graph_n (base g) + 1))%N)
+    by lia.
+  assert (Hsum_scaled :
+    (fold_right N.add 0%N (map
+      (fun st => T_wto_check_step (graph_width (base g)) (listed_of g) st) states) <=
+      512 * (PTrieT.c_trie + 1) * N.of_nat (graph_n (base g) + 1) *
+        N.of_nat (graph_width (base g) + 1))%N).
+  { eapply N.le_trans; [exact Hsum|]. clear - HlengthN. nia. }
+  clear Hpath Hstates Hlast Hcost Hcostall Hsum Hfuel.
+  time_unfold @T_wto_check_index. time_cbn.
+  destruct (wto_check_step (graph_width (base g)) (listed_of g) last);
+    rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+Local Transparent loopN.
+
 Module WtoCode <: WTO_OPS.
   Definition build (g : prepared) (roots : list positive) : wto :=
     let r := wto_components g roots in
@@ -1838,7 +2058,7 @@ Module WtoT <: WTO_ALL.
   TimeFun search_trace.
 
   Definition k_member : N := 4%N.
-  Definition k_index : N := 1%N. (* STUB *)
+  Definition k_index : N := (4096 * (PTrieT.c_trie + 1))%N.
   Definition k_check : N := 1%N. (* STUB *)
   Definition k_scope : N := 1%N. (* STUB *)
   Definition k_expand : N := 32%N.
@@ -2210,7 +2430,10 @@ Module WtoT <: WTO_ALL.
     (T_wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
       [WtoCheckVisit w] 0 Empty Empty [] <=
     k_index * N.of_nat (graph_n (base g) + 1) * N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g w. pose proof (wto_check_index_clock g w) as Hindex.
+    unfold k_index. time_unfold @T_wto_check_index. exact Hindex.
+  Qed.
 
   Local Opaque loopN.
 
