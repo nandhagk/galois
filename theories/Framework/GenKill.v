@@ -631,6 +631,209 @@ Module GenKillSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
       apply Hsound; exact (proj2 Hcandidate).
     - apply may_covers; assumption.
   Qed.
+
+  Local Definition presence_states p :=
+    flat_map (fun n => (n, false) :: (n, true) :: nil) (C.nodes p).
+
+  (** Each listed node has both possible observations of the selected fact. *)
+  Local Lemma presence_listed : forall p n bit, In n (C.nodes p) ->
+    In (n, bit) (presence_states p).
+  Proof.
+    intros p n bit Hn; unfold presence_states; apply in_flat_map.
+    exists n; split; [exact Hn|]; destruct bit; cbn; auto.
+  Qed.
+
+  Local Definition presence_next p d e bit :=
+    S.mem d (G.gen p e) || (bit && negb (S.mem d (G.kill p e))).
+
+  (* Both observations are retained, so unreachable nodes stay distinct from present facts. *)
+  Local Definition presence_close p d (b : N.t * bool -> bool) state :=
+    b state ||
+    (existsb (N.eqb (fst state)) (C.entries p) &&
+      Bool.eqb (S.mem d (G.init p)) (snd state)) ||
+    existsb (fun e => N.eqb (fst state) (destination p e) &&
+      existsb (fun bit => b (source p e, bit) &&
+        Bool.eqb (presence_next p d e bit) (snd state)) (false :: true :: nil))
+      (C.edges p).
+
+  (** Presence closure records exactly old observations, boundaries, and one-edge extensions. *)
+  Local Lemma presence_close_spec : forall p d b n bit,
+    presence_close p d b (n, bit) = true <->
+    b (n, bit) = true \/
+    (In n (C.entries p) /\ S.mem d (G.init p) = bit) \/
+    exists e before, In e (C.edges p) /\ n = destination p e /\
+      b (source p e, before) = true /\ presence_next p d e before = bit.
+  Proof.
+    intros p d b n bit; unfold presence_close; cbn [fst snd].
+    rewrite !orb_true_iff, andb_true_iff, entryb_spec, Bool.eqb_true_iff.
+    rewrite existsb_exists; split.
+    - intros [[Hold|Hseed]|[e [He Hstep]]].
+      + left; exact Hold.
+      + right; left; exact Hseed.
+      + apply andb_true_iff in Hstep; destruct Hstep as [Hnode Hstep].
+        apply node_eqb_true in Hnode; apply existsb_exists in Hstep.
+        destruct Hstep as [before [_ Hbefore]]; apply andb_true_iff in Hbefore.
+        destruct Hbefore as [Hmarked Hnext]; rewrite Bool.eqb_true_iff in Hnext.
+        right; right; exists e, before; split; [exact He|].
+        split; [exact Hnode|]; split; [exact Hmarked|exact Hnext].
+    - intros [Hold|[Hseed|[e [before [He [Hnode [Hmarked Hnext]]]]]]].
+      + left; left; exact Hold.
+      + left; right; exact Hseed.
+      + right; exists e; split; [exact He|]; apply andb_true_iff; split.
+        * apply node_eqb_true; exact Hnode.
+        * apply existsb_exists; exists before; split.
+          -- destruct before; cbn; auto.
+          -- apply andb_true_iff; split; [exact Hmarked|].
+             rewrite Bool.eqb_true_iff; exact Hnext.
+  Qed.
+
+  (** Every marked presence observation has an actual finite boundary-path witness. *)
+  Local Lemma presence_closure : forall p d, C.wf p -> exists b,
+    (forall n bit, b (n, bit) = true -> exists entry path,
+      In entry (C.entries p) /\ route p entry path n /\
+      S.mem d (path_facts p path) = bit) /\
+    forall state, In state (presence_states p) -> presence_close p d b state = b state.
+  Proof.
+    intros p d Hwf; apply (finite_closure (presence_states p) (presence_close p d)
+      (fun b => forall n bit, b (n, bit) = true -> exists entry path,
+        In entry (C.entries p) /\ route p entry path n /\
+        S.mem d (path_facts p path) = bit)).
+    - intros b [n bit] Hmarked; apply presence_close_spec; left; exact Hmarked.
+    - intros b Hsound n bit Hmarked; apply presence_close_spec in Hmarked.
+      destruct Hmarked as [Hold|[[Hentry Hinitial]|
+        [e [before [He [-> [Hbefore Hnext]]]]]]].
+      + apply Hsound; exact Hold.
+      + exists n, nil; split; [exact Hentry|]; split; [constructor|exact Hinitial].
+      + destruct (Hsound _ _ Hbefore) as [entry [path [Hentry [Hroute Hbit]]]].
+        exists entry, (path ++ e :: nil); split; [exact Hentry|]; split.
+        * apply route_snoc with (n := source p e); [exact Hroute|exact He|reflexivity].
+        * unfold path_facts in *; rewrite path_snoc, S.mem_union, S.mem_diff, Hbit.
+          exact Hnext.
+    - intros n bit Hbad; discriminate.
+  Qed.
+
+  (** A closed observation mask marks the initial fact value at every boundary. *)
+  Local Lemma presence_seed : forall p d b, C.wf p ->
+    (forall state, In state (presence_states p) -> presence_close p d b state = b state) ->
+    forall n, In n (C.entries p) -> b (n, S.mem d (G.init p)) = true.
+  Proof.
+    intros p d b Hwf Hclosed n Hentry.
+    rewrite <- Hclosed by (apply presence_listed; apply C.entries_nodes; assumption).
+    apply presence_close_spec; right; left; split; [exact Hentry|reflexivity].
+  Qed.
+
+  (** A closed observation mask transports each marked input through a listed edge. *)
+  Local Lemma presence_edge : forall p d b, C.wf p ->
+    (forall state, In state (presence_states p) -> presence_close p d b state = b state) ->
+    forall e bit, In e (C.edges p) -> b (source p e, bit) = true ->
+      b (destination p e, presence_next p d e bit) = true.
+  Proof.
+    intros p d b Hwf Hclosed e bit He Hmarked.
+    rewrite <- Hclosed by (apply presence_listed; exact (proj2 (edge_nodes p e Hwf He))).
+    apply presence_close_spec; right; right; exists e, bit.
+    split; [exact He|]; split; [reflexivity|]; split; [exact Hmarked|reflexivity].
+  Qed.
+
+  Local Definition must_candidate d (b : N.t * bool -> bool)
+      (look : N.t -> option S.t) n :=
+    if b (n, false) then look n
+    else if b (n, true) then option_map (S.add d) (look n) else None.
+
+  (** Adding the selected fact preserves every old encoded member. *)
+  Local Lemma subset_add : forall d facts, S.subset facts (S.add d facts) = true.
+  Proof.
+    intros d facts; apply S.subset_spec; intros q Hq.
+    rewrite S.has_add, Hq; apply orb_true_r.
+  Qed.
+
+  (** An observed path value bounds a candidate that adds only its guaranteed selected fact. *)
+  Local Lemma must_candidate_bound : forall d b look n facts bound bit,
+    look n = Some facts -> S.subset facts bound = true -> b (n, bit) = true ->
+    (bit = true -> S.mem d bound = true) ->
+    genkill_must_leb S.subset (Some bound) (must_candidate d b look n) = true.
+  Proof.
+    intros d b look n facts bound bit Hlook Hbound Hmarked Hbit.
+    unfold must_candidate; rewrite Hlook.
+    destruct (b (n, false)) eqn:Hfalse; [exact Hbound|].
+    destruct bit; [|congruence]; rewrite Hmarked; cbn [option_map genkill_must_leb].
+    apply S.subset_spec; intros q Hq; rewrite S.has_add in Hq.
+    apply orb_true_iff in Hq; destruct Hq as [Heq|Hq].
+    - apply Pos.eqb_eq in Heq; subst q; rewrite <- S.mem_has; apply Hbit; reflexivity.
+    - exact (proj1 (S.subset_spec _ _) Hbound q Hq).
+  Qed.
+
+  (** The candidate accepts every initial must constraint. *)
+  Local Lemma must_candidate_seed : forall p d b look, C.wf p ->
+    Must.post_solution p look ->
+    (forall state, In state (presence_states p) -> presence_close p d b state = b state) ->
+    forall n, In n (C.entries p) ->
+      genkill_must_leb S.subset (Some (G.init p)) (must_candidate d b look n) = true.
+  Proof.
+    intros p d b look Hwf Hpost Hclosed n Hentry.
+    pose proof (must_seed_closed p look n Hpost Hentry) as Hseed.
+    destruct (look n) as [facts|] eqn:Hlook; [|discriminate].
+    eapply must_candidate_bound with (facts := facts) (bit := S.mem d (G.init p)).
+    - exact Hlook.
+    - exact Hseed.
+    - apply presence_seed; assumption.
+    - intro Hbit; exact Hbit.
+  Qed.
+
+  (** A marked source observation ensures the candidate accepts its transfer constraint. *)
+  Local Lemma must_candidate_flow : forall p d b look, C.wf p ->
+    Must.post_solution p look ->
+    (forall state, In state (presence_states p) -> presence_close p d b state = b state) ->
+    forall e, In e (C.edges p) ->
+      genkill_must_leb S.subset
+        (UT.transfer p e (must_candidate d b look (source p e)))
+        (must_candidate d b look (destination p e)) = true.
+  Proof.
+    intros p d b look Hwf Hpost Hclosed e He.
+    pose proof (must_flow_closed p look e Hpost He) as Hflow.
+    change (genkill_must_leb S.subset (UT.transfer p e (look (source p e)))
+      (look (destination p e)) = true) in Hflow.
+    destruct (look (source p e)) as [facts|] eqn:Hsource.
+    - destruct (look (destination p e)) as [target_facts|] eqn:Htarget;
+        [|discriminate].
+      change (S.subset target_facts
+        (S.union (G.gen p e) (S.diff facts (G.kill p e))) = true) in Hflow.
+      destruct (b (source p e, false)) eqn:Hfalse.
+      + unfold must_candidate at 1; rewrite Hfalse, Hsource.
+        eapply must_candidate_bound with (facts := target_facts)
+          (bit := presence_next p d e false).
+        * exact Htarget.
+        * exact Hflow.
+        * apply presence_edge; assumption.
+        * intro Hbit; unfold presence_next in Hbit; cbn [andb] in Hbit.
+          rewrite orb_false_r in Hbit; rewrite S.mem_union, Hbit; reflexivity.
+      + destruct (b (source p e, true)) eqn:Htrue.
+        * unfold must_candidate at 1; rewrite Hfalse, Htrue, Hsource.
+          eapply must_candidate_bound with (facts := target_facts)
+            (bit := presence_next p d e true).
+          -- exact Htarget.
+          -- eapply subset_trans; [exact Hflow|apply transfer_subset, subset_add].
+          -- apply presence_edge; assumption.
+          -- intro Hbit; rewrite S.mem_union, S.mem_diff, S.mem_add_same; exact Hbit.
+        * unfold must_candidate at 1; rewrite Hfalse, Htrue; reflexivity.
+    - unfold must_candidate at 1; rewrite Hsource.
+      destruct (b (source p e, false)), (b (source p e, true)); reflexivity.
+  Qed.
+
+  (** The presence mask yields a must post-solution that adds every unrefuted selected fact. *)
+  Local Lemma must_candidate_post : forall p d b look, C.wf p ->
+    Must.post_solution p look ->
+    (forall state, In state (presence_states p) -> presence_close p d b state = b state) ->
+    Must.post_solution p (must_candidate d b look).
+  Proof.
+    intros p d b look Hwf Hpost Hclosed r Hr.
+    rewrite Must.rows_spec in Hr; apply in_app_or in Hr.
+    destruct Hr as [Hr|Hr]; apply in_map_iff in Hr; destruct Hr as [v [<- Hv]].
+    - rewrite Must.eval_seed, Must.target_seed; cbn [row_ok forallb].
+      rewrite andb_true_r; apply must_candidate_seed; assumption.
+    - rewrite Must.eval_flow, Must.target_flow; cbn [row_ok forallb].
+      rewrite andb_true_r; apply must_candidate_flow; assumption.
+  Qed.
+
   (** A least reached must post-solution contains exactly the facts on all boundary paths. *)
   Lemma must_exact : forall p look, C.wf p -> G.may = false -> Must.post_solution p look ->
     (forall other, Must.post_solution p other -> forall n,
@@ -638,7 +841,19 @@ Module GenKillSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     forall n facts, In n (C.nodes p) -> look n = Some facts -> forall d,
       S.mem d facts = true <-> forall entry path,
         In entry (C.entries p) -> route p entry path n -> S.mem d (path_facts p path) = true.
-  Proof. Admitted. (* CONVERT: must_greatest_paths: The variable must_post_keeps was not found *)
+  Proof.
+    intros p look Hwf Hmust Hpost Hleast n facts Hn Hlook d; split.
+    - intros Hd entry path Hentry Hroute.
+      eapply must_covers; eassumption.
+    - intro Hall; destruct (presence_closure p d Hwf) as [b [Hsound Hclosed]].
+      pose proof (Hleast _ (must_candidate_post p d b look Hwf Hpost Hclosed) n) as Hbound.
+      unfold must_candidate in Hbound; rewrite Hlook in Hbound.
+      destruct (b (n, false)) eqn:Hfalse.
+      + destruct (Hsound n false Hfalse) as [entry [path [Hentry [Hroute Hmissing]]]].
+        specialize (Hall entry path Hentry Hroute); congruence.
+      + destruct (b (n, true)); [|discriminate].
+        eapply subset_mem; [exact Hbound|apply S.mem_add_same].
+  Qed.
 End GenKillSound.
 
 Module GenKillMayDomainT (F : KEY_T) (S : SET_T F)
