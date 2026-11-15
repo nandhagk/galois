@@ -4992,13 +4992,474 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     exact Hsorted.
   Qed.
 
+  (** An empty local table leaves the binding environment unchanged. *)
+  Lemma run_look_empty : forall (s : Model.env (V := V.t)) x, look s Empty x = s x.
+  Proof.
+    intros s x. unfold look. now rewrite PTrie.get_empty.
+  Qed.
+
+  (** Updating a local binding implements the semantic environment update. *)
+  Lemma run_look_set : forall (s : Model.env (V := V.t)) locals x c y,
+    look s (PTrieCode.set x c locals) y = update (look s locals) x c y.
+  Proof.
+    intros s locals x c y. unfold look, update.
+    destruct (Pos.eqb x y) eqn:Hsame.
+    - apply Pos.eqb_eq in Hsame. subst y. now rewrite PTrie.get_set_same.
+    - apply Pos.eqb_neq in Hsame. rewrite PTrie.get_set_other by congruence. reflexivity.
+  Qed.
+
+  (** A successful action-term lookup has exactly its semantic value. *)
+  Lemma run_term_cell_spec : forall (s : Model.env (V := V.t)) locals t c,
+    term_cell s locals t = Some c <-> term_value (look s locals) t c.
+  Proof.
+    intros s locals [x|v] c; cbn [term_cell term_value]; [reflexivity|].
+    split; intro Heq; [now injection Heq as <-|now subst c].
+  Qed.
+
+  (** A successful argument lookup gives the semantic argument list. *)
+  Lemma run_term_cells_spec : forall (s : Model.env (V := V.t)) locals ts cs,
+    term_cells s locals ts = Some cs <-> terms_value (look s locals) ts cs.
+  Proof.
+    intros s locals ts. induction ts as [|t rest IH]; intro cs.
+    - cbn [term_cells terms_value]. split; intro H.
+      + injection H as <-. constructor.
+      + inversion H. reflexivity.
+    - split; intro H.
+      + cbn [term_cells] in H.
+        destruct (term_cell s locals t) as [c|] eqn:Hcell; [|discriminate].
+        destruct (term_cells s locals rest) as [more|] eqn:Hmore; [|discriminate].
+        injection H as <-. constructor.
+        * apply run_term_cell_spec. exact Hcell.
+        * apply IH. reflexivity.
+      + inversion H as [|t' c rest' more Hhead Htail]; subst t' rest' cs.
+        cbn [term_cells].
+        rewrite (proj2 (run_term_cell_spec s locals t c) Hhead), (proj2 (IH more) Htail).
+        reflexivity.
+  Qed.
+
+  (** An optional result lookup agrees with the semantic result pattern. *)
+  Lemma run_result_cell_spec : forall (s : Model.env (V := V.t)) locals res o,
+    result_cell s locals res = Some o <->
+    match res, o with
+    | None, None => True
+    | Some t, Some c => term_value (look s locals) t c
+    | _, _ => False
+    end.
+  Proof.
+    intros s locals [t|] [c|]; cbn [result_cell].
+    - rewrite <- run_term_cell_spec. destruct (term_cell s locals t); split; congruence.
+    - destruct (term_cell s locals t); split; intro H; try discriminate; contradiction.
+    - split; [discriminate|contradiction].
+    - split; [intros; exact I|intros; reflexivity].
+  Qed.
+
+  (** Primitive argument lookup supplies exactly the value cells it reads. *)
+  Lemma run_term_values_spec : forall (s : Model.env (V := V.t)) locals ts vs,
+    term_values s locals ts = Some vs ->
+    terms_value (look s locals) ts (map Val vs).
+  Proof.
+    intros s locals ts. induction ts as [|t rest IH]; intros vs Hlookup.
+    - injection Hlookup as <-. constructor.
+    - cbn [term_values] in Hlookup.
+      destruct (term_cell s locals t) as [[i|v]|] eqn:Hcell; try discriminate.
+      destruct (term_values s locals rest) as [more|] eqn:Hmore; [|discriminate].
+      injection Hlookup as <-. constructor.
+      + apply run_term_cell_spec. exact Hcell.
+      + apply IH. reflexivity.
+  Qed.
+
+  (** Value cells represent their underlying primitive arguments. *)
+  Lemma run_value_cells : forall vs : list V.t, values (map Val vs) vs.
+  Proof.
+    intro vs. induction vs; constructor; auto.
+  Qed.
+
+  (** A sorted term has a successful lookup of its declared sort. *)
+  Lemma run_term_cell_typed : forall g (s : Model.env (V := V.t)) locals t ty,
+    env_sorted g (look s locals) -> has g t ty ->
+    exists c, term_cell s locals t = Some c /\ cell_sort c = ty.
+  Proof.
+    intros g s locals [x|v] ty Henv Hhas.
+    - apply Henv. exact Hhas.
+    - cbn [has] in Hhas. subst ty. exists (Val v). split; reflexivity.
+  Qed.
+
+  (** Sorted argument terms have successful lookups with the declared argument sorts. *)
+  Lemma run_term_cells_typed : forall g (s : Model.env (V := V.t)) locals ts ss,
+    env_sorted g (look s locals) -> Forall2 (has g) ts ss ->
+    exists cs, term_cells s locals ts = Some cs /\ map cell_sort cs = ss.
+  Proof.
+    intros g s locals ts ss Henv Hhas. induction Hhas as [|t ty ts ss Hhead Htail IH].
+    - exists []. split; reflexivity.
+    - destruct (run_term_cell_typed g s locals t ty Henv Hhead) as [c [Hc Hty]].
+      destruct IH as [cs [Hcs Hsort]]. exists (c :: cs).
+      cbn [term_cells map]. rewrite Hc, Hcs, Hty, Hsort. split; reflexivity.
+  Qed.
+
+  (** A sorted optional result has a successful lookup of its declared output sort. *)
+  Lemma run_result_cell_typed : forall g (s : Model.env (V := V.t)) locals out res,
+    env_sorted g (look s locals) -> has_result g out res ->
+    exists o, result_cell s locals res = Some o /\ option_map cell_sort o = out_sort out.
+  Proof.
+    intros g s locals out res Henv Hhas. destruct out; destruct res as [t|];
+      cbn [has_result out_sort] in Hhas; try contradiction.
+    - exists None. split; reflexivity.
+    - destruct (run_term_cell_typed g s locals t SId Henv Hhas) as [c [Hc Hsort]].
+      exists (Some c). cbn [result_cell option_map out_sort]. rewrite Hc, Hsort.
+      split; reflexivity.
+    - destruct (run_term_cell_typed g s locals t SVal Henv Hhas) as [c [Hc Hsort]].
+      exists (Some c). cbn [result_cell option_map out_sort]. rewrite Hc, Hsort.
+      split; reflexivity.
+  Qed.
+
+  (** Sorted primitive arguments always evaluate to a list of values. *)
+  Lemma run_term_values_typed : forall g (s : Model.env (V := V.t)) locals ts,
+    env_sorted g (look s locals) -> Forall (fun t => has g t SVal) ts ->
+    exists vs, term_values s locals ts = Some vs.
+  Proof.
+    intros g s locals ts Henv Hhas. induction Hhas as [|t rest Hhead Htail IH].
+    - exists []. reflexivity.
+    - destruct (run_term_cell_typed g s locals t SVal Henv Hhead) as [[i|v] [Hc Hsort]];
+        [discriminate|].
+      destruct IH as [vs Hvs]. exists (v :: vs). cbn [term_values]. now rewrite Hc, Hvs.
+  Qed.
+
+  (** An identifier read by an action term was already allocated. *)
+  Lemma run_term_cell_allocated : forall db (s : Model.env (V := V.t)) locals t i,
+    env_allocated db (look s locals) -> term_cell s locals t = Some (Id i) ->
+    D.allocated db i.
+  Proof.
+    intros db s locals [x|v] i Hallocated Hcell; [eapply Hallocated; exact Hcell|discriminate].
+  Qed.
+
+  (** Every identifier in a successfully read argument list was already allocated. *)
+  Lemma run_term_cells_allocated : forall db (s : Model.env (V := V.t)) locals ts cs,
+    env_allocated db (look s locals) -> term_cells s locals ts = Some cs ->
+    forall i, In (Id i) cs -> D.allocated db i.
+  Proof.
+    intros db s locals ts. induction ts as [|t rest IH]; intros cs Hallocated Hcells i Hin.
+    - injection Hcells as <-. contradiction.
+    - cbn [term_cells] in Hcells.
+      destruct (term_cell s locals t) as [c|] eqn:Hc; [|discriminate].
+      destruct (term_cells s locals rest) as [more|] eqn:Hmore; [|discriminate].
+      injection Hcells as <-. destruct Hin as [Heq|Hin].
+      + subst c. eapply run_term_cell_allocated; eauto.
+      + eapply IH; eauto.
+  Qed.
+
+  (** An identifier in a successfully read result was already allocated. *)
+  Lemma run_result_cell_allocated : forall db (s : Model.env (V := V.t)) locals res o,
+    env_allocated db (look s locals) -> result_cell s locals res = Some o ->
+    forall i, In (Id i) (option_list o) -> D.allocated db i.
+  Proof.
+    intros db s locals [t|] o Hallocated Hresult i Hin; cbn [result_cell] in Hresult.
+    - destruct (term_cell s locals t) as [c|] eqn:Hc; [|discriminate].
+      injection Hresult as <-. destruct Hin as [Heq|[]]. subst c.
+      eapply run_term_cell_allocated; eauto.
+    - injection Hresult as <-. contradiction.
+  Qed.
+
+  (** A local assignment preserves the context's environment typing. *)
+  Lemma run_env_sorted_set : forall g (s : Model.env (V := V.t)) locals x c ty,
+    env_sorted g (look s locals) -> cell_sort c = ty ->
+    env_sorted (ctx_set g x ty) (look s (PTrieCode.set x c locals)).
+  Proof.
+    intros g s locals x c ty Henv Hsort y other Hctx.
+    rewrite run_look_set. unfold ctx_set in Hctx. unfold update.
+    destruct (Pos.eqb x y).
+    - injection Hctx as <-. exists c. split; [reflexivity|exact Hsort].
+    - apply Henv. exact Hctx.
+  Qed.
+
+  (** Allocated environment identifiers remain allocated when the counter grows. *)
+  Lemma run_env_allocated_mono : forall db next (s : Model.env (V := V.t)),
+    (D.ids db <= D.ids next)%N -> env_allocated db s -> env_allocated next s.
+  Proof.
+    intros db next s Hids Henv x i Hcell. unfold D.allocated.
+    specialize (Henv x i Hcell). unfold D.allocated in Henv. lia.
+  Qed.
+
+  (** A local assignment preserves allocation when its new cell is allocated. *)
+  Lemma run_env_allocated_set : forall db (s : Model.env (V := V.t)) locals x c,
+    env_allocated db (look s locals) ->
+    (forall i, c = Id i -> D.allocated db i) ->
+    env_allocated db (look s (PTrieCode.set x c locals)).
+  Proof.
+    intros db s locals x c Henv Hcell y i Hlookup.
+    rewrite run_look_set in Hlookup. unfold update in Hlookup.
+    destruct (Pos.eqb x y).
+    - apply Hcell. now injection Hlookup.
+    - eapply Henv. exact Hlookup.
+  Qed.
+
+  (** Typing a query from the empty context determines every output-context binding. *)
+  Lemma run_query_context : forall (p : program V.t) (q : list (atom V.t)) g h,
+    query_ok (program_sorts p) (program_kind p) ctx_empty q g ->
+    query_ok (program_sorts p) (program_kind p) ctx_empty q h ->
+    forall x, g x = h x.
+  Proof.
+    intros p q g h Hg Hh x.
+    destruct (bind_query_b_complete V.t (decls V.t p) Empty ctx_empty q g
+      trie_ctx_empty Hg) as [tg [Htg Hgrepr]].
+    destruct (bind_query_b_complete V.t (decls V.t p) Empty ctx_empty q h
+      trie_ctx_empty Hh) as [th [Hth Hhrepr]].
+    rewrite Htg in Hth. injection Hth as <-. rewrite <- Hgrepr, <- Hhrepr. reflexivity.
+  Qed.
+
+  (** A checked rule and its environment share a context that types all its actions. *)
+  Lemma run_rule_context : forall p cp r s, plans_ok p cp -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s ->
+    exists g, query_ok (program_sorts p) (program_kind p) ctx_empty (query V.t r) g /\
+      actions_ok (program_sorts p) (program_kind p) g (actions V.t r) /\ env_sorted g s.
+  Proof.
+    intros p cp r s Hchecked Hin [h [Hquery Henv]].
+    pose proof (plans_ok_sorted p cp Hchecked) as Hprogram.
+    destruct ((proj1 (Forall_forall _ _)) Hprogram r Hin) as [g [Hg Hacts]].
+    exists g. split; [exact Hg|]. split; [exact Hacts|].
+    intros x ty Hctx. apply Henv. rewrite <- (run_query_context p (query V.t r) g h Hg Hquery x).
+    exact Hctx.
+  Qed.
+
+  (** Every checked slot fits a row having its declaration's width. *)
+  Lemma run_slots_fit : forall p cp db f ss kindout n,
+    plans_ok p cp -> loaded p cp db -> program_sorts p f = Some ss ->
+    program_kind p f = Some kindout ->
+    n = length ss + match kindout with ORel => 0 | _ => 1 end -> D.slots_fit db f n.
+  Proof.
+    intros p cp db f ss kindout n Hchecked [_ [Hslots _]] Hsort Hkind Hwidth perm Hin.
+    rewrite Hslots in Hin.
+    destruct (check_plan_slots p cp f perm Hchecked Hin) as [d [Hdecl [Hnodup Hbound]]].
+    destruct (run_find_decl_fields (decls V.t p) f d Hdecl) as [Hds Hdk].
+    change (program_sorts p f = Some (arg_sorts d)) in Hds.
+    change (program_kind p f = Some (out d)) in Hdk.
+    rewrite Hsort in Hds. injection Hds as Hss. rewrite Hkind in Hdk. injection Hdk as Hout.
+    rewrite <- Hss, <- Hout in Hbound. split; [exact Hnodup|]. now rewrite Hwidth.
+  Qed.
+
+  (** The output sort determines how many cells the output contributes. *)
+  Lemma run_output_length : forall (o : option (cell V.t)) kindout,
+    option_map cell_sort o = out_sort kindout ->
+    length (option_list o) = match kindout with ORel => 0 | _ => 1 end.
+  Proof.
+    intros [c|] kindout Hsort; destruct kindout; cbn in *; try discriminate; reflexivity.
+  Qed.
+
+  (** A sorted and allocated row meets the database's insertion preconditions. *)
+  Lemma run_put_allowed : forall p cp db f k o,
+    plans_ok p cp -> loaded p cp db ->
+    row_sorted (program_sorts p) (program_kind p) f k o ->
+    (forall i, In (Id i) (k ++ option_list o) -> D.allocated db i) -> D.kind_ok db f k o.
+  Proof.
+    intros p cp db f k o Hchecked Hloaded [out [Hsort [Hkind Hout]]] Hallocated.
+    split; [exact Hallocated|]. split.
+    - eapply run_slots_fit; [exact Hchecked|exact Hloaded|exact Hsort|exact Hkind|].
+      rewrite length_app, length_map, (run_output_length o out Hout). reflexivity.
+    - rewrite (proj1 Hloaded), Hkind. destruct out; destruct o as [[i|v]|];
+        cbn in *; try discriminate; exact I.
+  Qed.
+
+  (** Constructor allocation never decreases the identifier counter. *)
+  Lemma run_make_ids : forall f k db, D.wf db -> kind (D.view db) f = Some OId ->
+    (D.ids db <= D.ids (snd (D.make f k db)))%N.
+  Proof.
+    intros f k db Hwf Hkind. pose proof (D.make_spec f k db Hwf Hkind) as Hmake.
+    destruct (D.make f k db) as [i next]. cbn [snd].
+    destruct Hmake as [[j [_ [_ ->]]]|[Hfresh [_ [Hids _]]]]; [lia|].
+    unfold D.fresh_id in Hfresh. rewrite Hids, Hfresh.
+    replace (Npos (N.succ_pos (D.ids db))) with (N.succ (D.ids db))
+      by (destruct (D.ids db); reflexivity).
+    lia.
+  Qed.
+
+  (** A typed constructor action preserves the loaded state and returns an allocated name. *)
+  Lemma run_make_state : forall p cp f k db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    program_kind p f = Some OId -> program_sorts p f = Some (map cell_sort k) ->
+    (forall i, In (Id i) k -> D.allocated db i) ->
+    D.wf (snd (D.make f k db)) /\ loaded p cp (snd (D.make f k db)) /\
+    (D.ids db <= D.ids (snd (D.make f k db)))%N /\
+    D.unit db <= D.unit (snd (D.make f k db)) /\
+    D.allocated (snd (D.make f k db)) (fst (D.make f k db)) /\
+    D.pending (snd (D.make f k db)) = D.pending db.
+  Proof.
+    intros p cp f k db Hchecked Hwf Hloaded Hkind Hsort Hallocated.
+    assert (Hkinddb : kind (D.view db) f = Some OId) by (rewrite (proj1 Hloaded); exact Hkind).
+    assert (Hfit : D.slots_fit db f (S (length k))).
+    { eapply run_slots_fit; [exact Hchecked|exact Hloaded|exact Hsort|exact Hkind|].
+      rewrite length_map. cbn. lia. }
+    destruct (D.layout_make f k db Hwf) as [Hkinds [Hslots [_ [Hnew Hpending]]]].
+    split; [apply D.wf_make; assumption|]. split.
+    - destruct Hloaded as [Hdecls [Hlayout Hsorted]].
+      split; [intro g; rewrite Hkinds; apply Hdecls|].
+      split; [now rewrite Hslots|]. apply F22_make_sorted; assumption.
+    - split; [apply run_make_ids; assumption|].
+      split; [apply D.unit_mono_make; exact Hwf|]. split; assumption.
+  Qed.
+
+  (** A typed insertion preserves the loaded state and queues at most one entry. *)
+  Lemma run_put_state : forall p cp f k o db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    row_sorted (program_sorts p) (program_kind p) f k o ->
+    (forall i, In (Id i) (k ++ option_list o) -> D.allocated db i) ->
+    D.wf (D.put f k o db) /\ loaded p cp (D.put f k o db) /\
+    D.ids (D.put f k o db) = D.ids db /\ D.unit db <= D.unit (D.put f k o db) /\
+    D.pending (D.put f k o db) <= D.pending db + 1.
+  Proof.
+    intros p cp f k o db Hchecked Hwf Hloaded Hrow Hallocated.
+    pose proof (run_put_allowed p cp db f k o Hchecked Hloaded Hrow Hallocated) as Hallowed.
+    destruct (D.layout_put f k o db Hwf) as [Hkinds [Hslots [Hids Hpending]]].
+    split; [apply D.wf_put; assumption|]. split.
+    - destruct Hloaded as [Hdecls [Hlayout Hsorted]].
+      split; [intro g; rewrite Hkinds; apply Hdecls|]. split; [now rewrite Hslots|].
+      apply F21_put_sorted; try assumption.
+      destruct Hrow as [out [Hsort [Hkind Hout]]]. exists out.
+      split; [exact Hsort|]. split; [rewrite Hdecls; exact Hkind|exact Hout].
+    - split; [exact Hids|]. split; [apply D.unit_mono_put; exact Hwf|exact Hpending].
+  Qed.
+
+  (** An allocated union preserves the loaded state and queues at most one entry. *)
+  Lemma run_union_state : forall p cp i j db,
+    D.wf db -> loaded p cp db -> D.allocated db i -> D.allocated db j ->
+    D.wf (D.union i j db) /\ loaded p cp (D.union i j db) /\
+    D.ids (D.union i j db) = D.ids db /\ D.unit db <= D.unit (D.union i j db) /\
+    D.pending (D.union i j db) <= D.pending db + 1.
+  Proof.
+    intros p cp i j db Hwf Hloaded Hi Hj.
+    destruct (D.layout_union i j db Hwf) as [Hkinds [Hslots [Hids Hpending]]].
+    split; [apply D.wf_union; assumption|]. split.
+    - destruct Hloaded as [Hdecls [Hlayout Hsorted]].
+      split; [intro g; rewrite Hkinds; apply Hdecls|]. split; [now rewrite Hslots|].
+      apply F23_union_sorted; assumption.
+    - split; [exact Hids|]. split; [apply D.unit_mono_union; exact Hwf|exact Hpending].
+  Qed.
+
+  (** Typed actions preserve loaded well-formed states and bound their pending work. *)
+  Lemma run_apply_go_typed : forall p cp acts g s locals db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    D.wf (apply_go acts s locals db) /\ loaded p cp (apply_go acts s locals db) /\
+    (D.ids db <= D.ids (apply_go acts s locals db))%N /\
+    D.unit db <= D.unit (apply_go acts s locals db) /\
+    D.pending (apply_go acts s locals db) <= D.pending db + length acts.
+  Proof.
+    intros p cp acts. induction acts as [|a rest IH]; intros g s locals db
+      Hchecked Hwf Hloaded Hacts Henv Hallocated.
+    - cbn [apply_go length]. split; [exact Hwf|]. split; [exact Hloaded|]. repeat split; lia.
+    - destruct a as [x f args|f args res|t u|x op args]; cbn [actions_ok] in Hacts.
+      + destruct Hacts as [ss [Hsort [Hkind [Hargs Hrest]]]].
+        destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+          as [cells [Hcells Hsorts]].
+        rewrite <- Hsorts in Hsort.
+        pose proof (run_term_cells_allocated db s locals args cells Hallocated Hcells) as Hids.
+        pose proof (run_make_state p cp f cells db Hchecked Hwf Hloaded Hkind Hsort Hids)
+          as Hstate.
+        destruct (D.make f cells db) as [i next] eqn:Hmake. cbn [fst snd] in Hstate.
+        destruct Hstate as [Hwf' [Hloaded' [Hids' [Hunit' [Hnew Hpending]]]]].
+        assert (Henv' : env_sorted (ctx_set g x SId)
+            (look s (PTrieCode.set x (Id i) locals))).
+        { apply run_env_sorted_set; [exact Henv|reflexivity]. }
+        assert (Hallocated' : env_allocated next (look s (PTrieCode.set x (Id i) locals))).
+        { apply run_env_allocated_set.
+          - eapply run_env_allocated_mono; [exact Hids'|exact Hallocated].
+          - intros j Heq. injection Heq as <-. exact Hnew. }
+        destruct (IH _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv' Hallocated')
+          as [Hfinal [Hloadfinal [Hidfinal [Hunitfinal Hpendfinal]]]].
+        cbn [apply_go]. rewrite Hcells, Hmake.
+        split; [exact Hfinal|]. split; [exact Hloadfinal|]. cbn [length]. repeat split; lia.
+      + destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hresult Hrest]]]]]].
+        destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+          as [cells [Hcells Hsorts]].
+        destruct (run_result_cell_typed g s locals out res Henv Hresult)
+          as [output [Houtput Houtsort]].
+        assert (Hrow : row_sorted (program_sorts p) (program_kind p) f cells output).
+        { exists out. rewrite Hsorts. repeat split; assumption. }
+        assert (Hids : forall i, In (Id i) (cells ++ option_list output) -> D.allocated db i).
+        { intros i Hin. apply in_app_iff in Hin as [Hin|Hin].
+          - eapply run_term_cells_allocated; eauto.
+          - eapply run_result_cell_allocated; eauto. }
+        destruct (run_put_state p cp f cells output db Hchecked Hwf Hloaded Hrow Hids)
+          as [Hwf' [Hloaded' [Hids' [Hunit' Hpending]]]].
+        assert (Hallocated' : env_allocated (D.put f cells output db) (look s locals)).
+        { eapply run_env_allocated_mono with (db := db);
+            [rewrite Hids'; reflexivity|exact Hallocated]. }
+        destruct (IH _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv Hallocated')
+          as [Hfinal [Hloadfinal [Hidfinal [Hunitfinal Hpendfinal]]]].
+        cbn [apply_go]. rewrite Hcells, Houtput.
+        split; [exact Hfinal|]. split; [exact Hloadfinal|]. cbn [length]. repeat split; lia.
+      + destruct Hacts as [Ht [Hu Hrest]].
+        destruct (run_term_cell_typed g s locals t SId Henv Ht)
+          as [[i|v] [Hi Hitype]]; [|discriminate].
+        destruct (run_term_cell_typed g s locals u SId Henv Hu)
+          as [[j|v] [Hj Hjtype]]; [|discriminate].
+        pose proof (run_term_cell_allocated db s locals t i Hallocated Hi) as Hiall.
+        pose proof (run_term_cell_allocated db s locals u j Hallocated Hj) as Hjall.
+        destruct (run_union_state p cp i j db Hwf Hloaded Hiall Hjall)
+          as [Hwf' [Hloaded' [Hids' [Hunit' Hpending]]]].
+        assert (Hallocated' : env_allocated (D.union i j db) (look s locals)).
+        { eapply run_env_allocated_mono with (db := db);
+            [rewrite Hids'; reflexivity|exact Hallocated]. }
+        destruct (IH _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv Hallocated')
+          as [Hfinal [Hloadfinal [Hidfinal [Hunitfinal Hpendfinal]]]].
+        cbn [apply_go]. rewrite Hi, Hj.
+        split; [exact Hfinal|]. split; [exact Hloadfinal|]. cbn [length]. repeat split; lia.
+      + destruct Hacts as [Hargs Hrest].
+        destruct (run_term_values_typed g s locals args Henv Hargs) as [vs Hvalues].
+        cbn [apply_go]. rewrite Hvalues. destruct (V.prim op vs) as [v|] eqn:Hprim.
+        * assert (Henv' : env_sorted (ctx_set g x SVal)
+              (look s (PTrieCode.set x (Val v) locals))).
+          { apply run_env_sorted_set; [exact Henv|reflexivity]. }
+          assert (Hallocated' : env_allocated db (look s (PTrieCode.set x (Val v) locals))).
+          { apply run_env_allocated_set; [exact Hallocated|]. intros i Heq. discriminate. }
+          destruct (IH _ _ _ _ Hchecked Hwf Hloaded Hrest Henv' Hallocated')
+            as [Hfinal [Hloadfinal [Hidfinal [Hunitfinal Hpendfinal]]]].
+          split; [exact Hfinal|]. split; [exact Hloadfinal|]. cbn [length]. repeat split; lia.
+        * split; [exact Hwf|]. split; [exact Hloaded|]. cbn [length]. repeat split; lia.
+  Qed.
+
+  (** The public action entry starts the typed action invariant with no locals. *)
+  Lemma run_apply_typed : forall p cp acts g s db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    actions_ok (program_sorts p) (program_kind p) g acts -> env_sorted g s ->
+    env_allocated db s ->
+    D.wf (apply acts s db) /\ loaded p cp (apply acts s db) /\
+    (D.ids db <= D.ids (apply acts s db))%N /\ D.unit db <= D.unit (apply acts s db) /\
+    D.pending (apply acts s db) <= D.pending db + length acts.
+  Proof.
+    intros p cp acts g s db Hchecked Hwf Hloaded Hacts Henv Hallocated.
+    unfold apply. eapply run_apply_go_typed; try eassumption.
+    - intros x ty Hctx. destruct (Henv x ty Hctx) as [c [Hc Hty]].
+      exists c. rewrite run_look_empty. split; assumption.
+    - intros x i Hcell. rewrite run_look_empty in Hcell. eapply Hallocated. exact Hcell.
+  Qed.
+
   Lemma F3_apply_wf : forall p cp r s db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     In r (rules V.t p) -> rule_env (program_sorts p) (program_kind p) r s ->
     env_allocated db s ->
     D.wf (apply (actions V.t r) s db) /\ loaded p cp (apply (actions V.t r) s db) /\
     (D.ids db <= D.ids (apply (actions V.t r) s db))%N /\
     D.unit db <= D.unit (apply (actions V.t r) s db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp r s db Hchecked Hwf Hloaded Hin Henv Hallocated.
+    destruct (run_rule_context p cp r s Hchecked Hin Henv) as [g [_ [Hacts Hsorted]]].
+    destruct (run_apply_typed p cp (actions V.t r) g s db Hchecked Hwf Hloaded Hacts
+      Hsorted Hallocated) as [Hwf' [Hloaded' [Hids [Hunit _]]]].
+    split; [exact Hwf'|]. split; [exact Hloaded'|]. split; assumption.
+  Qed.
+
+  (** Applying a rule queues at most one pending entry per action. *)
+  Lemma F34_apply_pending : forall p cp r s db, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
+    D.pending (apply (actions V.t r) s db) <= D.pending db + length (actions V.t r).
+  Proof.
+    intros p cp r s db Hchecked Hwf Hloaded Hin Henv Hallocated.
+    destruct (run_rule_context p cp r s Hchecked Hin Henv) as [g [_ [Hacts Hsorted]]].
+    exact (proj2 (proj2 (proj2 (proj2 (run_apply_typed p cp (actions V.t r) g s db
+      Hchecked Hwf Hloaded Hacts Hsorted Hallocated))))).
+  Qed.
+
+
 
   (** Interpreting a concrete term preserves its environment lookup. *)
   Lemma run_model_term : forall (M : model (V := V.t)) nu s t c,
@@ -5283,12 +5744,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     reflexivity.
   Qed.
 
-  (** Applying a rule queues at most one pending entry per action. *)
-  Lemma F34_apply_pending : forall p cp r s db, plans_ok p cp -> D.wf db ->
-    loaded p cp db -> In r (rules V.t p) ->
-    rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
-    D.pending (apply (actions V.t r) s db) <= D.pending db + length (actions V.t r).
-  Proof. Admitted. (* STUB *)
 
   (** The job loop of a round applies the jobs as the plan's job application does. *)
   Lemma apply_all_jobs : forall p js db, apply_all p js db = apply_jobs p js db.
