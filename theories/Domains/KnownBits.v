@@ -4014,6 +4014,121 @@ Qed.
 
 
 
+(** A nonnegative count no larger than the width occupies at most that width. *)
+Lemma tnum_count_bits_width : forall w k, 0 <= k <= Zpos w ->
+  (Z.size_nat k <= Pos.to_nat w)%nat /\ (Z.to_nat k <= Pos.to_nat w)%nat.
+Proof.
+  intros w k Hk. pose proof (tnum_nonnegative_bits k ltac:(lia)) as Hbits.
+  assert (Hnat : (Z.to_nat k <= Pos.to_nat w)%nat).
+  { change (Z.to_nat k <= Z.to_nat (Zpos w))%nat. apply Z2Nat.inj_le; lia. }
+  lia.
+Qed.
+
+(** An all-ones mask uses no more bits than its requested length. *)
+Lemma tnum_ones_bits : forall n, 0 <= n ->
+  (Z.size_nat (Z.ones n) <= Z.to_nat n)%nat.
+Proof.
+  intros n Hn. apply tnum_bits_of_abs_bound.
+  rewrite Z.ones_equiv, Z2Nat.id by exact Hn.
+  pose proof (Z.pow_pos_nonneg 2 n ltac:(lia) Hn) as Hpow.
+  rewrite Z.abs_eq; lia.
+Qed.
+
+(** The left-shift helper clamps its live work to the word width. *)
+Lemma tnum_shl_value_time : forall w k x, 0 <= k <= Zpos w ->
+  (T_tnum_shl_value w k x <=
+    256 * N.of_nat (Pos.to_nat w + Z.size_nat x + 1))%N.
+Proof.
+  intros w k x Hk.
+  destruct (tnum_count_bits_width w k Hk) as [Hbits Hnat].
+  pose proof (tnum_positive_bits w) as Hwidth.
+  pose proof (tnum_shiftl_time x k ltac:(lia)) as Hshift.
+  pose proof (tnum_shiftl_bits x k ltac:(lia)) as Hshiftbits.
+  time_unfold T_tnum_shl_value. time_cbn. time_pose.
+  destruct (Zpos w <=? k); cbn [Z.size_nat] in *;
+    rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+TimeBound tnum_shl_value_time.
+
+(** The logical right-shift helper reads a normalized nonnegative word. *)
+Lemma tnum_lshr_value_time : forall w k x, 0 <= k <= Zpos w ->
+  (T_tnum_lshr_value w k x <=
+    256 * N.of_nat (Pos.to_nat w + Z.size_nat x + 1))%N.
+Proof.
+  intros w k x Hk.
+  destruct (tnum_count_bits_width w k Hk) as [Hbits Hnat].
+  pose proof (tnum_positive_bits w) as Hwidth.
+  pose proof (wrap_is_word w x) as Hword. rewrite <- tnum_wrap_agrees in Hword.
+  pose proof (tnum_shiftr_time (tnum_wrap w x) k ltac:(destruct Hword; lia) ltac:(lia)) as Hshift.
+  time_unfold T_tnum_lshr_value. time_cbn. time_pose.
+  destruct (Zpos w <=? k); cbn [Z.size_nat] in *;
+    rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+TimeBound tnum_lshr_value_time.
+
+(** The arithmetic right-shift helper constructs at most one word-sized sign mask. *)
+Lemma tnum_ashr_value_time : forall w k x, 0 <= k <= Zpos w ->
+  (T_tnum_ashr_value w k x <=
+    2048 * N.of_nat (Pos.to_nat w + Z.size_nat x + 1))%N.
+Proof.
+  intros w k x Hk.
+  set (j := Z.min k (Zpos w - 1)).
+  assert (Hj : 0 <= j <= Zpos w - 1) by (unfold j; lia).
+  destruct (tnum_count_bits_width w k Hk) as [Hkbits Hknat].
+  destruct (tnum_count_bits_width w j ltac:(lia)) as [Hjbits Hjnat].
+  destruct (tnum_count_bits_width w (Zpos w - 1) ltac:(lia)) as [Htopbits Htopnat].
+  destruct (tnum_count_bits_width w (Zpos w - j) ltac:(lia)) as [Htailbits Htailnat].
+  pose proof (tnum_positive_bits w) as Hwidth.
+  pose proof (wrap_is_word w x) as Hword. rewrite <- tnum_wrap_agrees in Hword.
+  pose proof (tnum_wrap_bits w x) as Hxbits.
+  pose proof (tnum_shiftr_time (tnum_wrap w x) j ltac:(destruct Hword; lia) ltac:(lia)) as Hshift.
+  pose proof (tnum_shiftr_bits (tnum_wrap w x) j ltac:(destruct Hword; lia) ltac:(lia)) as Hshiftbits.
+  pose proof (tnum_ones_time (Zpos w - j) ltac:(lia)) as Hones.
+  pose proof (tnum_ones_bits (Zpos w - j) ltac:(lia)) as Honesbits.
+  pose proof (tnum_lnot_bits (Z.ones (Zpos w - j))) as Hnotbits.
+  pose proof (tnum_wrap_bits w (Z.lnot (Z.ones (Zpos w - j)))) as Hmaskbits.
+  pose proof (tnum_wrap_time w x) as Hwrap.
+  pose proof (Std.Z.T_sub_le (Zpos w) 1) as Htopsub.
+  pose proof (Std.Z.T_min_le k (Zpos w - 1)) as Hminimum.
+  pose proof (tnum_testbit_time (tnum_wrap w x) (Zpos w - 1)) as Htest.
+  pose proof (Std.Z.T_sub_le (Zpos w) j) as Htailsub.
+  pose proof (tnum_lnot_time (Z.ones (Zpos w - j))) as Hnot.
+  pose proof (tnum_wrap_time w (Z.lnot (Z.ones (Zpos w - j)))) as Hfill.
+  pose proof (Std.Z.T_lor_le (Z.shiftr (tnum_wrap w x) j)
+    (tnum_wrap w (Z.lnot (Z.ones (Zpos w - j))))) as Hor.
+  time_unfold T_tnum_ashr_value. fold j. clearbody j.
+  try change (match w with
+    | xI p => Zpos (xO p)
+    | xO p => Zpos (Pos.pred_double p)
+    | xH => 0
+    end) with (Zpos w - 1) in *.
+  try change (match -j with
+    | Z0 => Zpos w
+    | Zpos p => Zpos (w + p)%positive
+    | Zneg p => Z.pos_sub w p
+    end) with (Zpos w - j) in *.
+  destruct (Z.testbit (tnum_wrap w x) (Zpos w - 1)) eqn:Hsign;
+    cbn beta iota zeta in *;
+    change (Z.size_nat (Zpos w)) with (Pos.size_nat w) in *;
+    change (Z.size_nat 1) with 1%nat in *;
+    rewrite ?Nat2N.inj_add in *; lia.
+Qed.
+TimeBound tnum_ashr_value_time.
+
+(** Mapping endpoints charges the callback twice and linear mask work. *)
+Lemma tnum_map_time : forall sw rw f Tf a,
+  (forall x, is_word sw x -> is_word rw (f x)) ->
+  (T_tnum_map sw rw f Tf a <=
+    Tf (tnum_max sw a) + Tf (tnum_min sw a) +
+    1024 * N.of_nat (Pos.to_nat sw + Pos.to_nat rw + tnum_bits a + 1))%N.
+Proof.
+  intros sw rw f Tf a Hf.
+  pose proof (tnum_word_bits rw _ (Hf _ (tnum_max_word sw a))) as Hmax.
+  pose proof (tnum_word_bits rw _ (Hf _ (tnum_min_word sw a))) as Hmin.
+  time_unfold T_tnum_map. cbn beta iota zeta. time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+
 Local Open Scope nat_scope.
 
 Theorem tnum_unknown_from_equation : forall n i m,
