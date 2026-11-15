@@ -4,7 +4,7 @@
     For example, a self-edge produces a one-vertex natural loop.
     Builds on: prepared graphs, dominator trees and depth-first traces. *)
 
-From Stdlib Require Import PArith NArith Arith List Bool.
+From Stdlib Require Import PArith NArith Arith Lia List Bool.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search DomSig LoopsSig.
@@ -35,6 +35,12 @@ Local Lemma loop_first_head : forall (xs : list positive) r,
 Proof.
   intros [|v rest] r Hhead; [discriminate|].
   cbn in Hhead. injection Hhead as <-. reflexivity.
+Qed.
+
+(** The singleton-prefix helper has a uniform derived cost. *)
+Local Lemma loop_first_clock_bound : forall xs, (T_loop_first xs <= 4)%N.
+Proof.
+  intros [|v rest]; unfold T_loop_first; time_simpl; lia.
 Qed.
 
 Definition tree_step (g : prepared) (t : domtree) (st : loop_tree_state) :
@@ -795,7 +801,7 @@ Module LoopsT <: LOOPS_ALL.
   Definition k_trace : N := 1. (* STUB *)
   Definition k_test : N := 1. (* STUB *)
   Definition k_forest : N := 1. (* STUB *)
-  Definition k_reducible : N := 1. (* STUB *)
+  Definition k_reducible : N := 16.
 
   Definition latches := loop_latches_at.
   Definition back_member scan u v : Prop :=
@@ -1230,7 +1236,14 @@ Module LoopsT <: LOOPS_ALL.
       T_retreat_trace g (firstn 1 (loop_order (classify g t))) +
       T_test_back (loop_back_rows (classify g t))
         (retreat_trace g (firstn 1 (loop_order (classify g t)))) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t.
+    pose proof (loop_first_clock_bound (loop_order (classify g t))) as Hfirst.
+    unfold classify in Hfirst.
+    unfold T_reducible_b, T_classify, T_retreat_trace, T_test_back,
+      classify, retreat_trace, k_reducible.
+    time_simpl. rewrite !loop_first_equation. lia.
+  Qed.
 
   Lemma T11_reducible_public : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
