@@ -1452,6 +1452,463 @@ Module PresentPointsData (O : OPS) (Q : TYPE with Definition t := lang_prepared 
   Qed.
 End PresentPointsData.
 
+Definition present_row_count {A} (keys : list positive) (rows : ptrie (list A)) : nat :=
+  fold_right (fun k n => length (index_row rows k) + n) 0 keys.
+
+Lemma present_row_count_empty {A} keys : @present_row_count A keys Empty = 0.
+Proof.
+  induction keys as [|k rest IH]; [reflexivity|].
+  unfold present_row_count at 1; cbn [fold_right].
+  unfold index_row at 1. rewrite PTrie.get_empty. exact IH.
+Qed.
+
+Lemma present_row_count_other {A} keys (rows : ptrie (list A)) id values :
+  ~ In id keys ->
+  present_row_count keys (PTrieCode.set id values rows) = present_row_count keys rows.
+Proof.
+  induction keys as [|k rest IH]; intro Hfresh; [reflexivity|].
+  unfold present_row_count at 1 2; cbn [fold_right].
+  assert (Hk : k <> id) by (intro Heq; subst k; apply Hfresh; now left).
+  unfold index_row at 1. rewrite PTrie.get_set_other by exact Hk.
+  fold (present_row_count rest (PTrieCode.set id values rows)).
+  fold (present_row_count rest rows). rewrite IH; [reflexivity|].
+  intro Hin; apply Hfresh; now right.
+Qed.
+
+Lemma present_row_count_set {A} keys (rows : ptrie (list A)) id values :
+  NoDup keys -> present_row_count keys (PTrieCode.set id values rows) <=
+    length values + present_row_count keys rows.
+Proof.
+  induction keys as [|k rest IH]; intro Hdistinct; [cbn [present_row_count fold_right]; lia|].
+  inversion Hdistinct as [|a tail Hfresh Hrest]; subst.
+  unfold present_row_count at 1 2; cbn [fold_right].
+  fold (present_row_count rest (PTrieCode.set id values rows)).
+  fold (present_row_count rest rows).
+  destruct (Pos.eq_dec k id) as [Heq|Hneq].
+  - subst k. unfold index_row at 1. rewrite PTrie.get_set_same.
+    rewrite present_row_count_other by exact Hfresh. lia.
+  - unfold index_row at 1. rewrite PTrie.get_set_other by exact Hneq.
+    specialize (IH Hrest).
+    change (length (index_row rows k) + present_row_count rest (PTrieCode.set id values rows)
+      <= length values + (length (index_row rows k) + present_row_count rest rows)). lia.
+Qed.
+
+Lemma present_first_table_count {A B} (key : A -> positive) keys
+    (rows : list (A * list B)) : NoDup keys ->
+  present_row_count keys (first_table key rows) <=
+    fold_right (fun row n => length (snd row) + n) 0 rows.
+Proof.
+  intro Hdistinct. induction rows as [|row rest IH].
+  - change (@present_row_count B keys Empty <= 0). rewrite present_row_count_empty; lia.
+  - change (present_row_count keys (PTrieCode.set (key (fst row)) (snd row)
+      (first_table key rest)) <= length (snd row) +
+        fold_right (fun row n => length (snd row) + n) 0 rest).
+    eapply Nat.le_trans; [apply present_row_count_set; exact Hdistinct|]. lia.
+Qed.
+
+Lemma present_map_injective_nodup {A B} (f : A -> B) xs :
+  (forall x y, f x = f y -> x = y) -> NoDup xs -> NoDup (map f xs).
+Proof.
+  intros Hinj Hdistinct. induction Hdistinct as [|x rest Hfresh Hrest IH].
+  - constructor.
+  - cbn [map]. constructor; [|exact IH]. intro Hin.
+    apply in_map_iff in Hin as [y [Heq Hin]]. apply Hinj in Heq; subst y. contradiction.
+Qed.
+
+Lemma present_map_flat_map {A B C} (f : B -> C) (g : A -> list B) xs :
+  map f (flat_map g xs) = flat_map (fun x => map f (g x)) xs.
+Proof.
+  induction xs as [|x rest IH]; cbn [flat_map map]; [reflexivity|].
+  now rewrite map_app, IH.
+Qed.
+
+Lemma summarize_internal_edges_nodup {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) :
+  NoDup (map (fun row => fst (fst row)) (summary_internal (summarize kept item))).
+Proof.
+  apply (NoDup_map_inv point_dst).
+  rewrite map_map.
+  pose proof (summarize_points_nodup kept item) as Hpoints.
+  change (NoDup ((fst item, 0%N) ::
+    map (fun row => point_dst (fst (fst row)))
+      (summary_internal (summarize kept item)))) in Hpoints.
+  now inversion Hpoints.
+Qed.
+
+Lemma summarize_outgoing_edges_nodup {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) :
+  NoDup (map (fun row => fst (fst row)) (summary_outgoing (summarize kept item))).
+Proof.
+  destruct item as [b [ps cs term]]. destruct term;
+    cbn [summarize summary_outgoing fst snd Lang.term listed_edge_args exit_edge_args
+      filter edge_target map];
+    repeat match goal with |- context [if ?flag then _ else _] => destruct flag end;
+    repeat constructor; cbn; intuition discriminate.
+Qed.
+
+Lemma summarize_outgoing_block {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) row :
+  In row (summary_outgoing (summarize kept item)) ->
+    exists be, point_block_edge (fst (fst row)) = Some be.
+Proof.
+  change (In row (map (fun ea =>
+    (PointEdge (summary_exit (summarize kept item)) (edge_target (fst ea), 0%N)
+      (Some (fst ea)), guard_uses (term _ _ _ (snd item)) ++ snd ea, ([] : list positive)))
+    (listed_edge_args kept (fst item) (term _ _ _ (snd item)))) ->
+    exists be, point_block_edge (fst (fst row)) = Some be).
+  intro Hin. apply in_map_iff in Hin as [ea [Heq Hin]]. subst row. eexists; reflexivity.
+Qed.
+
+Lemma summarize_edges_nodup {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) :
+  NoDup (map (fun row => fst (fst row))
+    (summary_internal (summarize kept item) ++ summary_outgoing (summarize kept item))).
+Proof.
+  rewrite map_app. apply NoDup_app.
+  - apply summarize_internal_edges_nodup.
+  - apply summarize_outgoing_edges_nodup.
+  - intros edge Hi Ho. apply in_map_iff in Hi as [ri [Hei Hi]].
+    apply in_map_iff in Ho as [ro [Heo Ho]].
+    pose proof (summarize_internal_no_block _ _ _ Hi) as Hnone.
+    destruct (summarize_outgoing_block _ _ _ Ho) as [be Hsome].
+    rewrite Hei in Hnone. rewrite Heo in Hsome. congruence.
+Qed.
+
+Lemma summarize_edge_owner {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) row :
+  In row (summary_internal (summarize kept item) ++ summary_outgoing (summarize kept item)) ->
+    fst (point_src (fst (fst row))) = fst item.
+Proof.
+  intro Hin. apply in_app_or in Hin as [Hi|Ho].
+  - apply summarize_internal_endpoints in Hi as [Hs _].
+    now apply summarize_point_owner in Hs.
+  - change (In row (map (fun ea =>
+      (PointEdge (summary_exit (summarize kept item)) (edge_target (fst ea), 0%N)
+        (Some (fst ea)), guard_uses (term _ _ _ (snd item)) ++ snd ea, ([] : list positive)))
+      (listed_edge_args kept (fst item) (term _ _ _ (snd item))))) in Ho.
+    apply in_map_iff in Ho as [ea [Heq Hin]]. subst row. reflexivity.
+Qed.
+
+Lemma summaries_edges_nodup {A K G} (kept : ptrie A)
+    (bs : list (positive * block positive K G)) :
+  NoDup (map fst bs) ->
+  NoDup (flat_map (fun item => map (fun row => fst (fst row))
+    (summary_internal (summarize kept item) ++ summary_outgoing (summarize kept item))) bs).
+Proof.
+  induction bs as [|item rest IH]; intro Hdistinct; [constructor|].
+  inversion Hdistinct as [|id ids Hfresh Hrest]; subst.
+  cbn [flat_map]. apply NoDup_app.
+  - apply summarize_edges_nodup.
+  - now apply IH.
+  - intros edge Hitem Hin. apply in_flat_map in Hin as [other [Hother Hedge]].
+    apply in_map_iff in Hitem as [ri [Hei Hi]].
+    apply in_map_iff in Hedge as [ro [Heo Ho]].
+    apply summarize_edge_owner in Hi. apply summarize_edge_owner in Ho.
+    rewrite Hei in Hi. rewrite Heo in Ho.
+    apply Hfresh. rewrite <- Hi, Ho. now apply in_map.
+Qed.
+
+Lemma lang_point_edges_nodup {K G} (p : func positive K G) :
+  NoDup (lang_point_edges (lang_prepare p)).
+Proof.
+  change (NoDup (map (fun row => fst (fst row))
+    (flat_map (fun summary => summary_internal summary ++ summary_outgoing summary)
+      (map (summarize (first_table PosKeyCode.encode
+        (map (fun item => (fst item, params _ _ _ (snd item)))
+          (first_blocks (blocks _ _ _ p))))) (first_blocks (blocks _ _ _ p)))))).
+  rewrite flat_map_after_map, present_map_flat_map.
+  apply summaries_edges_nodup. rewrite first_blocks_selected. apply selected_blocks_nodup.
+Qed.
+
+Definition present_weight {A} (weight : A -> nat) (xs : list A) : nat :=
+  fold_right (fun x n => weight x + n) 0 xs.
+
+Lemma present_weight_map {A B} (weight : B -> nat) (f : A -> B) xs :
+  present_weight weight (map f xs) = present_weight (fun x => weight (f x)) xs.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  change (weight (f x) + present_weight weight (map f rest) =
+    weight (f x) + present_weight (fun x => weight (f x)) rest). now rewrite IH.
+Qed.
+
+Lemma present_weight_app {A} (weight : A -> nat) xs ys :
+  present_weight weight (xs ++ ys) = present_weight weight xs + present_weight weight ys.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  change (weight x + present_weight weight (rest ++ ys) =
+    (weight x + present_weight weight rest) + present_weight weight ys). rewrite IH; lia.
+Qed.
+
+Lemma present_weight_flat_map {A B} (weight : B -> nat) (f : A -> list B) xs :
+  present_weight weight (flat_map f xs) = present_weight (fun x => present_weight weight (f x)) xs.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  change (present_weight weight (f x ++ flat_map f rest) =
+    present_weight weight (f x) + present_weight (fun x => present_weight weight (f x)) rest).
+  now rewrite present_weight_app, IH.
+Qed.
+
+Lemma present_weight_plus {A} (f g : A -> nat) xs :
+  present_weight (fun x => f x + g x) xs = present_weight f xs + present_weight g xs.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  change ((f x + g x) + present_weight (fun x => f x + g x) rest =
+    (f x + present_weight f rest) + (g x + present_weight g rest)). rewrite IH; lia.
+Qed.
+
+Lemma present_weight_mono {A} (f g : A -> nat) xs :
+  (forall x, In x xs -> f x <= g x) -> present_weight f xs <= present_weight g xs.
+Proof.
+  induction xs as [|x rest IH]; intro Hle; [reflexivity|].
+  change (f x + present_weight f rest <= g x + present_weight g rest). assert (Hx := Hle x (or_introl eq_refl)).
+  specialize (IH (fun y Hin => Hle y (or_intror Hin))). lia.
+Qed.
+
+Lemma present_flat_length {A B} (f : A -> list B) xs :
+  length (flat_map f xs) = present_weight (fun x => length (f x)) xs.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  change (length (f x ++ flat_map f rest) =
+    length (f x) + present_weight (fun x => length (f x)) rest).
+  now rewrite length_app, IH.
+Qed.
+
+Lemma selected_blocks_weight {K G} (weight : positive * block positive K G -> nat) bs seen :
+  present_weight weight (selected_blocks seen bs) <= present_weight weight bs.
+Proof.
+  revert seen. induction bs as [|item rest IH]; intro seen; [reflexivity|].
+  cbn [selected_blocks]. destruct (trie_get (fst item) seen) as [[]|].
+  - change (present_weight weight (selected_blocks seen rest) <= weight item + present_weight weight rest).
+    specialize (IH seen); lia.
+  - change (weight item + present_weight weight (selected_blocks (PTrieCode.set (fst item) tt seen) rest) <=
+      weight item + present_weight weight rest).
+    specialize (IH (PTrieCode.set (fst item) tt seen)); lia.
+Qed.
+
+Lemma code_rows_length {K} b i (cs : list (positive * K * list positive)) :
+  length (fst (code_rows b i cs)) = length cs.
+Proof.
+  revert i; induction cs as [|[[x op] ys] rest IH]; intro i;
+    cbn [code_rows fst length]; [reflexivity|now rewrite IH].
+Qed.
+
+Definition present_row_vars (row : point_row) := length (snd (fst row)) + length (snd row).
+
+Lemma code_rows_var_count {K} b i (cs : list (positive * K * list positive)) :
+  present_weight present_row_vars (fst (code_rows b i cs)) =
+    length (flat_map (fun '(x, _, ys) => x :: ys) cs).
+Proof.
+  revert i; induction cs as [|[[x op] ys] rest IH]; intro i; [reflexivity|].
+  change (length ys + 1 + present_weight present_row_vars (fst (code_rows b (N.succ i) rest)) =
+    length ((x :: ys) ++ flat_map (fun '(x, _, ys) => x :: ys) rest)).
+  rewrite IH, length_app; cbn [length]; lia.
+Qed.
+
+Lemma summarize_points_length {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) :
+  length (summary_points (summarize kept item)) = length (code _ _ _ (snd item)) + 2.
+Proof.
+  change (S (S (length (map (fun row => point_dst (fst (fst row)))
+    (fst (code_rows (fst item) 1%N (code _ _ _ (snd item))))))) =
+      length (code _ _ _ (snd item)) + 2).
+  rewrite length_map, code_rows_length. lia.
+Qed.
+
+Lemma summarize_edges_length {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) :
+  length (summary_internal (summarize kept item) ++ summary_outgoing (summarize kept item)) <=
+    length (code _ _ _ (snd item)) + 3.
+Proof.
+  rewrite length_app.
+  change (S (length (fst (code_rows (fst item) 1%N (code _ _ _ (snd item))))) +
+    length (map (fun ea =>
+      (PointEdge (summary_exit (summarize kept item)) (edge_target (fst ea), 0%N)
+        (Some (fst ea)), guard_uses (term _ _ _ (snd item)) ++ snd ea, ([] : list positive)))
+      (listed_edge_args kept (fst item) (term _ _ _ (snd item)))) <=
+    length (code _ _ _ (snd item)) + 3).
+  rewrite length_map, code_rows_length.
+  assert (Hlength : length (listed_edge_args kept (fst item) (term _ _ _ (snd item))) <= 2).
+  { unfold listed_edge_args. eapply Nat.le_trans; [apply filter_length_le|].
+    destruct (term _ _ _ (snd item)); cbn [exit_edge_args length]; lia. }
+  lia.
+Qed.
+
+Lemma present_exit_vars_count {A G} (kept : ptrie A) b last (e : exit positive G) :
+  present_weight present_row_vars
+    (map (fun ea => (PointEdge last (edge_target (fst ea), 0%N) (Some (fst ea)),
+      guard_uses e ++ snd ea, ([] : list positive))) (listed_edge_args kept b e)) +
+    length (exit_returns e) <= 2 * length (exit_uses e).
+Proof.
+  destruct e; cbn [listed_edge_args exit_edge_args filter edge_target fst snd
+    map present_weight fold_right present_row_vars guard_uses exit_returns exit_uses];
+    repeat match goal with |- context [if ?flag then _ else _] => destruct flag end;
+    cbn [map present_weight fold_right present_row_vars fst snd length];
+    unfold present_row_vars; cbn [fst snd length app]; repeat rewrite length_app; lia.
+Qed.
+
+Definition present_body_vars {K G} (body : block positive K G) : list positive :=
+  params _ _ _ body ++ flat_map (fun '(x, _, ys) => x :: ys) (code _ _ _ body) ++
+    exit_uses (term _ _ _ body).
+
+Lemma summarize_vars_count {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) :
+  present_weight present_row_vars
+    (summary_internal (summarize kept item) ++ summary_outgoing (summarize kept item)) +
+    length (summary_returns (summarize kept item)) <= 2 * length (present_body_vars (snd item)).
+Proof.
+  rewrite present_weight_app.
+  pose proof (present_exit_vars_count kept (fst item)
+    (summary_exit (summarize kept item)) (term _ _ _ (snd item))) as Hexit.
+  change (length (params _ _ _ (snd item)) +
+    present_weight present_row_vars (fst (code_rows (fst item) 1%N (code _ _ _ (snd item)))) +
+    present_weight present_row_vars (summary_outgoing (summarize kept item)) +
+    length (exit_returns (term _ _ _ (snd item))) <= 2 * length (present_body_vars (snd item))).
+  rewrite code_rows_var_count. unfold present_body_vars. rewrite !length_app.
+  change (present_weight present_row_vars (summary_outgoing (summarize kept item)) +
+    length (exit_returns (term _ _ _ (snd item))) <= 2 * length (exit_uses (term _ _ _ (snd item)))) in Hexit.
+  lia.
+Qed.
+
+Lemma present_weight_scale {A} (f : A -> nat) factor xs :
+  present_weight (fun x => factor * f x) xs = factor * present_weight f xs.
+Proof.
+  induction xs as [|x rest IH]; [cbn [present_weight fold_right]; lia|].
+  change (factor * f x + present_weight (fun x => factor * f x) rest =
+    factor * (f x + present_weight f rest)). rewrite IH; lia.
+Qed.
+
+Lemma present_reader_length {A B} (key : A -> positive) (xs : list A) (rows : ptrie (list B)) :
+  length (flat_map (fun x => index_row rows (key x)) xs) =
+    present_row_count (map key xs) rows.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  cbn [flat_map map present_row_count fold_right]. rewrite length_app, IH. reflexivity.
+Qed.
+
+Lemma present_pair_reader_length {A B} (key : A -> positive) (xs : list A)
+    (rows rows' : ptrie (list B)) :
+  length (flat_map (fun x => index_row rows (key x) ++ index_row rows' (key x)) xs) =
+    present_row_count (map key xs) rows + present_row_count (map key xs) rows'.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  cbn [flat_map map present_row_count fold_right]. rewrite !length_app, IH. unfold present_row_count; lia.
+Qed.
+
+Lemma summaries_vars_count {A K G} (kept : ptrie A)
+    (bs : list (positive * block positive K G)) :
+  present_weight present_row_vars
+    (flat_map (fun s => summary_internal s ++ summary_outgoing s) (map (summarize kept) bs)) +
+  present_weight (fun s => length (summary_returns s)) (map (summarize kept) bs) <=
+    2 * length (flat_map (fun item => present_body_vars (snd item)) bs).
+Proof.
+  rewrite present_weight_flat_map, !present_weight_map, <- present_weight_plus,
+    present_flat_length, <- present_weight_scale.
+  apply present_weight_mono. intros item Hin. apply summarize_vars_count.
+Qed.
+
+Lemma lang_occurrences_length {K G} (p : func positive K G) :
+  length (flat_map (fun e =>
+    index_row (edge_uses (lang_vars (lang_prepare p))) (PointEdge.encode e) ++
+    index_row (edge_defs (lang_vars (lang_prepare p))) (PointEdge.encode e))
+      (lang_point_edges (lang_prepare p)) ++
+    flat_map (fun n => index_row (node_exits (lang_vars (lang_prepare p))) (PointKey.encode n))
+      (lang_points (lang_prepare p))) <= 2 * length (function_vars p).
+Proof.
+  set (bs := first_blocks (blocks _ _ _ p)).
+  set (kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs)).
+  set (ss := map (summarize kept) bs).
+  set (rows := flat_map (fun s => summary_internal s ++ summary_outgoing s) ss).
+  set (es := map (fun row => fst (fst row)) rows).
+  set (ns := flat_map summary_points ss).
+  assert (Hedges : NoDup (map PointEdge.encode es)).
+  { apply present_map_injective_nodup; [apply PointEdge.encode_inj|].
+    apply (lang_point_edges_nodup p). }
+  assert (Hnodes : NoDup (map PointKey.encode ns)).
+  { apply present_map_injective_nodup; [apply PointKey.encode_inj|].
+    unfold ns, ss. rewrite flat_map_after_map. apply summaries_points_nodup.
+    unfold bs; rewrite first_blocks_selected. apply selected_blocks_nodup. }
+  pose proof (present_first_table_count PointEdge.encode (map PointEdge.encode es)
+    (map (fun row => (fst (fst row), snd (fst row))) rows) Hedges) as Huses.
+  pose proof (present_first_table_count PointEdge.encode (map PointEdge.encode es)
+    (map (fun row => (fst (fst row), snd row)) rows) Hedges) as Hdefs.
+  pose proof (present_first_table_count PointKey.encode (map PointKey.encode ns)
+    (map (fun s => (summary_exit s, summary_returns s)) ss) Hnodes) as Hexits.
+  change (present_row_count (map PointEdge.encode es)
+    (first_table PointEdge.encode (map (fun row => (fst (fst row), snd (fst row))) rows)) <=
+    present_weight (fun row => length (snd row))
+      (map (fun row => (fst (fst row), snd (fst row))) rows)) in Huses.
+  change (present_row_count (map PointEdge.encode es)
+    (first_table PointEdge.encode (map (fun row => (fst (fst row), snd row)) rows)) <=
+    present_weight (fun row => length (snd row))
+      (map (fun row => (fst (fst row), snd row)) rows)) in Hdefs.
+  change (present_row_count (map PointKey.encode ns)
+    (first_table PointKey.encode (map (fun s => (summary_exit s, summary_returns s)) ss)) <=
+    present_weight (fun row => length (snd row))
+      (map (fun s => (summary_exit s, summary_returns s)) ss)) in Hexits.
+  rewrite present_weight_map in Huses. rewrite present_weight_map in Hdefs.
+  rewrite present_weight_map in Hexits. cbn [snd] in Huses, Hdefs, Hexits.
+  pose proof (summaries_vars_count kept bs) as Hstored.
+  change (present_weight present_row_vars rows +
+    present_weight (fun s => length (summary_returns s)) ss <=
+    2 * length (flat_map (fun item => present_body_vars (snd item)) bs)) in Hstored.
+  unfold present_row_vars in Hstored. rewrite present_weight_plus in Hstored.
+  assert (Hsource : length (flat_map (fun item => present_body_vars (snd item)) bs) <=
+    length (function_vars p)).
+  { unfold bs, function_vars. rewrite length_app, !present_flat_length,
+      first_blocks_selected.
+    pose proof (selected_blocks_weight (fun item => length (present_body_vars (snd item)))
+      (blocks _ _ _ p) Empty) as Hselected.
+    change (present_weight (fun item => length (present_body_vars (snd item)))
+      (selected_blocks Empty (blocks _ _ _ p)) <= length (inputs _ _ _ p) +
+      present_weight (fun item => length (present_body_vars (snd item))) (blocks _ _ _ p)). lia. }
+  rewrite length_app, present_pair_reader_length, present_reader_length.
+  change (present_row_count (map PointEdge.encode es)
+    (first_table PointEdge.encode (map (fun row => (fst (fst row), snd (fst row))) rows)) +
+    present_row_count (map PointEdge.encode es)
+    (first_table PointEdge.encode (map (fun row => (fst (fst row), snd row)) rows)) +
+    present_row_count (map PointKey.encode ns)
+    (first_table PointKey.encode (map (fun s => (summary_exit s, summary_returns s)) ss)) <=
+    2 * length (function_vars p)).
+  eapply Nat.le_trans.
+  - apply Nat.add_le_mono; [apply Nat.add_le_mono; [exact Huses|exact Hdefs]|exact Hexits].
+  - eapply Nat.le_trans; [exact Hstored|]. lia.
+Qed.
+
+Lemma summaries_structure_count {A K G} (kept : ptrie A)
+    (bs : list (positive * block positive K G)) :
+  length (flat_map summary_points (map (summarize kept) bs)) +
+  length (flat_map (fun s => summary_internal s ++ summary_outgoing s) (map (summarize kept) bs)) <=
+    5 * (length bs + present_weight (fun item => length (code _ _ _ (snd item))) bs).
+Proof.
+  induction bs as [|item rest IH]; [reflexivity|].
+  cbn [map flat_map length present_weight fold_right]. rewrite !length_app.
+  rewrite summarize_points_length.
+  pose proof (summarize_edges_length kept item) as Hedges. rewrite length_app in Hedges. unfold present_weight in IH; lia.
+Qed.
+
+Lemma lang_structure_length {K G} (p : func positive K G) :
+  length (lang_points (lang_prepare p)) + length (lang_point_edges (lang_prepare p)) <=
+    5 * function_size p.
+Proof.
+  set (bs := first_blocks (blocks _ _ _ p)).
+  set (kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs)).
+  change (length (flat_map summary_points (map (summarize kept) bs)) +
+    length (map (fun row => fst (fst row))
+      (flat_map (fun s => summary_internal s ++ summary_outgoing s) (map (summarize kept) bs))) <=
+    5 * function_size p).
+  rewrite length_map. pose proof (summaries_structure_count kept bs) as Hcount.
+  assert (Hblocks : length bs <= length (blocks _ _ _ p)).
+  { unfold bs; rewrite first_blocks_selected; apply selected_blocks_length. }
+  assert (Hcode : present_weight (fun item => length (code _ _ _ (snd item))) bs <=
+    present_weight (fun item => length (code _ _ _ (snd item))) (blocks _ _ _ p)).
+  { unfold bs; rewrite first_blocks_selected; apply selected_blocks_weight. }
+  eapply Nat.le_trans; [exact Hcount|]. apply Nat.mul_le_mono_l.
+  clear Hcount. unfold function_size, present_weight in *. lia.
+Qed.
+
+
 Module PresentT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G).
   Module Q := Prepared O.
@@ -1589,7 +2046,19 @@ Module PresentT (O : OPS)
     (N.of_nat (length (C.nodes (R.prepare p)) + length (C.edges (R.prepare p)) +
       length (U.occurrences (R.prepare p))) <=
       c_present * N.of_nat (function_size p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. pose proof (lang_structure_length p) as Hstructure.
+    change (length (C.nodes (R.prepare p)) + length (C.edges (R.prepare p)) <=
+      5 * function_size p) in Hstructure.
+    assert (Hocc : length (U.occurrences (R.prepare p)) <= 2 * length (function_vars p)).
+    { exact (lang_occurrences_length p). }
+    assert (Hsyntax : length (function_vars p) <= function_size p).
+    { unfold function_size; lia. }
+    assert (Hcount : length (C.nodes (R.prepare p)) + length (C.edges (R.prepare p)) +
+      length (U.occurrences (R.prepare p)) <= 128 * (function_size p + 1)) by lia.
+    unfold c_present. apply time_of_nat_le in Hcount.
+    now rewrite Nat2N.inj_mul in Hcount.
+  Qed.
   (** Occurring variables are identifiers of the syntax. *)
   Lemma occurrence_width_le : forall p,
     U.occurrence_width (R.prepare p) <= function_width p.
