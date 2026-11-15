@@ -3818,6 +3818,202 @@ Proof.
 Qed.
 
 
+(** A carry flag occupies at most one stored integer bit. *)
+Lemma tnum_b2z_bits : forall c, (Z.size_nat (Z.b2z c) <= 1)%nat.
+Proof. intros []; cbn [Z.b2z Z.size_nat Pos.size_nat]; lia. Qed.
+
+(** Converting the carry flag requires only a constructor test. *)
+Lemma tnum_b2z_time : forall c, (Z.T_b2z c <= 1)%N.
+Proof. intros []; time_unfold Z.T_b2z; time_cbn; reflexivity. Qed.
+TimeBound tnum_b2z_time.
+
+(** An endpoint sum with carry has linearly many stored bits. *)
+Lemma tnum_carry_sum_bits : forall w x y c,
+  is_word w x -> is_word w y ->
+  (Z.size_nat (x + y + Z.b2z c) <= 2 * Pos.to_nat w + 3)%nat.
+Proof.
+  intros w x y c Hx Hy. pose proof (tnum_word_bits w x Hx).
+  pose proof (tnum_word_bits w y Hy). pose proof (tnum_b2z_bits c).
+  pose proof (tnum_sum_bits x y). pose proof (tnum_sum_bits (x + y) (Z.b2z c)). nia.
+Qed.
+
+(** The carry uncertainty computation produces only linearly many stored bits. *)
+Lemma tnum_adc_uncertain_bits : forall w a b c,
+  (Z.size_nat (tnum_adc_uncertain w a b c) <= 6 * Pos.to_nat w + 9)%nat.
+Proof.
+  intros w a b c.
+  pose proof (tnum_carry_sum_bits w (tnum_min w a) (tnum_min w b) c
+    (tnum_min_word w a) (tnum_min_word w b)).
+  pose proof (tnum_carry_sum_bits w (tnum_max w a) (tnum_max w b) c
+    (tnum_max_word w a) (tnum_max_word w b)).
+  pose proof (tnum_mask_bits w a). pose proof (tnum_mask_bits w b).
+  pose proof (tnum_lxor_bits
+    (tnum_min w a + tnum_min w b + Z.b2z c)
+    (tnum_max w a + tnum_max w b + Z.b2z c)).
+  pose proof (tnum_lor_bits (tnum_mask w a) (tnum_mask w b)).
+  pose proof (tnum_lor_bits
+    (Z.lxor (tnum_min w a + tnum_min w b + Z.b2z c)
+      (tnum_max w a + tnum_max w b + Z.b2z c))
+    (Z.lor (tnum_mask w a) (tnum_mask w b))).
+  unfold tnum_adc_uncertain. nia.
+Qed.
+
+(** Computing possible carries reads the masks and their bounded endpoints linearly. *)
+Lemma tnum_adc_uncertain_time : forall w a b c,
+  (T_tnum_adc_uncertain w a b c <=
+    4096 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b c.
+  pose proof (tnum_min_bits w a). pose proof (tnum_min_bits w b).
+  pose proof (tnum_max_bits w a). pose proof (tnum_max_bits w b).
+  pose proof (tnum_mask_bits w a). pose proof (tnum_mask_bits w b).
+  pose proof (tnum_b2z_bits c).
+  pose proof (tnum_sum_bits (tnum_min w a) (tnum_min w b)).
+  pose proof (tnum_sum_bits (tnum_max w a) (tnum_max w b)).
+  pose proof (tnum_carry_sum_bits w (tnum_min w a) (tnum_min w b) c
+    (tnum_min_word w a) (tnum_min_word w b)).
+  pose proof (tnum_carry_sum_bits w (tnum_max w a) (tnum_max w b) c
+    (tnum_max_word w a) (tnum_max_word w b)).
+  pose proof (tnum_lxor_bits
+    (tnum_min w a + tnum_min w b + Z.b2z c)
+    (tnum_max w a + tnum_max w b + Z.b2z c)).
+  pose proof (tnum_lor_bits (tnum_mask w a) (tnum_mask w b)).
+  time_unfold T_tnum_adc_uncertain. time_cbn. time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_adc_uncertain_time.
+
+(** Adding with a carry performs a bounded number of linear mask operations. *)
+Lemma tnum_adc_time : forall w a b c,
+  (T_tnum_adc w a b c <=
+    8192 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b c.
+  pose proof (tnum_min_bits w a). pose proof (tnum_min_bits w b).
+  pose proof (tnum_b2z_bits c).
+  pose proof (tnum_sum_bits (tnum_min w a) (tnum_min w b)).
+  pose proof (tnum_carry_sum_bits w (tnum_min w a) (tnum_min w b) c
+    (tnum_min_word w a) (tnum_min_word w b)).
+  pose proof (tnum_adc_uncertain_bits w a b c).
+  pose proof (tnum_lor_bits (tnum_min w a + tnum_min w b + Z.b2z c)
+    (tnum_adc_uncertain w a b c)).
+  pose proof (tnum_lnot_bits (tnum_adc_uncertain w a b c)).
+  pose proof (tnum_lnot_bits (Z.lor
+    (tnum_min w a + tnum_min w b + Z.b2z c) (tnum_adc_uncertain w a b c))).
+  pose proof (tnum_land_bits (tnum_min w a + tnum_min w b + Z.b2z c)
+    (Z.lnot (tnum_adc_uncertain w a b c))).
+  time_unfold T_tnum_adc. time_cbn. time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_adc_time.
+
+(** Addition is linear in width and the stored input masks. *)
+Lemma tnum_add_time : forall w a b,
+  (T_tnum_add w a b <=
+    16384 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. time_unfold T_tnum_add. time_cbn. time_pose. nia.
+Qed.
+TimeBound tnum_add_time.
+
+(** Subtraction first normalizes the complemented second operand. *)
+Lemma tnum_sub_time : forall w a b,
+  (T_tnum_sub w a b <=
+    32768 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. pose proof (tnum_not_bits w b).
+  time_unfold T_tnum_sub. time_cbn. time_pose.
+  rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_sub_time.
+
+(** Negation constructs zero and performs one subtraction. *)
+Lemma tnum_neg_time : forall w a,
+  (T_tnum_neg w a <=
+    131072 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. pose proof (tnum_const_bits w 0).
+  time_unfold T_tnum_neg. time_cbn. time_pose.
+  cbn [Z.size_nat] in *. rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_neg_time.
+
+(** Conjunction reads both stored masks linearly. *)
+Lemma tnum_and_time : forall w a b,
+  (T_tnum_and w a b <=
+    288 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. time_unfold T_tnum_and. time_cbn. time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_and_time.
+
+(** Disjunction reads both stored masks linearly. *)
+Lemma tnum_or_time : forall w a b,
+  (T_tnum_or w a b <=
+    288 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. time_unfold T_tnum_or. time_cbn. time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_or_time.
+
+(** Exclusive disjunction combines four bounded intermediate masks. *)
+Lemma tnum_xor_time : forall w a b,
+  (T_tnum_xor w a b <=
+    2048 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b.
+  pose proof (tnum_wand_bits w (zeros a) (zeros b)).
+  pose proof (tnum_wand_bits w (ones a) (ones b)).
+  pose proof (tnum_wand_bits w (zeros a) (ones b)).
+  pose proof (tnum_wand_bits w (ones a) (zeros b)).
+  time_unfold T_tnum_xor. time_cbn. time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_xor_time.
+
+(** The nonrotation cutoff uses no more bits than the width itself. *)
+Lemma tnum_shift_cutoff_size : forall w,
+  0 <= tnum_shift_cutoff w /\
+  (Z.to_nat (tnum_shift_cutoff w) <= Pos.size_nat w)%nat.
+Proof.
+  intro w; split; [exact (proj1 (tnum_shift_cutoff_bound w))|].
+  unfold tnum_shift_cutoff, tnum_bitlen.
+  destruct (Zpos w - 1 =? 0) eqn:Hzero; [cbn; lia|].
+  apply Z.eqb_neq in Hzero.
+  pose proof (tnum_abs_bits_bound (Zpos w)) as Hwidth.
+  cbn [Z.abs Z.size_nat] in Hwidth.
+  assert (Hpower : Zpos w - 1 < 2 ^ Z.of_nat (Pos.size_nat w)) by lia.
+  apply Z.log2_lt_pow2 in Hpower; [|lia].
+  pose proof (Z.log2_nonneg (Zpos w - 1)) as Hnonnegative.
+  pose proof (Z2Nat.id (Z.succ (Z.log2 (Zpos w - 1))) ltac:(lia)) as Hcast.
+  lia.
+Qed.
+
+(** Remainder modulo a nonnegative power of two fits exactly that many bits.
+    The dividend need not be nonnegative because the divisor is positive. *)
+Lemma tnum_power_modulo_bits : forall u k, 0 <= k ->
+  (Z.size_nat (u mod 2 ^ k) <= Z.to_nat k)%nat.
+Proof.
+  intros u k Hk; apply tnum_bits_of_abs_bound.
+  pose proof (Z.pow_pos_nonneg 2 k ltac:(lia) Hk) as Hpower.
+  pose proof (Z.mod_pos_bound u (2 ^ k) Hpower) as Hremainder.
+  rewrite Z.abs_eq by lia.
+  rewrite Z2Nat.id by exact Hk.
+  exact (proj2 Hremainder).
+Qed.
+
+(** The low uncertainty mask used by nonrotation expansion has logarithmic width. *)
+Lemma tnum_cutoff_modulo_bits : forall w u,
+  (Z.size_nat (u mod 2 ^ tnum_shift_cutoff w) <= Pos.size_nat w)%nat.
+Proof.
+  intros w u; destruct (tnum_shift_cutoff_size w) as [Hnonnegative Hsize].
+  eapply Nat.le_trans; [apply tnum_power_modulo_bits; exact Hnonnegative|exact Hsize].
+Qed.
+
+
+
 Local Open Scope nat_scope.
 
 Theorem tnum_unknown_from_equation : forall n i m,
