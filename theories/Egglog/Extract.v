@@ -6994,6 +6994,20 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     exact (Resources.search_reachable_pending D.t db (Enumeration.enumerated_rows cs db) s Hreach).
   Qed.
 
+  (** The full parked-frame and pending-queue ledger remains within the constructor count. *)
+  Lemma reachable_search_load : forall cs db s, D.wf db -> ctor_inventory cs db ->
+    reachable cs db s -> Resources.search_load s <= R db.
+  Proof.
+    intros cs db s Hwf Hinventory Hreach.
+    rewrite <- (inventory_rows_count cs db Hwf Hinventory).
+    destruct (Resources.search_load_preserved D.t (Enumeration.enumerated_rows cs db)
+      (initial cs db) s Hreach
+      (SearchProof.search_initial_invariant D.t db (Enumeration.enumerated_rows cs db)))
+      as [Hinv Hload].
+    eapply Nat.le_trans; [exact Hload|].
+    exact (Resources.search_initial_load D.t db (Enumeration.enumerated_rows cs db)).
+  Qed.
+
   (** Reachable queue entries obey the combined stored-identifier and optimal-cost width. *)
   Lemma reachable_queue_fits : forall cs db s, D.wf db -> D.canonical db ->
     ctor_inventory cs db -> reachable cs db s ->
