@@ -1965,107 +1965,23 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       fold budget; now apply route_stray_arithmetic.
   Qed.
 
-  Lemma c_lat_pos : (1 <= c_lat)%N.
+  (** The join fold pays one clock tick for each list cell and for its final case. *)
+  Local Lemma fold_clock_length xs : forall a,
+    (N.of_nat (length xs + 1) <= List.T_fold_left S.join S.T_join xs a)%N.
   Proof.
-    unfold c_lat; nia.
+    induction xs as [|x xs IH]; intro a; time_unfold @List.T_fold_left;
+      cbn [length]; [lia|].
+    specialize (IH (S.join a x)); repeat rewrite Nat2N.inj_add in *.
+    rewrite Nat2N.inj_succ; lia.
   Qed.
-  Lemma T_leb_le : forall a b,
-    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+
+  Local Lemma collapse_clock_length xs :
+    (N.of_nat (length xs + 1) <= T_collapse_with S.bot S.join S.T_join xs)%N.
   Proof.
-    intros a b; eapply N.le_trans; [apply leb_budget|].
-    apply N.mul_le_mono_r; unfold c_lat; nia.
+    destruct xs as [|x xs]; time_unfold @T_collapse_with; cbn [length]; [lia|].
+    pose proof (fold_clock_length xs x).
+    repeat rewrite Nat2N.inj_add in *; rewrite Nat2N.inj_succ; lia.
   Qed.
-  Lemma T_join_le : forall a b,
-    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_is_bot_le : forall a,
-    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof.
-    intro a; eapply N.le_trans; [apply is_bot_budget|].
-    apply N.mul_le_mono_r; unfold c_lat; nia.
-  Qed.
-  Lemma T_widen_le : forall p a b,
-    (T_widen p a b <= c_lat * N.of_nat
-      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_narrow_le : forall a b,
-    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_assign_le : forall x e a,
-    (T_assign x e a <= c_state * N.of_nat (assign_work x e a + 1))%N.
-  Proof.
-    intros x e a; pose proof (map_transfer_clock (S.assign x e) (fun s => S.T_assign x e s)
-      (S.assign_work x e) S.c_state a (S.T_assign_le x e)) as Hmap.
-    time_unfold @T_assign; unfold assign_work, c_state; pose proof k_partition_min; nia.
-  Qed.
-  Lemma T_havoc_le : forall x a,
-    (T_havoc x a <= c_state * N.of_nat (havoc_work x a + 1))%N.
-  Proof.
-    intros x a; pose proof (map_transfer_clock (S.havoc x) (fun s => S.T_havoc x s)
-      (S.havoc_work x) S.c_state a (S.T_havoc_le x)) as Hmap.
-    time_unfold @T_havoc; unfold havoc_work, c_state; pose proof k_partition_min; nia.
-  Qed.
-  Lemma T_assume_le : forall g es a,
-    (T_assume g es a <= c_state * N.of_nat (assume_work g es a + 1))%N.
-  Proof.
-    intros g es a; pose proof (map_transfer_clock (S.assume g es) (fun s => S.T_assume g es s)
-      (S.assume_work g es) S.c_state a (S.T_assume_le g es)) as Hmap.
-    time_unfold @T_assume; unfold assume_work, c_state; pose proof k_partition_min; nia.
-  Qed.
-  Lemma T_eval_le : forall e a,
-    (T_eval e a <= c_state * N.of_nat (eval_work e a + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma size_parts : forall a, size a = parts_size Tk.bits S.size (proj1_sig a).
-  Proof.
-    reflexivity.
-  Qed.
-  Lemma wunits_parts : forall a, wunits a = parts_units S.wunits (proj1_sig a).
-  Proof.
-    reflexivity.
-  Qed.
-  Lemma wsize_component : forall p, wsize p = S.wsize p.
-  Proof.
-    reflexivity.
-  Qed.
-  Lemma assign_work_parts : forall x e a, assign_work x e a =
-    fold_right Nat.add 0%nat (map (fun q => S.assign_work x e (snd q) + 1) (proj1_sig a)).
-  Proof.
-    reflexivity.
-  Qed.
-  Lemma havoc_work_parts : forall x a, havoc_work x a =
-    fold_right Nat.add 0%nat (map (fun q => S.havoc_work x (snd q) + 1) (proj1_sig a)).
-  Proof.
-    reflexivity.
-  Qed.
-  Lemma assume_work_parts : forall g es a, assume_work g es a =
-    fold_right Nat.add 0%nat
-      (map (fun q => S.assume_work g es (snd q) + 1) (proj1_sig a)).
-  Proof.
-    reflexivity.
-  Qed.
-  Lemma eval_work_parts : forall e a, eval_work e a = fold_right Nat.add 0%nat (map (fun q =>
-    S.eval_work e (snd q) + V.size (S.eval e (snd q)) + 1) (proj1_sig a)).
-  Proof.
-    reflexivity.
-  Qed.
-  Lemma T_inject_le : forall k s,
-    (T_inject k s <= c_partition * N.of_nat (Tk.bits k + S.size s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_merge_le : forall k a,
-    (T_merge k a <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_retag_le : forall k a,
-    (T_retag k a <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma join_size : forall a b,
-    (N.of_nat (size (join a b)) <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma join_wunits : forall a b,
-    (N.of_nat (wunits (join a b)) <= c_lat * N.of_nat (wunits a + wunits b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma merge_size : forall k a,
-    (N.of_nat (size (merge k a)) <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
-  Proof. Admitted. (* STUB *)
 
   Definition route_time (p : S.wparam) (old new : list (option Tk.t * S.t)) : N :=
     let fresh := fresh_parts S.leb S.bot old new in
@@ -2077,6 +1993,31 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     fst (fold_left (fun acc q =>
       ((fst acc + V.T_join (snd acc) (S.eval e (snd q)) + 1)%N,
        V.join (snd acc) (S.eval e (snd q)))) ps (0%N, V.bot)).
+
+  (** Evaluation separates component evaluations from its actual value-join accumulator. *)
+  Local Lemma eval_clock e a : T_eval e a =
+    (fold_right N.add 0%N (map (fun q => S.T_eval e (snd q) + 2)%N (proj1_sig a)) +
+      eval_joins e (proj1_sig a) + 3)%N.
+  Proof.
+    destruct a as [ps Hbound].
+    pose proof (ValueJoins.fold_clock (fun q : option Tk.t * S.t => S.eval e (snd q))
+      (fun q => (1 + S.T_eval e (snd q))%N) ps V.bot 0%N) as Hfold.
+    rewrite N.add_0_r in Hfold.
+    assert (Hrows : map (fun q => (1 + S.T_eval e (snd q) + 1)%N) ps =
+      map (fun q => (S.T_eval e (snd q) + 2)%N) ps).
+    { apply map_ext; intro q; lia. }
+    rewrite Hrows in Hfold.
+    time_unfold @T_eval; time_unfold @Specif.T_proj1_sig; time_simpl; cbn [proj1_sig].
+    unfold eval_joins; rewrite Hfold; lia.
+  Qed.
+
+  Local Lemma evaluation_sizes e (ps : list (option Tk.t * S.t)) :
+    fold_right Nat.add 0%nat (map (fun q => V.size (S.eval e (snd q)) + 1)%nat ps) <=
+    fold_right Nat.add 0%nat
+      (map (fun q => S.eval_work e (snd q) + V.size (S.eval e (snd q)) + 1)%nat ps).
+  Proof.
+    induction ps as [|q ps IH]; cbn [map fold_right]; lia.
+  Qed.
 
   Lemma F1_assign : forall x e a, proj1_sig (assign x e a) =
     map (fun q => (fst q, S.assign x e (snd q))) (proj1_sig a).
@@ -2281,7 +2222,15 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (T_merge k a <= k_partition *
       (T_collapse_with S.bot S.join S.T_join (map snd (proj1_sig a)) +
        T_inject k (collapse_with S.bot S.join (map snd (proj1_sig a))) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k [ps Hbound]; pose proof (map_snd_clock ps) as Hmap.
+    pose proof (collapse_clock_length (map snd ps)) as Hlength.
+    rewrite length_map, Nat2N.inj_add in Hlength.
+    pose proof k_partition_min; time_unfold @T_merge; time_simpl; cbn [proj1_sig].
+    change (fun x y => S.T_join x y) with S.T_join.
+    revert Hmap; time_simpl; intro Hmap.
+    nia.
+  Qed.
   Lemma T10_retag : forall k a,
     (T_retag k a <= k_partition * (T_merge k a + 1))%N.
   Proof.
@@ -2300,7 +2249,12 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (T_eval e a <= k_partition *
       (fold_right N.add 0%N (map (fun q => S.T_eval e (snd q) + 1) (proj1_sig a)) +
        eval_joins e (proj1_sig a) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e a; pose proof (sum_shift (fun q => S.T_eval e (snd q)) 2%N
+      (proj1_sig a) ltac:(lia)) as Hsum.
+    cbv beta in Hsum.
+    rewrite eval_clock; pose proof k_partition_min; nia.
+  Qed.
   Lemma T13_eval_joins : forall e ps, length ps <= C.k ->
     (eval_joins e ps <= k_partition * N.of_nat (fold_right Nat.add 0%nat
       (map (fun q => (V.size (S.eval e (snd q)) + 1)%nat) ps) + 1))%N.
@@ -2336,4 +2290,140 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     intros a b; pose proof k_partition_min; time_step.
   Qed.
+
+  (** Public contracts compose the bounded plan steps above. *)
+
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof.
+    unfold c_lat; nia.
+  Qed.
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b; eapply N.le_trans; [apply leb_budget|].
+    apply N.mul_le_mono_r; unfold c_lat; nia.
+  Qed.
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof.
+    intro a; eapply N.le_trans; [apply is_bot_budget|].
+    apply N.mul_le_mono_r; unfold c_lat; nia.
+  Qed.
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b; pose proof (T17_narrow a b); unfold c_lat.
+    repeat rewrite Nat2N.inj_add; nia.
+  Qed.
+  Lemma T_assign_le : forall x e a,
+    (T_assign x e a <= c_state * N.of_nat (assign_work x e a + 1))%N.
+  Proof.
+    intros x e a; pose proof (map_transfer_clock (S.assign x e) (fun s => S.T_assign x e s)
+      (S.assign_work x e) S.c_state a (S.T_assign_le x e)) as Hmap.
+    time_unfold @T_assign; unfold assign_work, c_state; pose proof k_partition_min; nia.
+  Qed.
+  Lemma T_havoc_le : forall x a,
+    (T_havoc x a <= c_state * N.of_nat (havoc_work x a + 1))%N.
+  Proof.
+    intros x a; pose proof (map_transfer_clock (S.havoc x) (fun s => S.T_havoc x s)
+      (S.havoc_work x) S.c_state a (S.T_havoc_le x)) as Hmap.
+    time_unfold @T_havoc; unfold havoc_work, c_state; pose proof k_partition_min; nia.
+  Qed.
+  Lemma T_assume_le : forall g es a,
+    (T_assume g es a <= c_state * N.of_nat (assume_work g es a + 1))%N.
+  Proof.
+    intros g es a; pose proof (map_transfer_clock (S.assume g es) (fun s => S.T_assume g es s)
+      (S.assume_work g es) S.c_state a (S.T_assume_le g es)) as Hmap.
+    time_unfold @T_assume; unfold assume_work, c_state; pose proof k_partition_min; nia.
+  Qed.
+  Lemma T_eval_le : forall e a,
+    (T_eval e a <= c_state * N.of_nat (eval_work e a + 1))%N.
+  Proof.
+    intros e [ps Hbound]; assert (Hcap : length ps <= C.k) by now apply Nat.leb_le.
+    pose proof (ValueJoins.sum_cost (fun q => (S.T_eval e (snd q) + 2)%N)
+      (fun q => S.eval_work e (snd q) + V.size (S.eval e (snd q)) + 1)%nat
+      (S.c_state + 2)%N ps) as Hsum.
+    assert (Hcalls : forall q, In q ps -> (S.T_eval e (snd q) + 2 <=
+      (S.c_state + 2) * N.of_nat
+        (S.eval_work e (snd q) + V.size (S.eval e (snd q)) + 1))%N).
+    { intros q Hq; pose proof (S.T_eval_le e (snd q)).
+      repeat rewrite Nat2N.inj_add in *; nia. }
+    specialize (Hsum Hcalls); cbv beta in Hsum.
+    pose proof (T13_eval_joins e ps Hcap) as Hjoins.
+    pose proof (evaluation_sizes e ps) as Hvalues; apply time_of_nat_le in Hvalues.
+    rewrite eval_clock; unfold eval_work; cbn [proj1_sig].
+    set (work := fold_right Nat.add 0%nat
+      (map (fun q => S.eval_work e (snd q) + V.size (S.eval e (snd q)) + 1)%nat ps)) in *.
+    assert (Hjoined : (eval_joins e ps <= k_partition * N.of_nat (work + 1))%N).
+    { eapply N.le_trans; [exact Hjoins|].
+      apply N.mul_le_mono_l; repeat rewrite Nat2N.inj_add; lia. }
+    assert (Hall : (fold_right N.add 0%N
+      (map (fun q => (S.T_eval e (snd q) + 2)%N) ps) + eval_joins e ps + 3 <=
+      (S.c_state + k_partition + 5) * N.of_nat (work + 1))%N).
+    { repeat rewrite Nat2N.inj_add in *; nia. }
+    eapply N.le_trans; [exact Hall|]; apply N.mul_le_mono_r.
+    unfold c_state; pose proof k_partition_min; nia.
+  Qed.
+  Lemma size_parts : forall a, size a = parts_size Tk.bits S.size (proj1_sig a).
+  Proof.
+    reflexivity.
+  Qed.
+  Lemma wunits_parts : forall a, wunits a = parts_units S.wunits (proj1_sig a).
+  Proof.
+    reflexivity.
+  Qed.
+  Lemma wsize_component : forall p, wsize p = S.wsize p.
+  Proof.
+    reflexivity.
+  Qed.
+  Lemma assign_work_parts : forall x e a, assign_work x e a =
+    fold_right Nat.add 0%nat (map (fun q => S.assign_work x e (snd q) + 1) (proj1_sig a)).
+  Proof.
+    reflexivity.
+  Qed.
+  Lemma havoc_work_parts : forall x a, havoc_work x a =
+    fold_right Nat.add 0%nat (map (fun q => S.havoc_work x (snd q) + 1) (proj1_sig a)).
+  Proof.
+    reflexivity.
+  Qed.
+  Lemma assume_work_parts : forall g es a, assume_work g es a =
+    fold_right Nat.add 0%nat
+      (map (fun q => S.assume_work g es (snd q) + 1) (proj1_sig a)).
+  Proof.
+    reflexivity.
+  Qed.
+  Lemma eval_work_parts : forall e a, eval_work e a = fold_right Nat.add 0%nat (map (fun q =>
+    S.eval_work e (snd q) + V.size (S.eval e (snd q)) + 1) (proj1_sig a)).
+  Proof.
+    reflexivity.
+  Qed.
+  Lemma T_inject_le : forall k s,
+    (T_inject k s <= c_partition * N.of_nat (Tk.bits k + S.size s + 1))%N.
+  Proof.
+    intros k s; pose proof (T11_inject k s); unfold c_partition.
+    repeat rewrite Nat2N.inj_add; nia.
+  Qed.
+  Lemma T_merge_le : forall k a,
+    (T_merge k a <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_retag_le : forall k a,
+    (T_retag k a <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma join_wunits : forall a b,
+    (N.of_nat (wunits (join a b)) <= c_lat * N.of_nat (wunits a + wunits b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma merge_size : forall k a,
+    (N.of_nat (size (merge k a)) <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+
 End PartitionT.
