@@ -1930,3 +1930,350 @@ Proof.
   - pose proof (proj1 (proj2 (proj2 (dom_lt_dfs_inventory g r)))) as Hvertices. lia.
   - apply dom_lt_numeric_of_ranges.
 Qed.
+
+(** * Producer traversal clocks *)
+
+(** A fold may spend credit carried by its changing accumulator. *)
+Lemma dom_time_fold_credit {A B : Type} (step : A -> B -> A) (T_step : A -> B -> N)
+    (credit : A -> N) k xs st :
+  (forall x, In x xs -> forall state,
+    (T_step state x + credit (step state x) <= k + credit state)%N) ->
+  (List.T_fold_left step T_step xs st + credit (fold_left step xs st) <=
+    (k + 1) * N.of_nat (length xs) + 1 + credit st)%N.
+Proof.
+  revert st. induction xs as [|x rest IH]; intros st Hstep.
+  - time_unfold @List.T_fold_left. cbn [fold_left length]. lia.
+  - specialize (IH (step st x) (fun y Hy => Hstep y (or_intror Hy))).
+    pose proof (Hstep x (or_introl eq_refl) st) as Hhead.
+    time_unfold @List.T_fold_left. cbn [fold_left length]. rewrite Nat2N.inj_succ.
+    clear -IH Hhead. nia.
+Qed.
+
+(** The root-width guard stops after at most its supplied unary width. *)
+Lemma dom_time_lt_key_fits width v :
+  (T_dom_lt_key_fits width v <= N.of_nat width + 1)%N.
+Proof.
+  revert v. induction width as [|width IH]; intros [v|v|]; time_step.
+Qed.
+
+(** Discovery-counter carry credit pays the binary increment in each enter event. *)
+Lemma dom_time_lt_event st event width :
+  (match event with Enter v => Pos.size_nat v <= width | _ => True end) ->
+  (T_dom_lt_event st event + dom_counter_credit (lt_next (dom_lt_event st event)) <=
+    (2 * PTrieT.c_trie + 32) * N.of_nat (width + 1) +
+      dom_counter_credit (lt_next st))%N.
+Proof.
+  destruct st as [order ranks parents stack next]. destruct event as [v|v|kind u v].
+  - intro Hwidth.
+    pose proof (PTrieT.T_set_le N v next ranks) as Hrank.
+    change (PTrieCode.T_set v next ranks <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hrank.
+    pose proof (dom_time_counter_succ next) as Hcounter.
+    destruct stack as [|parent rest].
+    + unfold T_dom_lt_event. time_simpl.
+      cbn [dom_lt_event lt_next lt_rank lt_dfs_parent lt_stack lt_reverse_order].
+      rewrite !Nat2N.inj_add in *. nia.
+    + pose proof (PTrieT.T_set_le positive v parent parents) as Hparent.
+      change (PTrieCode.T_set v parent parents <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hparent.
+      unfold T_dom_lt_event. time_simpl.
+      cbn [dom_lt_event lt_next lt_rank lt_dfs_parent lt_stack lt_reverse_order].
+      rewrite !Nat2N.inj_add in *. nia.
+  - intro Htrivial. destruct stack; unfold T_dom_lt_event; time_simpl;
+      cbn [dom_lt_event lt_next lt_rank lt_dfs_parent lt_stack lt_reverse_order]; nia.
+  - intro Htrivial. unfold T_dom_lt_event. time_simpl.
+    cbn [dom_lt_event lt_next lt_rank lt_dfs_parent lt_stack lt_reverse_order]. nia.
+Qed.
+
+(** A successful width guard permits lookup of the otherwise arbitrary root key. *)
+Lemma dom_lt_key_fits_bound width v :
+  dom_lt_key_fits width v = true -> Pos.size_nat v <= width.
+Proof.
+  revert v. induction width as [|width IH]; intros [v|v|] Hfits;
+    cbn [dom_lt_key_fits Pos.size_nat] in Hfits |- *; try discriminate; try lia.
+  all: specialize (IH v Hfits); lia.
+Qed.
+
+(** Building the listed-key trie charges one bounded insertion per original list entry. *)
+Lemma dom_time_lt_listed g :
+  (List.T_fold_left (fun acc v => PTrieCode.set v true acc)
+    (fun acc v => 1 + PTrieCode.T_set v true acc)%N (nodes g) Empty <=
+      (PTrieT.c_trie + 4) *
+        N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))%N.
+Proof.
+  pose proof (dom_time_fold_left (fun acc v => PTrieCode.set v true acc)
+    (fun acc v => 1 + PTrieCode.T_set v true acc)%N
+    ((PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1))%N
+    (nodes g) Empty) as Hfold.
+  specialize (Hfold ltac:(intros v Hv acc;
+    pose proof (PTrieT.T_set_le bool v true acc) as Hset;
+    change (PTrieCode.T_set v true acc <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset;
+    pose proof (dom_listed_key_width g v Hv) as Hwidth;
+    rewrite !Nat2N.inj_add in *; nia)).
+  replace (length (nodes g)) with (graph_n (base g)) in Hfold by
+    (destruct g as [[vs adjacency] predecessors count_v count_e]; reflexivity).
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+Qed.
+
+(** The producer trace contains at most two events per discovery and one per edge occurrence. *)
+Lemma dom_lt_trace_events g r :
+  length (dom_lt_trace g r) <= 2 * graph_n (base g) + graph_e (base g).
+Proof.
+  pose proof (dom_lt_trace_inventory g r) as Htrace.
+  unfold dom_lt_trace in Htrace |- *. rewrite dom_lt_listed_lookup in Htrace |- *.
+  destruct (dom_lt_key_fits (graph_width (base g)) r); [|cbn; lia].
+  destruct (existsb (Pos.eqb r) (nodes g)); [|cbn; lia].
+  destruct Htrace as [Hunique [Hlisted [Hvertices Hedges]]].
+  pose proof (dom_lt_filtered_rows g _ Hunique Hlisted) as Hrows.
+  pose proof (prepared_search_event_bound (scc_graph g) [r]) as Hevents.
+  rewrite search_event_supply_entered in Hevents.
+  clear -Hevents Hrows Hvertices. lia.
+Qed.
+
+(** The trace's component bounds scale to one common graph budget before they are added. *)
+Lemma dom_lt_trace_budget vertices edges width trie_coefficient search_coefficient
+    listed_work width_scan guard_work root_width filter_work search_work :
+  (listed_work <= (trie_coefficient + 4) * ((vertices + 1) * (width + 1)))%N ->
+  (width_scan <= 128 * ((vertices + edges + 1) * (width + 1)))%N ->
+  (guard_work <= width + 1)%N -> (root_width <= width)%N ->
+  (filter_work <= 16384 * ((vertices + edges + 1) * (width + 1)))%N ->
+  (search_work <= 2 * search_coefficient * (vertices + edges + 1 + 1) * (width + 1))%N ->
+  (1 + (1 + listed_work + (1 + width_scan + guard_work +
+    (2 * root_width + (filter_work + search_work)))) <=
+    8 * (search_coefficient + trie_coefficient + 4096) *
+      ((vertices + edges + 1) * (width + 1)))%N.
+Proof.
+  intros Hlisted Hscan Hguard Hroot Hfilter Hsearch.
+  set (budget := ((vertices + edges + 1) * (width + 1))%N).
+  assert (Hfactor : (width + 1 <= budget)%N).
+  { unfold budget. replace (width + 1)%N with (1 * (width + 1))%N at 1 by lia.
+    apply N.mul_le_mono_r. lia. }
+  assert (Hpositive : (1 <= budget)%N) by lia.
+  assert (Hlisted_big : (listed_work <= (trie_coefficient + 4) * budget)%N).
+  { eapply N.le_trans; [exact Hlisted|]. apply N.mul_le_mono_l.
+    unfold budget. apply N.mul_le_mono_r. lia. }
+  assert (Hguard_big : (guard_work <= budget)%N) by lia.
+  assert (Hroot_big : (root_width <= budget)%N) by lia.
+  assert (Htwice : ((vertices + edges + 1 + 1) * (width + 1) <= 2 * budget)%N).
+  { rewrite N.mul_add_distr_r, N.mul_1_l. fold budget. lia. }
+  assert (Hscaled : (2 * search_coefficient *
+    ((vertices + edges + 1 + 1) * (width + 1)) <=
+      2 * search_coefficient * (2 * budget))%N).
+  { now apply N.mul_le_mono_l. }
+  replace (2 * search_coefficient * (2 * budget))%N with
+    (4 * search_coefficient * budget)%N in Hscaled by
+    (clearbody budget; clear -search_coefficient budget; nia).
+  assert (Hsearch_big : (search_work <= 4 * search_coefficient * budget)%N).
+  { rewrite <- N.mul_assoc in Hsearch. eapply N.le_trans; eassumption. }
+  fold budget in Hscan, Hfilter |- *.
+  clearbody budget.
+  clear -Hlisted_big Hguard_big Hroot_big Hscan Hfilter Hsearch_big Hpositive.
+  nia.
+Qed.
+
+(** Missing listed roots pay the guard and lookup without filtered search work. *)
+Lemma dom_lt_trace_missing_budget vertices edges width trie_coefficient search_coefficient
+    listed_work width_scan guard_work root_width :
+  (listed_work <= (trie_coefficient + 4) * ((vertices + 1) * (width + 1)))%N ->
+  (width_scan <= 128 * ((vertices + edges + 1) * (width + 1)))%N ->
+  (guard_work <= width + 1)%N -> (root_width <= width)%N ->
+  (1 + (1 + listed_work + (1 + width_scan + guard_work + 2 * root_width)) <=
+    8 * (search_coefficient + trie_coefficient + 4096) *
+      ((vertices + edges + 1) * (width + 1)))%N.
+Proof.
+  intros Hlisted Hscan Hguard Hroot.
+  pose proof (dom_lt_trace_budget vertices edges width trie_coefficient search_coefficient
+    listed_work width_scan guard_work root_width 0%N 0%N
+    Hlisted Hscan Hguard Hroot (N.le_0_l _) (N.le_0_l _)) as Htime.
+  clear -Htime. lia.
+Qed.
+
+(** Rejected root widths stop before either the listed lookup or the search. *)
+Lemma dom_lt_trace_rejected_budget vertices edges width trie_coefficient search_coefficient
+    listed_work width_scan guard_work :
+  (listed_work <= (trie_coefficient + 4) * ((vertices + 1) * (width + 1)))%N ->
+  (width_scan <= 128 * ((vertices + edges + 1) * (width + 1)))%N ->
+  (guard_work <= width + 1)%N ->
+  (1 + (1 + listed_work + (1 + width_scan + guard_work)) <=
+    8 * (search_coefficient + trie_coefficient + 4096) *
+      ((vertices + edges + 1) * (width + 1)))%N.
+Proof.
+  intros Hlisted Hscan Hguard.
+  pose proof (dom_lt_trace_missing_budget vertices edges width trie_coefficient
+    search_coefficient listed_work width_scan guard_work 0%N
+    Hlisted Hscan Hguard (N.le_0_l _)) as Htime.
+  clear -Htime. lia.
+Qed.
+
+(** The guarded trace pays its membership scan, width scan and filtered search. *)
+Lemma dom_time_lt_trace g r :
+  (T_dom_lt_trace g r <= (8 * (search_trace_coefficient + PTrieT.c_trie + 4096)) *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1)))%N.
+Proof.
+  set (listed := fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty).
+  pose proof (dom_time_lt_listed g) as Hlisted.
+  pose proof (dom_time_graph_observations (base g)) as Hobservations.
+  pose proof (dom_time_lt_key_fits (graph_width (base g)) r) as Hguard.
+  unfold T_dom_lt_trace. time_simpl. fold listed.
+  destruct (dom_lt_key_fits (graph_width (base g)) r) eqn:Hfits.
+  - pose proof (dom_lt_key_fits_bound (graph_width (base g)) r Hfits) as Hroot_width.
+    assert (Hroot_bits : (N.of_nat (Pos.size_nat r) <=
+      N.of_nat (graph_width (base g)))%N) by lia.
+    destruct (trie_get r listed) as [present|] eqn:Hroot.
+    + assert (Hr : In r (nodes g)).
+      { unfold listed in Hroot. rewrite dom_lt_listed_lookup in Hroot.
+        destruct (existsb (Pos.eqb r) (nodes g)) eqn:Hmember; [|discriminate Hroot].
+        now apply dom_lt_existsb_key. }
+      assert (Hroots : forall v, In v [r] -> In v (nodes g)).
+      { intros v [<-|Hbad]; [exact Hr|contradiction]. }
+      pose proof (scc_search_time g [r] Hroots) as Hsearch.
+      pose proof (scc_graph_time g) as Hfilter.
+      cbn [length] in Hsearch.
+      rewrite PTrieT.trie_get_clock. time_simpl.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+      apply dom_lt_trace_budget.
+      * exact Hlisted.
+      * eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
+      * exact Hguard.
+      * exact Hroot_bits.
+      * now rewrite <- N.mul_assoc in Hfilter.
+      * eapply N.le_trans; [apply N.le_add_l|exact Hsearch].
+    + rewrite PTrieT.trie_get_clock. time_simpl. rewrite ?N.add_0_r.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+      apply dom_lt_trace_missing_budget.
+      * exact Hlisted.
+      * eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
+      * exact Hguard.
+      * exact Hroot_bits.
+  - time_simpl. rewrite ?N.add_0_r.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+    apply dom_lt_trace_rejected_budget.
+    + exact Hlisted.
+    + eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
+    + exact Hguard.
+Qed.
+
+(** Event count and callback cost scale to one layout-fold budget. *)
+Lemma dom_lt_layout_fold_budget vertices edges width trie_coefficient count work credit :
+  (count <= 2 * vertices + edges)%N ->
+  (work + credit <= ((2 * trie_coefficient + 32) * (width + 1) + 1) * count + 1 + 1)%N ->
+  (work <= (4 * trie_coefficient + 128) *
+    ((vertices + edges + 1) * (width + 1)))%N.
+Proof.
+  intros Hcount Hwork.
+  set (budget := ((vertices + edges + 1) * (width + 1))%N).
+  assert (Hpositive : (1 <= budget)%N).
+  { unfold budget. clear -vertices edges width. nia. }
+  assert (Hunit : ((2 * trie_coefficient + 32) * (width + 1) + 1 <=
+    (2 * trie_coefficient + 33) * (width + 1))%N).
+  { clear -trie_coefficient width. nia. }
+  assert (Hcount_big : (count <= 2 * (vertices + edges + 1))%N) by lia.
+  assert (Hscaled : (((2 * trie_coefficient + 32) * (width + 1) + 1) * count <=
+    ((2 * trie_coefficient + 33) * (width + 1)) * (2 * (vertices + edges + 1)))%N).
+  { now apply N.mul_le_mono. }
+  replace (((2 * trie_coefficient + 33) * (width + 1)) *
+    (2 * (vertices + edges + 1)))%N with ((4 * trie_coefficient + 66) * budget)%N
+    in Hscaled by (unfold budget; clear -trie_coefficient vertices edges width; nia).
+  assert (Hsmall : (work <= (4 * trie_coefficient + 66) * budget + 2)%N).
+  { clear -Hwork Hscaled. lia. }
+  fold budget. clearbody budget. clear -Hsmall Hpositive. nia.
+Qed.
+
+(** The layout fold pays bounded-key updates and amortized binary carries over the trace. *)
+Lemma dom_time_lt_layout_fold g r :
+  (List.T_fold_left dom_lt_event T_dom_lt_event (dom_lt_trace g r)
+    (DomLtLayout [] Empty Empty [] 1%N) <=
+    (4 * PTrieT.c_trie + 128) *
+      N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+        (graph_width (base g) + 1)))%N.
+Proof.
+  pose proof (dom_time_fold_credit dom_lt_event T_dom_lt_event
+    (fun st => dom_counter_credit (lt_next st))
+    ((2 * PTrieT.c_trie + 32) * N.of_nat (graph_width (base g) + 1))%N
+    (dom_lt_trace g r) (DomLtLayout [] Empty Empty [] 1%N)) as Hfold.
+  destruct (dom_lt_trace_inventory g r) as [Hunique [Hlisted [Hvertices Hedges]]].
+  assert (Hcallback : forall event, In event (dom_lt_trace g r) -> forall st,
+    (T_dom_lt_event st event + dom_counter_credit (lt_next (dom_lt_event st event)) <=
+      (2 * PTrieT.c_trie + 32) * N.of_nat (graph_width (base g) + 1) +
+        dom_counter_credit (lt_next st))%N).
+  { intros event Hevent st. apply dom_time_lt_event.
+    destruct event as [v|v|kind u v]; [|exact I|exact I].
+    apply dom_listed_key_width. apply Hlisted.
+    now apply search_entered_member. }
+  specialize (Hfold Hcallback).
+  pose proof (dom_lt_trace_events g r) as Hlength.
+  cbn beta in Hfold.
+  change (dom_counter_credit (lt_next (DomLtLayout [] Empty Empty [] 1%N))) with 1%N in Hfold.
+  apply time_of_nat_le in Hlength.
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+  rewrite Nat2N.inj_mul in Hlength.
+  eapply dom_lt_layout_fold_budget with (count := N.of_nat (length (dom_lt_trace g r)));
+    [exact Hlength|exact Hfold].
+Qed.
+
+(** The complete layout construction includes the guarded trace and its event fold. *)
+Lemma dom_time_lt_layout g r :
+  (T_dom_lt_layout_of g r <= (16 * (search_trace_coefficient + PTrieT.c_trie + 4096)) *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1)))%N.
+Proof.
+  pose proof (dom_time_lt_trace g r) as Htrace.
+  pose proof (dom_time_lt_layout_fold g r) as Hfold.
+  set (budget := N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+    (graph_width (base g) + 1))) in *.
+  assert (Hpositive : (1 <= budget)%N).
+  { unfold budget. clear -g. rewrite Nat2N.inj_mul, !Nat2N.inj_add. nia. }
+  unfold T_dom_lt_layout_of. time_simpl.
+  change (List.T_fold_left dom_lt_event (fun st event => T_dom_lt_event st event)
+    (dom_lt_trace g r) (DomLtLayout [] Empty Empty [] 1%N)) with
+    (List.T_fold_left dom_lt_event T_dom_lt_event
+      (dom_lt_trace g r) (DomLtLayout [] Empty Empty [] 1%N)).
+  set (trace_work := T_dom_lt_trace g r) in *.
+  set (fold_work := List.T_fold_left dom_lt_event T_dom_lt_event
+    (dom_lt_trace g r) (DomLtLayout [] Empty Empty [] 1%N)) in *.
+  set (search_coefficient := search_trace_coefficient) in *.
+  set (trie_coefficient := PTrieT.c_trie) in *.
+  clearbody trace_work fold_work search_coefficient trie_coefficient budget.
+  clear -Htrace Hfold Hpositive. nia.
+Qed.
+
+Definition dom_lt_dfs_coefficient : N :=
+  (32 * (search_trace_coefficient + PTrieT.c_trie + 4096))%N.
+
+(** The DFS wrapper also reverses the discovered order once and pays its public alias. *)
+Lemma dom_time_lt_dfs g r :
+  (T_dom_lt_dfs g r + 1 <= dom_lt_dfs_coefficient *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1)))%N.
+Proof.
+  pose proof (dom_time_lt_layout g r) as Hlayout.
+  pose proof (List.T_rev_append_le (lt_reverse_order (dom_lt_layout_of g r)) []) as Hreverse.
+  pose proof (dom_lt_layout_order_length g r) as Hlength.
+  destruct (dom_lt_dfs_inventory g r) as [Hunique [Hlisted [Hvertices Hedges]]].
+  rewrite Hlength in Hreverse.
+  set (budget := N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+    (graph_width (base g) + 1))) in *.
+  assert (Hsize : (N.of_nat (length (dom_lt_dfs g r)) + 1 <= budget)%N).
+  { assert (Hnatural : length (dom_lt_dfs g r) + 1 <=
+      (graph_n (base g) + graph_e (base g) + 1) * (graph_width (base g) + 1)).
+    { clear -Hvertices.
+      eapply Nat.le_trans with (graph_n (base g) + graph_e (base g) + 1); [lia|].
+      replace (graph_n (base g) + graph_e (base g) + 1) with
+        ((graph_n (base g) + graph_e (base g) + 1) * 1) at 1 by lia.
+      apply Nat.mul_le_mono_l. lia. }
+    apply time_of_nat_le in Hnatural. rewrite Nat2N.inj_add in Hnatural.
+    exact Hnatural. }
+  assert (Hpositive : (1 <= budget)%N) by (clear -Hsize; lia).
+  assert (Hreverse_big : (List.T_rev_append
+    (lt_reverse_order (dom_lt_layout_of g r)) [] <= budget)%N).
+  { eapply N.le_trans; [exact Hreverse|exact Hsize]. }
+  unfold T_dom_lt_dfs, dom_lt_dfs_coefficient. time_simpl.
+  set (layout_work := T_dom_lt_layout_of g r) in *.
+  set (reverse_work := List.T_rev_append (lt_reverse_order (dom_lt_layout_of g r)) []) in *.
+  set (search_coefficient := search_trace_coefficient) in *.
+  set (trie_coefficient := PTrieT.c_trie) in *.
+  clearbody layout_work reverse_work search_coefficient trie_coefficient budget.
+  clear -Hlayout Hreverse_big Hpositive. nia.
+Qed.
