@@ -1750,6 +1750,101 @@ Proof.
   nia.
 Qed.
 
+(** The stored-row checker charges its syntax at one database unit. *)
+Lemma dag_stored_check_budget : forall t d a m s r u w : N,
+  (1 <= m)%N -> (1 <= u)%N -> (1 <= w)%N ->
+  (s <= 3 * m * u)%N -> (r <= u)%N ->
+  (1 + (d + (1 +
+    ((128 * 1024) * (t + d + 1) * m * u + 8 * r +
+      (t * r + 32 * (t + 1) * s + (256 * (t + a + 1) * s * w + 8 * r))))) <=
+    (256 * 1024) * (t + d + a + 1) * m * u * w)%N.
+Proof.
+  intros t d a m s r u w Hm Hu Hw Hs Hr.
+  set (b := (t + d + a + 1)%N). set (q := (m * u * w)%N).
+  fold b. replace ((256 * 1024) * b * m * u * w)%N with
+    ((256 * 1024) * b * q)%N by (unfold q; ring).
+  assert (Hb1 : (1 <= b)%N) by (unfold b; lia).
+  assert (Hbt : (t + 1 <= b)%N) by (unfold b; lia).
+  assert (Hbd : (d + 1 <= b)%N) by (unfold b; lia).
+  assert (Hbtd : (t + d + 1 <= b)%N) by (unfold b; lia).
+  assert (Hba : (t + a + 1 <= b)%N) by (unfold b; lia).
+  assert (Hmuq : (m * u <= q)%N) by (unfold q; apply dag_budget_scale; exact Hw).
+  assert (Hum : (u <= m * u)%N).
+  { rewrite <- (N.mul_1_l u) at 1. now apply N.mul_le_mono_r. }
+  assert (Huq : (u <= q)%N) by lia.
+  assert (Hrq : (r <= q)%N) by lia.
+  assert (Hsq : (s <= 3 * q)%N).
+  { eapply N.le_trans; [exact Hs |].
+    rewrite <- N.mul_assoc. now apply N.mul_le_mono_l. }
+  assert (Hswq : (s * w <= 3 * q)%N).
+  { eapply N.le_trans; [apply N.mul_le_mono_r; exact Hs |].
+    unfold q. ring_simplify. apply N.le_refl. }
+  assert (Hq1 : (1 <= q)%N) by lia.
+  clearbody b q.
+  assert (Hvalidation :
+    ((128 * 1024) * (t + d + 1) * m * u <= (128 * 1024) * b * q)%N).
+  { replace ((128 * 1024) * (t + d + 1) * m * u)%N with
+      ((128 * 1024) * (t + d + 1) * (m * u))%N by ring.
+    apply N.mul_le_mono; [now apply N.mul_le_mono_l |exact Hmuq]. }
+  assert (Hseed : (t * r <= b * q)%N).
+  { apply N.mul_le_mono; [lia |exact Hrq]. }
+  assert (Hneeded : (32 * (t + 1) * s <= 96 * b * q)%N).
+  { eapply N.le_trans with (m := (32 * b * (3 * q))%N).
+    - apply N.mul_le_mono; [now apply N.mul_le_mono_l |exact Hsq].
+    - ring_simplify. apply N.le_refl. }
+  assert (Hcosts : (256 * (t + a + 1) * s * w <= 768 * b * q)%N).
+  { replace (256 * (t + a + 1) * s * w)%N with
+      (256 * (t + a + 1) * (s * w))%N by ring.
+    eapply N.le_trans with (m := (256 * b * (3 * q))%N).
+    - apply N.mul_le_mono; [now apply N.mul_le_mono_l |exact Hswq].
+    - ring_simplify. apply N.le_refl. }
+  assert (Hget : (16 * r <= 16 * b * q)%N) by (clear - Hrq Hb1; nia).
+  assert (Hfixed : (2 + d <= 3 * b * q)%N) by (clear - Hbd Hq1 Hb1; nia).
+  clear Hm Hu Hw Hs Hr Hb1 Hbt Hbd Hbtd Hba Hmuq Hum Huq Hrq Hsq Hswq Hq1.
+  nia.
+Qed.
+
+(** Guarding, selecting and copying fit the same row and width product as the checker. *)
+Lemma extraction_driver_overhead : forall d r a u w l : N,
+  (1 <= r)%N -> (1 <= a)%N -> (1 <= u)%N -> (1 <= w)%N -> (l <= r)%N ->
+  (d * u + d + u + 32 * l * u + 8 * w + 8 <= 64 * (d + 1) * r * a * u * w)%N.
+Proof.
+  intros d r a u w l Hr Ha Hu Hw Hl.
+  set (m := (r * a * u * w)%N).
+  replace (64 * (d + 1) * r * a * u * w)%N with (64 * (d + 1) * m)%N
+    by (unfold m; ring).
+  assert (Hra : (1 <= r * a)%N) by nia.
+  assert (Hrau : (1 <= r * a * u)%N) by nia.
+  assert (Hrauw : (r * a * u <= m)%N).
+  { unfold m. apply dag_budget_scale. exact Hw. }
+  assert (Hum : (u <= m)%N).
+  { eapply N.le_trans; [|exact Hrauw].
+    rewrite <- (N.mul_1_l u) at 1. now apply N.mul_le_mono_r. }
+  assert (Hwm : (w <= m)%N).
+  { unfold m. rewrite <- (N.mul_1_l w) at 1. now apply N.mul_le_mono_r. }
+  assert (Hlum : (l * u <= m)%N).
+  { eapply N.le_trans; [|exact Hrauw]. apply N.mul_le_mono_r.
+    eapply N.le_trans; [exact Hl |]. apply dag_budget_scale. exact Ha. }
+  assert (Hm : (1 <= m)%N) by lia.
+  clearbody m. clear Hr Ha Hu Hw Hl Hra Hrau Hrauw. nia.
+Qed.
+
+(** The public extraction coefficient dominates stored checking and its driver overhead. *)
+Lemma extraction_total_budget : forall t i d c q r a u w l : N,
+  (1 <= r)%N -> (1 <= a)%N -> (1 <= u)%N -> (1 <= w)%N -> (l <= r)%N ->
+  ((256 * 1024) * (t + d + c + 1) * r * a * u * w +
+    (d * u + d + u + 32 * l * u + 8 * w + 8) <=
+    (1024 * 1024) * (t + i + d + c + q + 1) * r * a * u * w)%N.
+Proof.
+  intros t i d c q r a u w l Hr Ha Hu Hw Hl.
+  pose proof (extraction_driver_overhead d r a u w l Hr Ha Hu Hw Hl) as Hdriver.
+  eapply N.le_trans; [apply N.add_le_mono_l; exact Hdriver |].
+  replace ((256 * 1024) * (t + d + c + 1) * r * a * u * w +
+    64 * (d + 1) * r * a * u * w)%N with
+    (((256 * 1024) * (t + d + c + 1) + 64 * (d + 1)) * r * a * u * w)%N by ring.
+  apply N.mul_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_r. nia.
+Qed.
+
 Module List.
   TimeFun flat_map.
 End List.
@@ -1968,6 +2063,88 @@ Definition extraction_candidate {V}
     end
   end.
 TimeFun extraction_candidate.
+
+(** The binary size code denotes the natural bit width. *)
+Lemma extraction_positive_size_value : forall p, Pos.to_nat (Pos.size p) = Pos.size_nat p.
+Proof.
+  intro p. induction p; cbn [Pos.size Pos.size_nat];
+    rewrite ?Pos2Nat.inj_succ, ?IHp; reflexivity.
+Qed.
+
+(** Every binary natural fits its logarithmic width, including zero. *)
+Lemma extraction_N_width_log : forall n, N.size_nat n <= N.to_nat (N.log2 n) + 1.
+Proof.
+  intros [|[p|p|]]; cbn [N.size_nat N.log2 N.to_nat Pos.size_nat];
+    rewrite ?extraction_positive_size_value; lia.
+Qed.
+
+(** Equality stops within the width of its stored right-hand identifier. *)
+Lemma extraction_eqb_right_clock : forall p q,
+  (Pos.T_eqb p q <= N.of_nat (Pos.size_nat q))%N.
+Proof.
+  intros p q. revert p. induction q as [q IH|q IH|]; intros [p|p|]; time_step.
+Qed.
+
+(** Linear selected-cost lookup pays for stored identifier widths. *)
+Lemma T_extraction_cost_lookup_le : forall V (entries : extraction_best V) target w,
+  (forall i n ch, In (i, (n, ch)) entries -> Pos.size_nat i <= w) ->
+  (T_extraction_cost_lookup target entries <=
+    8 * N.of_nat (length entries + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros V entries. induction entries as [|[i [n ch]] entries IH]; intros target w Hwidth.
+  - time_unfold @T_extraction_cost_lookup. cbn [length]. lia.
+  - pose proof (extraction_eqb_right_clock target i) as Heq.
+    pose proof (Hwidth i n ch (or_introl eq_refl)) as Hi.
+    specialize (IH target w (fun j cost row Hrow => Hwidth j cost row (or_intror Hrow))).
+    time_unfold @T_extraction_cost_lookup. time_simpl. time_cbn.
+    destruct (Pos.eqb target i); cbn [length]; rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** Projecting and reversing a selected table is linear in its number of entries. *)
+Lemma T_extraction_certificate_le : forall V (entries : extraction_best V),
+  (T_extraction_certificate entries <= 8 * N.of_nat (length entries + 1))%N.
+Proof.
+  intros V entries.
+  pose proof (ListDef.T_map_le (fun entry : positive * (N * extraction_row V) =>
+    (fst entry, snd (snd entry))) (fun _ => 4%N) 4%N entries
+    (fun _ => N.le_refl _)) as Hmap.
+  pose proof (List.T_rev_append_le
+    (map (fun entry : positive * (N * extraction_row V) =>
+      (fst entry, snd (snd entry))) entries) []) as Hreverse.
+  rewrite length_map in Hreverse.
+  time_unfold @T_extraction_certificate. time_simpl. time_cbn.
+  change (fun _ : positive * (N * extraction_row V) => (1 + (1 + (1 + 1)))%N)
+    with (fun _ : positive * (N * extraction_row V) => 4%N).
+  rewrite !Nat2N.inj_add. lia.
+Qed.
+
+(** Candidate construction adds linear selection and copying to its checker callback. *)
+Lemma T_extraction_candidate_le : forall V check T_check c target
+    (entries : extraction_best V) u w b,
+  (forall i n ch, In (i, (n, ch)) entries -> Pos.size_nat i <= u) ->
+  (T_check c (extraction_certificate entries) <= b)%N ->
+  (match check c (extraction_certificate entries) with
+    | Some n => N.size_nat n | None => 0 end <= w) ->
+  (T_extraction_candidate check T_check c target entries <=
+    b + 32 * N.of_nat (length entries + 1) * N.of_nat (u + 1) +
+      8 * N.of_nat (w + 1))%N.
+Proof.
+  intros V check T_check c target entries u w b Hwidth Hcheck Hresult.
+  pose proof (T_extraction_cost_lookup_le V entries target u Hwidth) as Hlookup.
+  pose proof (T_extraction_certificate_le V entries) as Hcertificate.
+  time_unfold @T_extraction_candidate. time_simpl. time_cbn.
+  destruct (extraction_cost_lookup target entries) as [budget|]; [|nia].
+  destruct (check c (extraction_certificate entries)) as [cost|] eqn:Hcost; [|nia].
+  pose proof (N.T_leb_le cost budget) as Hcompare. nia.
+Qed.
+
+(** The allocation guard reads only the cached allocation counter's bit width. *)
+Lemma extraction_guard_clock : forall ids c,
+  (N.T_ltb ids (Npos c) <= N.of_nat (N.size_nat ids) + 3)%N.
+Proof.
+  intros ids c. pose proof (N.T_compare_le ids (Npos c)) as Hcompare.
+  time_unfold @N.T_ltb. time_simpl. time_cbn. lia.
+Qed.
 
 (** A successful cost lookup comes from an actual finalized row. *)
 Lemma extraction_cost_lookup_sound : forall V (entries : extraction_best V) c n,
@@ -5867,7 +6044,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Definition cost_width (db : D.t) : nat :=
     extraction_rows_width C.fn_cost C.val_cost (best_rows db (Rows.rows db)) (Rows.rows db).
   Definition c_ex : N :=
-    (64 * 1024) * (PTrieT.c_trie + D.c_db + C.c_cost + 1).
+    (1024 * 1024) * (PTrieT.c_trie + I.c_ix + D.c_db + C.c_cost + Q.c_pq + 1).
   Lemma T_inventory_le : forall ds sl,
     (T_inventory ds sl <= c_ex * N.of_nat (layout_bits ds sl + 1) *
       N.of_nat (Nat.log2 (length sl) + 1))%N.
@@ -6164,8 +6341,100 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       apply N.mul_le_mono_r, N.mul_le_mono_r. nia.
   Qed.
 
-  Lemma T_check_dag_le : forall db c g, D.wf db ->
-    (T_check_dag db c g <= c_ex * N.of_nat (cert_size V.encode g + Pos.size_nat c + 1) *
+  (** Checking actual stored rows charges their arities at one database spending unit. *)
+  Lemma checked_certificate_stored_clock : forall db c g, D.wf db ->
+    (forall i f k, In (i, (f, k)) g -> Model.row (D.view db) f k (Some (Id i))) ->
+    (forall i f k, In (i, (f, k)) g -> Pos.size_nat f <= D.unit db) ->
+    Pos.size_nat c <= D.unit db ->
+    (T_check_dag db c g <=
+      (256 * 1024) * (PTrieT.c_trie + D.c_db + C.c_cost + 1) *
+        N.of_nat (dag_row_work g + 1) * N.of_nat (D.unit db + 1) *
+        N.of_nat (match check_dag db c g with
+          | Some n => N.size_nat n | None => 0 end + 1))%N.
+  Proof.
+    intros db c g Hwf Hrows Hnames Hroot.
+    assert (Hsyntax_nat : cert_size V.encode g <=
+      3 * dag_row_work g * (D.unit db + 1)).
+    { apply dag_certificate_uniform. intros i f k Hin.
+      pose proof (Hrows i f k Hin) as Hrow. split.
+      - pose proof (stored_cell_unit db f k (Some (Id i)) (Id i) Hwf Hrow
+          ltac:(apply in_or_app; right; now left)) as Hwidth.
+        cbn [cell_bits Pos.size_nat] in Hwidth. lia.
+      - split; [exact (Hnames i f k Hin) |].
+        intros cell Hcell. eapply stored_cell_unit; try eassumption.
+        apply in_or_app. now left. }
+    assert (Hsyntax : (N.of_nat (cert_size V.encode g + 1) <=
+      3 * N.of_nat (dag_row_work g + 1) * N.of_nat (D.unit db + 1))%N).
+    { assert (Hplus : cert_size V.encode g + 1 <=
+        3 * (dag_row_work g + 1) * (D.unit db + 1)) by nia.
+      assert (Hcast : (N.of_nat (cert_size V.encode g + 1) <=
+        N.of_nat (3 * (dag_row_work g + 1) * (D.unit db + 1)))%N) by lia.
+      rewrite !Nat2N.inj_mul in Hcast. exact Hcast. }
+    assert (HrootN : (N.of_nat (Pos.size_nat c + 1) <= N.of_nat (D.unit db + 1))%N)
+      by lia.
+    time_unfold @T_check_dag. time_simpl. time_cbn.
+    time_unfold @T_dag_check. time_simpl. time_cbn.
+    unfold check_dag, dag_check.
+    set (row_check := dag_check_row (D.ids db) (fun i => fst (D.find i db))
+      (fun f k => fst (D.lookup f k db))) in *.
+    set (row_clock := fun i f k => T_dag_check_row (D.ids db)
+      (fun j => fst (D.find j db)) (fun j => (1 + (D.T_find j db + 1))%N)
+      (fun f k => fst (D.lookup f k db))
+      (fun f k => (1 + (D.T_lookup f k db + 1))%N) i f k) in *.
+    pose proof (checked_validate_stored_clock db g Empty c Hwf Hrows) as Hvalidate.
+    fold row_check row_clock in Hvalidate.
+    pose proof (D.T_ids_le db) as Hids.
+    destruct (dag_validate row_check Empty g c) eqn:Hvalid.
+    - destruct (dag_validate_sound V.t row_check g Empty c []
+        ltac:(intro i; unfold dag_seen; rewrite PTrie.get_empty; cbn;
+          split; [discriminate |contradiction]) Hvalid) as [Hordered _].
+      pose proof (PTrieT.T_set_le unit c tt Empty) as Hset.
+      change (PTrieCode.T_set c tt Empty <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat c + 1))%N in Hset.
+      pose proof (T_dag_needed_le V.t V.encode g (PTrieCode.set c tt Empty)) as Hneeded.
+      pose proof (T_dag_get_cost_le
+        (dag_cost_table C.fn_cost C.val_cost (dag_needed g (PTrieCode.set c tt Empty)) g Empty)
+        c) as Hget.
+      pose proof (T_dag_cost_table_prefix_le V.t V.encode C.fn_cost
+        (fun f cs => C.T_fn_cost f cs) C.val_cost (fun v => C.T_val_cost v) C.c_cost
+        C.fn_cost_super C.T_fn_cost_le C.T_val_cost_le g c Hordered g [] eq_refl) as Hcosts.
+      cbn [dag_cost_table] in Hcosts. time_cbn.
+      eapply N.le_trans with (m := (1 + (D.c_db + (1 +
+        ((128 * 1024) * (PTrieT.c_trie + D.c_db + 1) *
+          N.of_nat (dag_row_work g + 1) * N.of_nat (D.unit db + 1) +
+         8 * N.of_nat (Pos.size_nat c + 1) +
+         (PTrieT.c_trie * N.of_nat (Pos.size_nat c + 1) +
+          32 * (PTrieT.c_trie + 1) * N.of_nat (cert_size V.encode g + 1) +
+          (256 * (PTrieT.c_trie + C.c_cost + 1) * N.of_nat (cert_size V.encode g + 1) *
+             N.of_nat (N.size_nat (dag_get_cost (dag_cost_table C.fn_cost C.val_cost
+               (dag_needed g (PTrieCode.set c tt Empty)) g Empty) c) + 1) +
+           8 * N.of_nat (Pos.size_nat c + 1)))))))%N).
+      + apply N.add_le_mono_l. apply N.add_le_mono; [exact Hids |].
+        apply N.add_le_mono_l. apply N.add_le_mono; [exact Hvalidate |].
+        apply N.add_le_mono.
+        * apply N.add_le_mono; [exact Hset |exact Hneeded].
+        * apply N.add_le_mono; [exact Hcosts |exact Hget].
+      + apply dag_stored_check_budget; lia.
+    - time_cbn.
+      eapply N.le_trans with (m := (1 + (D.c_db + (1 +
+        ((128 * 1024) * (PTrieT.c_trie + D.c_db + 1) *
+          N.of_nat (dag_row_work g + 1) * N.of_nat (D.unit db + 1) +
+         8 * N.of_nat (Pos.size_nat c + 1) + 0))))%N).
+      + apply N.add_le_mono_l. apply N.add_le_mono; [exact Hids |].
+        apply N.add_le_mono_l. apply N.add_le_mono; [exact Hvalidate |apply N.le_refl].
+      + pose proof (dag_stored_check_budget PTrieT.c_trie D.c_db C.c_cost
+          (N.of_nat (dag_row_work g + 1)) 0 (N.of_nat (Pos.size_nat c + 1))
+          (N.of_nat (D.unit db + 1)) 1 ltac:(lia) ltac:(lia) ltac:(lia)
+          ltac:(lia) HrootN) as Hbudget.
+        rewrite !N.mul_0_r, !N.mul_0_l, !N.add_0_r, !N.mul_1_r in Hbudget.
+        rewrite N.mul_1_r, N.add_0_r. lia.
+  Qed.
+
+  (** The syntax-based checker estimate retains its original closed coefficient. *)
+  Lemma checked_dag_syntax_clock : forall db c g, D.wf db ->
+    (T_check_dag db c g <= (64 * 1024) *
+      (PTrieT.c_trie + D.c_db + C.c_cost + 1) *
+      N.of_nat (cert_size V.encode g + Pos.size_nat c + 1) *
       N.of_nat (D.unit db + 1) *
       N.of_nat (match check_dag db c g with
         | Some n => N.size_nat n
@@ -6216,7 +6485,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
         * apply N.add_le_mono; [exact Hset |exact Hneeded].
         * apply N.add_le_mono; [exact Hcosts |exact Hget].
       + clear Hvalidate Hids Hset Hneeded Hget Hcosts Hordered Hvalid.
-        unfold c_ex, checker_row_budget.
+        unfold checker_row_budget.
         apply dag_check_budget; lia.
     - time_cbn.
       eapply N.le_trans with (m := (1 + (D.c_db + (1 +
@@ -6229,14 +6498,209 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
           (N.of_nat (D.unit db + 1)) 1 ltac:(lia) ltac:(lia) ltac:(lia)
           ltac:(lia) ltac:(lia)) as Hbudget.
         rewrite !N.mul_0_r, !N.mul_0_l, !N.add_0_r, !N.mul_1_r in Hbudget.
-        unfold c_ex, checker_row_budget. rewrite N.mul_1_r, N.add_0_r.
+        unfold checker_row_budget. rewrite N.mul_1_r, N.add_0_r.
         exact Hbudget.
+  Qed.
+
+  Lemma T_check_dag_le : forall db c g, D.wf db ->
+    (T_check_dag db c g <= c_ex * N.of_nat (cert_size V.encode g + Pos.size_nat c + 1) *
+      N.of_nat (D.unit db + 1) *
+      N.of_nat (match check_dag db c g with
+        | Some n => N.size_nat n
+        | None => 0
+        end + 1))%N.
+  Proof.
+    intros db c g Hwf.
+    eapply N.le_trans; [exact (checked_dag_syntax_clock db c g Hwf) |].
+    apply N.mul_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_r. unfold c_ex. nia.
+  Qed.
+
+  (** The cached allocation counter fits the public database spending unit. *)
+  Lemma database_ids_unit : forall db, N.size_nat (D.ids db) <= D.unit db.
+  Proof.
+    intro db. pose proof (extraction_N_width_log (D.ids db)). unfold D.unit. nia.
+  Qed.
+
+  (** The allocation guard ensures that the queried root fits the database unit. *)
+  Lemma allocated_root_unit : forall db c, (Npos c <= D.ids db)%N ->
+    Pos.size_nat c <= D.unit db.
+  Proof.
+    intros db c Hallocated.
+    assert (Hwidth : Pos.size_nat c <= N.size_nat (D.ids db)).
+    { destruct (D.ids db) as [|bound]; [lia |]. cbn [N.size_nat].
+      destruct (Pos.eq_dec c bound) as [-> |Hneq]; [lia |].
+      apply Pos.size_nat_monotone. lia. }
+    pose proof (database_ids_unit db). lia.
+  Qed.
+
+  (** A stored constructor name is bounded by the database high-water mark. *)
+  Lemma stored_constructor_name_unit : forall cs db f k i,
+    D.wf db -> ctor_inventory cs db -> Model.row (D.view db) f k (Some (Id i)) ->
+    Pos.size_nat f <= D.unit db.
+  Proof.
+    intros cs db f k i Hwf [_ [_ [Hconstructors _]]] Hrow.
+    pose proof (Hconstructors f k i Hrow) as Hkind.
+    pose proof (D.wmark_names db f Hwf ltac:(rewrite Hkind; discriminate)) as Hwidth.
+    unfold D.unit. nia.
+  Qed.
+
+  (** The selected table contains at most one chosen row for each source row. *)
+  Lemma best_length : forall cs db, D.wf db -> ctor_inventory cs db ->
+    length (best cs db) <= R db.
+  Proof.
+    intros cs db Hwf Hinventory.
+    destruct (best_result cs db) as [costs [Hfinals _]].
+    pose proof (Finals.finalised_cardinality (Enumeration.enumerated_rows cs db)
+      costs (best cs db) Hfinals) as Hlength.
+    rewrite (inventory_rows_count cs db Hwf Hinventory) in Hlength. exact Hlength.
+  Qed.
+
+  (** Every row copied into the selected certificate is a stored constructor row. *)
+  Lemma best_certificate_row : forall cs db i f k,
+    D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    In (i, (f, k)) (extraction_certificate (best cs db)) ->
+    Model.row (D.view db) f k (Some (Id i)).
+  Proof.
+    intros cs db i f k Hwf Hcanonical Hinventory Hin.
+    apply Finals.certificate_entry in Hin as [n Hentry].
+    exact (proj1 (best_row cs db i n f k Hwf Hcanonical Hinventory Hentry)).
+  Qed.
+
+  (** The selected certificate has at most the source row count times its maximum arity. *)
+  Lemma best_certificate_work : forall cs db,
+    D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    dag_row_work (extraction_certificate (best cs db)) <= R db * (a db + 1).
+  Proof.
+    intros cs db Hwf Hcanonical Hinventory.
+    assert (Harity : forall i f k, In (i, (f, k)) (extraction_certificate (best cs db)) ->
+      length k <= a db).
+    { intros i f k Hin. apply (proj1 (a_spec cs db Hwf Hinventory) f k i).
+      now apply best_certificate_row with cs. }
+    pose proof (dag_row_work_length V.t (extraction_certificate (best cs db)) (a db) Harity)
+      as Hwork.
+    assert (Hlength : length (extraction_certificate (best cs db)) <= R db).
+    { unfold extraction_certificate. rewrite <- rev_alt, length_rev, length_map.
+      now apply best_length. }
+    eapply Nat.le_trans; [exact Hwork |]. apply Nat.mul_le_mono_r. exact Hlength.
+  Qed.
+
+  (** Every selected cost is one of the constructor costs covered by cost_width. *)
+  Lemma best_cost_width : forall cs db i n ch,
+    D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    In (i, (n, ch)) (best cs db) -> N.size_nat n <= cost_width db.
+  Proof.
+    intros cs db i n [f k] Hwf Hcanonical Hinventory Hin.
+    destruct (best_row cs db i n f k Hwf Hcanonical Hinventory Hin) as [Hrow Hcost].
+    rewrite Hcost. exact (proj1 (cost_width_spec cs db Hwf Hcanonical Hinventory) f k i Hrow).
+  Qed.
+
+  (** Checking a selected certificate returns a cost covered by the source width. *)
+  Lemma best_certificate_check_width : forall cs db c,
+    D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    match check_dag db c (extraction_certificate (best cs db)) with
+    | Some n => N.size_nat n | None => 0 end <= cost_width db.
+  Proof.
+    intros cs db c Hwf Hcanonical Hinventory.
+    destruct (best_result cs db) as [costs [Hfinals _]].
+    unfold check_dag. eapply Finals.certificate_check_width; [exact Hfinals |].
+    intros i n ch Hin. eapply best_cost_width; eassumption.
+  Qed.
+
+  (** The selected certificate checker fits the final extraction row and width envelope. *)
+  Lemma best_certificate_clock : forall cs db c,
+    D.wf db -> D.canonical db -> ctor_inventory cs db -> Pos.size_nat c <= D.unit db ->
+    (T_check_dag db c (extraction_certificate (best cs db)) <=
+      (256 * 1024) * (PTrieT.c_trie + D.c_db + C.c_cost + 1) *
+        N.of_nat (R db + 1) * N.of_nat (a db + 1) * N.of_nat (D.unit db + 1) *
+        N.of_nat (cost_width db + 1))%N.
+  Proof.
+    intros cs db c Hwf Hcanonical Hinventory Hroot.
+    pose proof (checked_certificate_stored_clock db c (extraction_certificate (best cs db))
+      Hwf (fun i f k Hin => best_certificate_row cs db i f k Hwf Hcanonical Hinventory Hin)
+      ltac:(intros i f k Hin; eapply stored_constructor_name_unit;
+        [exact Hwf |exact Hinventory |];
+        exact (best_certificate_row cs db i f k Hwf Hcanonical Hinventory Hin)) Hroot)
+      as Hcheck.
+    pose proof (best_certificate_check_width cs db c Hwf Hcanonical Hinventory) as Hwidth.
+    pose proof (best_certificate_work cs db Hwf Hcanonical Hinventory) as Hwork.
+    assert (Hwork_nat : dag_row_work (extraction_certificate (best cs db)) + 1 <=
+      (R db + 1) * (a db + 1)) by nia.
+    assert (HworkN : (N.of_nat (dag_row_work (extraction_certificate (best cs db)) + 1) <=
+      N.of_nat (R db + 1) * N.of_nat (a db + 1))%N).
+    { rewrite <- Nat2N.inj_mul. lia. }
+    eapply N.le_trans; [exact Hcheck |].
+    eapply N.le_trans with (m :=
+      ((256 * 1024) * (PTrieT.c_trie + D.c_db + C.c_cost + 1) *
+        N.of_nat (dag_row_work (extraction_certificate (best cs db)) + 1) *
+        N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N).
+    - apply N.mul_le_mono_l. lia.
+    - replace ((256 * 1024) * (PTrieT.c_trie + D.c_db + C.c_cost + 1) *
+        N.of_nat (R db + 1) * N.of_nat (a db + 1) * N.of_nat (D.unit db + 1) *
+        N.of_nat (cost_width db + 1))%N with
+        ((256 * 1024) * (PTrieT.c_trie + D.c_db + C.c_cost + 1) *
+          (N.of_nat (R db + 1) * N.of_nat (a db + 1)) * N.of_nat (D.unit db + 1) *
+          N.of_nat (cost_width db + 1))%N by ring.
+      apply N.mul_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_l. exact HworkN.
   Qed.
 
   Lemma T_extract_le : forall cs db c, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_extract cs db c <= T_best cs db + c_ex * N.of_nat (R db + 1) *
       N.of_nat (a db + 1) * N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db c Hwf Hcanonical Hinventory.
+    pose proof (D.T_ids_le db) as Hids.
+    pose proof (database_ids_unit db) as Hids_width.
+    pose proof (extraction_guard_clock (D.ids db) c) as Hguard_raw.
+    assert (Hguard : (N.T_ltb (D.ids db) (Npos c) <= N.of_nat (D.unit db + 1) + 3)%N)
+      by lia.
+    pose proof (best_length cs db Hwf Hinventory) as Hlength.
+    assert (HlengthN : (N.of_nat (length (best cs db) + 1) <= N.of_nat (R db + 1))%N)
+      by lia.
+    pose proof (extraction_total_budget PTrieT.c_trie I.c_ix D.c_db C.c_cost Q.c_pq
+      (N.of_nat (R db + 1)) (N.of_nat (a db + 1)) (N.of_nat (D.unit db + 1))
+      (N.of_nat (cost_width db + 1)) (N.of_nat (length (best cs db) + 1))
+      ltac:(lia) ltac:(lia) ltac:(lia) ltac:(lia) HlengthN) as Hbudget.
+    time_unfold @T_extract. time_simpl.
+    destruct (N.ltb (D.ids db) (Npos c)) eqn:Hallocated.
+    - clear - Hids Hguard Hbudget. unfold c_ex.
+      set (rowsN := N.of_nat (R db + 1)) in *.
+      set (arityN := N.of_nat (a db + 1)) in *.
+      set (unitN := N.of_nat (D.unit db + 1)) in *.
+      set (widthN := N.of_nat (cost_width db + 1)) in *.
+      set (selectedN := N.of_nat (length (best cs db) + 1)) in *.
+      set (best_clock := T_best cs db) in *.
+      clearbody rowsN arityN unitN widthN selectedN best_clock. lia.
+    - apply N.ltb_ge in Hallocated.
+      pose proof (allocated_root_unit db c Hallocated) as Hroot.
+      pose proof (D.T_find_le c db Hwf Hallocated) as Hfind_raw.
+      assert (Hfind : (D.T_find c db <= D.c_db * N.of_nat (D.unit db + 1))%N).
+      { eapply N.le_trans; [exact Hfind_raw |]. apply N.mul_le_mono_l. lia. }
+      set (checker := ((256 * 1024) * (PTrieT.c_trie + D.c_db + C.c_cost + 1) *
+        N.of_nat (R db + 1) * N.of_nat (a db + 1) * N.of_nat (D.unit db + 1) *
+        N.of_nat (cost_width db + 1))%N).
+      assert (Hcheck : (T_check_dag db c (extraction_certificate (best cs db)) <= checker)%N).
+      { apply best_certificate_clock; assumption. }
+      assert (Hentry_width : forall i n ch, In (i, (n, ch)) (best cs db) ->
+        Pos.size_nat i <= D.unit db).
+      { intros i n [f k] Hin.
+        pose proof (proj1 (best_row cs db i n f k Hwf Hcanonical Hinventory Hin)) as Hrow.
+        pose proof (stored_cell_unit db f k (Some (Id i)) (Id i) Hwf Hrow
+          ltac:(apply in_or_app; right; now left)) as Hwidth.
+        cbn [cell_bits Pos.size_nat] in Hwidth. lia. }
+      pose proof (best_certificate_check_width cs db c Hwf Hcanonical Hinventory) as Hwidth.
+      pose proof (T_extraction_candidate_le V.t (check_dag db)
+        (fun root g => T_check_dag db root g) c (fst (D.find c db)) (best cs db)
+        (D.unit db) (cost_width db) checker Hentry_width Hcheck Hwidth) as Hcandidate.
+      unfold c_ex. unfold checker in Hcandidate.
+      clear - Hids Hguard Hfind Hcandidate Hbudget.
+      set (rowsN := N.of_nat (R db + 1)) in *.
+      set (arityN := N.of_nat (a db + 1)) in *.
+      set (unitN := N.of_nat (D.unit db + 1)) in *.
+      set (widthN := N.of_nat (cost_width db + 1)) in *.
+      set (selectedN := N.of_nat (length (best cs db) + 1)) in *.
+      set (best_clock := T_best cs db) in *.
+      clearbody rowsN arityN unitN widthN selectedN best_clock. lia.
+  Qed.
 
   Definition state := extraction_state V.t D.t Q.t.
   Definition initial (cs : list (positive * (N * nat))) (db : D.t) : state :=
