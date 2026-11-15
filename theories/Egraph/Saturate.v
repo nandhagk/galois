@@ -918,6 +918,427 @@ Proof.
 Qed.
 
 
+(** * Front checker costs *)
+
+(** Trie insertion pays only for the bits of its key. *)
+Lemma front_set_clock : forall A x (a : A) tr,
+  (PTrieCode.T_set x a tr <= 9 * N.of_nat (Pos.size_nat x + 1))%N.
+Proof.
+  intros A x a tr. pose proof (PTrieT.replace_clock_bound A x (Some a) tr).
+  time_step.
+Qed.
+
+(** Each term contributes at least one unit of text. *)
+Lemma front_term_positive : forall V (t : term V), 1 <= term_bits t.
+Proof.
+  intros V [x|v]; cbn [term_bits]; lia.
+Qed.
+
+(** Reading a term's sort pays for the bits of its variable name. *)
+Lemma front_has_clock : forall V g (t : term V) s,
+  (T_has_b g t s <= 8 * N.of_nat (term_bits t))%N.
+Proof.
+  intros V g [x|v] s; time_step;
+    unfold T_sort_eqb; time_cbn; rewrite ?PTrieT.trie_get_clock; time_cases; nia.
+Qed.
+
+(** Binding a term's sort pays for its key lookup and possible insertion. *)
+Lemma front_bind_clock : forall V g (t : term V) s,
+  (T_bind_b g t s <= 16 * N.of_nat (term_bits t))%N.
+Proof.
+  intros V g [x|v] s; time_step;
+    unfold T_sort_eqb; time_cbn; rewrite ?PTrieT.trie_get_clock;
+    try pose proof (front_set_clock sort x s g); time_cases; nia.
+Qed.
+
+(** Argument checking visits each argument once. *)
+Lemma front_has_list_clock : forall V (ts : list (term V)) ss g,
+  (T_has_list_b g ts ss <= 16 * N.of_nat (terms_bits ts + 1))%N.
+Proof.
+  intros V ts. induction ts as [|t ts IH]; intros [|s ss] g; time_step.
+  pose proof (front_has_clock V g t s). pose proof (IH ss g).
+  pose proof (front_term_positive V t).
+  unfold terms_bits in *. cbn [fold_right] in *. nia.
+Qed.
+
+(** Primitive argument checking visits each argument once. *)
+Lemma front_has_vals_clock : forall V (ts : list (term V)) g,
+  (T_has_vals_b g ts <= 16 * N.of_nat (terms_bits ts + 1))%N.
+Proof.
+  intros V ts. induction ts as [|t ts IH]; intro g; time_step.
+  pose proof (front_has_clock V g t SVal). pose proof (IH g).
+  pose proof (front_term_positive V t).
+  unfold terms_bits in *. cbn [fold_right] in *. nia.
+Qed.
+
+(** Result checking visits at most one term. *)
+Lemma front_has_result_clock : forall V g out (res : option (term V)),
+  (T_has_result_b g out res <= 16 * N.of_nat (result_bits res + 1))%N.
+Proof.
+  intros V g out [t|]; destruct out; time_step;
+    pose proof (front_has_clock V g t SId); pose proof (front_has_clock V g t SVal);
+    unfold result_bits; nia.
+Qed.
+
+(** Argument binding visits each argument once. *)
+Lemma front_bind_list_clock : forall V (ts : list (term V)) ss g,
+  (T_bind_list_b g ts ss <= 32 * N.of_nat (terms_bits ts + 1))%N.
+Proof.
+  intros V ts. induction ts as [|t ts IH]; intros [|s ss] g; time_step.
+  pose proof (front_bind_clock V g t s). pose proof (front_term_positive V t).
+  destruct (bind_b g t s) as [g'|]; time_cbn.
+  - pose proof (IH ss g'). unfold terms_bits in *. cbn [fold_right] in *. nia.
+  - unfold terms_bits in *. cbn [fold_right] in *. nia.
+Qed.
+
+(** Result binding visits at most one term. *)
+Lemma front_bind_result_clock : forall V g out (res : option (term V)),
+  (T_bind_result_b g out res <= 32 * N.of_nat (result_bits res + 1))%N.
+Proof.
+  intros V g out [t|]; destruct out; time_step;
+    pose proof (front_bind_clock V g t SId); pose proof (front_bind_clock V g t SVal);
+    unfold result_bits; nia.
+Qed.
+
+(** Building the declaration table pays for each declaration key. *)
+Lemma front_decls_clock : forall ds,
+  (T_decl_table ds <= 16 * N.of_nat
+    (S (fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds)))%N.
+Proof.
+  induction ds as [|d ds IH]; time_step.
+  pose proof (front_set_clock (list sort * output)%type (name d) (arg_sorts d, out d)
+    (decl_table ds)).
+  unfold decl_bits in *. nia.
+Qed.
+
+(** Query checking pays for the text of each visited atom. *)
+Lemma front_query_clock : forall V (q : list (atom V)) tb g,
+  (T_bind_query_b tb g q <= 128 * N.of_nat
+    (S (fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q)))%N.
+Proof.
+  intros V q. induction q as [|a q IH]; intros tb g.
+  - time_step.
+  - destruct a as [f args res | op args res].
+    + time_step. rewrite PTrieT.trie_get_clock.
+      destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
+      pose proof (front_bind_list_clock V args ss g).
+      destruct (bind_list_b g args ss) as [g1|]; time_cbn; [|nia].
+      pose proof (front_bind_result_clock V g1 out res).
+      destruct (bind_result_b g1 out res) as [g2|]; time_cbn; [|nia].
+      pose proof (IH tb g2). nia.
+    + time_step. pose proof (front_has_vals_clock V args g).
+      pose proof (front_has_clock V g res SVal). pose proof (IH tb g).
+      time_cases; time_cbn; nia.
+Qed.
+
+(** Action checking pays for each action's variable and function keys. *)
+Lemma front_actions_clock : forall V (acts : list (action V)) tb g,
+  (T_check_actions_b tb g acts <= 128 * N.of_nat
+    (S (fold_right (fun a n => (action_bits a + n)%nat) 0%nat acts)))%N.
+Proof.
+  intros V acts. induction acts as [|a acts IH]; intros tb g.
+  - time_step.
+  - destruct a as [x f args | f args res | t u | x op args].
+    + time_step. rewrite PTrieT.trie_get_clock.
+      destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
+      destruct out; time_cbn; try nia.
+      pose proof (front_has_list_clock V args ss g).
+      pose proof (front_set_clock sort x SId g).
+      pose proof (IH tb (PTrieCode.set x SId g)). nia.
+    + time_step. rewrite PTrieT.trie_get_clock.
+      destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
+      pose proof (front_has_list_clock V args ss g).
+      pose proof (front_has_result_clock V g out res). pose proof (IH tb g). nia.
+    + time_step. pose proof (front_has_clock V g t SId).
+      pose proof (front_has_clock V g u SId). pose proof (IH tb g). nia.
+    + time_step. pose proof (front_has_vals_clock V args g).
+      pose proof (front_set_clock sort x SVal g).
+      pose proof (IH tb (PTrieCode.set x SVal g)). nia.
+Qed.
+
+(** Rule checking composes its query and action passes. *)
+Lemma front_rule_clock : forall V (r : rule V) tb,
+  (T_check_rule tb r <= 512 * N.of_nat (rule_bits r))%N.
+Proof.
+  intros V [q acts] tb. pose proof (front_query_clock V q tb Empty).
+  time_step. destruct (bind_query_b tb Empty q) as [g|]; time_cbn; [|nia].
+  pose proof (front_actions_clock V acts tb g). nia.
+Qed.
+
+(** A sum's initial offset is counted exactly once. *)
+Lemma front_sum_offset : forall A (w : A -> nat) k xs,
+  fold_right (fun a n => w a + n) k xs =
+  fold_right (fun a n => w a + n) 0 xs + k.
+Proof.
+  intros A w k xs. induction xs as [|a xs IH]; cbn [fold_right]; lia.
+Qed.
+
+(** The pattern text pays at least once for each node. *)
+Lemma front_pattern_length : forall V (ns : list (pnode V)),
+  length ns <= fold_right (fun n m => pnode_size n + m) 0 ns.
+Proof.
+  intros V ns. induction ns as [|n ns IH]; cbn [length fold_right]; [lia|].
+  destruct n; cbn [pnode_size]; lia.
+Qed.
+
+(** Updating a shape walks only the prefix named by its index. *)
+Lemma front_require_clock : forall j s sh,
+  (T_front_require j s sh <= 4 * N.of_nat (j + 1))%N.
+Proof.
+  induction j as [|j IH]; intros s [|[old used] sh]; time_step.
+Qed.
+
+(** Every constructor child pays for one bound check and one prefix update. *)
+Lemma front_require_children_clock : forall i ch ss sh,
+  (T_front_require_children i ch ss sh <= 16 * N.of_nat
+    (fold_right (fun j n => (j + 1 + n)%nat) 0%nat ch + 1))%N.
+Proof.
+  intros i ch. induction ch as [|j ch IH]; intros [|s ss] sh;
+    time_unfold @T_front_require_children; time_simpl; cbn [fold_right]; try lia.
+  pose proof (Nat.T_leb_le (S j) i).
+  pose proof (front_require_clock j s sh).
+  destruct (Nat.leb (S j) i); time_simpl; [|nia].
+  destruct (front_require j s sh) as [sh'|]; time_simpl; [|nia].
+  pose proof (IH ss sh'). nia.
+Qed.
+
+(** The constructor pass pays for names and the written child indices. *)
+Lemma front_require_nodes_clock : forall V tb i (ns : list (pnode V)) sh,
+  (T_front_require_nodes tb i ns sh <= 32 * N.of_nat
+    (fold_right (fun n m => (pnode_size n + m)%nat) 0%nat ns + 1))%N.
+Proof.
+  intros V tb i ns. revert i. induction ns as [|n ns IH]; intros i sh.
+  - time_step.
+  - destruct n as [h|f ch|v].
+    + time_step.
+    + time_step. rewrite PTrieT.trie_get_clock.
+      destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
+      destruct out; time_cbn; try nia.
+      pose proof (front_require_children_clock i ch ss sh).
+      destruct (front_require_children i ch ss sh) as [sh'|]; time_cbn; [|nia].
+      pose proof (IH (S i) sh'). nia.
+    + time_step.
+Qed.
+
+(** The hole pass pays for each hole key or fixed node sort once. *)
+Lemma front_holes_clock : forall V bind (ns : list (pnode V)) sh g,
+  (T_front_holes bind ns sh g <= 64 * N.of_nat
+    (fold_right (fun n m => (pnode_size n + m)%nat) 0%nat ns + 1))%N.
+Proof.
+  intros V bind ns. induction ns as [|n ns IH]; intros sh g.
+  - time_step.
+  - destruct sh as [|[old used] sh]; [time_step|].
+    destruct old as [s|]; [|time_step]. destruct used; [|time_step].
+    destruct n as [h|f ch|v].
+    + destruct bind.
+      * time_unfold @T_front_holes; time_simpl; cbn [fold_right pnode_size].
+        pose proof (front_bind_clock V g (Var h) s) as Hbind.
+        cbn [term_bits] in Hbind.
+        destruct (@bind_b V g (Var h) s) as [g'|]; time_simpl; [|nia].
+        pose proof (IH sh g'). nia.
+      * time_unfold @T_front_holes; time_simpl; cbn [fold_right pnode_size].
+        pose proof (front_has_clock V g (Var h) s) as Hhas.
+        cbn [term_bits] in Hhas. pose proof (IH sh g).
+        destruct (@has_b V g (Var h) s); time_simpl; nia.
+    + time_unfold @T_front_holes; time_simpl; cbn [fold_right pnode_size].
+      pose proof (IH sh g). destruct (sort_eqb s SId); time_simpl; nia.
+    + time_unfold @T_front_holes; time_simpl; cbn [fold_right pnode_size].
+      pose proof (IH sh g). destruct (sort_eqb s SVal); time_simpl; nia.
+Qed.
+
+(** Initializing one shape per node is linear in the number of nodes. *)
+Lemma front_initial_clock : forall V (ns : list (pnode V)),
+  (ListDef.T_map front_initial (fun n => T_front_initial n) ns <=
+    3 * N.of_nat (length ns + 1))%N.
+Proof.
+  intros V ns.
+  pose proof (ListDef.T_map_le (@front_initial V) (fun n => T_front_initial n)
+    1%N ns ltac:(intro n; unfold T_front_initial; lia)). nia.
+Qed.
+
+(** Pattern checking pays for its node text, root and child indices. *)
+Lemma front_pattern_clock : forall V bind tb g (p : fpat V),
+  (T_front_pattern bind tb g p <= 128 * N.of_nat (pat_size p + 1))%N.
+Proof.
+  intros V bind tb g [ns r].
+  pose proof (front_pattern_length V ns).
+  pose proof (front_initial_clock V ns) as Hinitial.
+  unfold T_front_initial in Hinitial.
+  pose proof (front_require_clock r SId (map front_initial ns)).
+  time_unfold @T_front_pattern; time_simpl.
+  unfold pat_size. cbn [nodes root]. rewrite front_sum_offset.
+  pose proof (Datatypes.T_length_le ns).
+  pose proof (Nat.T_eqb_le (S r) (length ns)).
+  destruct (Nat.eqb (S r) (length ns)); time_simpl; [|nia].
+  destruct (front_require r SId (map front_initial ns)) as [sh|]; time_simpl; [|nia].
+  pose proof (front_require_nodes_clock V tb 0 ns sh).
+  destruct (front_require_nodes tb 0 ns sh) as [sh'|]; time_simpl; [|nia].
+  pose proof (front_holes_clock V bind ns sh' g). nia.
+Qed.
+
+(** Rewrite checking pays for both patterns and the condition text. *)
+Lemma front_rewrite_clock : forall V tb (rw : rewrite V),
+  (T_front_rewrite tb rw <= 512 * N.of_nat (rewrite_size rw + 1))%N.
+Proof.
+  intros V tb [[ns r] rhs_pat conditions].
+  pose proof (front_pattern_clock V true tb Empty (FPat V ns r)).
+  assert (Hroot : r + 1 <= pat_size (FPat V ns r)).
+  { unfold pat_size. cbn [nodes root]. rewrite front_sum_offset. lia. }
+  time_unfold @T_front_rewrite; time_simpl.
+  unfold rewrite_size. cbn [lhs rhs cond].
+  pose proof (List.T_nth_error_le ns r).
+  destruct (nth_error ns r) as [n|]; time_simpl; [|nia].
+  destruct n as [h|f ch|v]; time_simpl; try nia.
+  destruct (front_pattern true tb Empty (FPat V ns r)) as [g0|]; time_simpl; [|nia].
+  pose proof (front_query_clock V conditions tb g0).
+  destruct (bind_query_b tb g0 conditions) as [g|]; time_simpl; [|nia].
+  pose proof (front_pattern_clock V false tb g rhs_pat). nia.
+Qed.
+
+(** Each action contributes at least one unit of text. *)
+Lemma front_action_positive : forall V (a : action V), 1 <= action_bits a.
+Proof.
+  intros V a. destruct a; cbn [action_bits]; lia.
+Qed.
+
+(** Checking an analysis action reads at most its function name. *)
+Lemma front_analysis_action_clock : forall V tb (a : action V),
+  (T_front_analysis_action tb a <= 8 * N.of_nat (action_bits a))%N.
+Proof.
+  intros V tb a. destruct a; time_step; rewrite ?PTrieT.trie_get_clock; nia.
+Qed.
+
+(** The analysis restriction pass visits each action once. *)
+Lemma front_analysis_actions_clock : forall V tb (acts : list (action V)),
+  (List.T_forallb (front_analysis_action tb) (fun a => T_front_analysis_action tb a)
+    acts <= 16 * N.of_nat
+      (fold_right (fun a n => (action_bits a + n)%nat) 0%nat acts + 1))%N.
+Proof.
+  intros V tb acts. induction acts as [|a acts IH].
+  - time_step.
+  - time_unfold @List.T_forallb; time_simpl; cbn [fold_right].
+    pose proof (front_analysis_action_clock V tb a).
+    pose proof (front_action_positive V a). nia.
+Qed.
+
+(** Analysis checking composes ordinary typing with the allowed-action pass. *)
+Lemma front_analysis_clock : forall V tb (r : rule V),
+  (T_front_analysis tb r <= 1024 * N.of_nat (rule_bits r))%N.
+Proof.
+  intros V tb [q acts].
+  pose proof (front_rule_clock V (Rule V q acts) tb).
+  pose proof (front_analysis_actions_clock V tb acts).
+  time_unfold @T_front_analysis; time_simpl.
+  unfold rule_bits in *. cbn [query actions] in *. nia.
+Qed.
+
+(** Expression child checking pays for its bound and prefix lookup. *)
+Lemma front_expr_children_clock : forall V (ns : list (enode V)) i ch ss,
+  (T_front_expr_children ns i ch ss <= 16 * N.of_nat
+    (fold_right (fun j n => (j + 1 + n)%nat) 0%nat ch + 1))%N.
+Proof.
+  intros V ns i ch. induction ch as [|j ch IH]; intros [|s ss];
+    time_unfold @T_front_expr_children; time_simpl; cbn [fold_right]; try lia.
+  pose proof (Nat.T_leb_le (S j) i).
+  pose proof (List.T_nth_error_le ns j).
+  pose proof (IH ss).
+  destruct (nth_error ns j) as [n|]; time_simpl; [|nia].
+  destruct n; time_simpl; nia.
+Qed.
+
+(** Expression node checking reads each constructor name and its child indices. *)
+Lemma front_expr_nodes_clock : forall V tb (ns : list (enode V)) i rest,
+  (T_front_expr_nodes tb ns i rest <= 32 * N.of_nat
+    (fold_right (fun n m => (enode_size n + m)%nat) 0%nat rest + 1))%N.
+Proof.
+  intros V tb ns i rest. revert i. induction rest as [|n rest IH]; intro i.
+  - time_step.
+  - destruct n as [f ch|v].
+    + time_unfold @T_front_expr_nodes; time_simpl; cbn [fold_right enode_size].
+      rewrite PTrieT.trie_get_clock.
+      destruct (trie_get f tb) as [[ss out]|]; time_simpl; [|nia].
+      destruct out; time_simpl; try nia.
+      pose proof (front_expr_children_clock V ns i ch ss).
+      pose proof (IH (S i)). nia.
+    + time_step.
+Qed.
+
+(** Expression checking includes its root lookup in the input-size budget. *)
+Lemma front_expr_clock : forall V tb (e : fexpr V),
+  (T_front_expr tb e <= 64 * N.of_nat (expr_size e + 1))%N.
+Proof.
+  intros V tb [ns r]. time_unfold @T_front_expr; time_simpl.
+  unfold expr_size. cbn [expr_nodes expr_root]. rewrite front_sum_offset.
+  pose proof (List.T_nth_error_le ns r).
+  destruct (nth_error ns r) as [n|]; time_simpl; [|nia].
+  destruct n as [f ch|v]; time_simpl; [|nia].
+  pose proof (front_expr_nodes_clock V tb ns 0 ns). nia.
+Qed.
+
+(** The root and both pattern headers make rewrite size positive. *)
+Lemma front_rewrite_positive : forall V (rw : rewrite V), 1 <= rewrite_size rw.
+Proof.
+  intros V [[ln lr] [rn rr] conditions]. unfold rewrite_size, pat_size.
+  cbn [lhs rhs cond nodes root].
+  rewrite (front_sum_offset (pnode V) pnode_size (lr + 1) ln),
+    (front_sum_offset (pnode V) pnode_size (rr + 1) rn). lia.
+Qed.
+
+(** Every expression includes its root index. *)
+Lemma front_expr_positive : forall V (e : fexpr V), 1 <= expr_size e.
+Proof.
+  intros V [ns r]. unfold expr_size. cbn [expr_nodes expr_root].
+  rewrite front_sum_offset. lia.
+Qed.
+
+(** First-error traversal adds bounded overhead to the checks it visits. *)
+Lemma front_first_bad_clock : forall A (check : A -> bool) (T_check : A -> N)
+    (weight : A -> nat) k xs,
+  (forall x, 1 <= weight x) ->
+  (forall x, (T_check x <= k * N.of_nat (weight x))%N) ->
+  (T_front_first_bad check T_check xs <= (k + 4) * N.of_nat
+    (fold_right (fun x n => (weight x + n)%nat) 0%nat xs + 1))%N.
+Proof.
+  intros A check T_check weight k xs Hpositive Hcheck.
+  induction xs as [|x xs IH]; time_unfold @T_front_first_bad; time_simpl;
+    cbn [fold_right]; [nia|].
+  pose proof (Hpositive x). pose proof (Hcheck x).
+  destruct (check x); time_simpl; [|nia].
+  destruct (front_first_bad check xs); time_simpl; nia.
+Qed.
+
+(** The whole front-end checker is linear in the declared input text measure. *)
+Lemma front_check_clock : forall V ds (rws : list (rewrite V)) ans es,
+  (T_front_check ds rws ans es <= 4096 * N.of_nat (front_size ds rws ans es + 1))%N.
+Proof.
+  intros V ds rws ans es.
+  pose proof (front_decls_clock ds) as Hdecls.
+  assert (Hrewrite : forall rw : rewrite V,
+    (T_front_rewrite (decl_table ds) rw <= 1024 * N.of_nat (rewrite_size rw))%N).
+  { intro rw. pose proof (front_rewrite_clock V (decl_table ds) rw).
+    pose proof (front_rewrite_positive V rw). nia. }
+  pose proof (front_first_bad_clock (rewrite V) (front_rewrite (decl_table ds))
+    (fun rw => T_front_rewrite (decl_table ds) rw) rewrite_size 1024%N rws
+    (front_rewrite_positive V) Hrewrite) as Hrewrites.
+  assert (Hrule_positive : forall r : rule V, 1 <= rule_bits r).
+  { intro r. unfold rule_bits. lia. }
+  pose proof (front_first_bad_clock (rule V) (front_analysis (decl_table ds))
+    (fun r => T_front_analysis (decl_table ds) r) rule_bits 1024%N ans
+    Hrule_positive (front_analysis_clock V (decl_table ds))) as Hanalyses.
+  assert (Hexpr : forall e : fexpr V,
+    (T_front_expr (decl_table ds) e <= 128 * N.of_nat (expr_size e))%N).
+  { intro e. pose proof (front_expr_clock V (decl_table ds) e).
+    pose proof (front_expr_positive V e). nia. }
+  pose proof (front_first_bad_clock (fexpr V) (front_expr (decl_table ds))
+    (fun e => T_front_expr (decl_table ds) e) expr_size 128%N es
+    (front_expr_positive V) Hexpr) as Hexprs.
+  time_unfold @T_front_check; time_simpl. unfold front_size.
+  destruct (front_first_bad (front_rewrite (decl_table ds)) rws); time_simpl; [nia|].
+  destruct (front_first_bad (front_analysis (decl_table ds)) ans); time_simpl; [nia|].
+  destruct (front_first_bad (front_expr (decl_table ds)) es); time_simpl; nia.
+Qed.
+
+
 (** The first-error traversal succeeds exactly when every item passes. *)
 Lemma front_first_bad_none : forall A (check : A -> bool) xs,
   front_first_bad check xs = None <-> Forall (fun x => check x = true) xs.
@@ -2670,15 +3091,60 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
   TimeFun add_expr.
   TimeFun add_inputs.
   TimeFun saturate.
-  Definition c_sat : N := 1. (* STUB *)
+  Definition c_sat : N := (2 * 4096 + 4 * (8 * 1024) * (D.c_db + 1))%N.
   Fixpoint T_inputs (es : list (fexpr V.t)) (db : D.t) : N :=
     match es with
     | [] => 1%N
     | e :: rest => (T_add_expr e db + 1 + T_inputs rest (snd (add_expr e db)))%N
     end.
+  (** Adding a node pays for one database make and a fixed wrapper cost. *)
+  Lemma T_add_node_overhead : forall node cells db,
+    (T_add_node node cells db <= match node with
+     | EApp f _ => D.T_make f cells db + 16
+     | ELit _ => 16
+     end)%N.
+  Proof.
+    intros [f children | v] cells db; time_unfold T_add_node; time_cbn; lia.
+  Qed.
+
+  (** The paired input fold pays a fixed factor of the specified input cost. *)
+  Lemma T_add_inputs_overhead : forall es db, (T_add_inputs es db <= 16 * T_inputs es db)%N.
+  Proof.
+    induction es as [| e rest IH]; intro db.
+    - time_unfold T_add_inputs. unfold T_inputs. time_cbn. lia.
+    - time_unfold T_add_inputs. cbn [T_inputs].
+      destruct (add_expr e db) as [i next] eqn:Hexpr.
+      specialize (IH next). destruct (add_inputs rest next) as [cs final] eqn:Hrest.
+      time_cbn. nia.
+  Qed.
+
+  (** The saturation wrapper pays for each invoked phase and a fixed amount of control work. *)
+  Lemma T_saturate_overhead : forall ds rws ans lim es,
+    let p := C.compile ds rws ans in
+    let cp := E.plan p in
+    (T_saturate ds rws ans lim es <= T_check_front ds rws ans es + 16 +
+      match check_front ds rws ans es with
+      | Some _ => 0
+      | None => C.T_compile ds rws ans + E.T_plan p + E.T_load p cp +
+          T_add_inputs es (E.load p cp) +
+          E.T_run p cp lim (snd (add_inputs es (E.load p cp)))
+      end)%N.
+  Proof.
+    intros ds rws ans lim es. cbv zeta. time_unfold T_saturate.
+    destruct (check_front ds rws ans es) as [err |] eqn:Hcheck; [time_cbn; lia |].
+    destruct (add_inputs es (E.load (C.compile ds rws ans)
+      (E.plan (C.compile ds rws ans)))) as [cs initial] eqn:Hinputs.
+    destruct (E.run (C.compile ds rws ans) (E.plan (C.compile ds rws ans)) lim initial)
+      as [st final] eqn:Hrun.
+    time_cbn. lia.
+  Qed.
+
   Lemma T_check_front_le : forall ds rws ans es,
     (T_check_front ds rws ans es <= c_sat * N.of_nat (front_size ds rws ans es + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds rws ans es. pose proof (front_check_clock V.t ds rws ans es).
+    time_unfold @T_check_front; time_simpl. unfold c_sat. nia.
+  Qed.
 
   Lemma T_add_expr_amort : forall B U ds e db, D.wf db -> expr_ok ds db e ->
     (D.ids (snd (add_expr e db)) <= B)%N -> D.unit (snd (add_expr e db)) <= U ->
@@ -2698,9 +3164,17 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
           c_sat * T_inputs es (E.load p cp) +
           E.T_run p cp lim (inputs_db es (E.load p cp))
       end)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds rws ans lim es. cbv zeta.
+    pose proof (T_saturate_overhead ds rws ans lim es) as Hcost. cbv zeta in Hcost.
+    destruct (check_front ds rws ans es) as [err |] eqn:Hcheck.
+    - unfold c_sat. nia.
+    - pose proof (T_add_inputs_overhead es
+        (E.load (C.compile ds rws ans) (E.plan (C.compile ds rws ans)))) as Hinputs.
+      rewrite add_inputs_db in Hcost. unfold c_sat. nia.
+  Qed.
 
-  Definition k_sat : N := 1. (* STUB *)
+  Definition k_sat : N := (8 * 1024 * (D.c_db + 1))%N.
   Definition node_args (n : enode V.t) (cs : list (cell V.t)) : list (cell V.t) :=
     match n with
     | EApp _ ch => map (fun j => nth j cs (Id 1%positive)) ch
@@ -2858,14 +3332,19 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     snd (add_inputs es db) = inputs_db es db /\
     length (fst (add_inputs es db)) = length es /\
     (T_add_inputs es db <= k_sat * T_inputs es db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros es db. split; [apply add_inputs_db |]. split; [apply add_inputs_length |].
+    pose proof (T_add_inputs_overhead es db) as Hcost. unfold k_sat. nia.
+  Qed.
 
   Lemma F8_inputs_represented : forall ds es db n e c t, D.wf db ->
     view_sorted (lookup_sorts ds) (D.view db) -> Forall (expr_ok ds db) es ->
     nth_error es n = Some e -> nth_error (fst (add_inputs es db)) n = Some c ->
     unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->
     represents (D.view (snd (add_inputs es db))) (Id c) t.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact inputs_represented.
+  Qed.
 
   Lemma F9_canonical_view : forall db, D.wf db -> D.canonical db ->
     C.canonical_view (D.view db).
@@ -2883,10 +3362,16 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
           T_add_inputs es (E.load p cp) +
           E.T_run p cp lim (snd (add_inputs es (E.load p cp)))
       end)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds rws ans lim es. cbv zeta.
+    pose proof (T_saturate_overhead ds rws ans lim es) as Hcost. cbv zeta in Hcost.
+    unfold k_sat. nia.
+  Qed.
 
   Lemma T2_k_sat : (k_sat <= c_sat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold k_sat, c_sat. nia.
+  Qed.
 
   (** Adding inputs pays for their nodes at the final unit and identifier budget. *)
   Lemma T_inputs_le : forall B U ds rws ans es, front_ok ds rws ans es ->
