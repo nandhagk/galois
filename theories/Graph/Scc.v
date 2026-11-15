@@ -3814,6 +3814,138 @@ Proof.
   all: now apply lower_frontier.
 Qed.
 
+Definition prefix_state es :=
+  fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial.
+
+Lemma prefix_state_snoc es e :
+  prefix_state (es ++ [e]) =
+    visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge (prefix_state es) e.
+Proof. unfold prefix_state, fold_events. rewrite fold_left_app. reflexivity. Qed.
+
+Lemma prefix_frames g prefix suffix : scc_trace g = prefix ++ suffix ->
+  tarjan_frames_embedded (prefix_state prefix) /\
+    trace_stack (tarjan_frames (prefix_state prefix)) suffix [].
+Proof.
+  intro Htrace. pose proof (scc_trace_nested g) as Hnested. rewrite Htrace in Hnested.
+  destruct (tarjan_stack_prefix [] prefix suffix [] Hnested) as [middle [Hfirst Hlast]].
+  destruct (tarjan_embeds_fold [] prefix middle Hfirst tarjan_initial eq_refl
+    (tarjan_embeds_nil [])) as [Hframes Hembed].
+  split; [exact Hembed|]. unfold prefix_state. now rewrite Hframes.
+Qed.
+
+Lemma prefix_pending_unique g prefix suffix : scc_trace g = prefix ++ suffix ->
+  NoDup (tarjan_pending (prefix_state prefix)).
+Proof.
+  intro Htrace. pose proof (scc_trace_prefix_unique g prefix suffix Htrace) as Hunique.
+  pose proof (Permutation_NoDup (Permutation_sym (tarjan_bag_inventory prefix)) Hunique) as Hbag.
+  unfold tarjan_bag in Hbag. now apply NoDup_app_remove_r in Hbag.
+Qed.
+
+Lemma prefix_pending_entered prefix v :
+  In v (tarjan_pending (prefix_state prefix)) -> In v (entered prefix).
+Proof.
+  intro Hin. eapply Permutation_in; [exact (tarjan_bag_inventory prefix)|].
+  unfold tarjan_bag. apply in_or_app. now left.
+Qed.
+
+Lemma prefix_fresh g prefix v suffix : scc_trace g = prefix ++ Enter v :: suffix ->
+  ~ In v (tarjan_pending (prefix_state prefix)).
+Proof.
+  intros Htrace Hpending. apply prefix_pending_entered in Hpending.
+  pose proof (scc_trace_unique g) as Hunique.
+  rewrite Htrace, search_entered_app in Hunique. cbn [entered] in Hunique.
+  exact (nodup_disjoint (entered prefix) (v :: entered suffix) Hunique v Hpending
+    (or_introl eq_refl)).
+Qed.
+
+Lemma pending_discovered g s :
+  tarjan_pending_domains s -> tarjan_low_witness g s ->
+  forall w, In w (tarjan_pending s) -> exists d, trie_get w (tarjan_disc s) = Some d.
+Proof.
+  intros Hdomains Hlinks w Hw.
+  destruct (proj2 (proj2 Hdomains w) Hw) as [low Hlow].
+  destruct (Hlinks w low Hlow) as [disc [witness [Hdisc _]]]. now exists disc.
+Qed.
+
+Lemma leave_shape initial v suffix final : trace_stack initial (Leave v :: suffix) final ->
+  exists rest, initial = v :: rest /\ trace_stack rest suffix final.
+Proof. intro Hstack. inversion Hstack; subst; eauto. Qed.
+
+Lemma edge_shape initial kind u v suffix final :
+  trace_stack initial (Edge kind u v :: suffix) final -> exists rest, initial = u :: rest.
+Proof. intro Hstack. inversion Hstack; subst; eauto. Qed.
+
+Lemma prefix_frontier g prefix suffix : scc_trace g = prefix ++ suffix ->
+  frontier (tarjan_frames (prefix_state prefix)) (prefix_state prefix).
+Proof.
+  revert suffix. induction prefix as [|e prefix IH] using rev_ind; intros suffix Htrace.
+  - apply initial_frontier.
+  - assert (Hprior : scc_trace g = prefix ++ e :: suffix).
+    { rewrite Htrace. now rewrite <- app_assoc. }
+    specialize (IH (e :: suffix) Hprior).
+    destruct (prefix_frames g prefix (e :: suffix) Hprior) as [Hembed Hstack].
+    destruct (scc_prefix_semantic g prefix (e :: suffix) Hprior) as
+      [Hdomains Horder Hembedded Hvalues Hlinks Hclosed Hpaths Htree Houtput].
+    clear Hembedded Hclosed Hpaths Htree Houtput.
+    rewrite !prefix_state_snoc. destruct e as [v|v|kind u v]; cbn [visit_event].
+    + change (frontier (v :: tarjan_frames (prefix_state prefix))
+        (TarjanVisitor.enter v (prefix_state prefix))).
+      apply enter_frontier; [exact Hembed|exact Hvalues|exact IH|].
+      now apply (prefix_fresh g prefix v suffix).
+    + destruct (leave_shape _ v suffix [] Hstack) as [frames [Hframes Htail]].
+      pose proof (proj2 (proj2 (tarjan_event_metadata (Leave v) (prefix_state prefix))))
+        as Hframe_step.
+      cbn [visit_event] in Hframe_step. rewrite Hframe_step, Hframes.
+      cbn beta iota zeta.
+      unfold tarjan_frames_embedded in Hembed. rewrite Hframes in Hembed, IH.
+      apply leave_frontier.
+      * exact Hframes.
+      * exact Hembed.
+      * exact Horder.
+      * now apply (prefix_pending_unique g prefix (Leave v :: suffix)).
+      * exact Hdomains.
+      * eapply pending_discovered; eassumption.
+      * exact IH.
+    + destruct (edge_shape _ kind u v suffix [] Hstack) as [frames Hframes].
+      pose proof (proj2 (proj2 (tarjan_event_metadata (Edge kind u v) (prefix_state prefix))))
+        as Hframe_step.
+      cbn [visit_event] in Hframe_step. rewrite Hframe_step, Hframes.
+      unfold tarjan_frames_embedded in Hembed. rewrite Hframes in Hembed, IH.
+      now apply edge_frontier.
+Qed.
+
+(** A future source is still open or must be entered again in that future trace. *)
+Lemma stack_future_edge initial es final : trace_stack initial es final ->
+  forall kind u v, In (Edge kind u v) es -> In u initial \/ In (Enter u) es.
+Proof.
+  intro Hstack. induction Hstack; intros edge_kind source target Hin; cbn [In] in Hin |- *.
+  - contradiction.
+  - destruct Hin as [Hfalse|Hin]; [discriminate|].
+    destruct (IHHstack _ _ _ Hin) as [[Heq|Hsource]|Henter].
+    + subst source. right. now left.
+    + now left.
+    + right. now right.
+  - destruct Hin as [Hfalse|Hin]; [discriminate|].
+    destruct (IHHstack _ _ _ Hin) as [Hsource|Henter].
+    + left. now right.
+    + right. now right.
+  - destruct Hin as [Heq|Hin].
+    + injection Heq as Hkind Hsource Htarget. subst source. left. now left.
+    + destruct (IHHstack _ _ _ Hin) as [Hsource|Henter]; [now left|right; now right].
+Qed.
+
+Lemma future_edge_excluded prefix suffix open source :
+  trace_stack open suffix [] -> NoDup (entered prefix ++ entered suffix) ->
+  In source (entered prefix) -> ~ In source open ->
+  forall kind target, ~ In (Edge kind source target) suffix.
+Proof.
+  intros Hstack Hunique Hentered Hclosed kind target Hin.
+  destruct (stack_future_edge _ _ _ Hstack kind source target Hin) as [Hsource|Henter];
+    [contradiction|].
+  apply search_entered_member in Henter.
+  exact (nodup_disjoint (entered prefix) (entered suffix) Hunique source Hentered Henter).
+Qed.
+
 End TarjanFrontierFacts.
 
 
