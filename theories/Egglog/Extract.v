@@ -4356,6 +4356,320 @@ Module SearchFacts (V : VALUE) (C : COST V) (Q : PQ).
 
 End SearchFacts.
 
+(** A ghost sum charges each finite-map value independently of its lookup key. *)
+Definition search_entries_weight {A} (weight : A -> nat) (entries : list (positive * A)) :=
+  fold_right (fun entry total => weight (snd entry) + total) 0 entries.
+
+Definition search_trie_weight {A} (weight : A -> nat) (m : ptrie A) :=
+  search_entries_weight weight (PTrieCode.elements m).
+
+Lemma search_entries_weight_app : forall A weight (left right : list (positive * A)),
+  search_entries_weight weight (left ++ right) =
+    search_entries_weight weight left + search_entries_weight weight right.
+Proof.
+  intros A weight left right. unfold search_entries_weight.
+  induction left as [|[i a] left IH].
+  - reflexivity.
+  - cbn [fold_right app snd]. rewrite IH. lia.
+Qed.
+
+Lemma search_entries_weight_lift : forall A weight (bit : positive -> positive)
+    (entries : list (positive * A)),
+  search_entries_weight weight (map (fun entry => (bit (fst entry), snd entry)) entries) =
+    search_entries_weight weight entries.
+Proof.
+  intros A weight bit entries. unfold search_entries_weight.
+  induction entries as [|[i a] entries IH].
+  - reflexivity.
+  - cbn [fold_right map fst snd]. now rewrite IH.
+Qed.
+
+(** A trie node carries exactly the sum of its two subtries and optional root value. *)
+Lemma search_trie_weight_node : forall A weight (left right : ptrie A) value,
+  search_trie_weight weight (PTrieCode.node left value right) =
+    search_trie_weight weight left +
+    (match value with Some a => weight a | None => 0 end) +
+    search_trie_weight weight right.
+Proof.
+  intros A weight left right value. unfold search_trie_weight.
+  rewrite PTrie.elements_node, !search_entries_weight_app, !search_entries_weight_lift.
+  destruct value; cbn [search_entries_weight fold_right snd]; lia.
+Qed.
+
+(** Replacing a binding exchanges exactly the old and new value charges. *)
+Lemma search_trie_weight_replace : forall A weight p value (m : ptrie A),
+  search_trie_weight weight (PTrieCode.replace p value m) +
+    (match PTrieCode.get p m with Some a => weight a | None => 0 end) =
+  search_trie_weight weight m + (match value with Some a => weight a | None => 0 end).
+Proof.
+  intros A weight p. induction p; intros value m.
+  all: assert (Hweight : search_trie_weight weight m =
+    search_trie_weight weight (PTrieCode.left m) +
+    (match PTrieCode.value m with Some a => weight a | None => 0 end) +
+    search_trie_weight weight (PTrieCode.right m)).
+  all: try (rewrite <- (PTrieT.F1_node A m) at 1; apply search_trie_weight_node).
+  all: cbn [PTrieCode.replace];
+    rewrite search_trie_weight_node, Hweight, PTrie.get_equation.
+  - specialize (IHp value (PTrieCode.right m)). lia.
+  - specialize (IHp value (PTrieCode.left m)). lia.
+  - lia.
+Qed.
+
+Lemma search_trie_weight_remove : forall A weight p (m : ptrie A),
+  search_trie_weight weight (PTrieCode.remove p m) +
+    (match trie_get p m with Some a => weight a | None => 0 end) =
+  search_trie_weight weight m.
+Proof.
+  intros A weight p m. pose proof (search_trie_weight_replace A weight p None m) as Hweight.
+  unfold PTrieCode.remove. cbn beta iota zeta in Hweight.
+  unfold PTrieCode.get in Hweight. lia.
+Qed.
+
+Module SearchResources (V : VALUE) (C : COST V) (Q : PQ).
+  Module Facts := SearchFacts V C Q.
+  Import Facts.
+
+  (** Each parked occurrence and each pending heap entry owns one source-row token. *)
+  Definition search_waiter_count (waiters : ptrie (list (extraction_frame V.t))) :=
+    search_trie_weight (@length (extraction_frame V.t)) waiters.
+
+  Definition search_load {DB} (s : extraction_state V.t DB Q.t) :=
+    search_waiter_count (search_waiters s) + Q.pending (search_queue s).
+
+  Lemma search_park_load : forall DB i frame (s : extraction_state V.t DB Q.t),
+    search_load (search_park i frame s) = S (search_load s).
+  Proof.
+    intros DB i frame s. unfold search_load, search_park, search_waiter_count.
+    cbn [search_restate search_waiters search_queue].
+    pose proof (search_trie_weight_replace _ (@length (extraction_frame V.t)) i
+      (Some (frame :: match trie_get i (search_waiters s) with
+        | Some frames => frames | None => [] end)) (search_waiters s)) as Hweight.
+    unfold PTrieCode.set. unfold PTrieCode.get in Hweight.
+    destruct (trie_get i (search_waiters s)); cbn [length] in Hweight; lia.
+  Qed.
+
+  (** A candidate offer creates at most one pending heap entry and no parked frame. *)
+  Lemma search_offer_load : forall DB i n row (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> search_load (search_offer i n row s) <= S (search_load s).
+  Proof.
+    intros DB i n row s Hwf. unfold search_offer.
+    destruct (trie_get i (search_candidates s)) as [[old choice]|];
+      [destruct (N.ltb n old)|]; unfold search_load;
+      cbn [search_restate search_waiters search_queue];
+      try pose proof (Q.pending_push n i (search_queue s) Hwf); lia.
+  Qed.
+
+  Lemma search_offer_wf : forall DB i n row (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> Q.wf (search_queue (search_offer i n row s)).
+  Proof.
+    intros DB i n row s Hwf. unfold search_offer.
+    destruct (trie_get i (search_candidates s)) as [[old choice]|];
+      [destruct (N.ltb n old)|]; cbn [search_restate search_queue];
+      try apply Q.wf_push; exact Hwf.
+  Qed.
+
+  Lemma search_resume_wf : forall DB frame (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> Q.wf (search_queue (search_resume frame s)).
+  Proof.
+    intros DB [[[f k] i] todo acc] s Hwf. unfold search_resume.
+    cbn [frame_row frame_rest frame_costs].
+    destruct (trie_get i (search_final_costs s)); [exact Hwf|].
+    destruct (search_scan (search_final_costs s) acc todo) as [[child [rest costs]]|costs].
+    - exact Hwf.
+    - now apply search_offer_wf.
+  Qed.
+
+  (** Registering one active frame consumes at most its one source-row token. *)
+  Lemma search_resume_load : forall DB frame (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> search_load (search_resume frame s) <= S (search_load s).
+  Proof.
+    intros DB [[[f k] i] todo acc] s Hwf. unfold search_resume.
+    cbn [frame_row frame_rest frame_costs].
+    destruct (trie_get i (search_final_costs s)); [lia|].
+    destruct (search_scan (search_final_costs s) acc todo) as [[child [rest costs]]|costs].
+    - rewrite search_park_load. lia.
+    - now apply search_offer_load.
+  Qed.
+
+  (** Registering a list preserves the total of active and stored source-row tokens. *)
+  Lemma search_resume_list_load : forall DB frames (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) ->
+    search_load (search_resume_list frames s) <= length frames + search_load s.
+  Proof.
+    intros DB frames. induction frames as [|frame frames IH]; intros s Hwf.
+    - cbn [search_resume_list length]. lia.
+    - pose proof (search_resume_load DB frame s Hwf) as Hhead.
+      pose proof (search_resume_wf DB frame s Hwf) as Hnext.
+      specialize (IH (search_resume frame s) Hnext).
+      cbn [search_resume_list length]. lia.
+  Qed.
+
+  Lemma search_initial_load : forall DB (db : DB) rs,
+    search_load (search_initial db rs) <= length rs.
+  Proof.
+    intros DB db rs. unfold search_initial.
+    pose proof (search_resume_list_load DB (map search_new_frame rs)
+      (search_start db rs) Q.wf_empty) as Hload.
+    rewrite length_map in Hload.
+    assert (Hstart : search_load (search_start db rs) = 0).
+    { unfold search_load, search_waiter_count, search_trie_weight, search_entries_weight,
+        search_start.
+      cbn [search_waiters search_queue PTrieCode.elements PTrieCode.fold PTrieCode.fold_path
+        rev_append fold_right].
+      now rewrite Q.pending_empty. }
+    rewrite Hstart in Hload. lia.
+  Qed.
+
+  (** A successful pop releases one token before the detached frames are registered again. *)
+  Lemma search_finish_load : forall DB i n row queue (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> Q.pop (search_queue s) = Some (n, i, queue) ->
+    search_load (search_finish i n row queue s) < search_load s.
+  Proof.
+    intros DB i n row queue s Hwf Hpop.
+    pose proof (Q.wf_pop (search_queue s) n i queue Hwf Hpop) as Hnext.
+    pose proof (Q.pending_pop (search_queue s) n i queue Hwf Hpop) as Hpending.
+    pose proof (search_trie_weight_remove _ (@length (extraction_frame V.t)) i
+      (search_waiters s)) as Hweight.
+    unfold search_finish.
+    pose proof (search_resume_list_load DB
+      (match trie_get i (search_waiters s) with Some frames => frames | None => [] end)
+      (search_restate s (PTrieCode.set i n (search_final_costs s))
+        (PTrieCode.remove i (search_candidates s)) (PTrieCode.remove i (search_waiters s))
+        queue ((i, (n, row)) :: search_finalised s)) Hnext) as Hload.
+    unfold search_load, search_waiter_count in Hload |- *.
+    cbn [search_restate search_waiters search_queue] in Hload.
+    destruct (trie_get i (search_waiters s)); cbn [length] in Hload, Hweight; lia.
+  Qed.
+
+  Lemma search_step_load : forall DB rs (s next : extraction_state V.t DB Q.t),
+    search_invariant rs s -> search_step s = inl next -> search_load next < search_load s.
+  Proof.
+    intros DB rs s next Hinv Hstep.
+    destruct (search_step_cases DB rs s next Hinv Hstep)
+      as [i [n [f [k [queue [Hpop [Hcandidate ->]]]]]]].
+    destruct Hinv as [Hcandidates [Hwaiters [[Hwf Hqueue] Htracking]]].
+    now apply search_finish_load.
+  Qed.
+  (** Every ready original row fits one fixed heap entry-width envelope. *)
+  Definition search_rows_width (rs : list (search_row V.t)) (costs : ptrie N) (w : nat) :=
+    forall f k i, In (f, k, i) rs -> Semantics.search_known costs k ->
+      Pos.size_nat i + N.size_nat (C.fn_cost f (dag_cost_cells C.val_cost costs k)) <= w.
+
+  Lemma search_offer_fits : forall DB w i n row (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> Q.fits w (search_queue s) ->
+    Pos.size_nat i + N.size_nat n <= w ->
+    Q.fits w (search_queue (search_offer i n row s)).
+  Proof.
+    intros DB w i n row s Hwf Hfits Hwidth. unfold search_offer.
+    destruct (trie_get i (search_candidates s)) as [[old choice]|];
+      [destruct (N.ltb n old)|]; cbn [search_restate search_queue];
+      try apply Q.fits_push; assumption.
+  Qed.
+
+  (** Resumption only enqueues the exact cost of a ready original row. *)
+  Lemma search_resume_fits : forall DB rs w frame (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> Q.fits w (search_queue s) ->
+    search_frame_valid rs (search_final_costs s) frame ->
+    search_rows_width rs (search_final_costs s) w ->
+    Q.fits w (search_queue (search_resume frame s)).
+  Proof.
+    intros DB rs w [[[f k] i] todo acc] s Hwf Hfits Hframe Hwidth.
+    unfold search_resume. cbn [frame_row frame_rest frame_costs].
+    destruct (trie_get i (search_final_costs s)); [exact Hfits|].
+    destruct (search_scan (search_final_costs s) acc todo)
+      as [[child [rest values]]|values] eqn:Hscan.
+    - exact Hfits.
+    - apply search_offer_fits; try assumption.
+      destruct (search_frame_ready rs (search_final_costs s)
+        (ExtractionFrame (f, k, i) todo acc) values Hframe Hscan) as [Hknown Hvalues].
+      cbn [frame_row fst snd] in Hknown, Hvalues.
+      rewrite Hvalues. apply Hwidth; [exact (proj1 Hframe)|exact Hknown].
+  Qed.
+
+  Lemma search_resume_list_fits : forall DB rs w frames (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> Q.fits w (search_queue s) ->
+    Forall (search_frame_valid rs (search_final_costs s)) frames ->
+    search_rows_width rs (search_final_costs s) w ->
+    Q.fits w (search_queue (search_resume_list frames s)).
+  Proof.
+    intros DB rs w frames. induction frames as [|frame frames IH];
+      intros s Hwf Hfits Hframes Hwidth.
+    - exact Hfits.
+    - inversion Hframes as [|entry rest Hframe Hrest]; subst entry rest.
+      destruct (search_resume_stable DB frame s)
+        as [Hdb [Hrows [Hcount [Hcosts Hfinals]]]].
+      cbn [search_resume_list]. apply IH.
+      + now apply search_resume_wf.
+      + eapply search_resume_fits; eassumption.
+      + now rewrite Hcosts.
+      + now rewrite Hcosts.
+  Qed.
+
+  Lemma search_initial_fits : forall DB (db : DB) rs w,
+    search_rows_width rs Empty w -> Q.fits w (search_queue (search_initial db rs)).
+  Proof.
+    intros DB db rs w Hwidth. unfold search_initial.
+    eapply (search_resume_list_fits DB rs w).
+    - exact Q.wf_empty.
+    - apply Q.fits_empty.
+    - apply Forall_forall. intros frame Hin. apply in_map_iff in Hin.
+      destruct Hin as [row [<- Hrow]]. now apply search_frame_new.
+    - exact Hwidth.
+  Qed.
+
+  (** Finalization preserves queued widths when every newly ready source row fits. *)
+  Lemma search_finish_fits : forall DB rs w i n f k queue
+      (s : extraction_state V.t DB Q.t),
+    search_invariant rs s -> Q.fits w (search_queue s) ->
+    Q.pop (search_queue s) = Some (n, i, queue) ->
+    trie_get i (search_candidates s) = Some (n, (f, k)) ->
+    search_rows_width rs (PTrieCode.set i n (search_final_costs s)) w ->
+    Q.fits w (search_queue (search_finish i n (f, k) queue s)).
+  Proof.
+    intros DB rs w i n f k queue s [Hcandidates [Hwaiters [[Hwf Hqueue] Htracking]]]
+      Hfits Hpop Hcandidate Hwidth.
+    destruct (Hcandidates i n f k Hcandidate) as [Hmissing Hrest].
+    unfold search_finish. eapply (search_resume_list_fits DB rs w).
+    - eapply Q.wf_pop; eassumption.
+    - eapply Q.fits_pop; eassumption.
+    - now apply search_detached_valid.
+    - exact Hwidth.
+  Qed.
+
+
+  (** The load bound follows the same continuing-step closure as the search invariant. *)
+  Lemma search_load_preserved : forall DB rs (s last : extraction_state V.t DB Q.t),
+    clos_refl_trans (extraction_state V.t DB Q.t)
+      (fun before after => search_step before = inl after) s last ->
+    search_invariant rs s ->
+    search_invariant rs last /\ search_load last <= search_load s.
+  Proof.
+    intros DB rs s last Hreach.
+    induction Hreach as [before after Hstep|s|before middle after Hfirst IHfirst Hlast IHlast];
+      intro Hinv.
+    - split.
+      + eapply search_step_invariant; eassumption.
+      + pose proof (search_step_load DB rs before after Hinv Hstep). lia.
+    - split; [exact Hinv|lia].
+    - destruct (IHfirst Hinv) as [Hmiddle Hfirst_load].
+      destruct (IHlast Hmiddle) as [Hlast_inv Hlast_load]. split; [exact Hlast_inv|lia].
+  Qed.
+
+  (** Every reachable state keeps the pending heap count within the finite source count. *)
+  Lemma search_reachable_pending : forall DB (db : DB) rs (s : extraction_state V.t DB Q.t),
+    clos_refl_trans (extraction_state V.t DB Q.t)
+      (fun before after => search_step before = inl after) (search_initial db rs) s ->
+    Q.pending (search_queue s) <= length rs.
+  Proof.
+    intros DB db rs s Hreach.
+    destruct (search_load_preserved DB rs _ _ Hreach (search_initial_invariant DB db rs))
+      as [Hinv Hload].
+    pose proof (search_initial_load DB db rs) as Hinitial.
+    assert (Hcap : search_load s <= length rs) by lia.
+    unfold search_load in Hcap. lia.
+  Qed.
+End SearchResources.
+
 (** A finite bound on distinct finalisations supplies a terminating unary loop. *)
 Lemma extraction_loop_complete {St Out} (step : St -> St + Out)
     (Inv : St -> Prop) (count : St -> nat) (bound : nat) :
