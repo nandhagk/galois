@@ -667,6 +667,444 @@ Proof.
       exact (proj1 (wto_encloses_member w v u Hencloses)).
 Qed.
 
+(** A pending visit refers to a structural subtree of the original candidate. *)
+Inductive wto_subtree (whole : wto) : wto -> Prop :=
+  | subtree_root : wto_subtree whole whole
+  | subtree_vertex : forall v rest,
+      wto_subtree whole (WVertex v rest) -> wto_subtree whole rest
+  | subtree_body : forall h body rest,
+      wto_subtree whole (WLoop h body rest) -> wto_subtree whole body
+  | subtree_rest : forall h body rest,
+      wto_subtree whole (WLoop h body rest) -> wto_subtree whole rest.
+
+(** Enclosure in a pending subtree remains enclosure in the original candidate. *)
+Lemma wto_subtree_encloses : forall whole tree,
+  wto_subtree whole tree -> forall h v,
+  wto_encloses h v tree -> wto_encloses h v whole.
+Proof.
+  intros whole tree Htree. induction Htree; intros head x Hencloses.
+  - exact Hencloses.
+  - apply IHHtree. now apply encloses_vertex.
+  - apply IHHtree. now apply encloses_body.
+  - apply IHHtree. now apply encloses_rest.
+Qed.
+
+(** Pending visits retain their unprocessed vertices; close tasks retain none. *)
+Fixpoint wto_check_remaining (tasks : list wto_check_task) : list positive :=
+  match tasks with
+  | [] => []
+  | WtoCheckVisit tree :: rest => wto_order tree ++ wto_check_remaining rest
+  | WtoCheckClose _ :: rest => wto_check_remaining rest
+  end.
+
+(** Every pending visit lies inside every loop that closes after that visit. *)
+Fixpoint wto_check_scopes (whole : wto) (tasks : list wto_check_task) : Prop :=
+  match tasks with
+  | [] => True
+  | WtoCheckVisit tree :: rest =>
+      (forall h, In (WtoCheckClose h) rest -> forall v, In v (wto_order tree) ->
+        wto_encloses h v whole) /\ wto_check_scopes whole rest
+  | WtoCheckClose _ :: rest => wto_check_scopes whole rest
+  end.
+
+(** The interval index relates processed positions, open scopes and closed intervals. *)
+Record wto_index_invariant (whole : wto) (listed : ptrie bool) (s : wto_check_state) : Prop := {
+  index_seen : wto_check_seen listed s;
+  index_next : wto_check_next s = N.of_nat (length (wto_check_vertices s));
+  index_order : rev (wto_check_vertices s) ++ wto_check_remaining (wto_check_tasks s) =
+    wto_order whole;
+  index_ranks : forall v r, trie_get v (wto_check_ranks s) = Some r ->
+    exists i, nth_error (wto_order whole) i = Some v /\ r = N.of_nat i /\
+      i < length (wto_check_vertices s);
+  index_origins : forall tree, In (WtoCheckVisit tree) (wto_check_tasks s) ->
+    wto_subtree whole tree;
+  index_scopes : wto_check_scopes whole (wto_check_tasks s);
+  index_active : forall h, In (WtoCheckClose h) (wto_check_tasks s) ->
+    exists lo, trie_get h (wto_check_ranks s) = Some lo /\
+      forall v r, trie_get v (wto_check_ranks s) = Some r -> (lo <= r)%N ->
+        wto_encloses h v whole;
+  index_intervals : forall h lo hi,
+    trie_get h (wto_check_intervals s) = Some (lo, hi) ->
+    (hi <= wto_check_next s)%N /\
+    forall v r, trie_get v (wto_check_ranks s) = Some r -> (lo <= r < hi)%N ->
+      wto_encloses h v whole
+}.
+
+(** Updating a key either returns its new binding or preserves another key's binding. *)
+Lemma wto_get_set_cases : forall A (ranks : ptrie A) v next u r,
+  trie_get u (PTrieCode.set v next ranks) = Some r ->
+  (u = v /\ r = next) \/ (u <> v /\ trie_get u ranks = Some r).
+Proof.
+  intros A ranks v next u r Hget. destruct (Pos.eq_dec u v) as [->|Hne].
+  - rewrite PTrie.get_set_same in Hget. inversion Hget; subst. now left.
+  - rewrite PTrie.get_set_other in Hget by exact Hne. now right.
+Qed.
+
+(** Emitting a fresh listed vertex preserves the index when the task rewrite preserves scopes. *)
+Lemma wto_index_emit : forall whole listed tasks next ranks intervals vs v b tasks',
+  wto_index_invariant whole listed (WtoCheckState tasks next ranks intervals vs) ->
+  trie_get v ranks = None -> trie_get v listed = Some b ->
+  wto_check_remaining tasks = v :: wto_check_remaining tasks' ->
+  (forall tree, In (WtoCheckVisit tree) tasks' -> wto_subtree whole tree) ->
+  wto_check_scopes whole tasks' ->
+  (forall h, In (WtoCheckClose h) tasks' ->
+    (In (WtoCheckClose h) tasks /\ wto_encloses h v whole) \/
+    (h = v /\ wto_encloses v v whole)) ->
+  wto_index_invariant whole listed
+    (WtoCheckState tasks' (N.succ next) (PTrieCode.set v next ranks) intervals (v :: vs)).
+Proof.
+  intros whole listed tasks next ranks intervals vs v b tasks' Hinv Hfresh Hlisted Hremaining
+    Horigins' Hscopes' Hactive'.
+  destruct Hinv as [Hseen Hnext Horder Hranks Horigins Hscopes Hactive Hintervals].
+  cbn [wto_check_next wto_check_vertices wto_check_tasks wto_check_ranks
+    wto_check_intervals] in *.
+  assert (Hposition : nth_error (wto_order whole) (length vs) = Some v).
+  { rewrite <- Horder, Hremaining.
+    replace (length vs) with (length (rev vs)) by apply length_rev.
+    rewrite nth_error_app2 by lia. rewrite Nat.sub_diag. reflexivity. }
+  constructor; cbn [wto_check_next wto_check_vertices wto_check_tasks wto_check_ranks
+    wto_check_intervals].
+  - eapply wto_check_seen_add; eassumption.
+  - cbn [length]. rewrite Hnext, Nat2N.inj_succ. reflexivity.
+  - cbn [rev]. rewrite <- app_assoc. cbn [app]. now rewrite <- Hremaining.
+  - intros u r Hget. destruct (wto_get_set_cases _ _ _ _ _ _ Hget) as [[-> ->]|[Hne Hold]].
+    + exists (length vs). repeat split; auto; cbn [length]; lia.
+    + destruct (Hranks u r Hold) as [i [Hi [Hr Hlt]]].
+      exists i. repeat split; auto; cbn [length]; lia.
+  - exact Horigins'.
+  - exact Hscopes'.
+  - intros h Hclose. destruct (Hactive' h Hclose) as [[Hold Henclosed]|[-> Hself]].
+    + destruct (Hactive h Hold) as [lo [Hlo Hinside]].
+      assert (Hne : h <> v) by congruence.
+      exists lo. split; [now rewrite PTrie.get_set_other|].
+      intros u r Hget Hle.
+      destruct (wto_get_set_cases _ _ _ _ _ _ Hget) as [[-> ->]|[Hune Hgetold]].
+      * exact Henclosed.
+      * now apply (Hinside u r).
+    + exists next. split; [apply PTrie.get_set_same|].
+      intros u r Hget Hle.
+      destruct (wto_get_set_cases _ _ _ _ _ _ Hget) as [[-> ->]|[Hune Hgetold]].
+      * exact Hself.
+      * destruct (Hranks u r Hgetold) as [i [Hi [Hr Hlt]]].
+        assert (Hbelow : (r < next)%N).
+        { rewrite Hnext, Hr. lia. }
+        lia.
+  - intros h lo hi Hget. destruct (Hintervals h lo hi Hget) as [Hhi Hinside]. split.
+    + lia.
+    + intros u r Hrank Hrange.
+      destruct (wto_get_set_cases _ _ _ _ _ _ Hrank) as [[-> ->]|[Hne Hold]].
+      * lia.
+      * now apply (Hinside u r).
+Qed.
+
+(** A successful checker result is the reversal of an invariant terminal state's vertices. *)
+Definition wto_index_result (whole : wto) (listed : ptrie bool)
+    (result : option (ptrie N * ptrie (N * N) * list positive)) : Prop :=
+  match result with
+  | None => True
+  | Some (ranks, intervals, vs) => exists s,
+      wto_index_invariant whole listed s /\ wto_check_tasks s = [] /\
+      wto_check_ranks s = ranks /\ wto_check_intervals s = intervals /\
+      rev (wto_check_vertices s) = vs
+  end.
+
+(** Every index transition preserves positions and the open and closed nesting scopes. *)
+Lemma wto_index_step : forall whole width listed s,
+  wto_index_invariant whole listed s ->
+  match wto_check_step width listed s with
+  | inl next => wto_index_invariant whole listed next
+  | inr result => wto_index_result whole listed result
+  end.
+Proof.
+  intros whole width listed [tasks next ranks intervals vs] Hinv.
+  pose proof Hinv as Hparts.
+  destruct Hparts as [Hseen Hnext Horder Hranks Horigins Hscopes Hactive Hintervals].
+  cbn [wto_check_next wto_check_vertices wto_check_tasks wto_check_ranks
+    wto_check_intervals] in *.
+  destruct tasks as [|task tasks].
+  - cbn [wto_check_step wto_index_result].
+    exists (WtoCheckState [] next ranks intervals vs). split; [exact Hinv|].
+    repeat split; try reflexivity. now rewrite rev_append_rev, app_nil_r.
+  - destruct task as [tree|h].
+    + destruct tree as [|v tail|h body tail].
+      * cbn [wto_check_step]. constructor; cbn [wto_check_next wto_check_vertices
+          wto_check_tasks wto_check_ranks wto_check_intervals].
+        -- exact Hseen.
+        -- exact Hnext.
+        -- exact Horder.
+        -- exact Hranks.
+        -- intros tree Hin. apply Horigins. now right.
+        -- exact (proj2 Hscopes).
+        -- intros h Hin. apply Hactive. now right.
+        -- exact Hintervals.
+      * cbn [wto_check_step]. destruct (wto_key_fits width v); [|exact I].
+        destruct (trie_get v listed) as [b|] eqn:Hlisted; [|exact I].
+        destruct (trie_get v ranks) as [r|] eqn:Hfresh; [exact I|].
+        eapply wto_index_emit; [exact Hinv|exact Hfresh|exact Hlisted|reflexivity| | |].
+        -- intros tree [Heq|Hin].
+           ++ injection Heq as Heq. subst tree. eapply subtree_vertex.
+              apply Horigins. now left.
+           ++ apply Horigins. now right.
+        -- split.
+           ++ intros h Hclose u Hin. apply (proj1 Hscopes h Hclose u). now right.
+           ++ exact (proj2 Hscopes).
+        -- intros h [Heq|Hin]; [discriminate|]. left. split; [now right|].
+           apply (proj1 Hscopes h Hin v). now left.
+      * cbn [wto_check_step]. destruct (wto_key_fits width h); [|exact I].
+        destruct (trie_get h listed) as [b|] eqn:Hlisted; [|exact I].
+        destruct (trie_get h ranks) as [r|] eqn:Hfresh; [exact I|].
+        assert (Hloop : wto_subtree whole (WLoop h body tail)).
+        { apply Horigins. now left. }
+        eapply wto_index_emit; [exact Hinv|exact Hfresh|exact Hlisted| | | |].
+        -- cbn [wto_check_remaining wto_order]. now rewrite app_assoc.
+        -- intros tree [Heq|[Heq|[Heq|Hin]]].
+           ++ injection Heq as Heq. subst tree. now apply subtree_body in Hloop.
+           ++ discriminate.
+           ++ injection Heq as Heq. subst tree. now apply subtree_rest in Hloop.
+           ++ apply Horigins. now right.
+        -- split.
+           ++ intros head [Heq|[Heq|Hin]] u Hu.
+              ** injection Heq as Heq. subst head.
+                 eapply wto_subtree_encloses; [exact Hloop|].
+                 apply encloses_here. now right.
+              ** discriminate.
+              ** apply (proj1 Hscopes head Hin u). right. apply in_or_app. now left.
+           ++ split.
+              ** intros head Hin u Hu. apply (proj1 Hscopes head Hin u).
+                 right. apply in_or_app. now right.
+              ** exact (proj2 Hscopes).
+        -- intros head [Heq|[Heq|[Heq|Hin]]].
+           ++ discriminate.
+           ++ injection Heq as Heq. subst head. right. split; [reflexivity|].
+              eapply wto_subtree_encloses; [exact Hloop|].
+              apply encloses_here. now left.
+           ++ discriminate.
+           ++ left. split; [now right|]. apply (proj1 Hscopes head Hin h). now left.
+    + cbn [wto_check_step]. destruct (trie_get h ranks) as [lo|] eqn:Hlo; [|exact I].
+      destruct (Hactive h (or_introl eq_refl)) as [start [Hstart Hinside]].
+      assert (Hstartlo : start = lo) by congruence. subst start.
+      constructor; cbn [wto_check_next wto_check_vertices wto_check_tasks wto_check_ranks
+        wto_check_intervals].
+      * exact Hseen.
+      * exact Hnext.
+      * exact Horder.
+      * exact Hranks.
+      * intros tree Hin. apply Horigins. now right.
+      * exact Hscopes.
+      * intros head Hin. apply Hactive. now right.
+      * intros head first last Hget.
+        destruct (wto_get_set_cases _ _ _ _ _ _ Hget) as [[Heq Hpair]|[Hne Hold]].
+        -- subst head. injection Hpair as Heqfirst Heqlast. subst first last.
+           split; [lia|]. intros u r Hr Hrange. apply (Hinside u r Hr). lia.
+        -- now apply (Hintervals head first last).
+Qed.
+
+(** The binary driver carries the index invariant through every completed transition. *)
+Lemma wto_index_loop : forall whole width listed fs (Hacc : Acc loopN_lt fs),
+  wto_index_invariant whole listed (snd fs) ->
+  match loop loopN_lt (loopN_step (wto_check_step width listed)) fs Hacc with
+  | inl _ => True
+  | inr result => wto_index_result whole listed result
+  end.
+Proof.
+  intros whole width listed fs Hacc.
+  induction Hacc as [[fuel s] Hacc IH] using Acc_ind_dep.
+  cbn [snd]. intro Hinv. destruct fuel as [|p]; [exact I|].
+  cbn [loop loopN_step Acc_inv].
+  pose proof (wto_index_step whole width listed s Hinv) as Hstep.
+  destruct (wto_check_step width listed s) as [next|result] eqn:Hnext.
+  - apply IH. exact Hstep.
+  - exact Hstep.
+Qed.
+
+(** The empty index starts at the first vertex of the whole candidate. *)
+Lemma wto_index_initial : forall whole listed,
+  wto_index_invariant whole listed
+    (WtoCheckState [WtoCheckVisit whole] 0 Empty Empty []).
+Proof.
+  intros whole listed. constructor; cbn [wto_check_next wto_check_vertices wto_check_tasks
+    wto_check_ranks wto_check_intervals].
+  - split; [constructor|]. split.
+    + intro v. split; [contradiction|]. intros [r Hget].
+      rewrite PTrie.get_empty in Hget. discriminate.
+    + intros v Hin. contradiction.
+  - reflexivity.
+  - cbn [rev app wto_check_remaining]. now rewrite app_nil_r.
+  - intros v r Hget. rewrite PTrie.get_empty in Hget. discriminate.
+  - intros tree [Heq|Hin]; [|contradiction]. injection Heq as Heq. subst tree. constructor.
+  - split; [intros h Hin; contradiction|exact I].
+  - intros h [Heq|Hin]; [discriminate|contradiction].
+  - intros h lo hi Hget. rewrite PTrie.get_empty in Hget. discriminate.
+Qed.
+
+(** Fuel exhaustion cannot manufacture a successful index result. *)
+Lemma wto_index_run : forall whole fuel width listed s,
+  wto_index_invariant whole listed s ->
+  match loopN (wto_check_step width listed) fuel s with
+  | inl _ => True
+  | inr result => wto_index_result whole listed result
+  end.
+Proof.
+  intros whole fuel width listed s Hinv. unfold loopN. now apply wto_index_loop.
+Qed.
+
+Local Opaque loopN.
+
+(** Successful candidate indexing exposes an invariant terminal state. *)
+Lemma wto_check_index_result : forall fuel width listed w ranks intervals vs,
+  wto_check_index fuel width listed [WtoCheckVisit w] 0 Empty Empty [] =
+    Some (ranks, intervals, vs) ->
+  wto_index_result w listed (Some (ranks, intervals, vs)).
+Proof.
+  intros fuel width listed w ranks intervals vs Hindex.
+  pose proof (wto_index_run w fuel width listed
+    (WtoCheckState [WtoCheckVisit w] 0 Empty Empty []) (wto_index_initial w listed)) as Hresult.
+  unfold wto_check_index in Hindex.
+  destruct (loopN (wto_check_step width listed) fuel
+    (WtoCheckState [WtoCheckVisit w] 0 Empty Empty [])) as [s|result]; [discriminate|].
+  destruct result as [[[ranks' intervals'] vs']|]; [|discriminate].
+  inversion Hindex; subst. exact Hresult.
+Qed.
+
+Local Transparent loopN.
+
+(** The completed numeric index recognizes the candidate's unique order and enclosing edges. *)
+Lemma wto_check_index_spec : forall fuel width listed w ranks intervals vs,
+  wto_check_index fuel width listed [WtoCheckVisit w] 0 Empty Empty [] =
+    Some (ranks, intervals, vs) ->
+  NoDup (wto_order w) /\ vs = wto_order w /\
+  (forall v, (exists r, trie_get v ranks = Some r) <-> In v (wto_order w)) /\
+  forall u v, wto_interval_edge ranks intervals u v = true ->
+    graph_before (wto_order w) u v \/ wto_encloses v u w.
+Proof.
+  intros fuel width listed w ranks intervals vs Hindex.
+  destruct (wto_check_index_result fuel width listed w ranks intervals vs Hindex)
+    as [[tasks next ranks' intervals' seen] [Hinv [Htasks [Hranks [Hintervals Hvs]]]]].
+  cbn [wto_check_tasks wto_check_ranks wto_check_intervals wto_check_vertices] in *.
+  subst tasks ranks' intervals' vs.
+  destruct Hinv as [Hseen Hnext Horder Hranks Horigins Hscopes Hactive Hintervals].
+  cbn [wto_check_tasks wto_check_ranks wto_check_intervals wto_check_vertices
+    wto_check_next wto_check_remaining] in *.
+  rewrite app_nil_r in Horder.
+  destruct Hseen as [Hunique [Hlookup Hlisted]].
+  cbn [wto_check_vertices wto_check_ranks] in *.
+  split; [rewrite <- Horder; now apply NoDup_rev|]. split; [exact Horder|]. split.
+  - intro v. rewrite <- Horder, <- in_rev. symmetry. apply Hlookup.
+  - intros u v Hedge. unfold wto_interval_edge in Hedge.
+    destruct (trie_get u ranks) as [ru|] eqn:Hu; [|discriminate].
+    destruct (trie_get v ranks) as [rv|] eqn:Hv; [|discriminate].
+    apply orb_true_iff in Hedge. destruct Hedge as [Hforward|Hback].
+    + apply N.ltb_lt in Hforward.
+      destruct (Hranks u ru Hu) as [i [Hi [Hri Hboundi]]].
+      destruct (Hranks v rv Hv) as [j [Hj [Hrj Hboundj]]].
+      left. apply graph_before_indices. exists i, j. repeat split; auto; lia.
+    + destruct (trie_get v intervals) as [[lo hi]|] eqn:Hinterval; [|discriminate].
+      apply andb_true_iff in Hback. destruct Hback as [Hlo Hhi].
+      apply N.leb_le in Hlo. apply N.ltb_lt in Hhi.
+      right. apply (proj2 (Hintervals v lo hi Hinterval) u ru Hu). now split.
+Qed.
+
+(** A successful presence test is exactly an inhabited optional lookup. *)
+Lemma wto_present_test : forall A v (table : ptrie A),
+  (match trie_get v table with Some _ => true | None => false end) = true <->
+  exists value, trie_get v table = Some value.
+Proof.
+  intros A v table. destruct (trie_get v table) as [value|].
+  - split; [intro H; now exists value|intro H; reflexivity].
+  - split; [discriminate|intros [value Hvalue]; discriminate].
+Qed.
+
+(** Every edge retained by graph filtering was already an original edge. *)
+Lemma wto_filtered_path : forall g u vs v,
+  path (base (scc_graph g)) u vs v -> path (base g) u vs v.
+Proof.
+  intros g u vs v Hpath. induction Hpath as [v|u v vs z Hedge Hpath IH].
+  - constructor.
+  - econstructor; [|exact IH]. unfold edge in *.
+    rewrite scc_graph_succs in Hedge.
+    destruct (existsb (Pos.eqb u) (nodes g)); [|contradiction].
+    apply filter_In in Hedge. exact (proj1 Hedge).
+Qed.
+
+(** Filtering cannot introduce rooted reachability absent from the original graph. *)
+Lemma wto_filtered_reach : forall g roots v,
+  reach (base (scc_graph g)) roots v -> reach (base g) roots v.
+Proof.
+  intros g roots v [r [vs [Hroot Hpath]]]. exists r, vs.
+  split; [exact Hroot|now apply wto_filtered_path].
+Qed.
+
+(** A successor-closed vertex list contains every endpoint reached from one of its vertices. *)
+Lemma wto_path_domain : forall g vertices,
+  (forall u v, In u vertices -> edge g u v -> In v vertices) ->
+  forall u vs v, path g u vs v -> In u vertices -> In v vertices.
+Proof.
+  intros g vertices Hclosed u vs v Hpath. induction Hpath; intro Hin.
+  - exact Hin.
+  - apply IHHpath. eapply Hclosed; eassumption.
+Qed.
+
+(** An accepting checker has already established that each supplied root is listed. *)
+Lemma wto_check_roots : forall g roots w,
+  wto_check_linear g roots w = true -> forall v, In v roots -> In v (nodes g).
+Proof.
+  intros g roots w Hcheck v Hin. unfold wto_check_linear in Hcheck.
+  destruct (forallb (fun v =>
+    match trie_get v (listed_of g) with Some _ => true | None => false end) roots)
+    eqn:Hroots; [|discriminate].
+  rewrite forallb_forall in Hroots. specialize (Hroots v Hin).
+  apply wto_present_test in Hroots. now apply (proj1 (scc_listed_lookup (nodes g) v)).
+Qed.
+
+Local Opaque loopN.
+
+(** A complete filtered trace and accepted edge checks establish raw rooted coverage. *)
+Lemma wto_check_sound_from_reach : forall g roots w,
+  (forall v, In v (entered (prepared_search_trace (scc_graph g) roots)) <->
+    reach (base (scc_graph g)) roots v) ->
+  wto_check_linear g roots w = true -> is_wto g roots w.
+Proof.
+  intros g roots w Htrace Hcheck. unfold wto_check_linear in Hcheck.
+  destruct (forallb (fun v =>
+    match trie_get v (listed_of g) with Some _ => true | None => false end) roots);
+    [|discriminate].
+  destruct (wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+    [WtoCheckVisit w] 0 Empty Empty []) as [[[ranks intervals] vs]|] eqn:Hindex;
+    [|discriminate].
+  set (live := entered (prepared_search_trace (scc_graph g) roots)) in *.
+  apply andb_true_iff in Hcheck. destruct Hcheck as [Hcoverage Hedges].
+  apply andb_true_iff in Hcoverage. destruct Hcoverage as [Hinside Houtside].
+  destruct (wto_check_index_spec (check_fuel g) (graph_width (base g)) (listed_of g)
+    w ranks intervals vs Hindex) as [Hunique [Hvs [Hdomain Hlegal]]].
+  rewrite forallb_forall in Hinside. rewrite forallb_forall in Houtside.
+  unfold wto_edges_ok in Hedges. rewrite forallb_forall in Hedges.
+  assert (Hedge_order : forall u v, In u (wto_order w) -> edge (base g) u v ->
+    graph_before (wto_order w) u v \/ wto_encloses v u w).
+  { intros u v Hu Hedge. apply Hlegal.
+    specialize (Hedges u ltac:(now rewrite Hvs)). rewrite forallb_forall in Hedges.
+    now apply Hedges. }
+  assert (Hclosed : forall u v, In u (wto_order w) -> edge (base g) u v ->
+    In v (wto_order w)).
+  { intros u v Hu Hedge. destruct (Hedge_order u v Hu Hedge) as [Hbefore|Hencloses].
+    - apply graph_before_indices in Hbefore. destruct Hbefore as [i [j [Hlt [Hi Hj]]]].
+      now apply nth_error_In in Hj.
+    - exact (proj2 (wto_encloses_member w v u Hencloses)). }
+  assert (Hroots : forall r, In r roots -> In r (wto_order w)).
+  { intros r Hr. apply (proj1 (Hdomain r)), wto_present_test, Houtside.
+    apply Htrace. exists r, [r]. split; [exact Hr|constructor]. }
+  assert (Hcover : forall v, In v (wto_order w) <-> reach (base g) roots v).
+  { intro v. split.
+    - intro Hin. apply wto_filtered_reach, Htrace.
+      apply (proj1 (scc_listed_lookup live v)), wto_present_test, Hinside.
+      now rewrite Hvs.
+    - intros [r [path_vs [Hr Hpath]]].
+      eapply wto_path_domain; [exact Hclosed|exact Hpath|now apply Hroots]. }
+  split; [exact Hunique|]. split; [exact Hcover|].
+  intros u v Hedge Hreach. apply Hedge_order; [now apply Hcover|exact Hedge].
+Qed.
+
+Local Transparent loopN.
+
 Module WtoCode <: WTO_OPS.
   Definition build (g : prepared) (roots : list positive) : wto :=
     let r := wto_components g roots in
@@ -1075,7 +1513,7 @@ Module WtoT <: WTO_ALL.
 
   Lemma T3_scope : forall g vs,
     (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: unlisted scope rows can contain unbounded-width successors. *)
 
   (** The index loop checks each key's width and listing before it reads a trie. *)
   Lemma T4a_index : forall g w,
