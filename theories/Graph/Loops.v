@@ -4564,6 +4564,37 @@ Proof.
         (loop_classify_collect_exact g t r h Hgraph Hprepared Htree Hh)) x).
 Qed.
 
+(** Keep collector computations abstract while combining their individual clock bounds. *)
+Local Lemma loop_collectors_clock_sum {A : Type} (cost : A -> N)
+    (work inputs : A -> nat) (bits : A -> N) k width :
+  forall vertices,
+  (forall h, In h vertices ->
+    (cost h <= k * (N.of_nat (work h + inputs h + 1) * width + bits h))%N) ->
+  (fold_right (fun h total => cost h + total)%N 0%N vertices <= k *
+    (N.of_nat
+      (fold_right (fun h total => (work h + total)%nat) 0%nat vertices +
+       fold_right (fun h total => (inputs h + total)%nat) 0%nat vertices + length vertices) *
+       width + fold_right (fun h total => bits h + total)%N 0%N vertices))%N.
+Proof.
+  intro vertices. induction vertices as [|h rest IH]; intro Hbound.
+  - cbn [fold_right length]. lia.
+  - pose proof (Hbound h (or_introl eq_refl)) as Hhead.
+    specialize (IH (fun v Hv => Hbound v (or_intror Hv))).
+    cbn [fold_right length]. repeat rewrite Nat2N.inj_add in Hhead, IH |- *.
+    rewrite Nat2N.inj_succ. nia.
+Qed.
+
+Local Lemma loop_installation_work_sum {A : Type} (lengths work : A -> nat) :
+  forall vertices,
+  (forall h, In h vertices -> lengths h <= work h) ->
+  fold_right (fun h total => lengths h + 1 + total) 0 vertices <=
+    fold_right (fun h total => work h + total) 0 vertices + length vertices.
+Proof.
+  intro vertices. induction vertices as [|h rest IH]; intro Hbound; [cbn; lia|].
+  pose proof (Hbound h (or_introl eq_refl)) as Hhead.
+  specialize (IH (fun v Hv => Hbound v (or_intror Hv))). cbn [fold_right length]. lia.
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -4759,38 +4790,6 @@ Module LoopsT <: LOOPS_ALL.
   TimeFun forest.
   TimeFun reducible_b.
 
-  Definition c_loops : N := 1. (* STUB *)
-
-  Lemma T_forest_le : forall g t r,
-    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
-    (T_forest g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (loop_depth g (forest g t) + 1) *
-      N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_reducible_b_le : forall g t r,
-    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
-    (T_reducible_b g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (loop_depth g (forest g t) + 1) *
-      N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma forest_bigO : bigO (fun '(g, t, r) =>
-      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
-    (fun '(g, t, _) => N.of_nat
-      ((graph_n (base g) + graph_e (base g) + 1) *
-        (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, t, _) => T_forest g t).
-  Proof. Admitted. (* STUB *)
-
-  Lemma reducible_b_bigO : bigO (fun '(g, t, r) =>
-      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
-    (fun '(g, t, _) => N.of_nat
-      ((graph_n (base g) + graph_e (base g) + 1) *
-        (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, t, _) => T_reducible_b g t).
-  Proof. Admitted. (* STUB *)
-
   Definition tree_step := tree_step.
   TimeFun tree_step.
   Definition classify := classify.
@@ -4822,6 +4821,11 @@ Module LoopsT <: LOOPS_ALL.
   Definition k_test : N := loop_test_cost.
   Definition k_forest : N := loop_forest_cost.
   Definition k_reducible : N := 16.
+
+  (** One scale covers forest construction and the reducibility wrapper. *)
+  Definition c_loops : N :=
+    ((k_forest + 1) * (k_classify + k_collect * (k_collect + 1) + k_install + 2) +
+      (k_reducible + 1) * (k_classify + k_trace + k_test + 1))%N.
 
   Definition latches := loop_latches_at.
   Definition back_member scan u v : Prop :=
@@ -5789,13 +5793,139 @@ Module LoopsT <: LOOPS_ALL.
   Qed.
 
 
+  Local Lemma collectors_clock : forall g t r vertices,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+    incl vertices (headers g t) ->
+    (fold_right (fun h cost => T_collect g t h (latches (classify g t) h) + cost)%N
+      0%N vertices <= k_collect *
+      (N.of_nat
+        (fold_right (fun h total => (body_work g (collected g t h) + total)%nat) 0%nat vertices +
+         fold_right (fun h total => (length (latches (classify g t) h) + total)%nat)
+           0%nat vertices +
+         length vertices) * N.of_nat (graph_width (base g) + 1) +
+       fold_right (fun h cost =>
+         N.of_nat (N.size_nat (body_fuel g (latches (classify g t) h))) + cost)%N
+         0%N vertices))%N.
+  Proof.
+    intros g t r vertices Hgraph Hprepared Htree Hincl.
+    apply loop_collectors_clock_sum. intros h Hin.
+    apply (T6_collect g t r h Hgraph Hprepared Htree), Hincl, Hin.
+  Qed.
+
+  Local Lemma installation_work : forall g t vertices,
+    fold_right (fun h total => length (collected g t h) + 1 + total) 0 vertices <=
+      fold_right (fun h total => (body_work g (collected g t h) + total)%nat) 0%nat vertices +
+        length vertices.
+  Proof.
+    intros g t vertices. apply loop_installation_work_sum.
+    intros h Hin. apply body_work_length.
+  Qed.
+
   Lemma T8_forest : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_forest g t <= c_loops *
       N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (loop_depth g (forest g t) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    destruct (F6_latch_count g t r Hgraph Hprepared Htree)
+      as [Hunique [Hlisted Hinputs]].
+    pose proof (NoDup_incl_length Hunique Hlisted) as Hheaders.
+    assert (Hnodes : length (nodes g) = graph_n (base g)).
+    { destruct g as [[vertices adjacency] predecessors vertex_count edge_count]. reflexivity. }
+    rewrite Hnodes in Hheaders.
+    pose proof (F16_nesting_charge g t r Hgraph Hprepared Htree) as Hwork.
+    pose proof (collectors_clock g t r (headers g t) Hgraph Hprepared Htree
+      (fun h Hin => Hin)) as Hcollectors.
+    pose proof (T7a_assemble g t r Hgraph Hprepared Htree) as Hassembly.
+    pose proof (T7b_fuel_widths g t r Hgraph Hprepared Htree) as Hbits.
+    pose proof (T3_classify g t r Hgraph Hprepared Htree) as Hclassify.
+    pose proof (T7c_forest_wrapper g t) as Hwrapper.
+    pose proof (installation_work g t (headers g t)) as Hinstallation.
+    clear Hgraph Hprepared Htree Hunique Hlisted Hnodes.
+    set (size := N.of_nat (graph_n (base g) + graph_e (base g) + 1)) in *.
+    set (depth := N.of_nat (loop_depth g (forest g t) + 1)) in *.
+    set (width := N.of_nat (graph_width (base g) + 1)) in *.
+    set (budget := (size * depth * width)%N).
+    assert (Hsize : (1 <= size)%N) by (clear -size; unfold size; lia).
+    assert (Hdepth : (1 <= depth)%N) by (clear -depth; unfold depth; lia).
+    assert (Hwidth : (1 <= width)%N) by (clear -width; unfold width; lia).
+    assert (Hbase : (size * width <= budget)%N) by (clear -Hdepth budget; unfold budget; nia).
+    assert (Hgraphpaid : (N.of_nat (graph_n (base g) + 1) * width <= budget)%N).
+    { eapply N.le_trans; [|exact Hbase]. apply N.mul_le_mono_r. unfold size. lia. }
+    assert (Hpositive : (1 <= budget)%N)
+      by (clear -Hsize Hdepth Hwidth budget; unfold budget; nia).
+    assert (Hworktotal : (N.of_nat
+      (fold_right (fun h total => (body_work g (collected g t h) + total)%nat) 0%nat (headers g t) +
+       fold_right (fun h total => (length (latches (classify g t) h) + total)%nat)
+         0%nat (headers g t) +
+       length (headers g t)) <= size * depth)%N).
+    { clear -Hwork Hinputs Hheaders size depth. unfold size, depth.
+      rewrite <- Nat2N.inj_mul. apply time_of_nat_le. nia. }
+    assert (Hworkpaid : (N.of_nat
+      (fold_right (fun h total => (body_work g (collected g t h) + total)%nat) 0%nat (headers g t) +
+       fold_right (fun h total => (length (latches (classify g t) h) + total)%nat)
+         0%nat (headers g t) +
+       length (headers g t)) * width <= budget)%N).
+    { unfold budget. now apply N.mul_le_mono_r. }
+    assert (Hbitpaid : (fold_right (fun h cost =>
+      N.of_nat (N.size_nat (body_fuel g (latches (classify g t) h))) + cost)%N
+      0%N (headers g t) <= k_collect * budget)%N).
+    { eapply N.le_trans; [exact Hbits|].
+      assert (Hscaled : (k_collect * (size * width) <= k_collect * budget)%N).
+      { now apply N.mul_le_mono_l. } clear -Hscaled. nia. }
+    assert (Hcollectpaid : (fold_right
+      (fun h cost => T_collect g t h (latches (classify g t) h) + cost)%N
+      0%N (headers g t) <= (k_collect * (k_collect + 1)) * budget)%N).
+    { eapply N.le_trans; [exact Hcollectors|].
+      assert (Hsum : (N.of_nat
+        (fold_right (fun h total => (body_work g (collected g t h) + total)%nat)
+           0%nat (headers g t) +
+         fold_right (fun h total => (length (latches (classify g t) h) + total)%nat)
+           0%nat (headers g t) +
+         length (headers g t)) * width +
+        fold_right (fun h cost =>
+          N.of_nat (N.size_nat (body_fuel g (latches (classify g t) h))) + cost)%N
+          0%N (headers g t) <= (k_collect + 1) * budget)%N)
+        by (clear -Hworkpaid Hbitpaid; clearbody budget; nia).
+      pose proof (N.mul_le_mono_l _ _ k_collect Hsum) as Hscaled. clear -Hscaled. nia. }
+    assert (Hinstalltotal : (N.of_nat
+      (fold_right (fun h total => (length (collected g t h) + 1 + total)%nat)
+        0%nat (headers g t) + 1) <= size * depth)%N).
+    { clear -Hinstallation Hwork Hheaders size depth. unfold size, depth.
+      rewrite <- Nat2N.inj_mul. apply time_of_nat_le. nia. }
+    clearbody size depth width.
+    assert (Hassemblypaid : (T_assemble (forest_rows g t) <= k_install * budget)%N).
+    { eapply N.le_trans; [exact Hassembly|].
+      assert (Hproduct : (N.of_nat
+        (fold_right (fun h total => (length (collected g t h) + 1 + total)%nat)
+          0%nat (headers g t) + 1) * width <= budget)%N).
+      { unfold budget. now apply N.mul_le_mono_r. }
+      pose proof (N.mul_le_mono_l _ _ k_install Hproduct) as Hscaled. clear -Hscaled. nia. }
+    assert (Hclassifypaid : (T_classify g t <= k_classify * budget)%N).
+    { eapply N.le_trans; [exact Hclassify|].
+      pose proof (N.mul_le_mono_l _ _ k_classify Hbase) as Hscaled. clear -Hscaled. nia. }
+    set (factor := (k_classify + k_collect * (k_collect + 1) + k_install + 2)%N).
+    assert (Hinside : (T_classify g t +
+      fold_right (fun h cost => T_collect g t h (latches (classify g t) h) + cost)%N
+        0%N (headers g t) + T_assemble (forest_rows g t) +
+      N.of_nat (graph_n (base g) + 1) * width + 1 <=
+      factor * budget)%N).
+    { clear -Hclassifypaid Hcollectpaid Hassemblypaid Hgraphpaid Hpositive factor.
+      unfold factor; nia. }
+    assert (Hwrapped : (T_forest g t <= (k_forest * factor) * budget)%N).
+    { eapply N.le_trans; [exact Hwrapper|].
+      pose proof (N.mul_le_mono_l _ _ k_forest Hinside) as Hscaled. clear -Hscaled. nia. }
+    assert (Hfactor : (k_forest * factor <= c_loops)%N).
+    { clear -factor.
+      assert (Hscaled : (k_forest * factor <= (k_forest + 1) * factor)%N).
+      { apply N.mul_le_mono_r. lia. }
+      unfold c_loops. fold factor. lia. }
+    pose proof (N.mul_le_mono_r _ _ budget Hfactor) as Hpaid.
+    clear -Hwrapped Hpaid. unfold budget in *. nia.
+  Qed.
+
 
   Lemma T9_retreat_test : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -5839,4 +5969,36 @@ Module LoopsT <: LOOPS_ALL.
       N.of_nat (loop_depth g (forest g t) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
   Proof. Admitted. (* STUB *)
+
+
+  Lemma T_forest_le : forall g t r,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+    (T_forest g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (loop_depth g (forest g t) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_reducible_b_le : forall g t r,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+    (T_reducible_b g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (loop_depth g (forest g t) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma forest_bigO : bigO (fun '(g, t, r) =>
+      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
+    (fun '(g, t, _) => N.of_nat
+      ((graph_n (base g) + graph_e (base g) + 1) *
+        (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
+    (fun '(g, t, _) => T_forest g t).
+  Proof. Admitted. (* STUB *)
+
+  Lemma reducible_b_bigO : bigO (fun '(g, t, r) =>
+      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
+    (fun '(g, t, _) => N.of_nat
+      ((graph_n (base g) + graph_e (base g) + 1) *
+        (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
+    (fun '(g, t, _) => T_reducible_b g t).
+  Proof. Admitted. (* STUB *)
+
 End LoopsT.
