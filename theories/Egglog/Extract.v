@@ -5645,6 +5645,85 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       (SearchProof.search_step_invariant D.t (Enumeration.enumerated_rows cs db))) as [Hrun _].
     rewrite <- (inventory_rows_count cs db Hwf Hinventory). exact Hrun.
   Qed.
+  (** Every cost already finalized by a reachable state is the eventual selected optimum. *)
+  Lemma reachable_cost_selected : forall cs db s i n, reachable cs db s ->
+    trie_get i (search_final_costs s) = Some n ->
+    exists ch, In (i, (n, ch)) (best cs db).
+  Proof.
+    intros cs db s i n Hreach Hget.
+    destruct (reachable_verified cs db s Hreach) as [_ [Hcurrent Hcurrent_opt]].
+    destruct (best_result cs db) as [costs [Hbest [Hbest_opt Hcomplete]]].
+    destruct (proj2 (proj2 Hcurrent) i n Hget) as [tree [Htree Hcost]].
+    destruct (Hcomplete i tree Htree) as [m [ch Hin]].
+    assert (Hbest_get : trie_get i costs = Some m).
+    { apply (proj2 (Finals.finalised_lookup_spec (Enumeration.enumerated_rows cs db)
+        costs (best cs db) i m Hbest)). exists ch. exact Hin. }
+    destruct (proj2 (proj2 Hbest) i m Hbest_get) as [other [Hother Hother_cost]].
+    assert (Hequal : n = m).
+    { apply N.le_antisymm.
+      - rewrite <- Hother_cost. exact (Hcurrent_opt i n Hget other Hother).
+      - rewrite <- Hcost. exact (Hbest_opt i m Hbest_get tree Htree). }
+    exists ch. rewrite Hequal. exact Hin.
+  Qed.
+
+  (** The public chosen-cost observation agrees with every reachable final-trie binding. *)
+  Lemma reachable_cost_value : forall cs db s i n, reachable cs db s ->
+    trie_get i (search_final_costs s) = Some n -> cost_of (best cs db) (Id i) = n.
+  Proof.
+    intros cs db s i n Hreach Hget.
+    destruct (reachable_cost_selected cs db s i n Hreach Hget) as [ch Hin].
+    destruct (best_result cs db) as [costs [Hbest Hrest]].
+    assert (Hbest_get : trie_get i costs = Some n).
+    { apply (proj2 (Finals.finalised_lookup_spec (Enumeration.enumerated_rows cs db)
+        costs (best cs db) i n Hbest)). exists ch. exact Hin. }
+    unfold cost_of. rewrite chosen_cost_extraction_lookup,
+      (Finals.finalised_lookup_agrees costs (best cs db) (proj1 Hbest) i), Hbest_get.
+    reflexivity.
+  Qed.
+
+  (** A ready key keeps its current final costs in the complete optimal result. *)
+  Lemma reachable_key_costs : forall cs db s k, reachable cs db s ->
+    Semantics.search_known (search_final_costs s) k ->
+    dag_cost_cells C.val_cost (search_final_costs s) k = map (cost_of (best cs db)) k.
+  Proof.
+    intros cs db s k Hreach Hknown. rewrite dag_cost_cells_map.
+    apply map_ext_in. intros [i|v] Hin.
+    - destruct (Hknown i Hin) as [n Hget]. unfold dag_get_cost. rewrite Hget.
+      symmetry. exact (reachable_cost_value cs db s i n Hreach Hget).
+    - unfold cost_of. destruct (best cs db); reflexivity.
+  Qed.
+
+  (** Every reachable final cost fits the exact constructor-cost width. *)
+  Lemma reachable_cost_width : forall cs db s i n, D.wf db -> D.canonical db ->
+    ctor_inventory cs db -> reachable cs db s ->
+    trie_get i (search_final_costs s) = Some n -> N.size_nat n <= cost_width db.
+  Proof.
+    intros cs db s i n Hwf Hcanonical Hinventory Hreach Hget.
+    destruct (reachable_cost_selected cs db s i n Hreach Hget) as [[f k] Hin].
+    destruct (best_row cs db i n f k Hwf Hcanonical Hinventory Hin) as [Hrow Hcost].
+    rewrite Hcost. exact (proj1 (cost_width_spec cs db Hwf Hcanonical Hinventory) f k i Hrow).
+  Qed.
+
+  (** A ready original row supplies an entry within the combined identifier/cost queue width. *)
+  Lemma reachable_row_width : forall cs db s f k i, D.wf db -> D.canonical db ->
+    ctor_inventory cs db -> reachable cs db s ->
+    In (f, k, i) (Enumeration.enumerated_rows cs db) ->
+    Semantics.search_known (search_final_costs s) k ->
+    Pos.size_nat i + N.size_nat (C.fn_cost f (dag_cost_cells C.val_cost (search_final_costs s) k))
+      <= D.unit db + cost_width db.
+  Proof.
+    intros cs db s f k i Hwf Hcanonical Hinventory Hreach Hsource Hknown.
+    destruct (inventory_rows_spec cs db Hwf Hinventory) as [_ [Hrows _]].
+    pose proof (proj1 (Hrows f k i) Hsource) as Hrow.
+    assert (Hid : Pos.size_nat i <= D.unit db).
+    { pose proof (stored_cell_unit db f k (Some (Id i)) (Id i) Hwf Hrow
+        ltac:(apply in_or_app; right; now left)) as Hwidth.
+      cbn [cell_bits Pos.size_nat] in Hwidth. lia. }
+    rewrite (reachable_key_costs cs db s k Hreach Hknown).
+    pose proof (proj1 (cost_width_spec cs db Hwf Hcanonical Hinventory) f k i Hrow) as Hcost.
+    lia.
+  Qed.
+
   Lemma T0_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_initial cs db + heap_potential (initial cs db) <= k_step *
       N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
