@@ -5206,19 +5206,76 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     In (c, n) (ready s) -> counter s c = 0.
   Proof. Admitted. (* STUB *)
 
+  (** Every continuing reachable state retains queue coverage and attained optimal finals. *)
+  Lemma reachable_verified : forall cs db s, reachable cs db s ->
+    Correct.search_verified (Enumeration.enumerated_rows cs db) s.
+  Proof.
+    intros cs db s Hreach. unfold reachable in Hreach.
+    eapply (extraction_reachable_invariant (step cs db)
+      (Correct.search_verified (Enumeration.enumerated_rows cs db))).
+    - intros before after Hverified Hstep.
+      eapply Correct.search_verified_step; [exact Hverified|exact Hstep|].
+      eapply SearchProof.search_step_invariant; [exact (proj1 Hverified)|exact Hstep].
+    - exact Hreach.
+    - apply Correct.search_verified_initial. apply SearchProof.search_initial_invariant.
+  Qed.
+
+  (** Canonical stored outputs turn exact-row optimality into the public database invariant. *)
+  Lemma verified_knuth : forall cs db s, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    Correct.search_verified (Enumeration.enumerated_rows cs db) s -> knuth_inv db s.
+  Proof.
+    intros cs db s Hwf Hcanonical Hinventory [_ [Hfinals Hoptimal]] c n [f k] Hin e Hrep.
+    change (In (c, (n, (f, k))) (search_finalised s)) in Hin.
+    destruct (inventory_rows_spec cs db Hwf Hinventory) as [_ [Hrows _]].
+    destruct (Finals.finalised_row (Enumeration.enumerated_rows cs db)
+      (search_final_costs s) (search_finalised s) c n f k Hfinals Hin) as [Hsource Hcost].
+    pose proof (proj1 (Hrows f k c) Hsource) as Hrow.
+    assert (Hfixed : D.repr db c = c).
+    { apply (Hcanonical f k (Some (Id c)) Hrow c).
+      apply in_or_app. right. now left. }
+    pose proof (DatabaseTrees.database_search_represents db (Enumeration.enumerated_rows cs db)
+      Hwf Hcanonical (fun g key i Hstored => proj2 (Hrows g key i) Hstored)
+      (Id c) e Hrep) as Hexact.
+    change (search_represents (Enumeration.enumerated_rows cs db) (Id (D.repr db c)) e)
+      in Hexact. rewrite Hfixed in Hexact.
+    apply (Hoptimal c n); [|exact Hexact].
+    apply (proj2 (Finals.finalised_lookup_spec (Enumeration.enumerated_rows cs db)
+      (search_final_costs s) (search_finalised s) c n Hfinals)).
+    exists (f, k). exact Hin.
+  Qed.
+
   Lemma F4_pop_final : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
     reachable cs db s -> knuth_inv db s -> step cs db s = inl s' -> knuth_inv db s'.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db s next Hwf Hcanonical Hinventory Hreach Hknuth Hstep.
+    apply (verified_knuth cs db next Hwf Hcanonical Hinventory), reachable_verified.
+    unfold reachable in *. eapply rt_trans; [exact Hreach|].
+    now apply rt_step.
+  Qed.
 
   Lemma F5_finalised_attained : forall cs db s c n ch, D.wf db -> D.canonical db ->
     ctor_inventory cs db -> reachable cs db s -> In (c, (n, ch)) (finalised s) ->
     exists e, represents (D.view db) (Id c) e /\ tree_cost e = n.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db s c n ch Hwf Hcanonical Hinventory Hreach Hin.
+    destruct (reachable_verified cs db s Hreach) as [_ [Hfinals Hoptimal]].
+    destruct (inventory_rows_spec cs db Hwf Hinventory) as [_ [Hrows _]].
+    destruct (Finals.finalised_attained (Enumeration.enumerated_rows cs db)
+      (search_final_costs s) (search_finalised s) Hfinals c n ch Hin) as [e [Hrep Hcost]].
+    exists e. split; [|exact Hcost].
+    exact (DatabaseTrees.search_database_represents db (Enumeration.enumerated_rows cs db)
+      Hwf (fun f k i Hstored => proj1 (Hrows f k i) Hstored) (Id c) e Hrep).
+  Qed.
 
   Lemma F6_best_loop : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     loop_fuel (step cs db) (R db + 1) (initial cs db) = inr (best cs db).
-  Proof. Admitted. (* STUB *)
-
+  Proof.
+    intros cs db Hwf Hcanonical Hinventory.
+    destruct (Correct.best_rows_correct D.t db (Enumeration.enumerated_rows cs db)
+      (SearchProof.search_initial_invariant D.t db (Enumeration.enumerated_rows cs db))
+      (SearchProof.search_step_invariant D.t (Enumeration.enumerated_rows cs db))) as [Hrun _].
+    rewrite <- (inventory_rows_count cs db Hwf Hinventory). exact Hrun.
+  Qed.
   Lemma T0_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_initial cs db + heap_potential (initial cs db) <= k_step *
       N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
