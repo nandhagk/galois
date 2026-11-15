@@ -342,6 +342,20 @@ Fixpoint wto_reverse_into (w tail : wto) : wto :=
   end.
 TimeFun wto_reverse_into.
 
+(** Reversing sibling order visits no more constructors than the flattened vertex order. *)
+Lemma wto_reverse_clock : forall w tail,
+  (T_wto_reverse_into w tail <= 2 * N.of_nat (length (wto_order w)) + 1)%N.
+Proof.
+  intro w. induction w as [|v rest IH|h body IHbody rest IHrest]; intro tail.
+  - time_step.
+  - pose proof (IH (WVertex v tail)) as Hrest.
+    time_unfold @T_wto_reverse_into. time_simpl. cbn [wto_order length].
+    rewrite !Nat2N.inj_succ. nia.
+  - pose proof (IHrest (WLoop h body tail)) as Hrest.
+    time_unfold @T_wto_reverse_into. time_simpl. cbn [wto_order length].
+    rewrite length_app, !Nat2N.inj_succ, !Nat2N.inj_add. nia.
+Qed.
+
 Definition wto_expand_tasks within entries owners cs :=
   map (fun c => WtoExpand within entries owners c) cs.
 TimeFun wto_expand_tasks.
@@ -3403,6 +3417,68 @@ Module WtoT <: WTO_ALL.
 
   Local Transparent loopN Galois.Graph.Wto.wto_components.
 
+  Local Opaque loopN.
+
+  (** A short step pays its component row or the partial output that it reverses. *)
+  Definition short_mass (g : prepared) (st : wto_state) : nat :=
+    match wto_tasks st with
+    | WtoExpand _ _ _ c :: _ => source_mass g c
+    | _ => length (wto_order (wto_partial st))
+    end.
+
+  Lemma short_step_clock : forall g roots st,
+    In st (history g roots) ->
+    (forall within entries owners c tasks h body,
+      wto_tasks st = WtoExpand within entries owners c :: tasks ->
+      wto_select (wto_preferred owners entries c) c = Some (h, body) -> body = []) ->
+    (T_wto_step g st <= k_expand * N.of_nat (short_mass g st + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+  Proof.
+    intros g roots [tasks partial parents] Hin Hshort.
+    destruct tasks as [|task tasks].
+    - pose proof (wto_reverse_clock partial WNil) as Hreverse.
+      unfold k_expand, short_mass. cbn [wto_tasks wto_partial].
+      time_unfold @T_wto_step. time_unfold @Galois.Graph.Wto.T_wto_step.
+      time_simpl. rewrite !Nat2N.inj_add in *. nia.
+    - destruct task as [within entries owners c|h].
+      + destruct (history_component_domain g roots
+          (WtoState (WtoExpand within entries owners c :: tasks) partial parents)
+          within entries owners c tasks Hin eq_refl)
+          as [Hnonempty [Hunique [Hlisted Howners]]].
+        assert (Hwidth : Forall (fun v => Pos.size_nat v <= graph_width (base g)) c).
+        { apply Forall_forall. intros v Hv. apply wto_listed_width, Hlisted, Hv. }
+        pose proof (wto_selection_clock owners entries c (graph_width (base g))
+          Hwidth Howners) as Hselection_clock.
+        destruct (Galois.Graph.Wto.wto_select
+          (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
+        * pose proof (Hshort within entries owners c tasks h body eq_refl Hselect) as Hbody.
+          subst body.
+          pose proof (wto_select_spec _ _ _ _ Hselect) as Hpermutation.
+          pose proof (Permutation_length Hpermutation) as Hlength.
+          cbn [length] in Hlength. rewrite Hlength in Hselection_clock.
+          pose proof (source_mass_permutation g _ _ Hpermutation) as Hmass.
+          change (source_mass g c = 1 + length (succs (base g) h) + 0) in Hmass.
+          rewrite Nat.add_0_r in Hmass.
+          assert (Hhead : Pos.size_nat h <= graph_width (base g)).
+          { apply wto_listed_width, Hlisted. eapply Permutation_in.
+            - exact (Permutation_sym Hpermutation).
+            - now left. }
+          pose proof (search_succs_clock (base g) h) as Hrow.
+          pose proof (wto_member_clock h (succs (base g) h)) as Hmember.
+          clear Hin Hshort Hnonempty Hunique Hlisted Howners Hwidth Hpermutation Hlength.
+          unfold k_expand, short_mass. cbn [wto_tasks wto_partial]. rewrite Hmass.
+          time_unfold @T_wto_step. time_unfold @Galois.Graph.Wto.T_wto_step.
+          rewrite Hselect. cbn beta iota zeta.
+          destruct (Galois.Graph.Wto.wto_member h (succs (base g) h));
+            time_simpl; rewrite !Nat2N.inj_add in *; nia.
+        * apply wto_select_empty in Hselect. contradiction.
+      + pose proof (wto_reverse_clock partial WNil) as Hreverse.
+        unfold k_expand, short_mass. cbn [wto_tasks wto_partial].
+        destruct parents;
+          time_unfold @T_wto_step; time_unfold @Galois.Graph.Wto.T_wto_step;
+          time_simpl; rewrite !Nat2N.inj_add in *; nia.
+  Qed.
+
   (** Close, terminal and singleton steps pay the reversed partial order and one row. *)
   Lemma T15_short_step : forall g roots st,
       In st (history g roots) ->
@@ -3413,7 +3489,20 @@ Module WtoT <: WTO_ALL.
         N.of_nat (length (wto_order (wto_partial st)) +
           source_mass g (concat (map task_members (firstn 1 (wto_tasks st)))) + 1) *
         N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots st Hin Hshort.
+    pose proof (short_step_clock g roots st Hin Hshort) as Hclock.
+    assert (Hmass : short_mass g st <= length (wto_order (wto_partial st)) +
+      source_mass g (concat (map task_members (firstn 1 (wto_tasks st))))).
+    { destruct st as [tasks partial parents]. destruct tasks as [|task tasks];
+        [cbn [short_mass wto_tasks wto_partial firstn map concat source_mass]; lia|].
+      destruct task; cbn [short_mass wto_tasks wto_partial firstn map concat task_members].
+      - rewrite app_nil_r. lia.
+      - cbn [source_mass]. lia. }
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Local Transparent loopN.
 
   (** Concatenation visits each component cell and each of its vertices once. *)
   Lemma components_concat_clock : forall (cs : list (list positive)),
