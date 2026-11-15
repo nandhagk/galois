@@ -1303,14 +1303,163 @@ Proof.
   intros x Hx. rewrite tnum_wrap_bit by exact Hi. now rewrite Z.div_pow2_bits by lia.
 Qed.
 
+(** A bounded masked left shift agrees with the concrete word operation. *)
+Lemma tnum_shl_value_agrees : forall w k x, 0 <= k <= Zpos w ->
+  tnum_shl_value w k x = wshl w x k.
+Proof.
+  intros w k x Hk. unfold tnum_shl_value, wshl.
+  rewrite (wrap_id w k) by (apply count_is_word; exact Hk).
+  destruct (Zpos w <=? k); [reflexivity|].
+  rewrite tnum_wrap_agrees, Z.shiftl_mul_pow2 by lia.
+  unfold wrap. now rewrite Z.mul_mod_idemp_l by apply modulus_nonzero.
+Qed.
+
+(** A bounded masked logical right shift agrees with the concrete word operation. *)
+Lemma tnum_lshr_value_agrees : forall w k x, 0 <= k <= Zpos w ->
+  tnum_lshr_value w k x = wlshr w x k.
+Proof.
+  intros w k x Hk. unfold tnum_lshr_value, wlshr.
+  rewrite (wrap_id w k) by (apply count_is_word; exact Hk).
+  destruct (Zpos w <=? k); [reflexivity|].
+  now rewrite tnum_wrap_agrees, Z.shiftr_div_pow2 by lia.
+Qed.
+
+(** The wrapped high part of a rotation fits below its low shift boundary. *)
+Lemma tnum_rotation_high_bound : forall w k x, 0 <= k < Zpos w ->
+  0 <= Z.shiftr (wrap w x) (Zpos w - k) < 2 ^ k.
+Proof.
+  intros w k x Hk. rewrite Z.shiftr_div_pow2 by lia.
+  pose proof (wrap_is_word w x) as Hx.
+  assert (Hd : 0 < 2 ^ (Zpos w - k)) by (apply Z.pow_pos_nonneg; lia).
+  split.
+  - apply Z.div_pos; [exact (proj1 Hx)|lia].
+  - apply Z.div_lt_upper_bound; [exact Hd|].
+    rewrite <- Z.pow_add_r by lia.
+    replace (Zpos w - k + k) with (Zpos w) by lia. exact (proj2 Hx).
+Qed.
+
+(** Saturating the shift and filling the high bits implements arithmetic right shift. *)
+Lemma tnum_ashr_value_agrees : forall w k x, 0 <= k <= Zpos w ->
+  tnum_ashr_value w k x = washr w x k.
+Proof.
+  intros w k x Hk.
+  pose proof (word_fun2_normalised bvashr BAshr w x k eq_refl) as Hnormal.
+  cbn [eval_binary_tag] in Hnormal.
+  rewrite (wrap_id w k) in Hnormal by (apply count_is_word; exact Hk).
+  rewrite <- Hnormal. apply Z.bits_inj'. intros i Hi.
+  rewrite testbit_washr by
+    (try apply wrap_is_word; try (apply count_is_word; exact Hk); exact Hi).
+  unfold tnum_ashr_value. rewrite !tnum_wrap_agrees.
+  set (k' := Z.min k (Zpos w - 1)).
+  assert (Hk' : 0 <= k' <= Zpos w - 1) by (unfold k'; lia).
+  assert (Hindex : Z.min (i + k') (Zpos w - 1) =
+    Z.min (i + k) (Zpos w - 1)) by (unfold k'; lia).
+  rewrite <- Hindex.
+  destruct (Z.testbit (wrap w x) (Zpos w - 1)) eqn:Hsign.
+  - rewrite Z.lor_spec, Z.shiftr_spec by lia.
+    rewrite (testbit_wrap w (Z.lnot (Z.ones (Zpos w - k'))) i Hi),
+      Z.lnot_spec by lia.
+    destruct (i <? Zpos w) eqn:Hlow; cbn [andb].
+    + apply Z.ltb_lt in Hlow.
+      destruct (Z_lt_ge_dec (i + k') (Zpos w)) as [Hsource|Hsource].
+      * rewrite Z.ones_spec_low, Z.min_l by lia. now rewrite orb_false_r.
+      * rewrite Z.ones_spec_high, Z.min_r by lia. now rewrite orb_true_r, Hsign.
+    + apply Z.ltb_ge in Hlow.
+      rewrite (word_bits_high w (wrap w x) (i + k') (wrap_is_word w x)) by lia.
+      reflexivity.
+  - rewrite Z.shiftr_spec by lia.
+    destruct (i <? Zpos w) eqn:Hlow; cbn [andb].
+    + apply Z.ltb_lt in Hlow.
+      destruct (Z_lt_ge_dec (i + k') (Zpos w)) as [Hsource|Hsource].
+      * now rewrite Z.min_l by lia.
+      * rewrite Z.min_r by lia.
+        rewrite (word_bits_high w (wrap w x) (i + k') (wrap_is_word w x)) by lia.
+        symmetry. exact Hsign.
+    + apply Z.ltb_ge in Hlow.
+      apply word_bits_high with (w := w); [apply wrap_is_word|lia].
+Qed.
+
+(** The two pieces of a rotation occupy disjoint bit positions. *)
+Lemma tnum_rotation_disjoint : forall w k x, 0 <= k < Zpos w ->
+  Z.land (Z.shiftl (wrap w x) k) (Z.shiftr (wrap w x) (Zpos w - k)) = 0.
+Proof.
+  intros w k x Hk. apply Z.bits_inj'. intros i Hi.
+  rewrite Z.land_spec, Z.bits_0.
+  destruct (Z_lt_ge_dec i k) as [Hlow|Hhigh].
+  - rewrite Z.shiftl_spec, Z.testbit_neg_r by lia. reflexivity.
+  - rewrite <- (Z.mod_small _ _ (tnum_rotation_high_bound w k x Hk)).
+    rewrite Z.mod_pow2_bits_high by lia. apply andb_false_r.
+Qed.
+
+(** A reduced masked rotation agrees with the concrete word operation. *)
+Lemma tnum_rotl_value_agrees : forall w k x, 0 <= k < Zpos w ->
+  tnum_rotl_value w k x = wrotl w x k.
+Proof.
+  intros w k x Hk. unfold tnum_rotl_value, wrotl.
+  rewrite !tnum_wrap_agrees, (wrap_id w k) by (apply small_amount_word; exact Hk).
+  rewrite Z.mod_small by exact Hk.
+  rewrite <- Z.lxor_lor by (apply tnum_rotation_disjoint; exact Hk).
+  rewrite <- Z.add_nocarry_lxor by (apply tnum_rotation_disjoint; exact Hk).
+  now rewrite Z.shiftl_mul_pow2, Z.shiftr_div_pow2 by lia.
+Qed.
+
+(** The masked scalar dispatcher agrees with its saturating word operations. *)
+Lemma tnum_scalar_value_agrees : forall o w k x, 0 <= k ->
+  tnum_scalar_value o w k x =
+    match o with
+    | bvshl => wshl w x (Z.min k (Zpos w))
+    | bvlshr => wlshr w x (Z.min k (Zpos w))
+    | bvashr => washr w x (Z.min k (Zpos w))
+    | bvrotl => wrotl w x (k mod Zpos w)
+    | bvrotr => wrotl w x ((-k) mod Zpos w)
+    | _ => wrap w x
+    end.
+Proof.
+  intros o w k x Hk. destruct o; cbn [tnum_scalar_value];
+    rewrite ?Z.max_r by lia; try apply tnum_wrap_agrees.
+  - apply tnum_shl_value_agrees. lia.
+  - apply tnum_lshr_value_agrees. lia.
+  - apply tnum_ashr_value_agrees. lia.
+  - apply tnum_rotl_value_agrees. apply Z.mod_pos_bound. lia.
+  - apply tnum_rotl_value_agrees. apply Z.mod_pos_bound. lia.
+Qed.
+
+(** Pointwise agreement on source words preserves the bit-copy property. *)
+Lemma tnum_bit_copy_ext : forall sw rw f g,
+  (forall x, is_word sw x -> f x = g x) ->
+  tnum_bit_copy sw rw f -> tnum_bit_copy sw rw g.
+Proof.
+  intros sw rw f g Hfg Hcopy i Hi.
+  destruct (Hcopy i Hi) as [Hclear|[j [Hj Hsource]]].
+  - left. intros x Hx. rewrite <- Hfg by exact Hx. now apply Hclear.
+  - right. exists j. split; [exact Hj|].
+    intros x Hx. rewrite <- Hfg by exact Hx. now apply Hsource.
+Qed.
+
 Theorem tnum_shl_scalar_sound : forall w k a x,
   0 <= k -> is_word w x -> tnum_gamma w a x ->
   tnum_gamma w (tnum_shl_scalar w k a) (tnum_shl_scalar_value w k x).
-Proof. Admitted. (* CONVERT: tnum_shl_scalar_sound: The variable tnum_map_sound was not found in the current environment. *)
+Proof.
+  intros w k a x Hk Hx Ha. apply tnum_map_sound; try assumption.
+  eapply tnum_bit_copy_ext with (f := fun z => wshl w z (Z.min k (Zpos w))).
+  - intros z Hz. unfold tnum_shl_scalar_value.
+    symmetry. apply tnum_shl_value_agrees. lia.
+  - apply tnum_shl_copy. apply count_is_word. lia.
+Qed.
 
 Lemma tnum_scalar_word : forall o w k x,
   is_word w (tnum_scalar_value o w k x).
-Proof. Admitted. (* CONVERT: tnum_scalar_word: No applicable tactic. *)
+Proof.
+  intros o w k x. destruct o; cbn [tnum_scalar_value];
+    try (rewrite tnum_wrap_agrees; apply wrap_is_word).
+  - rewrite tnum_shl_value_agrees by lia. apply wshl_is_word.
+  - rewrite tnum_lshr_value_agrees by lia. apply wlshr_is_word.
+  - rewrite tnum_ashr_value_agrees by lia. apply washr_is_word.
+  - rewrite tnum_rotl_value_agrees by (apply Z.mod_pos_bound; lia).
+    unfold wrotl. apply wrap_is_word.
+  - rewrite tnum_rotl_value_agrees by (apply Z.mod_pos_bound; lia).
+    unfold wrotl. apply wrap_is_word.
+Qed.
 
 Theorem tnum_scalar_bits : forall o w k x i,
   0 <= k -> is_word w x -> 0 <= i < Zpos w ->
@@ -1319,7 +1468,34 @@ Theorem tnum_scalar_bits : forall o w k x i,
     | Some j => Z.testbit x j
     | None => false
     end.
-Proof. Admitted. (* CONVERT: tnum_scalar_bits: Found no subterm matching *)
+Proof.
+  intros o w k x i Hk Hx Hi.
+  assert (Hsat : is_word w (Z.min k (Zpos w))) by (apply count_is_word; lia).
+  assert (Hres : forall n, is_word w (n mod Zpos w)).
+  { intro n. apply small_amount_word. apply Z.mod_pos_bound. lia. }
+  assert (Hlow : (i <? Zpos w) = true) by (apply Z.ltb_lt; lia).
+  rewrite tnum_scalar_value_agrees by exact Hk.
+  destruct o; cbn [tnum_source];
+    try (rewrite (wrap_id w x Hx); reflexivity).
+  - rewrite testbit_wshl, Hlow by (try assumption; lia). cbn [andb].
+    destruct (k <=? i) eqn:Hki.
+    + apply Z.leb_le in Hki. rewrite Z.min_l by lia.
+      now rewrite (proj2 (Z.leb_le k i) Hki).
+    + apply Z.leb_gt in Hki. rewrite (proj2 (Z.leb_gt (Z.min k (Zpos w)) i)) by lia.
+      reflexivity.
+  - rewrite testbit_wlshr, Hlow by (try assumption; lia). cbn [andb].
+    destruct (i + k <? Zpos w) eqn:Hsmall.
+    + apply Z.ltb_lt in Hsmall. now rewrite Z.min_l by lia.
+    + apply Z.ltb_ge in Hsmall. apply (word_bits_high w x); [exact Hx|lia].
+  - rewrite testbit_washr, Hlow by (try assumption; lia). cbn [andb]. f_equal. lia.
+  - rewrite testbit_wrotl by exact Hi.
+    rewrite (wrap_id w _ (Hres k)), (wrap_id w x Hx).
+    rewrite Zminus_mod, Z.mod_mod, <- Zminus_mod by lia. reflexivity.
+  - rewrite testbit_wrotl by exact Hi.
+    rewrite (wrap_id w _ (Hres (-k))), (wrap_id w x Hx).
+    rewrite Zminus_mod, Z.mod_mod, <- Zminus_mod by lia.
+    replace (i - - k) with (i + k) by ring. reflexivity.
+Qed.
 
 Lemma tnum_source_range : forall o w k i j,
   0 <= k -> 0 <= i < Zpos w -> tnum_source o w k i = Some j ->
@@ -1350,7 +1526,10 @@ Qed.
 Theorem tnum_scalar_sound : forall o w k a x,
   0 <= k -> is_word w x -> tnum_gamma w a x ->
   tnum_gamma w (tnum_scalar o w k a) (tnum_scalar_value o w k x).
-Proof. Admitted. (* CONVERT: tnum_scalar_sound: The variable tnum_map_sound was not found in the current environment. *)
+Proof.
+  intros o w k a x Hk Hx Ha. apply tnum_map_sound; try assumption.
+  now apply tnum_scalar_copy.
+Qed.
 
 Theorem tnum_rotr_bits : forall w x k i,
   is_word w x -> is_word w k -> 0 <= i < Zpos w ->
@@ -1369,7 +1548,26 @@ Qed.
 Theorem tnum_scalar_agrees : forall o w f k x,
   tnum_shift_op o -> word_fun2 o = Some f -> is_word w k -> is_word w x ->
   tnum_scalar_value o w k x = eval_binary_tag f w x k.
-Proof. Admitted. (* CONVERT: tnum_scalar_agrees: eval_binary_tag has function type but binary_tag is expected. *)
+Proof.
+  intros o w f k x Ho Hf Hk Hx. assert (Hk0 : 0 <= k) by exact (proj1 Hk).
+  apply (word_ext w); [apply tnum_scalar_word|now apply (word_fun2_is_word o f)|].
+  intros i Hi. destruct (Z_lt_ge_dec i (Zpos w)) as [Hlow|Hhigh].
+  - rewrite tnum_scalar_bits by (try assumption; lia).
+    destruct Ho as [Ho|[Ho|[Ho|[Ho|Ho]]]]; subst o; injection Hf as <-;
+      cbn [tnum_source eval_binary_tag].
+    + rewrite testbit_wshl by (try assumption; lia).
+      rewrite (proj2 (Z.ltb_lt i (Zpos w))) by lia. destruct (k <=? i); reflexivity.
+    + rewrite testbit_wlshr by (try assumption; lia).
+      rewrite (proj2 (Z.ltb_lt i (Zpos w))) by lia. cbn [andb].
+      destruct (i + k <? Zpos w) eqn:Hsmall; [reflexivity|].
+      symmetry. apply (word_bits_high w x); [exact Hx|now apply Z.ltb_ge in Hsmall].
+    + rewrite testbit_washr by (try assumption; lia).
+      rewrite (proj2 (Z.ltb_lt i (Zpos w))) by lia. reflexivity.
+    + rewrite testbit_wrotl, (wrap_id w k Hk), (wrap_id w x Hx) by lia. reflexivity.
+    + rewrite tnum_rotr_bits by (try assumption; lia). reflexivity.
+  - rewrite (word_bits_high w _ i (tnum_scalar_word o w k x) ltac:(lia)).
+    rewrite (word_bits_high w _ i (word_fun2_is_word o f w x k Hf) ltac:(lia)). reflexivity.
+Qed.
 
 Theorem tnum_sext_copy : forall sw rw,
   tnum_bit_copy sw rw (fun x => wrap rw (signed sw x)).
@@ -2561,7 +2759,9 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
       | Op.bvrotr => wrotl w x ((- k) mod Zpos w)
       | _ => L.wrap w x
       end.
-  Proof. Admitted. (* CONVERT: F0_scalar_value: masked shifts require word-operation agreement *)
+  Proof.
+    exact tnum_scalar_value_agrees.
+  Qed.
   (** One masked scalar shift reads the width, the amount and the raw value once. *)
   Lemma T0_scalar_value : forall o w k x,
     (T_tnum_scalar_value o w k x <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat x +
