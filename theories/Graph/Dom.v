@@ -2009,6 +2009,93 @@ Proof.
   now apply dom_nat_N_lt.
 Qed.
 
+(** The numbered accepted tree exposes exactly the semantic reachable domain. *)
+Local Lemma dom_tree_checked_exact : forall g r m o,
+  DomCode.check g r m o = true -> domtree_exact g r (DomCode.tree g r m o).
+Proof.
+  intros g r m o Hcheck.
+  pose proof (dom_check_certificate g r m o Hcheck) as Hcert.
+  pose proof (proj1 Hcert) as Hpreorder.
+  destruct Hpreorder as [Hunique [Hhead [Hroot [Hparents [Hdomain Hcontiguous]]]]].
+  assert (Hordered : forall v p, trie_get v m = Some p -> order_before o p v).
+  { intros v p Hparent. exact (dom_cert_parent_before (base g) r m o v p Hcert Hparent). }
+  pose proof Hcheck as Hphases. unfold DomCode.check in Hphases.
+  destruct (dom_read_known (dom_scan g) r o) as [pos |] eqn:Hread;
+    [| discriminate Hphases].
+  destruct (dom_map_check_known (dom_scan g) r m o); [| discriminate Hphases].
+  apply andb_true_iff in Hphases as [Hsizes Hedges].
+  pose proof (dom_read_known_positions (dom_scan g) r o pos Hread) as Hpositions.
+  destruct (dom_read_known_success g r o pos Hread) as [_ [_ [_ [Hlisted _]]]].
+  subst pos.
+  assert (Hwidth : forall v, In v o -> Pos.size_nat v <= graph_width (base g)).
+  { intros v Hin. apply dom_listed_key_width. now apply Hlisted. }
+  unfold domtree_exact. split.
+  - rewrite <- (dom_nodes_verts g). apply Hlisted.
+    exact (dom_cert_root_listed (base g) r m o Hcert).
+  - split.
+    + change (dom_exact g r m). exact (dom_cert_exact g r m o Hcert).
+    + split.
+      * intros v a [Hpre | Hpost].
+        -- rewrite dom_tree_pre in Hpre.
+           pose proof (dom_positions_bound o v a Hunique Hpre) as Hbound.
+           apply (dom_distinct_value_width o (graph_width (base g)) a Hunique Hwidth). lia.
+        -- destruct (dom_tree_post_value g r m o v a Hpost) as [pv [Hpv Ha]]. subst a.
+           pose proof (dom_sizes_position_end_bound m o v pv Hunique Hordered Hpv) as Hbound.
+           apply (dom_distinct_value_width o (graph_width (base g))
+             (N.pred (pv + dom_size_get (dom_sizes m o) v)) Hunique Hwidth). lia.
+      * split.
+        -- change (forall u v, In v (children (DomCode.tree g r m o) u) <->
+             trie_get v m = Some u).
+           intros u v. rewrite dom_tree_children_member. split.
+           ++ intros [_ Hparent]. exact Hparent.
+           ++ intro Hparent. split; [eapply Hdomain; exact Hparent | exact Hparent].
+        -- split.
+           ++ intro u. now apply dom_tree_children_sorted.
+           ++ split.
+              ** intro v. rewrite dom_tree_pre, dom_positions_domain. split.
+                 --- intro Hv. exact (dom_cert_listed_reach (base g) r m o v Hcert Hv).
+                 --- intro Hv. exact (dom_cert_reach_listed (base g) r m o v Hcert Hv).
+              ** split.
+                 --- intro v. rewrite dom_tree_post_domain. split.
+                     +++ intro Hv. exact (dom_cert_listed_reach (base g) r m o v Hcert Hv).
+                     +++ intro Hv. exact (dom_cert_reach_listed (base g) r m o v Hcert Hv).
+                 --- intros u v Hreach.
+                     pose proof (dom_cert_reach_listed (base g) r m o v Hcert Hreach) as Hv.
+                     split.
+                     +++ intro Hdom.
+                         pose proof (dom_cert_dominates_anc (base g) r m o u v Hcert Hv Hdom)
+                           as Hanc.
+                         pose proof (dom_cert_anc_listed (base g) r m o u v Hcert Hanc Hv) as Hu.
+                         destruct (proj2 (dom_positions_domain o u) Hu) as [a Ha].
+                         destruct (proj2 (dom_positions_domain o v) Hv) as [c Hc].
+                         pose proof (proj2 (dom_sizes_interval_anc m o u v Hunique Hordered
+                           Hsizes Hu Hv) Hanc) as Hinterval.
+                         unfold dom_interval in Hinterval. rewrite Ha, Hc in Hinterval.
+                         apply andb_true_iff in Hinterval as [Hac Hend].
+                         apply N.leb_le in Hac. apply N.leb_le in Hend.
+                         exists a, (N.pred (a + dom_size_get (dom_sizes m o) u)),
+                           c, (N.pred (c + dom_size_get (dom_sizes m o) v)).
+                         split; [now rewrite dom_tree_pre |].
+                         split; [now apply dom_tree_post_number |].
+                         split; [now rewrite dom_tree_pre |].
+                         split; [now apply dom_tree_post_number |]. split; [exact Hac | lia].
+                     +++ intros [a [b [c [d [Ha [Hb [Hc [Hd [Hac Hdb]]]]]]]]].
+                         rewrite dom_tree_pre in Ha, Hc.
+                         assert (Hu : In u o).
+                         { apply (proj1 (dom_positions_domain o u)). now exists a. }
+                         pose proof (dom_tree_post_number g r m o u a Ha) as Hpostu.
+                         pose proof (dom_tree_post_number g r m o v c Hc) as Hpostv.
+                         rewrite Hb in Hpostu. injection Hpostu as Hbvalue. subst b.
+                         rewrite Hd in Hpostv. injection Hpostv as Hdvalue. subst d.
+                         apply (dom_cert_anc_dominates (base g) r m o u v Hcert Hv).
+                         apply (proj1 (dom_sizes_interval_anc m o u v Hunique Hordered
+                           Hsizes Hu Hv)).
+                         unfold dom_interval. rewrite Ha, Hc. apply andb_true_iff.
+                         split; apply N.leb_le; [exact Hac |].
+                         pose proof (dom_sizes_positive m o u).
+                         pose proof (dom_sizes_positive m o v). lia.
+Qed.
+
 Module Dom <: DOM.
   Include DomCode.
   Include DOM_SPEC.
@@ -2025,7 +2112,9 @@ Module Dom <: DOM.
   Qed.
 
   Lemma tree_exact : forall g r m o, check g r m o = true -> domtree_exact g r (tree g r m o).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o Hcheck. exact (dom_tree_checked_exact g r m o Hcheck).
+  Qed.
 
   Lemma dominates_b_spec : forall g r m o u v,
     check g r m o = true -> reach (base g) [r] v ->
@@ -2243,7 +2332,9 @@ Module DomT <: DOM_ALL.
 
   Lemma F12_tree_exact : forall g r m o, check g r m o = true ->
   domtree_exact g r (tree g r m o).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o Hcheck. exact (tree_exact g r m o Hcheck).
+  Qed.
 
   (** A successful read lists distinct listed vertices within the budget, headed by the root. *)
   Lemma F2c_read : forall g r o pos, read (scan g) r o = Some pos ->
