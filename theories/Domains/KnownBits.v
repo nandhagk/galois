@@ -1633,25 +1633,89 @@ Proof.
 Qed.
 
 Theorem tnum_ctz_range : forall w x, 0 <= wctz w x <= Zpos w.
-Proof. Admitted. (* CONVERT: tnum_ctz_range: wctz has type width -> Z -> Z but unary_tag is expected. *)
+Proof.
+  intros w x.
+  pose proof (word_fun1_normalised bvctz UCtz w x eq_refl) as Hnorm.
+  cbn [eval_unary_tag] in Hnorm.
+  destruct (Z.eq_dec (wrap w x) 0) as [Hz|Hnz].
+  - rewrite <- Hnorm, Hz, wctz_zero. lia.
+  - rewrite <- Hnorm.
+    destruct (wctz_spec w _ (wrap_is_word w x) Hnz) as [Hset _].
+    split.
+    + destruct (Z_le_gt_dec 0 (wctz w (wrap w x))); [assumption|].
+      rewrite Z.testbit_neg_r in Hset by lia. discriminate.
+    + destruct (Z_lt_ge_dec (wctz w (wrap w x)) (Zpos w)); [lia|].
+      rewrite (word_bits_high w (wrap w x) (wctz w (wrap w x))
+        (wrap_is_word w x) ltac:(lia)) in Hset. discriminate.
+Qed.
 
 Lemma tnum_trailing_clear : forall w a x i,
   tnum_gamma w a x -> 0 <= i < tnum_trailing w a -> Z.testbit x i = false.
-Proof. Admitted. (* CONVERT: tnum_trailing_clear: Tactic failure: Cannot find witness. *)
+Proof.
+  intros w a x i Ha Hi. unfold tnum_trailing in Hi. rewrite tnum_wnot_agrees in Hi. apply tnum_gamma_bits in Ha. destruct Ha as [Hz _].
+  pose proof (tnum_ctz_range w (wnot w (zeros a))) as Hrange.
+  apply (Hz i ltac:(unfold tnum_trailing in Hi; lia)).
+  assert (Hclear : Z.testbit (wnot w (zeros a)) i = false).
+  { destruct (Z.eq_dec (wnot w (zeros a)) 0) as [Hnone|Hsome].
+    - now rewrite Hnone, Z.bits_0.
+    - apply (proj2 (wctz_spec w _ (wnot_is_word w _) Hsome)). exact Hi. }
+  rewrite tnum_not_bit in Hclear by (unfold tnum_trailing in Hi; lia).
+  now apply negb_false_iff in Hclear.
+Qed.
 
 Lemma tnum_trailing_factor : forall w a x,
   tnum_gamma w a x -> exists q, x = q * 2 ^ tnum_trailing w a.
-Proof. Admitted. (* CONVERT: tnum_trailing_factor: Tactic failure: Cannot find witness. *)
+Proof.
+  intros w a x Ha. pose proof (tnum_ctz_range w (tnum_wnot w (zeros a))) as Hrange.
+  assert (Hmod : x mod 2 ^ tnum_trailing w a = 0).
+  { apply Z.bits_inj'. intros i Hi. rewrite Z.bits_0.
+    destruct (Z_lt_ge_dec i (tnum_trailing w a)) as [Hlow|Hhigh].
+    - rewrite Z.mod_pow2_bits_low by exact Hlow.
+      eapply tnum_trailing_clear; [exact Ha|lia].
+    - apply Z.mod_pow2_bits_high. unfold tnum_trailing in *. lia. }
+  exists (x / 2 ^ tnum_trailing w a).
+  pose proof (Z.div_mod x (2 ^ tnum_trailing w a)
+    ltac:(pose proof (Z.pow_pos_nonneg 2 (tnum_trailing w a) ltac:(lia)
+      ltac:(unfold tnum_trailing; lia)); lia)) as Heq.
+  rewrite Hmod in Heq. lia.
+Qed.
 
 Theorem tnum_mul_low_sound : forall w a b x y,
   tnum_gamma w a x -> tnum_gamma w b y ->
   tnum_gamma w (tnum_mul_low w a b) (wmul w x y).
-Proof. Admitted. (* CONVERT: tnum_mul_low_sound: The variable tnum_trailing_factor was not found in the current *)
+Proof.
+  intros w a b x y Ha Hb.
+  destruct (tnum_trailing_factor w a x Ha) as [qa Hx].
+  destruct (tnum_trailing_factor w b y Hb) as [qb Hy].
+  pose proof (tnum_ctz_range w (tnum_wnot w (zeros a))) as Hra.
+  pose proof (tnum_ctz_range w (tnum_wnot w (zeros b))) as Hrb.
+  change (0 <= tnum_trailing w a <= Zpos w) in Hra.
+  change (0 <= tnum_trailing w b <= Zpos w) in Hrb.
+  apply tnum_gamma_bits. split; intros i Hi Hbit.
+  - cbn [tnum_mul_low zeros] in Hbit. rewrite tnum_wrap_agrees, tnum_wrap_bit in Hbit by exact Hi.
+    assert (Hlow : i < tnum_trailing w a + tnum_trailing w b).
+    { destruct (Z_lt_ge_dec i (tnum_trailing w a + tnum_trailing w b)); [assumption|].
+      rewrite Z.ones_spec_high in Hbit by lia. discriminate. }
+    rewrite wmul_value, tnum_wrap_bit by exact Hi. rewrite Hx, Hy.
+    replace (qa * 2 ^ tnum_trailing w a * (qb * 2 ^ tnum_trailing w b)) with
+      ((qa * qb) * 2 ^ (tnum_trailing w a + tnum_trailing w b)) by
+      (rewrite Z.pow_add_r by lia; ring).
+    apply Z.mul_pow2_bits_low. exact Hlow.
+  - cbn [tnum_mul_low ones] in Hbit. rewrite Z.bits_0 in Hbit. discriminate.
+Qed.
 
 Theorem tnum_mul_sound : forall w a b x y,
   is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
   tnum_gamma w (tnum_mul w a b) (wmul w x y).
-Proof. Admitted. (* CONVERT: tnum_mul_sound: The variable tnum_constant_value was not found in the current *)
+Proof.
+  intros w a b x y Hx Hy Ha Hb. unfold tnum_mul.
+  destruct (tnum_constant w a) as [ca|] eqn:Hca,
+    (tnum_constant w b) as [cb|] eqn:Hcb; try now apply tnum_mul_low_sound.
+  rewrite (tnum_constant_value w a x ca Hx Ha Hca),
+    (tnum_constant_value w b y cb Hy Hb Hcb).
+  rewrite <- (wrap_id w (wmul w ca cb) (word_fun2_is_word bvmul BMul w ca cb eq_refl))
+    at 2. apply tnum_const_sound.
+Qed.
 
 Lemma tnum_mul_prefix : forall y i, 0 <= i ->
   y mod 2 ^ (i + 1) = y mod 2 ^ i + Z.b2z (Z.testbit y i) * 2 ^ i.
@@ -1674,7 +1738,14 @@ Lemma tnum_mul_partial_add : forall w x y i, 0 <= i < Zpos w -> is_word w x ->
     if Z.testbit y i then
       wadd w (wrap w (x * (y mod 2 ^ i))) (tnum_shl_scalar_value w i x)
     else wrap w (x * (y mod 2 ^ i)).
-Proof. Admitted. (* CONVERT: tnum_mul_partial_add: masked shift agreement is pending. *)
+Proof.
+  intros w x y i Hi Hx. rewrite tnum_mul_prefix by lia.
+  destruct (Z.testbit y i); cbn [Z.b2z].
+  - unfold tnum_shl_scalar_value. rewrite tnum_shl_value_agrees by lia. rewrite Z.min_l by lia.
+    rewrite <- (wmul_wshl w x i Hx Hi).
+    rewrite wadd_value, wmul_value, <- wrap_add. f_equal. ring.
+  - f_equal. ring.
+Qed.
 
 Lemma tnum_mul_step_sound : forall w a b x y i r,
   0 <= i < Zpos w -> is_word w x -> tnum_gamma w a x -> tnum_gamma w b y ->
@@ -1823,7 +1894,22 @@ Lemma tnum_mul_acc_done_sound : forall w b y i,
   is_word w y -> tnum_gamma w b y -> 0 <= i ->
   tnum_mul_acc_done w b i = true ->
   y mod 2 ^ i = y /\ tnum_min w b mod 2 ^ i = tnum_min w b.
-Proof. Admitted. (* CONVERT: tnum_mul_acc_done_sound: Found no subterm matching "Z.testbit (wrap ?M1559 ?M1560) ?M1561" *)
+Proof.
+  intros w b y i Hy Hb Hi Hdone. unfold tnum_mul_acc_done in Hdone.
+  apply andb_true_iff in Hdone as [Hv Hm]. apply Z.eqb_eq in Hv, Hm.
+  apply tnum_gamma_bits in Hb. destruct Hb as [Hz Ho]. split; apply tnum_low_complete;
+    try exact Hi.
+  - intros j Hj. destruct (Z_lt_ge_dec j (Zpos w)) as [Hlow|Hhigh].
+    + pose proof (tnum_shift_clear _ i j Hi Hj Hv) as Hvbit.
+      pose proof (tnum_shift_clear _ i j Hi Hj Hm) as Hmbit.
+      unfold tnum_min in Hvbit. rewrite tnum_wrap_agrees, tnum_wrap_bit in Hvbit by lia.
+      rewrite tnum_mask_bit in Hmbit by lia.
+      specialize (Hz j ltac:(lia)). specialize (Ho j ltac:(lia)).
+      destruct (Z.testbit (zeros b) j), (Z.testbit (ones b) j), (Z.testbit y j);
+        cbn in *; intuition discriminate.
+    + apply (word_bits_high w y j Hy). lia.
+  - intros j Hj. now apply (tnum_shift_clear _ i j Hi Hj Hv).
+Qed.
 
 Lemma tnum_mul_acc_increment : forall w a b x y i r q delta,
   0 <= i < Zpos w -> is_word w delta ->
@@ -1831,7 +1917,14 @@ Lemma tnum_mul_acc_increment : forall w a b x y i r q delta,
   tnum_gamma w q delta ->
   tnum_gamma w (tnum_add w r (tnum_shl_scalar w i q))
     (wrap w (tnum_mul_residual w a b x y i + delta * 2 ^ i)).
-Proof. Admitted. (* CONVERT: tnum_mul_acc_increment: masked shift agreement is pending. *)
+Proof.
+  intros w a b x y i r q delta Hi Hdelta Hr Hq.
+  pose proof (tnum_add_sound w r (tnum_shl_scalar w i q) _ _
+    Hr (tnum_shl_scalar_sound w i q delta ltac:(lia) Hdelta Hq)) as Hsum.
+  unfold tnum_shl_scalar_value in Hsum. rewrite tnum_shl_value_agrees in Hsum by lia. rewrite Z.min_l in Hsum by lia.
+  rewrite <- (wmul_wshl w delta i Hdelta Hi), wadd_value, wmul_value,
+    <- wrap_add in Hsum. exact Hsum.
+Qed.
 
 Lemma tnum_mul_acc_next : forall w a b x y i r,
   0 <= i < Zpos w -> is_word w x -> tnum_gamma w a x -> tnum_gamma w b y ->
@@ -1842,7 +1935,35 @@ Lemma tnum_mul_acc_next : forall w a b x y i r,
         else wor w (tnum_min w a) (tnum_mask w a) in
       tnum_add w r (tnum_shl_scalar w i (tnum_uncertain w m)))
     (wrap w (tnum_mul_residual w a b x y (i + 1))).
-Proof. Admitted. (* CONVERT: tnum_mul_acc_next: Not convertible. *)
+Proof.
+  intros w a b x y i r Hi Hx Ha Hb Hr.
+  destruct (tnum_decompose w a x Hx Ha) as [c [Hsub Hxc]].
+  pose proof (tnum_unsigned_bounds w a x Hx Ha) as Hbounds.
+  pose proof (tnum_min_word w a) as Hvalue.
+  apply tnum_gamma_bits in Hb. destruct Hb as [Hz Ho].
+  rewrite tnum_mul_residual_step by exact Hi.
+  destruct (Z.testbit (zeros b) i) eqn:Hbz.
+  - rewrite (Hz i Hi Hbz).
+    assert (Hbo : Z.testbit (ones b) i = false).
+    { destruct (Z.testbit (ones b) i) eqn:Hbo; [|reflexivity].
+      specialize (Ho i Hi Hbo). specialize (Hz i Hi Hbz). congruence. }
+    rewrite Hbo. cbn [Z.b2z]. replace (_ + (x * 0 - _ * 0) * _) with
+      (tnum_mul_residual w a b x y i) by ring. exact Hr.
+  - destruct (Z.testbit (ones b) i) eqn:Hbo.
+    + rewrite (Ho i Hi Hbo). cbn [Z.b2z].
+      replace (x * 1 - tnum_min w a * 1) with c by lia.
+      apply tnum_mul_acc_increment; try assumption.
+      * change (0 <= tnum_min w a < modulus w) in Hvalue.
+        unfold is_word in *. lia.
+      * now apply tnum_uncertain_sound.
+    + cbn [Z.b2z]. destruct (Z.testbit y i).
+      * cbn [Z.b2z]. replace (x * 1 - tnum_min w a * 0) with x by ring.
+        apply tnum_mul_acc_increment; try assumption. now apply tnum_uncertain_value.
+      * cbn [Z.b2z]. replace (x * 0 - tnum_min w a * 0) with 0 by ring.
+        apply tnum_mul_acc_increment; try assumption.
+        -- apply zero_is_word.
+        -- apply tnum_uncertain_zero.
+Qed.
 
 Theorem tnum_mul_acc_runs_sound : forall w a b x y,
   is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
