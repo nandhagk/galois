@@ -2511,6 +2511,186 @@ Proof.
   now rewrite Hdone in Hloop.
 Qed.
 
+(** A constant-cost visitor exposes Search's public trace clock without extra observations. *)
+Module LoopTraceClockVisitor <: VISITOR_T.
+  Include LoopTraceVisitor.
+  Definition vwork (_ : state) : nat := 0.
+  Definition c_vis : N := 1%N.
+
+  Lemma T_enter_le : forall v s, (T_enter v s <= c_vis * N.of_nat (vwork s + 1))%N.
+  Proof. intros v s. unfold T_enter, c_vis, vwork. time_simpl. lia. Qed.
+
+  Lemma T_leave_le : forall v s, (T_leave v s <= c_vis * N.of_nat (vwork s + 1))%N.
+  Proof. intros v s. unfold T_leave, c_vis, vwork. time_simpl. lia. Qed.
+
+  Lemma T_edge_le : forall kind u v s,
+    (T_edge kind u v s <= c_vis * N.of_nat (vwork s + 1))%N.
+  Proof. intros kind u v s. unfold T_edge, c_vis, vwork. time_simpl. lia. Qed.
+End LoopTraceClockVisitor.
+
+Module LoopTraceClock := Galois.Graph.Search.SearchT LoopTraceClockVisitor.
+
+Local Definition loop_trace_cost : N := (16 * (LoopTraceClock.k_trace + 1))%N.
+Local Definition loop_test_cost : N := 64%N.
+Local Opaque LoopTraceClock.k_trace.
+
+Local Lemma loop_vertex_width_bound : forall vertices width,
+  (forall v, In v vertices -> Pos.size_nat v <= width) -> vertex_width vertices <= width.
+Proof.
+  intro vertices. induction vertices as [|v rest IH]; intros width Hwidth; [cbn; lia|].
+  cbn [vertex_width]. change graph_max with Nat.max. apply Nat.max_lub.
+  - apply Hwidth. now left.
+  - apply IH. intros u Hu. apply Hwidth. now right.
+Qed.
+
+Local Lemma loop_successor_width : forall g u,
+  wf_graph (base g) -> In u (nodes g) ->
+  vertex_width (succs (base g) u) <= graph_width (base g).
+Proof.
+  intros g u Hgraph Hu. apply loop_vertex_width_bound. intros v Hv.
+  apply loop_listed_width. rewrite loop_nodes_verts in Hu |- *.
+  exact (proj2 Hgraph u v Hu Hv).
+Qed.
+
+Local Lemma loop_trace_support : forall g r,
+  wf_graph (base g) -> counts_ok g -> In r (nodes g) ->
+  NoDup (entered (prepared_search_trace g [r])) /\
+    incl (entered (prepared_search_trace g [r])) (nodes g).
+Proof.
+  intros g r Hgraph Hcounts Hroot.
+  assert (Hroots : forall v, In v [r] -> In v (nodes g)).
+  { intros v [<-|Hin]; [exact Hroot|contradiction]. }
+  split.
+  - exact (LoopTrace.trace_unique g [r] Hcounts Hgraph Hroots).
+  - intros v Hin. rewrite loop_nodes_verts in Hroot |- *.
+    apply (loop_reachable_listed (base g) r v Hgraph Hroot).
+    exact (proj1 (LoopTrace.trace_reach g [r] v Hcounts Hgraph Hroots) Hin).
+Qed.
+
+(** A single listed-root trace stays within the graph's vertex, edge and key budgets. *)
+Local Lemma loop_trace_measures : forall g r,
+  wf_graph (base g) -> counts_ok g -> In r (nodes g) ->
+  LoopTraceClock.n_reach g [r] <= graph_n (base g) /\
+  LoopTraceClock.e_reach g [r] <= graph_e (base g) /\
+  LoopTraceClock.run_width g [r] <= graph_width (base g) /\
+  length (prepared_search_trace g [r]) <= 2 * graph_n (base g) + graph_e (base g).
+Proof.
+  intros g r Hgraph Hcounts Hroot.
+  destruct (loop_trace_support g r Hgraph Hcounts Hroot) as [Hunique Hlisted].
+  pose proof (NoDup_incl_length Hunique Hlisted) as Hvertices.
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors vertex_count edge_count]. reflexivity. }
+  rewrite Hnodes in Hvertices.
+  pose proof (DomProducer.dom_nodup_sum_incl (fun v => length (succs (base g) v))
+    _ _ Hunique Hlisted) as Hedges.
+  assert (Hrows : fold_right (fun v total => length (succs (base g) v) + total)
+    0 (nodes g) = graph_e (base g)).
+  { destruct g as [[vertices adjacency] predecessors vertex_count edge_count]. reflexivity. }
+  cbn beta in Hedges. rewrite Hrows in Hedges.
+  assert (Hwidth : LoopTraceClock.run_width g [r] <= graph_width (base g)).
+  { unfold LoopTraceClock.run_width. change graph_max with Nat.max. apply Nat.max_lub.
+    - apply loop_vertex_width_bound. intros v [<-|Hin]; [now apply loop_listed_width|contradiction].
+    - assert (Hall : forall vertices, incl vertices (nodes g) ->
+        fold_right (fun u width => Nat.max (vertex_width (succs (base g) u)) width)
+          0 vertices <= graph_width (base g)).
+      { intro vertices. induction vertices as [|v rest IH]; intros Hincl; [cbn; lia|].
+        cbn [fold_right]. apply Nat.max_lub.
+        - apply loop_successor_width; [exact Hgraph|apply Hincl; now left].
+        - apply IH. intros u Hu. apply Hincl. now right. }
+      exact (Hall _ Hlisted). }
+  pose proof (LoopTraceClock.F7b_events_raw g [r]) as Hevents.
+  unfold LoopTraceClock.n_reach, LoopTraceClock.e_reach, LoopTraceClock.trace in *.
+  repeat split; try assumption. lia.
+Qed.
+
+Local Lemma loop_trace_edge_width : forall g r u v,
+  wf_graph (base g) -> counts_ok g -> In r (nodes g) ->
+  In (Edge Back u v) (prepared_search_trace g [r]) ->
+  Pos.size_nat u <= graph_width (base g) /\ Pos.size_nat v <= graph_width (base g).
+Proof.
+  intros g r u v Hgraph Hcounts Hroot Hin.
+  assert (Hroots : forall x, In x [r] -> In x (nodes g)).
+  { intros x [<-|Hfalse]; [exact Hroot|contradiction]. }
+  destruct (LoopTrace.trace_edges_sound g [r] Back u v Hcounts Hgraph Hroots Hin)
+    as [Hreach Hedge].
+  assert (Hu : In u (nodes g)).
+  { rewrite loop_nodes_verts in Hroot |- *.
+    now apply (loop_reachable_listed (base g) r u). }
+  split; [now apply loop_listed_width|].
+  apply loop_listed_width. rewrite loop_nodes_verts in Hu |- *.
+  exact (proj2 Hgraph u v Hu Hedge).
+Qed.
+
+Local Lemma loop_forallb_clock_bound {A : Type} (test : A -> bool) (clock : A -> N) :
+  forall xs cost,
+  (forall x, In x xs -> (clock x <= cost)%N) ->
+  (List.T_forallb test clock xs <= (cost + 2) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros cost Hclock.
+  - time_unfold List.T_forallb. cbn [length]. lia.
+  - pose proof (Hclock x (or_introl eq_refl)) as Hhead.
+    specialize (IH cost (fun y Hy => Hclock y (or_intror Hy))).
+    time_unfold List.T_forallb. time_simpl. cbn [length]. rewrite Nat2N.inj_succ.
+    destruct (test x); lia.
+Qed.
+
+Local Lemma loop_test_clock : forall rows events width,
+  (forall u v, In (Edge Back u v) events -> Pos.size_nat u <= width /\ Pos.size_nat v <= width) ->
+  (T_test_back rows events + 1 <=
+    16 * N.of_nat (length events + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros rows events width Hwidth. unfold T_test_back. time_simpl.
+  match goal with
+  | |- context [List.T_forallb ?test ?clock events] =>
+      assert (Htest : (List.T_forallb test clock events <=
+        (8 * N.of_nat (width + 1) + 2) * N.of_nat (length events) + 1)%N)
+  end.
+  { apply loop_forallb_clock_bound. intros [v|v|kind u v] Hin;
+      cbn beta iota zeta; try lia.
+    destruct kind; cbn beta iota zeta; try lia.
+    destruct (Hwidth u v Hin) as [Hu Hv].
+    apply time_of_nat_le in Hu. apply time_of_nat_le in Hv.
+    rewrite PTrieT.trie_get_clock.
+    destruct (trie_get u rows) as [row|]; [rewrite PTrieT.trie_get_clock|];
+      rewrite Nat2N.inj_add; lia. }
+  repeat rewrite Nat2N.inj_add in Htest |- *. nia.
+Qed.
+
+Local Lemma loop_trace_clock_bound : forall g r,
+  wf_graph (base g) -> counts_ok g -> In r (nodes g) ->
+  (T_prepared_search_trace g [r] + 1 <= loop_trace_cost *
+    N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros g r Hgraph Hcounts Hroot.
+  destruct (loop_trace_measures g r Hgraph Hcounts Hroot) as [Hvertices [Hedges [Hwidth _]]].
+  pose proof (LoopTraceClock.T4_raw g [r]) as Hclock.
+  pose proof (DomProducer.dom_size_value (nv g)) as Hnv.
+  pose proof (DomProducer.dom_size_value (ne g)) as Hne.
+  destruct Hcounts as [Hcachev Hcachee].
+  apply time_of_nat_le in Hvertices. apply time_of_nat_le in Hedges.
+  apply time_of_nat_le in Hwidth.
+  unfold LoopTraceClock.T_search_trace in Hclock. cbn beta iota zeta in Hclock.
+  cbn [length] in Hclock. unfold loop_trace_cost.
+  repeat rewrite Nat2N.inj_add in Hclock |- *. nia.
+Qed.
+
+Local Lemma loop_retreat_test_clock : forall g r rows,
+  wf_graph (base g) -> counts_ok g -> In r (nodes g) ->
+  (T_test_back rows (prepared_search_trace g [r]) + 1 <= loop_test_cost *
+    N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros g r rows Hgraph Hcounts Hroot.
+  pose proof (loop_test_clock rows (prepared_search_trace g [r]) (graph_width (base g))
+    (fun u v Hin => loop_trace_edge_width g r u v Hgraph Hcounts Hroot Hin)) as Hclock.
+  destruct (loop_trace_measures g r Hgraph Hcounts Hroot) as [_ [_ [_ Hevents]]].
+  apply time_of_nat_le in Hevents.
+  unfold loop_test_cost. repeat rewrite Nat2N.inj_add in Hclock, Hevents |- *.
+  repeat rewrite Nat2N.inj_mul in Hevents. nia.
+Qed.
+
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -2727,8 +2907,8 @@ Module LoopsT <: LOOPS_ALL.
   Definition k_body_stop : N := 8.
   Definition k_collect : N := loop_collect_cost.
   Definition k_install : N := loop_install_cost.
-  Definition k_trace : N := 1. (* STUB *)
-  Definition k_test : N := 1. (* STUB *)
+  Definition k_trace : N := loop_trace_cost.
+  Definition k_test : N := loop_test_cost.
   Definition k_forest : N := 1. (* STUB *)
   Definition k_reducible : N := 16.
 
@@ -3573,7 +3753,19 @@ Module LoopsT <: LOOPS_ALL.
         (retreat_trace g (firstn 1 (loop_order (classify g t)))) <=
       (k_trace + k_test) * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
         N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    destruct (F4_tree_order g t r Hgraph Hprepared Htree) as [_ [Hroot _]].
+    rewrite (loop_first_head (loop_order (classify g t)) r Hroot).
+    assert (Hcounts : counts_ok g) by (exact (conj (proj1 Hprepared) (proj1 (proj2 Hprepared)))).
+    pose proof (loop_tree_root_listed g r t Htree) as Hlisted.
+    pose proof (loop_trace_clock_bound g r Hgraph Hcounts Hlisted) as Htrace.
+    pose proof (loop_retreat_test_clock g r (loop_back_rows (classify g t))
+      Hgraph Hcounts Hlisted) as Htest.
+    unfold T_retreat_trace, T_test_back. time_simpl.
+    unfold retreat_trace, k_trace, k_test. nia.
+  Qed.
+
 
   Lemma T10_reducible_wrapper : forall g t,
     (T_reducible_b g t <= k_reducible * (T_classify g t +
