@@ -3328,6 +3328,54 @@ Proof.
 Qed.
 
 
+(** Selected classifier headers are exactly targets of reachable dominance back edges. *)
+Local Lemma loop_classify_headers_exact g t r h :
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  (In h (loop_headers_of (classify g t)) <-> natural_header (base g) r h).
+Proof.
+  intros Hgraph Hprepared Htree. unfold loop_headers_of. rewrite filter_In. split.
+  - intros [Hlisted Htest].
+    destruct (loop_latches_at (classify g t) h) as [|u rest] eqn:Hrow; [discriminate|].
+    assert (Hin : In u (loop_latches_at (classify g t) h)) by (rewrite Hrow; now left).
+    destruct (loop_classify_backs g t r Hgraph Hprepared Htree u h) as [Hback Hlatches].
+    apply (proj1 Hlatches) in Hin. apply (proj1 Hback) in Hin. now exists u.
+  - intro Hheader. split.
+    + destruct (loop_classify_order g t r Hgraph Hprepared Htree) as [_ [_ [Hmembers _]]].
+      apply Hmembers. exact (loop_header_reachable (base g) r h Hheader).
+    + destruct Hheader as [u Hnatural].
+      destruct (loop_classify_backs g t r Hgraph Hprepared Htree u h) as [Hback Hlatches].
+      assert (Hin : In u (loop_latches_at (classify g t) h)).
+      { apply (proj2 Hlatches), (proj2 Hback). exact Hnatural. }
+      destruct (loop_latches_at (classify g t) h); [contradiction|reflexivity].
+Qed.
+
+Local Lemma loop_classify_collect_exact g t r h :
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  In h (loop_headers_of (classify g t)) ->
+  NoDup (collect g t h (loop_latches_at (classify g t) h)) /\
+  incl (collect g t h (loop_latches_at (classify g t) h)) (nodes g) /\
+  forall v, In v (collect g t h (loop_latches_at (classify g t) h)) <->
+    natural_loop (base g) r h v.
+Proof.
+  intros Hgraph Hprepared Htree Hheader. apply (loop_collect_exact g t r h).
+  - exact Hgraph.
+  - exact Hprepared.
+  - exact Htree.
+  - now apply (proj1 (loop_classify_headers_exact g t r h Hgraph Hprepared Htree)).
+  - intro v. destruct (loop_classify_backs g t r Hgraph Hprepared Htree v h)
+      as [Hback Hlatches]. now rewrite Hlatches, Hback.
+Qed.
+
+Local Lemma loop_body_lookup_members l h v :
+  In v (loop_body l h) <-> exists vs, trie_get h (body l) = Some vs /\ In v vs.
+Proof.
+  destruct l as [owners parents rows]. cbn [loop_body body].
+  destruct (trie_get h rows) as [vs|] eqn:Hget.
+  - split; [intro Hin; exists vs; now split|]. intros [other [Heq Hin]].
+    injection Heq as <-. exact Hin.
+  - split; [contradiction|]. intros [vs [Hget' Hin]]. discriminate Hget'.
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -3441,12 +3489,35 @@ Module Loops <: LOOPS.
   Lemma headers_spec : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (exists vs, trie_get h (body (forest g t)) = Some vs) <-> natural_header (base g) r h.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r h Hgraph Hprepared Htree. unfold forest. split.
+    - intros [vs Hget]. apply loop_assemble_body_lookup in Hget as [Hheader Hrow].
+      now apply (proj1 (loop_classify_headers_exact g t r h Hgraph Hprepared Htree)).
+    - intro Hnatural.
+      assert (Hheader : In h (loop_headers_of (classify g t))).
+      { now apply (proj2 (loop_classify_headers_exact g t r h Hgraph Hprepared Htree)). }
+      exists (collect g t h (loop_latches_at (classify g t) h)).
+      apply loop_assemble_body_lookup. now split.
+  Qed.
 
   Lemma body_spec : forall g t r h v,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     In v (loop_body (forest g t) h) <-> natural_loop (base g) r h v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r h v Hgraph Hprepared Htree. rewrite loop_body_lookup_members.
+    unfold forest. split.
+    - intros [vs [Hget Hin]]. apply loop_assemble_body_lookup in Hget as [Hheader Hrow].
+      subst vs. destruct (loop_classify_collect_exact g t r h Hgraph Hprepared Htree Hheader)
+        as [_ [_ Hexact]]. now apply Hexact.
+    - intro Hnatural.
+      assert (Hheader : In h (loop_headers_of (classify g t))).
+      { apply (proj2 (loop_classify_headers_exact g t r h Hgraph Hprepared Htree)).
+        exact (proj1 Hnatural). }
+      exists (collect g t h (loop_latches_at (classify g t) h)). split.
+      + apply loop_assemble_body_lookup. now split.
+      + destruct (loop_classify_collect_exact g t r h Hgraph Hprepared Htree Hheader)
+          as [_ [_ Hexact]]. now apply Hexact.
+  Qed.
 
   Lemma body_unique : forall g t h, NoDup (loop_body (forest g t) h).
   Proof.
