@@ -1488,6 +1488,398 @@ Proof.
   - right. exists u. split; [exists r, prefix; now split|exact Hedge].
 Qed.
 
+(** A fuel run returns either its current prefix or the completed chronology. *)
+Definition search_run_events g fuel st :=
+  match loop_fuel (search_step g) fuel st with
+  | inl next => rev (search_events next)
+  | inr es => es
+  end.
+
+Lemma search_run_initial_prefix g fuel st :
+  exists suffix, search_run_events g fuel st = rev (search_events st) ++ suffix.
+Proof.
+  revert st. induction fuel as [|fuel IH]; intro st.
+  - exists []. unfold search_run_events. cbn [loop_fuel]. now rewrite app_nil_r.
+  - unfold search_run_events. cbn [loop_fuel].
+    destruct (search_step g st) as [next|es] eqn:Hstep.
+    + destruct (IH next) as [suffix Hsuffix].
+      destruct (search_step_prefix g st next Hstep) as [emitted Hemitted].
+      exists (emitted ++ suffix). fold (search_run_events g fuel next).
+      rewrite Hsuffix, Hemitted, app_assoc. reflexivity.
+    + exists []. rewrite app_nil_r. exact (proj1 (search_stop_events g st es Hstep)).
+Qed.
+
+(** Every state reached before the fuel limit contributes a prefix of the returned trace. *)
+Lemma search_run_iter_prefix g fuel st n : n <= fuel ->
+  exists suffix, search_run_events g fuel st =
+    rev (search_events (Nat.iter n (search_advance g) st)) ++ suffix.
+Proof.
+  revert st n. induction fuel as [|fuel IH]; intros st n Hfuel.
+  - assert (n = 0) by lia. subst n. apply search_run_initial_prefix.
+  - destruct n as [|n]; [apply search_run_initial_prefix|].
+    unfold search_run_events. cbn [loop_fuel].
+    destruct (search_step g st) as [next|es] eqn:Hstep.
+    + assert (Hadvance : search_advance g st = next).
+      { unfold search_advance. now rewrite Hstep. }
+      rewrite Nat.iter_succ_r, Hadvance. fold (search_run_events g fuel next).
+      apply IH. lia.
+    + rewrite (search_iter_stopped g st es Hstep (S n)).
+      exists []. rewrite app_nil_r. exact (proj1 (search_stop_events g st es Hstep)).
+Qed.
+
+Lemma prepared_search_iter_prefix g roots n : n <= N.to_nat (search_budget g roots) ->
+  exists suffix, prepared_search_trace g roots =
+    rev (search_events (Nat.iter n (search_advance (base g))
+      (SearchState (map SearchRoot roots) Empty []))) ++ suffix.
+Proof.
+  intro Hfuel.
+  pose proof (search_run_iter_prefix (base g) (N.to_nat (search_budget g roots))
+    (SearchState (map SearchRoot roots) Empty []) n Hfuel) as Hprefix.
+  unfold search_run_events in Hprefix. rewrite <- search_loopN_fuel in Hprefix.
+  unfold prepared_search_trace.
+  destruct (loopN (search_step (base g)) (search_budget g roots)
+    (SearchState (map SearchRoot roots) Empty [])); [|exact Hprefix].
+  rewrite rev_append_rev, app_nil_r. exact Hprefix.
+Qed.
+
+(** The reverse chronology contains the same number of entering events. *)
+Lemma search_entered_length_rev es : length (entered (rev es)) = length (entered es).
+Proof.
+  induction es as [|e rest IH]; [reflexivity|].
+  cbn [rev]. rewrite search_entered_app, length_app.
+  destruct e; cbn [entered length]; lia.
+Qed.
+
+(** Root and empty-row retirements are the only continuing steps without events. *)
+Fixpoint search_admin_pending tasks : nat :=
+  match tasks with
+  | [] => 0
+  | SearchRoot _ :: rest | SearchRow _ _ :: rest => 1 + search_admin_pending rest
+  | SearchLeave _ :: rest => search_admin_pending rest
+  end.
+
+Fixpoint search_tree_count es : nat :=
+  match es with
+  | [] => 0
+  | Edge Tree _ _ :: rest => 1 + search_tree_count rest
+  | _ :: rest => search_tree_count rest
+  end.
+
+Definition search_fresh_head st : nat :=
+  match search_tasks st with
+  | SearchRoot v :: _ =>
+    match trie_get v (search_colours st) with None => 1 | Some _ => 0 end
+  | _ => 0
+  end.
+
+Definition search_tree_balance st : Prop :=
+  search_tree_count (search_events st) <=
+    length (entered (search_events st)) + search_fresh_head st.
+
+Lemma search_fresh_head_le st : search_fresh_head st <= search_admin_pending (search_tasks st).
+Proof.
+  destruct st as [[|task tasks] colours es]; [reflexivity|].
+  destruct task as [v|u row|v]; cbn [search_fresh_head search_tasks search_colours
+    search_admin_pending]; [destruct (trie_get v colours)| |]; lia.
+Qed.
+
+Lemma search_tree_balance_initial roots :
+  search_tree_balance (SearchState (map SearchRoot roots) Empty []).
+Proof.
+  unfold search_tree_balance. cbn [search_events search_tree_count entered length]. lia.
+Qed.
+
+Lemma search_tree_balance_step g st next :
+  search_tree_balance st -> search_step g st = inl next -> search_tree_balance next.
+Proof.
+  intros Hbalance Hstep. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  destruct task as [v|u row|v]; cbn [search_step] in Hstep;
+    unfold search_tree_balance in *; cbn [search_events] in *.
+  - destruct (trie_get v colours) eqn:Hcolour; inversion Hstep; subst next.
+    + cbn [search_fresh_head search_tasks search_colours] in Hbalance.
+      rewrite Hcolour in Hbalance. cbn [search_events]. lia.
+    + cbn [search_fresh_head search_tasks search_colours] in Hbalance.
+      rewrite Hcolour in Hbalance.
+      cbn [search_events search_tree_count entered length search_fresh_head search_tasks]. lia.
+  - destruct row as [|v row].
+    + inversion Hstep; subst next.
+      cbn [search_fresh_head search_tasks] in Hbalance. cbn [search_events]. lia.
+    + destruct (trie_get v colours) as [active|] eqn:Hcolour; inversion Hstep; subst next.
+      * cbn [search_fresh_head search_tasks] in Hbalance.
+        destruct active; cbn [search_events search_tree_count entered length
+          search_fresh_head search_tasks]; lia.
+      * cbn [search_fresh_head search_tasks] in Hbalance.
+        cbn [search_events search_tree_count entered length search_fresh_head
+          search_tasks search_colours]. rewrite Hcolour. lia.
+  - inversion Hstep; subst next.
+    cbn [search_fresh_head search_tasks] in Hbalance.
+    cbn [search_events search_tree_count entered length]. lia.
+Qed.
+
+Lemma search_admin_initial roots : search_admin_pending (map SearchRoot roots) = length roots.
+Proof.
+  induction roots as [|v rest IH]; cbn [map length search_admin_pending]; lia.
+Qed.
+
+(** Each tree edge pays for its inserted root; all other administrative debt only decreases. *)
+Lemma search_step_account g st next : search_step g st = inl next ->
+  1 + search_admin_pending (search_tasks next) + length (search_events st) +
+    search_tree_count (search_events st) =
+  search_admin_pending (search_tasks st) + length (search_events next) +
+    search_tree_count (search_events next).
+Proof.
+  intro Hstep. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  destruct task as [v|u row|v]; cbn [search_step] in Hstep.
+  - destruct (trie_get v colours); inversion Hstep; subst next;
+      cbn [search_tasks search_events search_admin_pending search_tree_count length]; lia.
+  - destruct row as [|v row].
+    + inversion Hstep; subst next.
+      cbn [search_tasks search_events search_admin_pending search_tree_count length]; lia.
+    + destruct (trie_get v colours) as [active|]; inversion Hstep; subst next.
+      * destruct active; cbn [search_tasks search_events search_admin_pending search_tree_count length]; lia.
+      * cbn [search_tasks search_events search_admin_pending search_tree_count length]; lia.
+  - inversion Hstep; subst next.
+    cbn [search_tasks search_events search_admin_pending search_tree_count length]; lia.
+Qed.
+
+Lemma search_iter_account g roots n :
+  (forall i, i < n -> exists next,
+    search_step g (Nat.iter i (search_advance g)
+      (SearchState (map SearchRoot roots) Empty [])) = inl next) ->
+  n + search_admin_pending (search_tasks (Nat.iter n (search_advance g)
+      (SearchState (map SearchRoot roots) Empty []))) =
+    length roots + length (search_events (Nat.iter n (search_advance g)
+      (SearchState (map SearchRoot roots) Empty []))) +
+    search_tree_count (search_events (Nat.iter n (search_advance g)
+      (SearchState (map SearchRoot roots) Empty []))).
+Proof.
+  induction n as [|n IH]; intro Hgo.
+  - change (search_admin_pending (map SearchRoot roots) = length roots + 0 + 0).
+    rewrite search_admin_initial. lia.
+  - assert (Hbefore : forall i, i < n -> exists next,
+      search_step g (Nat.iter i (search_advance g)
+        (SearchState (map SearchRoot roots) Empty [])) = inl next).
+    { intros i Hi. apply Hgo. lia. }
+    specialize (IH Hbefore).
+    destruct (Hgo n (Nat.lt_succ_diag_r n)) as [next Hstep].
+    pose proof (search_step_account g _ next Hstep) as Haccount.
+    rewrite Nat.iter_succ.
+    assert (Hadvance : search_advance g (Nat.iter n (search_advance g)
+      (SearchState (map SearchRoot roots) Empty [])) = next).
+    { unfold search_advance at 1. now rewrite Hstep. }
+    rewrite Hadvance. lia.
+Qed.
+
+Lemma search_iter_steps_bound g roots n :
+  (forall i, i < n -> exists next,
+    search_step g (Nat.iter i (search_advance g)
+      (SearchState (map SearchRoot roots) Empty [])) = inl next) ->
+  n <= length (search_events (Nat.iter n (search_advance g)
+      (SearchState (map SearchRoot roots) Empty []))) + length roots +
+    length (entered (rev (search_events (Nat.iter n (search_advance g)
+      (SearchState (map SearchRoot roots) Empty []))))).
+Proof.
+  intro Hgo. pose proof (search_iter_account g roots n Hgo) as Haccount.
+  pose proof (search_iter_invariant g search_tree_balance
+    (search_tree_balance_step g) n
+    (SearchState (map SearchRoot roots) Empty [])
+    (search_tree_balance_initial roots)) as Hbalance.
+  pose proof (search_fresh_head_le (Nat.iter n (search_advance g)
+    (SearchState (map SearchRoot roots) Empty []))) as Hhead.
+  unfold search_tree_balance in Hbalance. rewrite search_entered_length_rev. lia.
+Qed.
+
+(** Pending tasks describe the remaining recursive DFS derivation. *)
+Inductive search_continuation (g : digraph) :
+    list positive -> list positive -> list search_task -> list event -> list positive -> Prop :=
+  | search_cont_nil : forall active seen,
+      search_continuation g active seen [] [] seen
+  | search_cont_root_seen : forall active seen v tasks es final,
+      In v seen -> search_continuation g active seen tasks es final ->
+      search_continuation g active seen (SearchRoot v :: tasks) es final
+  | search_cont_root_new : forall active seen v tasks inside middle outside final,
+      dfs_visit g active seen v inside middle ->
+      search_continuation g active middle tasks outside final ->
+      search_continuation g active seen (SearchRoot v :: tasks) (inside ++ outside) final
+  | search_cont_row : forall active seen u row tasks inside middle outside final,
+      dfs_rows g active seen u row inside middle ->
+      search_continuation g active middle tasks outside final ->
+      search_continuation g active seen (SearchRow u row :: tasks) (inside ++ outside) final
+  | search_cont_leave : forall active seen v tasks es final,
+      search_continuation g active seen tasks es final ->
+      search_continuation g (v :: active) seen (SearchLeave v :: tasks) (Leave v :: es) final.
+
+Local Lemma search_cont_root_inv g active seen v tasks es final :
+  search_continuation g active seen (SearchRoot v :: tasks) es final ->
+  (In v seen /\ search_continuation g active seen tasks es final) \/
+  exists inside middle outside, es = inside ++ outside /\
+    dfs_visit g active seen v inside middle /\
+    search_continuation g active middle tasks outside final.
+Proof.
+  intros Hcont. inversion Hcont; subst; [left; auto|right; eauto 8].
+Qed.
+
+Local Lemma search_cont_row_inv g active seen u row tasks es final :
+  search_continuation g active seen (SearchRow u row :: tasks) es final ->
+  exists inside middle outside, es = inside ++ outside /\
+    dfs_rows g active seen u row inside middle /\
+    search_continuation g active middle tasks outside final.
+Proof.
+  intros Hcont. inversion Hcont; subst. eauto 8.
+Qed.
+
+Local Lemma search_cont_leave_inv g active seen v tasks es final :
+  search_continuation g (v :: active) seen (SearchLeave v :: tasks) es final ->
+  exists outside, es = Leave v :: outside /\
+    search_continuation g active seen tasks outside final.
+Proof.
+  intros Hcont. inversion Hcont; subst. eauto.
+Qed.
+
+(** One machine transition can be reconstructed backwards as a recursive DFS step. *)
+Lemma search_continuation_step g st next suffix final :
+  search_shape st -> search_step g st = inl next ->
+  search_continuation g (search_active_tasks (search_tasks next))
+    (entered (search_events next)) (search_tasks next) suffix final ->
+  exists emitted,
+    rev (search_events next) = rev (search_events st) ++ emitted /\
+    search_continuation g (search_active_tasks (search_tasks st))
+      (entered (search_events st)) (search_tasks st) (emitted ++ suffix) final.
+Proof.
+  intros Hshape Hstep Hcont. destruct st as [[|task tasks] colours es];
+    [discriminate Hstep|].
+  destruct task as [v|u row|v].
+  - cbn [search_step] in Hstep.
+    destruct (trie_get v colours) as [active|] eqn:Hcolour;
+      injection Hstep as Hnext; subst next;
+      cbn [search_tasks search_events search_active_tasks entered] in Hcont.
+    + exists []. split; [cbn; now rewrite app_nil_r|].
+      cbn [search_tasks search_events search_active_tasks app].
+      apply search_cont_root_seen; [|exact Hcont].
+      apply search_entered_member. apply (proj1 (search_shape_seen _ Hshape v)).
+      cbn [search_colours]. rewrite Hcolour. discriminate.
+    + assert (Hfresh : ~ In v (entered es)).
+      { intros Hin. apply (proj1 (search_shape_none _ Hshape v) Hcolour).
+        now apply search_entered_member. }
+      apply search_cont_row_inv in Hcont.
+      destruct Hcont as [inside [middle [rest [Hsuffix [Hrows Hleave]]]]].
+      apply search_cont_leave_inv in Hleave.
+      destruct Hleave as [outside [Hrest Htail]]. subst suffix rest.
+      exists [Enter v]. split; [reflexivity|].
+      cbn [search_tasks search_events search_active_tasks app].
+      replace (Enter v :: inside ++ Leave v :: outside)
+        with ((Enter v :: inside ++ [Leave v]) ++ outside)
+        by (cbn [app]; now rewrite <- app_assoc).
+      eapply search_cont_root_new with
+        (inside := Enter v :: inside ++ [Leave v]) (middle := middle) (outside := outside).
+      * apply dfs_visit_node; [exact Hfresh|exact Hrows].
+      * exact Htail.
+  - destruct row as [|v row].
+    + cbn [search_step] in Hstep. injection Hstep as Hnext. subst next.
+      exists []. split; [cbn; now rewrite app_nil_r|].
+      cbn [search_tasks search_events search_active_tasks app] in *.
+      eapply search_cont_row with (inside := []) (middle := entered es) (outside := suffix).
+      * constructor.
+      * exact Hcont.
+    + cbn [search_step] in Hstep.
+      destruct (trie_get v colours) as [active|] eqn:Hcolour;
+        injection Hstep as Hnext; subst next;
+        cbn [search_tasks search_events search_active_tasks entered] in Hcont.
+      * apply search_cont_row_inv in Hcont.
+        destruct Hcont as [inside [middle [outside [Hsuffix [Hrows Htail]]]]].
+        subst suffix. exists [Edge (if active then Back else Done) u v].
+        split; [reflexivity|].
+        cbn [search_tasks search_events search_active_tasks app].
+        eapply search_cont_row with
+          (inside := Edge (if active then Back else Done) u v :: inside)
+          (middle := middle) (outside := outside).
+        -- eapply dfs_rows_seen; [| |exact Hrows].
+           ++ apply search_entered_member.
+              apply (proj1 (search_shape_seen _ Hshape v)).
+              cbn [search_colours]. rewrite Hcolour. discriminate.
+           ++ destruct active.
+              ** left. split; [reflexivity|].
+                 exact (proj1 (search_shape_active _ Hshape v) Hcolour).
+              ** right. split; [reflexivity|]. intros Hin.
+                 apply (proj2 (search_shape_active _ Hshape v)) in Hin.
+                 cbn [search_colours] in Hin. rewrite Hcolour in Hin. discriminate Hin.
+        -- exact Htail.
+      * assert (Hfresh : ~ In v (entered es)).
+        { intros Hin. apply (proj1 (search_shape_none _ Hshape v) Hcolour).
+          now apply search_entered_member. }
+        apply search_cont_root_inv in Hcont.
+        destruct Hcont as [[Hseen Hcont]|[inside [middle [rest [Hsuffix [Hvisit Hrest]]]]]].
+        -- contradiction.
+        -- apply search_cont_row_inv in Hrest.
+           destruct Hrest as [outside [middle' [tail [Hrest [Hrows Htail]]]]].
+           subst suffix rest. exists [Edge Tree u v]. split; [reflexivity|].
+           cbn [search_tasks search_events search_active_tasks app].
+           replace (Edge Tree u v :: inside ++ outside ++ tail)
+             with ((Edge Tree u v :: inside ++ outside) ++ tail)
+             by (cbn [app]; now rewrite <- app_assoc).
+           eapply search_cont_row with
+             (inside := Edge Tree u v :: inside ++ outside) (middle := middle') (outside := tail).
+           ++ eapply dfs_rows_tree; eassumption.
+           ++ exact Htail.
+  - cbn [search_step] in Hstep. injection Hstep as Hnext. subst next.
+    exists [Leave v]. split; [reflexivity|].
+    cbn [search_tasks search_events search_active_tasks entered app] in *.
+    now apply search_cont_leave.
+Qed.
+
+(** Completed finite runs produce a recursive continuation after the stored prefix. *)
+Lemma search_continuation_complete g fuel st es :
+  search_shape st -> loop_fuel (search_step g) fuel st = inr es ->
+  exists suffix final, es = rev (search_events st) ++ suffix /\
+    search_continuation g (search_active_tasks (search_tasks st))
+      (entered (search_events st)) (search_tasks st) suffix final.
+Proof.
+  revert st es. induction fuel as [|fuel IH]; intros st es Hshape Hrun;
+    cbn [loop_fuel] in Hrun; [discriminate Hrun|].
+  destruct (search_step g st) as [next|result] eqn:Hstep.
+  - pose proof (search_shape_step g st next Hshape Hstep) as Hnext.
+    destruct (IH next es Hnext Hrun) as [suffix [final [Hevents Hcont]]].
+    destruct (search_continuation_step g st next suffix final Hshape Hstep Hcont)
+      as [emitted [Hprefix Hbefore]].
+    exists (emitted ++ suffix), final. split; [|exact Hbefore].
+    rewrite Hevents, Hprefix. now rewrite app_assoc.
+  - injection Hrun as Hresult. subst result.
+    destruct (search_stop_events g st es Hstep) as [Hevents Htasks].
+    exists [], (entered (search_events st)). split.
+    + now rewrite app_nil_r.
+    + rewrite Htasks. constructor.
+Qed.
+
+(** Mapped root tasks specialize the continuation semantics to the public root relation. *)
+Lemma search_continuation_roots g roots seen es final :
+  search_continuation g [] seen (map SearchRoot roots) es final ->
+  dfs_roots g seen roots es final.
+Proof.
+  revert seen es final. induction roots as [|v roots IH]; intros seen es final Hcont.
+  - cbn [map] in Hcont. inversion Hcont; subst. constructor.
+  - cbn [map] in Hcont. apply search_cont_root_inv in Hcont.
+    destruct Hcont as [[Hseen Htail]|[inside [middle [outside [Heq [Hvisit Htail]]]]]].
+    + apply dfs_roots_seen; [exact Hseen|]. now apply IH.
+    + subst es. eapply dfs_roots_new; [|exact Hvisit|now apply IH].
+      inversion Hvisit; subst. assumption.
+Qed.
+
+(** A completed raw task-machine run satisfies the full ordered DFS specification. *)
+Lemma search_finished_depth_first g roots fuel es :
+  loop_fuel (search_step g) fuel (SearchState (map SearchRoot roots) Empty []) = inr es ->
+  exists final, dfs_roots g [] roots es final.
+Proof.
+  intros Hrun.
+  destruct (search_continuation_complete g fuel _ es (search_shape_initial roots) Hrun)
+    as [suffix [final [Heq Hcont]]].
+  cbn [search_tasks search_events entered rev app] in Heq, Hcont. subst suffix.
+  assert (Hactive : search_active_tasks (map SearchRoot roots) = []).
+  { clear Hrun Hcont. induction roots as [|v roots IH]; cbn; assumption || reflexivity. }
+  rewrite Hactive in Hcont. exists final. now apply search_continuation_roots.
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
@@ -1822,11 +2214,52 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Qed.
 
 
+  (** Every reachable key is either a root or a successor of an entered vertex. *)
+  Local Lemma reachable_width g roots v :
+    counts_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
+    reach (base g) roots v -> Pos.size_nat v <= run_width g roots.
+  Proof.
+    intros Hcounts Hgraph Hroots Hreach.
+    unfold run_width. rewrite search_graph_max.
+    destruct (search_reach_origin (base g) roots v Hreach) as [Hroot|[u [Hu Hedge]]].
+    - eapply Nat.le_trans; [apply search_vertex_width_member; exact Hroot|].
+      apply Nat.le_max_l.
+    - apply (proj2 (trace_reach g roots u Hcounts Hgraph Hroots)) in Hu.
+      pose proof (search_row_width_member (base g) (entered (trace g roots)) u v Hu Hedge)
+        as Hrow.
+      eapply Nat.le_trans; [exact Hrow|].
+      apply Nat.le_max_r.
+  Qed.
+
   Lemma F6_width : forall g roots st,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> Forall (event_width (run_width g roots)) (search_events st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots st Hcounts Hgraph Hroots Hinv.
+    pose proof (machine_shape g roots st (proj1 Hinv)) as Hshape.
+    destruct Hinv as [Hreachable [Hrepr [suffix Htrace]]].
+    assert (Hprefix : forall e, In e (search_events st) -> In e (trace g roots)).
+    { intros e Hin. rewrite Htrace. apply in_or_app. left.
+      rewrite <- in_rev. exact Hin. }
+    assert (Hentered : forall v, In (Enter v) (search_events st) ->
+      reach (base g) roots v).
+    { intros v Hin. apply (proj1 (trace_reach g roots v Hcounts Hgraph Hroots)).
+      apply search_entered_member. now apply Hprefix. }
+    apply Forall_forall. intros e Hin. destruct e as [v|v|kind u v].
+    - apply reachable_width; try assumption. now apply Hentered.
+    - apply reachable_width; try assumption. apply Hentered.
+      apply (proj1 (search_shape_seen st Hshape v)).
+      apply (proj2 (search_shape_false st Hshape v)) in Hin.
+      rewrite Hin. discriminate.
+    - destruct (trace_edges_sound g roots kind u v Hcounts Hgraph Hroots
+        (Hprefix (Edge kind u v) Hin)) as [Hu Hedge].
+      split.
+      + apply reachable_width; assumption.
+      + apply reachable_width; try assumption. eapply search_reach_edge; eassumption.
+  Qed.
+
 
   Lemma F7_events : forall g roots,
     counts_ok g -> wf_graph (base g) ->
@@ -1900,7 +2333,16 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     (forall i, i < n -> exists next,
       search_step (base g) (Nat.iter i (advance (base g)) (initial roots)) = inl next) ->
     n <= length (trace g roots) + length roots + n_reach g roots.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots n Hfuel Hgo.
+    assert (Hnat : n <= N.to_nat (search_budget g roots)) by lia.
+    destruct (prepared_search_iter_prefix g roots n Hnat) as [suffix Hprefix].
+    change (trace g roots = rev (search_events (Nat.iter n (search_advance (base g))
+      (SearchState (map SearchRoot roots) Empty []))) ++ suffix) in Hprefix.
+    pose proof (search_iter_steps_bound (base g) roots n Hgo) as Hsteps.
+    unfold n_reach. rewrite Hprefix, search_entered_app, !length_app, length_rev. lia.
+  Qed.
+
 
   (** The truncated loop pays its steps, one stop and the binary fuel width. *)
   Lemma T3_raw_loop : forall g roots,
