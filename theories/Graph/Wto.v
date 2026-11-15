@@ -2417,7 +2417,17 @@ Module WtoT <: WTO_ALL.
   TimeFun check.
   TimeFun heads.
   TimeFun ranks.
-  Definition c_wto : N := (PTrieT.c_trie + 8)%N.
+  Definition c_wto : N :=
+    let b := (128 * (SccT.c_scc + DigraphT.c_prepare + SccT.k_callback +
+      search_trace_coefficient + 16384 + 8 * (PTrieT.c_trie + 1)))%N in
+    (4096 * b * b + 262144 * (c_loopN + 1) * (PTrieT.c_trie + 1) +
+      PTrieT.c_trie + 8)%N.
+
+  (** The common coefficient retains both structural projection bounds. *)
+  Lemma c_wto_projection : (PTrieT.c_trie + 8 <= c_wto)%N.
+  Proof.
+    unfold c_wto. lia.
+  Qed.
 
   Local Opaque loopN.
 
@@ -2437,7 +2447,7 @@ Module WtoT <: WTO_ALL.
     (T_heads w <= c_wto * N.of_nat (length (wto_order w) + 1))%N.
   Proof.
     intro w. pose proof (wto_heads_into_clock w []) as Hheads.
-    unfold c_wto. time_step.
+    pose proof c_wto_projection as Hcoefficient. time_step.
   Qed.
 
   Lemma T_ranks_le : forall w,
@@ -2446,7 +2456,7 @@ Module WtoT <: WTO_ALL.
   Proof.
     intro w. pose proof (wto_order_into_clock w []) as Horder.
     pose proof (wto_rank_rows_one_clock (wto_order w)) as Hrows.
-    unfold c_wto. time_unfold @T_ranks.
+    pose proof c_wto_projection as Hcoefficient. time_unfold @T_ranks.
     rewrite (proj2 (wto_into_spec w [])), app_nil_r. time_cbn.
     rewrite !Nat2N.inj_add in *. nia.
   Qed.
