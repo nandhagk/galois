@@ -4522,6 +4522,61 @@ Proof.
     + specialize (Hclock s). lia.
 Qed.
 
+(** Row-number observations describe the plan without adding row-number runtime maps. *)
+Module SearchGhosts (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V).
+  Module Rows := ConstructorRows V I D.
+
+  Definition row_identifiers (k : list (cell V.t)) : list positive :=
+    flat_map (fun c => match c with Id i => [i] | Val _ => [] end) k.
+
+  (** Row numbers start at one in the deterministic ghost constructor-row enumeration. *)
+  Definition row_children (db : D.t) (number : positive) : list positive :=
+    match nth_error (Rows.rows db) (Pos.to_nat number - 1) with
+    | Some ((_, key), _) => row_identifiers key
+    | None => []
+    end.
+
+  Definition row_counter {H} (s : extraction_state V.t D.t H) (number : positive) : nat :=
+    length (filter
+      (fun i => negb (existsb (fun entry => Pos.eqb i (fst entry)) (search_finalised s)))
+      (row_children (search_database s) number)).
+
+  Definition numbered_rows (db : D.t) : list (positive * search_row V.t) :=
+    let rows := Rows.rows db in
+    combine (map Pos.of_succ_nat (seq 0 (length rows))) rows.
+
+  (** A ready observation names a real unfinalized row whose identifier children are final. *)
+  Definition ready_rows {H} (s : extraction_state V.t D.t H) : list (positive * N) :=
+    map (fun '(number, ((f, key), _)) =>
+      (number, C.fn_cost f (map (chosen_cost C.val_cost (search_finalised s)) key)))
+      (filter (fun entry =>
+        Nat.eqb (row_counter s (fst entry)) 0 &&
+        negb (existsb (fun final => Pos.eqb (snd (snd entry)) (fst final))
+          (search_finalised s)))
+        (numbered_rows (search_database s))).
+
+  (** The counter is exactly the number of unfinished identifier occurrences in its row. *)
+  Lemma row_counter_spec : forall H (s : extraction_state V.t D.t H) db number,
+    search_database s = db ->
+    row_counter s number = length (filter
+      (fun i => negb (existsb (fun entry => Pos.eqb i (fst entry)) (search_finalised s)))
+      (row_children db number)).
+  Proof.
+    intros H s db number Hdb. unfold row_counter. now rewrite Hdb.
+  Qed.
+
+  (** Filtering the numbered row list retains only rows with no unfinished child. *)
+  Lemma ready_rows_counter : forall H (s : extraction_state V.t D.t H) number n,
+    In (number, n) (ready_rows s) -> row_counter s number = 0.
+  Proof.
+    intros H s number n Hin. unfold ready_rows in Hin.
+    apply in_map_iff in Hin as [[row_number [[f key] i]] [Heq Hin]].
+    injection Heq as <- Hcost. apply filter_In in Hin as [_ Hready].
+    apply Bool.andb_true_iff in Hready as [Hcounter _].
+    now apply Nat.eqb_eq in Hcounter.
+  Qed.
+End SearchGhosts.
+
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) (Q : PQ_OPS) <: EXTRACT_OPS V I D C.
   Include SearchCode V C Q.

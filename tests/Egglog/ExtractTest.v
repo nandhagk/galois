@@ -6,7 +6,8 @@
     Builds on: Extract, Database and Index code towers. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia.
-From Galois.Base Require Import Trie Heap.
+From Argent Require Import Time.
+From Galois.Base Require Import Trie HeapSig Heap.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig DatabaseSig Index Database ExtractSig
   Extract.
 
@@ -418,3 +419,17 @@ Module IndexFuelCounterexample (V : VALUE) (I : INDEX V).
       + change (1 < 2). lia.
   Qed.
 End IndexFuelCounterexample.
+
+(** Ghost queue potentials have no clock operation in the published timed queue interface. *)
+Module GhostQueueClockProbe (Q : PQ_T).
+  Definition potential_probe (q : Q.t) : N := Q.phi 1 1 q.
+  TimeFunFails "E_OPAQUE" potential_probe.
+End GhostQueueClockProbe.
+
+(** The ghost row enumerator depends on observations with no published clock operations. *)
+Module GhostDatabaseClockProbe (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I).
+  Definition slots_probe (db : D.t) := D.slots db.
+  TimeFunFails "E_OPAQUE" slots_probe.
+  Definition old_probe (db : D.t) f k := D.old db f k.
+  TimeFunFails "E_OPAQUE" old_probe.
+End GhostDatabaseClockProbe.
