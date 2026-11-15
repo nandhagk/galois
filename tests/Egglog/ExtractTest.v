@@ -6,7 +6,8 @@
     Builds on: Extract, Database and Index code towers. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia.
-From Galois.Base Require Import Trie.
+From Argent Require Import Time.
+From Galois.Base Require Import Trie HeapSig Heap.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig DatabaseSig Index Database ExtractSig
   Extract.
 
@@ -55,7 +56,90 @@ Module InventoryCost <: COST_OPS InventoryValue.
 End InventoryCost.
 
 Module InventoryExtract :=
-  ExtractCode InventoryValue InventoryIndex InventoryDatabase InventoryCost.
+  ExtractCode InventoryValue InventoryIndex InventoryDatabase InventoryCost HeapCode.
+
+(** A nullary alternative seeds a class that also contains a self cycle. *)
+Definition cheapest_cycle_database : InventoryDatabase.t :=
+  let db := InventoryDatabase.init
+    [Decl 10%positive [SVal] OId; Decl 20%positive [] OId; Decl 30%positive [SId] OId]
+    [(10%positive, [0; 1]); (20%positive, [0]); (30%positive, [0; 1])] in
+  let db := snd (InventoryDatabase.make 10%positive [Val 7%positive] db) in
+  let db := snd (InventoryDatabase.make 20%positive [] db) in
+  let db := snd (InventoryDatabase.make 30%positive [Id 1%positive] db) in
+  InventoryDatabase.rebuild
+    (InventoryDatabase.union 1%positive 2%positive
+      (InventoryDatabase.union 1%positive 3%positive db)).
+
+Definition cheapest_cycle_inventory : list (positive * (N * nat)) :=
+  [(10%positive, (0%N, 1)); (20%positive, (1%N, 0)); (30%positive, (2%N, 1))].
+
+Example best_cheapest_alternative_in_cycle :
+  InventoryExtract.best cheapest_cycle_inventory cheapest_cycle_database =
+    [(1%positive, (1%N, (20%positive, [])))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example extract_cheapest_finite_cycle_witness :
+  InventoryExtract.extract cheapest_cycle_inventory cheapest_cycle_database 1%positive =
+    Some [(1%positive, (20%positive, []))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example extract_noncanonical_root_is_rejected :
+  InventoryExtract.extract cheapest_cycle_inventory cheapest_cycle_database 3%positive = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example best_pure_cycle_has_no_finite_witness :
+  InventoryExtract.best_rows tt [(30%positive, [Id 1%positive], 1%positive)] = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example best_repeated_waiting_child :
+  InventoryExtract.best_rows tt
+    [(20%positive, [Id 1%positive; Id 1%positive], 2%positive);
+     (10%positive, [Val 7%positive], 1%positive)] =
+    [(2%positive, (5%N, (20%positive, [Id 1%positive; Id 1%positive])));
+     (1%positive, (2%N, (10%positive, [Val 7%positive])))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example best_decrease_keeps_cheapest_candidate :
+  InventoryExtract.best_rows tt
+    [(10%positive, [Val 7%positive], 1%positive);
+     (20%positive, [], 1%positive)] =
+    [(1%positive, (1%N, (20%positive, [])))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example best_equal_cost_preserves_first_candidate :
+  InventoryExtract.best_rows tt
+    [(10%positive, [], 1%positive); (20%positive, [], 1%positive)] =
+    [(1%positive, (1%N, (10%positive, [])))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Module ZeroCost <: COST_OPS InventoryValue.
+  Definition fn_cost (_ : positive) (cs : list N) := fold_right N.max 0%N cs.
+  Definition val_cost (_ : positive) := 0%N.
+End ZeroCost.
+
+Module ZeroSearch := SearchCode InventoryValue ZeroCost HeapCode.
+
+Example best_zero_cost_cycle_uses_finite_seed :
+  ZeroSearch.best_rows tt
+    [(30%positive, [Id 1%positive], 1%positive); (20%positive, [], 1%positive)] =
+    [(1%positive, (0%N, (20%positive, [])))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
 
 Example inventory_full_slots_only :
   InventoryExtract.inventory
@@ -335,3 +419,44 @@ Module IndexFuelCounterexample (V : VALUE) (I : INDEX V).
       + change (1 < 2). lia.
   Qed.
 End IndexFuelCounterexample.
+
+(** Ghost queue potentials have no clock operation in the published timed queue interface. *)
+Module GhostQueueClockProbe (Q : PQ_T).
+  Definition potential_probe (q : Q.t) : N := Q.phi 1 1 q.
+  TimeFunFails "E_OPAQUE" potential_probe.
+End GhostQueueClockProbe.
+
+(** The ghost row enumerator depends on observations with no published clock operations. *)
+Module GhostDatabaseClockProbe (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I).
+  Definition slots_probe (db : D.t) := D.slots db.
+  TimeFunFails "E_OPAQUE" slots_probe.
+  Definition old_probe (db : D.t) f k := D.old db f k.
+  TimeFunFails "E_OPAQUE" old_probe.
+End GhostDatabaseClockProbe.
+
+(** Row numbers preserve child occurrences without querying ghost database observations. *)
+Definition coded_source_rows : list (search_row positive) :=
+  [(3%positive, [Id 2%positive; Val 7%positive; Id 2%positive; Id 5%positive], 9%positive);
+   (4%positive, [Val 7%positive], 10%positive);
+   (6%positive, [], 11%positive)].
+
+Definition coded_observer_state : extraction_state positive unit unit :=
+  ExtractionState tt coded_source_rows 3 Empty Empty Empty tt [].
+
+Example coded_children_keep_repeated_identifiers :
+  extraction_row_children (extraction_row_code (fun p : positive => p)
+    (3%positive, [Id 2%positive; Val 7%positive; Id 2%positive; Id 5%positive], 9%positive)) =
+    [2%positive; 2%positive; 5%positive].
+Proof. vm_compute. reflexivity. Qed.
+
+Example coded_counter_counts_unfinished_occurrences :
+  extraction_row_counter coded_observer_state (extraction_row_code (fun p : positive => p)
+    (3%positive, [Id 2%positive; Val 7%positive; Id 2%positive; Id 5%positive], 9%positive)) = 3.
+Proof. vm_compute. reflexivity. Qed.
+
+Example coded_ready_rows_include_literal_and_nullary_rows :
+  extraction_ready_rows (fun p : positive => p) InventoryCost.fn_cost InventoryCost.val_cost
+    coded_observer_state =
+    [(extraction_row_code (fun p : positive => p) (4%positive, [Val 7%positive], 10%positive), 2%N);
+     (extraction_row_code (fun p : positive => p) (6%positive, [], 11%positive), 1%N)].
+Proof. vm_compute. reflexivity. Qed.
