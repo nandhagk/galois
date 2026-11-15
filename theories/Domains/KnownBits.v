@@ -3557,6 +3557,267 @@ Proof.
 Qed.
 TimeBound tnum_bot_time.
 
+(** Appending a one bit to a nonnegative quotient uses a constant-cost addition. *)
+Lemma tnum_double_add_one_time : forall z, 0 <= z ->
+  (Std.Z.T_add (2 * z) 1 <= 4)%N.
+Proof.
+  intros [|p|p] Hz; [| |lia].
+  - time_unfold Std.Z.T_add. time_cbn. lia.
+  - change (Std.Z.T_add (Zpos (xO p)) 1 <= 4)%N.
+    time_unfold Std.Z.T_add. time_unfold Std.Pos.T_add. time_cbn. lia.
+Qed.
+
+(** Positive division charges divisor bits at each dividend bit. *)
+Lemma tnum_positive_division_step_time : forall a b, 0 < b ->
+  (Std.Z.T_pos_div_eucl a b <=
+    64 * N.of_nat (Pos.size_nat a) * (N.of_nat (Z.size_nat b) + 1))%N.
+Proof.
+  intros a b Hb. induction a as [a IH|a IH|];
+    time_unfold Std.Z.T_pos_div_eucl; cbn [Pos.size_nat].
+  - destruct (Std.Z.pos_div_eucl_sizes a b Hb) as (Hq0 & Hr0 & Hq & Hr).
+    destruct (Z.pos_div_eucl a b) as [q r]. cbn [fst snd] in *.
+    pose proof (Std.Z.T_mul_two_le r). pose proof (Std.Z.T_mul_two_le q).
+    pose proof (tnum_double_add_one_time r Hr0).
+    pose proof (tnum_double_add_one_time q Hq0).
+    pose proof (Std.Z.T_ltb_le (2 * r + 1) b).
+    pose proof (Std.Z.T_sub_le (2 * r + 1) b).
+    pose proof (Std.Z.size_nat_succ_double r Hr0).
+    cbn [Z.size_nat Pos.size_nat] in *.
+    destruct (2 * r + 1 <? b); rewrite ?Nat2N.inj_succ, !Nat2N.inj_add in *; nia.
+  - destruct (Std.Z.pos_div_eucl_sizes a b Hb) as (Hq0 & Hr0 & Hq & Hr).
+    destruct (Z.pos_div_eucl a b) as [q r]. cbn [fst snd] in *.
+    pose proof (Std.Z.T_mul_two_le r). pose proof (Std.Z.T_mul_two_le q).
+    pose proof (tnum_double_add_one_time q Hq0).
+    pose proof (Std.Z.T_ltb_le (2 * r) b).
+    pose proof (Std.Z.T_sub_le (2 * r) b).
+    pose proof (Std.Z.size_nat_double r Hr0).
+    cbn [Z.size_nat Pos.size_nat] in *.
+    destruct (2 * r <? b); rewrite ?Nat2N.inj_succ, !Nat2N.inj_add in *; nia.
+  - pose proof (Std.Z.T_leb_le 2 b). cbn [Z.size_nat Pos.size_nat] in *. nia.
+Qed.
+
+(** Signed division by a positive divisor adds only linear sign correction. *)
+Lemma tnum_positive_division_time : forall z p,
+  (Std.Z.T_div_eucl z (Zpos p) <=
+    96 * (N.of_nat (Z.size_nat z) + 1) * (N.of_nat (Pos.size_nat p) + 1))%N.
+Proof.
+  intros [|a|a] p; time_unfold Std.Z.T_div_eucl; cbn [Z.size_nat].
+  - nia.
+  - pose proof (tnum_positive_division_step_time a (Zpos p) ltac:(lia)) as Hdiv.
+    cbn [Z.size_nat] in Hdiv. nia.
+  - pose proof (tnum_positive_division_step_time a (Zpos p) ltac:(lia)) as Hdiv.
+    destruct (Std.Z.pos_div_eucl_sizes a (Zpos p) ltac:(lia)) as (Hq0 & Hr0 & Hq & Hr).
+    destruct (Z.pos_div_eucl a (Zpos p)) as [q r]. cbn [fst snd] in *.
+    pose proof (Std.Z.T_opp_le q). pose proof (Std.Z.T_opp_le (q + 1)).
+    pose proof (Std.Z.T_add_le q 1). pose proof (Std.Z.T_sub_le (Zpos p) r).
+    destruct r; cbn [Z.size_nat Pos.size_nat] in *;
+      rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+TimeBound tnum_positive_division_time.
+
+(** Remainder modulo a positive width costs the product of operand bit lengths. *)
+Lemma tnum_positive_modulo_time : forall z p,
+  (Std.Z.T_modulo z (Zpos p) <=
+    128 * (N.of_nat (Z.size_nat z) + 1) * (N.of_nat (Pos.size_nat p) + 1))%N.
+Proof.
+  intros z p. time_unfold Std.Z.T_modulo. time_cbn. time_pose. nia.
+Qed.
+TimeBound tnum_positive_modulo_time.
+
+(** A remainder modulo a positive width uses at most the width's own magnitude bits. *)
+Lemma tnum_positive_modulo_bits : forall z p,
+  (Z.size_nat (z mod Zpos p) <= Pos.size_nat p)%nat.
+Proof.
+  intros z p. change (Z.size_nat (z mod Zpos p) <= Z.size_nat (Zpos p))%nat.
+  apply Std.Z.size_nat_mono. pose proof (Z.mod_pos_bound z (Zpos p) ltac:(lia)). lia.
+Qed.
+
+
+(** A binary predecessor spends the zero-bit credit exposed by its borrow. *)
+Lemma tnum_pred_N_credit : forall p,
+  (Std.Pos.T_pred_N p + loopN_zero_bits (Pos.pred_N p) <=
+    loopN_zero_bits (N.pos p) + 3)%N.
+Proof.
+  intros [p|p|]; time_unfold Std.Pos.T_pred_N;
+    cbn [Pos.pred_N loopN_zero_bits loopN_zero_bits_pos];
+    try pose proof (loopN_pred_double_credit p); lia.
+Qed.
+
+(** Testing a positive word pays index borrows with binary zero-bit credit. *)
+Lemma tnum_testbit_credit : forall p n,
+  (Word.Pos.T_testbit p n <=
+    4 * N.of_nat (Pos.size_nat p) + loopN_zero_bits n + 1)%N.
+Proof.
+  intro p. induction p as [p IH|p IH|]; intros [|n];
+    time_unfold Word.Pos.T_testbit; cbn [Pos.size_nat].
+  all: try pose proof (IH (Pos.pred_N n)) as Htail.
+  all: try pose proof (tnum_pred_N_credit n) as Hpred.
+  all: rewrite ?Nat2N.inj_succ; nia.
+Qed.
+
+(** Positive bit lookup is linear in the value and index bit counts. *)
+Lemma tnum_positive_testbit_time : forall p n,
+  (Word.Pos.T_testbit p n <=
+    8 * N.of_nat (Pos.size_nat p + N.size_nat n + 1))%N.
+Proof.
+  intros p n. pose proof (tnum_testbit_credit p n) as Htest.
+  pose proof (loopN_zero_bits_le_size n) as Hcredit.
+  rewrite ?Nat2N.inj_add. nia.
+Qed.
+TimeBound tnum_positive_testbit_time.
+
+(** Unsigned bit lookup adds only constant dispatch cost. *)
+Lemma tnum_unsigned_testbit_time : forall z n,
+  (Word.N.T_testbit z n <=
+    16 * N.of_nat (N.size_nat z + N.size_nat n + 1))%N.
+Proof.
+  intros [|p] n; time_unfold Word.N.T_testbit; time_cbn; time_pose;
+    cbn [N.size_nat]; rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+TimeBound tnum_unsigned_testbit_time.
+
+(** Testing parity inspects only the outer integer and low positive bit. *)
+Lemma tnum_odd_time : forall z, (Word.Z.T_odd z <= 2)%N.
+Proof.
+  intros [|[p|p|]|[p|p|]]; time_unfold Word.Z.T_odd; time_cbn; lia.
+Qed.
+TimeBound tnum_odd_time.
+
+(** Integer bit lookup also charges the predecessor needed for a negative value. *)
+Lemma tnum_testbit_time : forall z i,
+  (Word.Z.T_testbit z i <=
+    32 * N.of_nat (Z.size_nat z + Z.size_nat i + 1))%N.
+Proof.
+  intros [|p|p] [|i|i]; time_unfold Word.Z.T_testbit; time_cbn; time_pose;
+    try pose proof (Std.N.size_nat_pred_N p);
+    cbn [Z.size_nat N.size_nat Pos.size_nat] in *;
+    rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+TimeBound tnum_testbit_time.
+
+(** Left shift by a nonnegative count uses constant-cost doubling steps. *)
+Lemma tnum_shiftl_time : forall z k, 0 <= k ->
+  (Std.Z.T_shiftl z k <= 8 * N.of_nat (Z.to_nat k + 1))%N.
+Proof.
+  intros z [|p|p] Hk; [| |lia].
+  - time_unfold Std.Z.T_shiftl. time_cbn. nia.
+  - pose proof (Std.Pos.T_iter_le (Z.mul 2) (fun x => Std.Z.T_mul 2 x) (fun _ => True)
+      3 z p (fun _ _ => I) (fun x _ => Std.Z.T_mul_two_le x) I) as Hiter.
+    time_unfold Std.Z.T_shiftl. time_cbn. cbn [Z.to_nat].
+    rewrite Nat2N.inj_add.
+    change (N.of_nat (Pos.to_nat p)) with (N.of_nat (N.to_nat (N.pos p))).
+    rewrite N2Nat.id. nia.
+Qed.
+TimeBound tnum_shiftl_time.
+
+(** Halving a nonnegative integer preserves nonnegativity. *)
+Lemma tnum_div2_nonnegative : forall z, 0 <= z -> 0 <= Z.div2 z.
+Proof.
+  intros [|[p|p|]|p] Hz; cbn [Z.div2]; lia.
+Qed.
+
+(** Halving a nonnegative integer reads only its outer constructor. *)
+Lemma tnum_div2_time : forall z, 0 <= z -> (Std.Z.T_div2 z <= 4)%N.
+Proof.
+  intros [|[p|p|]|p] Hz; try lia; time_unfold Std.Z.T_div2; time_cbn; time_pose; nia.
+Qed.
+
+(** Right shift of a nonnegative integer uses constant-cost halving steps. *)
+Lemma tnum_shiftr_time : forall z k, 0 <= z -> 0 <= k ->
+  (Std.Z.T_shiftr z k <= 8 * N.of_nat (Z.to_nat k + 1))%N.
+Proof.
+  intros z [|p|p] Hz Hk; [| |lia].
+  - time_unfold Std.Z.T_shiftr. time_unfold Std.Z.T_shiftl. time_cbn. time_pose. nia.
+  - pose proof (Std.Pos.T_iter_le Z.div2 (fun x => Std.Z.T_div2 x) (fun x => 0 <= x)
+      4 z p tnum_div2_nonnegative tnum_div2_time Hz) as Hiter.
+    time_unfold Std.Z.T_shiftr. time_unfold Std.Z.T_shiftl. time_cbn. time_pose.
+    cbn [Z.to_nat]. rewrite Nat2N.inj_add.
+    change (N.of_nat (Pos.to_nat p)) with (N.of_nat (N.to_nat (N.pos p))).
+    rewrite N2Nat.id. nia.
+Qed.
+TimeBound tnum_shiftr_time.
+
+(** A nonnegative left shift adds at most one stored bit per shift step. *)
+Lemma tnum_shiftl_bits : forall z k, 0 <= k ->
+  (Z.size_nat (Z.shiftl z k) <= Z.size_nat z + Z.to_nat k)%nat.
+Proof.
+  intros z k Hk. apply tnum_bits_of_abs_bound.
+  pose proof (tnum_abs_bits_bound z) as Hz.
+  pose proof (Z.pow_pos_nonneg 2 k ltac:(lia) Hk) as Hpow.
+  rewrite Z.shiftl_mul_pow2, Z.abs_mul, (Z.abs_eq (2 ^ k)) by lia.
+  rewrite Nat2Z.inj_add, Z2Nat.id, Z.pow_add_r by lia. nia.
+Qed.
+
+(** A nonnegative right shift cannot increase the stored magnitude bits. *)
+Lemma tnum_shiftr_bits : forall z k, 0 <= z -> 0 <= k ->
+  (Z.size_nat (Z.shiftr z k) <= Z.size_nat z)%nat.
+Proof.
+  intros z k Hz Hk. apply Std.Z.size_nat_mono. rewrite Z.shiftr_div_pow2 by exact Hk.
+  pose proof (Z.pow_pos_nonneg 2 k ltac:(lia) Hk) as Hpow. split.
+  - apply Z.div_pos; lia.
+  - apply Z.div_le_upper_bound; nia.
+Qed.
+
+(** Squared width bit lengths are bounded by a linear multiple of the width. *)
+Lemma tnum_width_bits_square : forall w,
+  ((Pos.size_nat w + 1) ^ 2 <= 8 * Pos.to_nat w)%nat.
+Proof.
+  induction w as [w IH|w IH|]; cbn [Pos.size_nat];
+    rewrite ?Pos2Nat.inj_xI, ?Pos2Nat.inj_xO, ?Pos2Nat.inj_1.
+  all: try pose proof (tnum_positive_bits w) as Hbits.
+  all: try pose proof (Pos2Nat.is_pos w) as Hpositive.
+  all: cbn [Nat.pow] in *; nia.
+Qed.
+
+
+(** A fuel-dependent invariant bounds the generated loop clock by its live callback budget. *)
+Lemma tnum_loopN_indexed_time : forall (St Out : Type) (step : St -> St + Out)
+    (T_step : St -> N) (Inv : N -> St -> Prop) (B fuel : N) (s : St),
+  (forall n state, Inv n state -> n <> 0%N -> (T_step state <= B)%N) ->
+  (forall n state next, Inv n state -> n <> 0%N -> step state = inl next ->
+    Inv (N.pred n) next) ->
+  Inv fuel s ->
+  (T_loopN step T_step fuel s <=
+    (B + 8) * fuel + B + N.of_nat (N.size_nat fuel) + 4)%N.
+Proof.
+  intros St Out step T_step Inv B fuel s Hcost Hpreserve Hinitial.
+  assert (Hbound : forall (fs : N * St) (Hacc : Acc loopN_lt fs),
+    Inv (fst fs) (snd fs) ->
+    (T_loop loopN_lt (loopN_step step)
+      (fun fs => T_loopN_step step T_step fs) fs Hacc <=
+      ((B + 8) * fst fs + loopN_zero_bits (fst fs)) + (B + 2) + 1)%N).
+  { apply T_loop_le.
+    - intros [n state] [n1 next] Hlt Hinv Hgo.
+      destruct n as [|p]; [discriminate Hgo|].
+      change (Inv (N.pos p) state) in Hinv.
+      cbn [loopN_step] in Hgo.
+      destruct (step state) as [state1|result] eqn:Hstep; [|discriminate Hgo].
+      inversion Hgo; subst n1 next.
+      split.
+      + exact (Hpreserve (N.pos p) state state1 Hinv ltac:(discriminate) Hstep).
+      + pose proof (Hcost (N.pos p) state Hinv ltac:(discriminate)) as Hcallback.
+        pose proof (loopN_pred_credit (N.pos p)) as Hcredit.
+        assert (Hfuel : (N.pred (N.pos p) + 1 = N.pos p)%N) by lia.
+        time_unfold @T_loopN_step; cbn [fst snd]; rewrite Hstep.
+        cbn [N.pred] in Hcredit, Hfuel |- *; nia.
+    - intros [n state] result Hinv Hstop.
+      destruct n as [|p].
+      + time_unfold @T_loopN_step; cbn [fst snd]; lia.
+      + change (Inv (N.pos p) state) in Hinv.
+        cbn [loopN_step] in Hstop.
+        destruct (step state) as [state1|result1] eqn:Hstep; [discriminate Hstop|].
+        pose proof (Hcost (N.pos p) state Hinv ltac:(discriminate)) as Hcallback.
+        time_unfold @T_loopN_step; cbn [fst snd]; rewrite Hstep; lia. }
+  time_unfold @T_loopN.
+  match goal with
+  | |- context [T_loop _ _ _ _ ?Hacc] =>
+    pose proof (Hbound (fuel, s) Hacc Hinitial) as Hloop
+  end.
+  pose proof (loopN_zero_bits_le_size fuel) as Hcredit.
+  cbn [fst snd] in Hloop; nia.
+Qed.
+
+
 Local Open Scope nat_scope.
 
 Theorem tnum_unknown_from_equation : forall n i m,
