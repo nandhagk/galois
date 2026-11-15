@@ -2375,6 +2375,427 @@ Module Compile (V : VALUE) <: COMPILE V.
     exact (proj1 (proj2 (proj2 Hcanonical)) i j b Hij Hab).
   Qed.
 
+  (** * Model validity of compiled rewrites *)
+
+  (** Binding the same term and sort preserves an inclusion between starting contexts. *)
+  Lemma binds_monotone : forall g h (t : term V.t) s g' h',
+    binds g t s g' -> binds h t s h' -> ctx_includes g h -> ctx_includes g' h'.
+  Proof.
+    intros g h t s g' h' Hg Hh Hinc x u Hsort.
+    destruct (binds_scope g t s g' Hg x u Hsort) as [Hold|Ht].
+    - apply (binds_includes h t s h' Hh), Hinc. exact Hold.
+    - subst t. pose proof (binds_has g (Var x) s g' Hg) as Hnew.
+      cbn [has] in Hnew. assert (u = s) by congruence. subst u.
+      exact (binds_has h (Var x) s h' Hh).
+  Qed.
+
+  (** Binding an argument list preserves an inclusion between starting contexts. *)
+  Lemma binds_list_monotone : forall g ts ss g', @binds_list V.t g ts ss g' ->
+    forall h h', binds_list h ts ss h' -> ctx_includes g h -> ctx_includes g' h'.
+  Proof.
+    intros g ts ss g' Hbind.
+    induction Hbind as [g|g g1 g2 t ts s ss Hhead Htail IH]; intros h h' Hother Hinc.
+    - inversion Hother; subst. exact Hinc.
+    - inversion Hother as [|h0 h1 h2 t' ts' s' ss' Hhead' Htail']; subst.
+      eapply IH; [exact Htail'|]. eapply binds_monotone; eassumption.
+  Qed.
+
+  (** Binding a function result preserves an inclusion between starting contexts. *)
+  Lemma binds_result_monotone : forall g h out res g' h',
+    @binds_result V.t g out res g' -> binds_result h out res h' ->
+    ctx_includes g h -> ctx_includes g' h'.
+  Proof.
+    intros g h out [t|] g' h' Hg Hh Hinc; destruct out;
+      cbn [binds_result out_sort] in Hg, Hh; try contradiction.
+    - eapply binds_monotone; eassumption.
+    - eapply binds_monotone; eassumption.
+    - subst g' h'. exact Hinc.
+  Qed.
+
+  (** Two typings of the same query preserve inclusion of their input contexts. *)
+  Lemma query_ok_monotone : forall sorts kinds g q g',
+    @query_ok V.t sorts kinds g q g' -> forall h h',
+    query_ok sorts kinds h q h' -> ctx_includes g h -> ctx_includes g' h'.
+  Proof.
+    intros sorts kinds g q g' Hquery.
+    induction Hquery as
+      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind Hargs Hres Hrest IH|
+       g g1 op args res rest Hargs Hres Hrest IH]; intros h h' Hother Hinc.
+    - inversion Hother; subst. exact Hinc.
+    - inversion Hother as
+        [|h0 h1 h2 h3 f' args' res' ss' out' rest' Hsort' Hkind' Hargs' Hres' Hrest'|];
+        subst.
+      assert (ss' = ss) by congruence. subst ss'.
+      assert (out' = out) by congruence. subst out'.
+      eapply IH; [exact Hrest'|]. eapply binds_result_monotone;
+        [exact Hres|exact Hres'|]. eapply binds_list_monotone; eassumption.
+    - inversion Hother as [ | | h0 h1 op' args' res' rest' Hargs' Hres' Hrest']; subst.
+      eapply IH; eassumption.
+  Qed.
+
+  (** Every typing of a flattened rewrite query includes its source context. *)
+  Lemma flatten_lhs_context : forall ds rw g h,
+    rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
+    query_ok (lookup_sorts ds) (lookup_kind ds) ctx_empty (flatten_lhs rw) h ->
+    ctx_includes g h.
+  Proof.
+    intros ds rw g h Hrw Hquery.
+    destruct (flatten_lhs_sorted ds rw g Hrw) as [h0 [Hquery0 [Hsource Hrest]]].
+    eapply ctx_includes_trans; [exact Hsource|].
+    eapply query_ok_monotone; [exact Hquery0|exact Hquery|apply ctx_includes_refl].
+  Qed.
+
+  (** A model environment sorted on a larger context is sorted on every included context. *)
+  Lemma model_env_includes : forall (M : model (V := V.t)) g h s,
+    ctx_includes g h -> model_env_sorted M h s -> model_env_sorted M g s.
+  Proof.
+    intros M g h s Hinc Hsorted x t Hsort. apply Hsorted, Hinc. exact Hsort.
+  Qed.
+
+  (** A model term has only one value in a fixed environment. *)
+  Lemma model_term_unique : forall (M : model (V := V.t)) s t c d,
+    model_term M s t c -> model_term M s t d -> c = d.
+  Proof.
+    intros M s [x|v] c d Hc Hd; cbn [model_term] in *; congruence.
+  Qed.
+
+  (** An already interpreted prefix gives pattern values for the current model arguments. *)
+  Lemma pattern_model_children : forall (M : model (V := V.t)) base current ns ts i ch cs,
+    Forall2 node_term ns ts -> i <= length ns ->
+    (forall j t c, j < i -> nth_error ts j = Some t -> model_term M current t c ->
+      pat_value M base ns j c) ->
+    Forall (fun j => j < i) ch ->
+    Forall2 (model_term M current) (map (fun j => pattern_get (Var 1%positive) j ts) ch) cs ->
+    Forall2 (pat_value M base ns) ch cs.
+  Proof.
+    intros M base current ns ts i ch cs Hforms Hbound Hprefix Hbefore.
+    revert cs. induction Hbefore as [|j ch Hbefore Htail IH]; intros cs Hvalues.
+    - inversion Hvalues. constructor.
+    - inversion Hvalues as [|t c args rest Hvalue Hrest]; subst.
+      constructor; [|exact (IH _ Hrest)].
+      destruct (nth_error ts j) as [t|] eqn:Hterm.
+      + eapply Hprefix; [exact Hbefore|exact Hterm|].
+        unfold pattern_get in Hvalue. rewrite Hterm in Hvalue. exact Hvalue.
+      + apply nth_error_None in Hterm. pose proof (Forall2_length Hforms). lia.
+  Qed.
+
+  (** Satisfied constructor atoms interpret every referenced table term as its pattern node. *)
+  Lemma pattern_atoms_model : forall (M : model (V := V.t)) sorts kinds g p ts s,
+    pat_ok sorts kinds g p -> Forall2 node_term (nodes V.t p) ts ->
+    Forall (model_atom V.prim M kinds s) (pattern_atoms (nodes V.t p) ts ts) ->
+    forall i t c, nth_error ts i = Some t -> model_term M s t c ->
+      pat_value M s (nodes V.t p) i c.
+  Proof.
+    intros M sorts kinds g p ts s [_ [_ [_ Hnodes]]] Hforms Hatoms i.
+    induction i as [i IH] using lt_wf_ind. intros t c Hterm Hvalue.
+    destruct (node_term_lookup _ _ Hforms i t Hterm) as [n [Hnode Hform]].
+    destruct n as [x|f ch|v]; cbn [node_term] in Hform.
+    - subst t. eapply pat_value_hole; eassumption.
+    - destruct (Hnodes i f ch Hnode) as [Hkind [ss [Hsort Hchildren]]].
+      assert (Hbefore : Forall (fun j => j < i) ch).
+      { clear -Hchildren. induction Hchildren as [|j u ch us Hj Htail IHchildren]; constructor.
+        - exact (proj1 Hj).
+        - exact IHchildren. }
+      assert (Hatom : model_atom V.prim M kinds s
+        (Fun V.t f (map (fun j => pattern_get (Var 1%positive) j ts) ch) (Some t))).
+      { apply (proj1 (Forall_forall _ _) Hatoms). eapply pattern_atom_at; eassumption. }
+      cbn [model_atom] in Hatom. destruct Hatom as [cs [Hargs Hresult]].
+      rewrite Hkind in Hresult.
+      assert (Heq : c = inl (con M f cs)) by (eapply model_term_unique; eassumption).
+      subst c. eapply pat_value_app; [exact Hnode|exact Hbefore|].
+      eapply pattern_model_children; [exact Hforms| | |exact Hbefore|exact Hargs].
+      + assert (i < length (nodes V.t p)).
+        { apply nth_error_Some. rewrite Hnode. discriminate. } lia.
+      + intros j u d Hlt Hlookup Hterm_value. exact (IH j Hlt u d Hlookup Hterm_value).
+    - subst t. cbn [model_term] in Hvalue. subst c. apply pat_value_lit. exact Hnode.
+  Qed.
+
+  (** A satisfied flattened left pattern assigns its generated root its pattern value. *)
+  Lemma flatten_pat_model : forall (M : model (V := V.t)) sorts kinds g p rn s,
+    pat_ok sorts kinds g p -> app_rooted p ->
+    Forall (model_atom V.prim M kinds s) (flatten_pat p rn) ->
+    exists c, s rn = Some (inl c) /\ pat_value M s (nodes V.t p) (root V.t p) (inl c).
+  Proof.
+    intros M sorts kinds g p rn s Hpat Hroot Hatoms.
+    set (ts := fst (pattern_table p rn)).
+    assert (Hforms : Forall2 node_term (nodes V.t p) ts) by
+      (exact (proj1 (pattern_table_facts p rn))).
+    assert (Hflat : flatten_pat p rn = pattern_atoms (nodes V.t p) ts ts) by
+      (destruct p; reflexivity).
+    rewrite Hflat in Hatoms.
+    destruct Hroot as [f [ch Hnode]].
+    assert (Hterm : nth_error ts (root V.t p) = Some (Var rn)).
+    { apply pattern_table_root. exists f, ch. exact Hnode. }
+    assert (Hatom : model_atom V.prim M kinds s
+      (Fun V.t f (map (fun j => pattern_get (Var 1%positive) j ts) ch) (Some (Var rn)))).
+    { apply (proj1 (Forall_forall _ _) Hatoms). eapply pattern_atom_at; eassumption. }
+    destruct (proj2 (proj2 (proj2 Hpat)) _ _ _ Hnode) as [Hkind Hargsorts].
+    cbn [model_atom] in Hatom. destruct Hatom as [cs [Hargs Hresult]].
+    rewrite Hkind in Hresult. exists (con M f cs). split; [exact Hresult|].
+    eapply pattern_atoms_model; eassumption.
+  Qed.
+
+  (** Updating a fresh model variable preserves every smaller source variable. *)
+  Lemma model_update_low : forall (M : model (V := V.t)) base current rn x c,
+    (rn <= x)%positive ->
+    (forall h, (h < rn)%positive -> current h = base h) ->
+    forall h, (h < rn)%positive -> model_update M current x c h = base h.
+  Proof.
+    intros M base current rn x c Hfresh Hagree h Hsmall. unfold model_update.
+    destruct (Pos.eqb x h) eqn:Hxh.
+    - apply Pos.eqb_eq in Hxh. subst h. lia.
+    - apply Hagree. exact Hsmall.
+  Qed.
+
+  (** Each completed table position stores its source pattern value in the current environment. *)
+  Definition model_pattern_prefix (M : model (V := V.t)) (base current : model_env M)
+      (ns : list (pnode V.t)) (ts : list (term V.t)) (bound : nat) : Prop :=
+    forall j, j < bound -> exists c, pat_value M base ns j c /\
+      forall default, model_term M current (pattern_get default j ts) c.
+
+  (** Adding the next interpreted node advances the value prefix. *)
+  Lemma model_pattern_prefix_advance : forall M base current ns ts i c,
+    model_pattern_prefix M base current ns ts i -> pat_value M base ns i c ->
+    (forall default, model_term M current (pattern_get default i ts) c) ->
+    model_pattern_prefix M base current ns ts (S i).
+  Proof.
+    intros M base current ns ts i c Hprefix Hnode Hvalue j Hlt.
+    destruct (Nat.eq_dec j i) as [->|Hneq].
+    - exists c. split; assumption.
+    - apply Hprefix. lia.
+  Qed.
+
+  (** A constructor allocation cannot change an earlier table term. *)
+  Lemma model_pattern_prefix_update : forall M base current (p : fpat V.t) rn i f ch x c,
+    (forall h, In (PHole h) (nodes V.t p) -> (h < rn)%positive) ->
+    nth_error (nodes V.t p) i = Some (PApp f ch) ->
+    nth_error (fst (pattern_table p rn)) i = Some (Var x) ->
+    model_pattern_prefix M base current (nodes V.t p) (fst (pattern_table p rn)) i ->
+    model_pattern_prefix M base (model_update M current x c)
+      (nodes V.t p) (fst (pattern_table p rn)) i.
+  Proof.
+    intros M base current p rn i f ch x c Hholes Hnode Hname Hprefix j Hlt.
+    destruct (Hprefix j Hlt) as [d [Hpat Hvalue]]. exists d. split; [exact Hpat|].
+    intro default. specialize (Hvalue default).
+    destruct (nth_error (fst (pattern_table p rn)) j) as [[y|v]|] eqn:Hterm.
+    - unfold pattern_get in *. rewrite Hterm in Hvalue |-*. cbn [model_term] in *.
+      unfold model_update. destruct (Pos.eqb x y) eqn:Hxy; [|exact Hvalue].
+      apply Pos.eqb_eq in Hxy. subst y.
+      pose proof (pattern_constructor_name_unique p rn i f ch x j Hholes Hnode Hname Hterm).
+      lia.
+    - unfold pattern_get in *. rewrite Hterm in Hvalue |-*. exact Hvalue.
+    - apply nth_error_None in Hterm.
+      pose proof (Forall2_length (proj1 (pattern_table_facts p rn))).
+      assert (i < length (nodes V.t p)).
+      { apply nth_error_Some. rewrite Hnode. discriminate. } lia.
+  Qed.
+
+  (** The interpreted prefix supplies all model arguments and their pattern values. *)
+  Lemma model_pattern_arguments : forall M base current ns ts i ch,
+    model_pattern_prefix M base current ns ts i -> Forall (fun j => j < i) ch ->
+    exists cs, Forall2 (pat_value M base ns) ch cs /\
+      Forall2 (model_term M current) (map (fun j => pattern_get (Var 1%positive) j ts) ch) cs.
+  Proof.
+    intros M base current ns ts i ch Hprefix Hbefore.
+    induction Hbefore as [|j ch Hlt Hbefore IH].
+    - exists []. split; constructor.
+    - destruct (Hprefix j Hlt) as [c [Hnode Hvalue]]. destruct IH as [cs [Hnodes Hvalues]].
+      exists (c :: cs). split; constructor; try assumption. apply Hvalue.
+  Qed.
+
+  (** One node's optional constructor action transports every valid continuation. *)
+  Definition model_pattern_step (M : model (V := V.t)) kinds
+      (current next : model_env M) (n : pnode V.t) (t : term V.t) all : Prop :=
+    forall acts, model_actions V.prim M kinds next acts -> model_actions V.prim M kinds current
+      (match n, t with
+       | PApp f ch, Var x =>
+           Make x f (map (fun j => pattern_get (Var 1%positive) j all) ch) :: acts
+       | _, _ => acts
+       end).
+
+  (** Interpreting one node advances the value prefix and preserves all source variables. *)
+  Lemma model_pattern_node_step : forall M sorts kinds g (p : fpat V.t) rn base i n t current,
+    pat_ok sorts kinds g p ->
+    (forall h, In (PHole h) (nodes V.t p) -> (h < rn)%positive) ->
+    model_env_sorted M g base ->
+    nth_error (nodes V.t p) i = Some n ->
+    nth_error (fst (pattern_table p rn)) i = Some t ->
+    (forall h, (h < rn)%positive -> current h = base h) ->
+    model_pattern_prefix M base current (nodes V.t p) (fst (pattern_table p rn)) i ->
+    exists next, (forall h, (h < rn)%positive -> next h = base h) /\
+      model_pattern_prefix M base next (nodes V.t p) (fst (pattern_table p rn)) (S i) /\
+      model_pattern_step M kinds current next n t (fst (pattern_table p rn)).
+  Proof.
+    intros M sorts kinds g p rn base i n t current Hpat Hholes Henv Hnode Hterm Hlow Hprefix.
+    destruct (pattern_table_facts p rn) as [Hforms [Hdistinct Hrange]].
+    pose proof (node_term_at _ _ Hforms i n t Hnode Hterm) as Hform.
+    destruct n as [x|f ch|v]; cbn [node_term] in Hform.
+    - subst t. destruct (pat_hole_sorted sorts kinds g p x Hpat (nth_error_In _ i Hnode))
+        as [u Hsort].
+      destruct (Henv x u Hsort) as [c [Hbase Hcsort]].
+      exists current. split; [exact Hlow|]. split; [|intros acts Hacts; exact Hacts].
+      eapply model_pattern_prefix_advance; [exact Hprefix| |].
+      + eapply pat_value_hole; eassumption.
+      + intro default. unfold pattern_get. rewrite Hterm. cbn [model_term].
+        rewrite Hlow; [exact Hbase|apply Hholes; eapply nth_error_In; exact Hnode].
+    - destruct Hform as [x ->].
+      destruct (proj2 (proj2 (proj2 Hpat)) i f ch Hnode)
+        as [Hkind [ss [Hsort Hchildren]]].
+      assert (Hbefore : Forall (fun j => j < i) ch).
+      { clear -Hchildren. induction Hchildren as [|j u ch us Hj Htail IHchildren]; constructor.
+        - exact (proj1 Hj).
+        - exact IHchildren. }
+      destruct (model_pattern_arguments M base current _ _ i ch Hprefix Hbefore)
+        as [cs [Hvalues Hargs]].
+      exists (model_update M current x (inl (con M f cs))). split.
+      + apply model_update_low; [eapply Hrange; eassumption|exact Hlow].
+      + split.
+        * eapply model_pattern_prefix_advance.
+          -- eapply model_pattern_prefix_update; eassumption.
+          -- eapply pat_value_app; eassumption.
+          -- intro default. unfold pattern_get. rewrite Hterm. cbn [model_term].
+             unfold model_update. now rewrite Pos.eqb_refl.
+        * intros acts Hacts. cbn [model_actions]. exists cs. split; [exact Hargs|].
+          split; assumption.
+    - subst t. exists current. split; [exact Hlow|]. split; [|intros acts Hacts; exact Hacts].
+      eapply model_pattern_prefix_advance; [exact Hprefix| |].
+      + apply pat_value_lit. exact Hnode.
+      + intro default. unfold pattern_get. rewrite Hterm. reflexivity.
+  Qed.
+
+  (** The constructor fold interprets the whole pattern before executing its continuation. *)
+  Lemma model_pattern_actions_fold : forall M sorts kinds g (p : fpat V.t) rn base,
+    pat_ok sorts kinds g p ->
+    (forall h, In (PHole h) (nodes V.t p) -> (h < rn)%positive) ->
+    model_env_sorted M g base -> forall ns ts, Forall2 node_term ns ts -> forall i current,
+    (forall j, nth_error ns j = nth_error (nodes V.t p) (i + j)) ->
+    (forall j, nth_error ts j = nth_error (fst (pattern_table p rn)) (i + j)) ->
+    (forall h, (h < rn)%positive -> current h = base h) ->
+    model_pattern_prefix M base current (nodes V.t p) (fst (pattern_table p rn)) i ->
+    exists next, (forall h, (h < rn)%positive -> next h = base h) /\
+      model_pattern_prefix M base next (nodes V.t p) (fst (pattern_table p rn))
+        (i + length ns) /\
+      (forall acts, model_actions V.prim M kinds next acts ->
+        model_actions V.prim M kinds current
+          (pattern_actions ns ts (fst (pattern_table p rn)) ++ acts)).
+  Proof.
+    intros M sorts kinds g p rn base Hpat Hholes Henv ns ts Hforms.
+    induction Hforms as [|n t ns ts Hform Hforms IH];
+      intros i current Hnode_pos Hterm_pos Hlow Hprefix.
+    - exists current. split; [exact Hlow|]. split.
+      + cbn [length]. rewrite Nat.add_0_r. exact Hprefix.
+      + intros acts Hacts. exact Hacts.
+    - assert (Hnode : nth_error (nodes V.t p) i = Some n).
+      { specialize (Hnode_pos 0). rewrite Nat.add_0_r in Hnode_pos. symmetry. exact Hnode_pos. }
+      assert (Hterm : nth_error (fst (pattern_table p rn)) i = Some t).
+      { specialize (Hterm_pos 0). rewrite Nat.add_0_r in Hterm_pos. symmetry. exact Hterm_pos. }
+      destruct (model_pattern_node_step M sorts kinds g p rn base i n t current
+        Hpat Hholes Henv Hnode Hterm Hlow Hprefix)
+        as [next1 [Hlow1 [Hprefix1 Hstep]]].
+      assert (Hnode_pos1 : forall j, nth_error ns j = nth_error (nodes V.t p) (S i + j)).
+      { intro j. replace (S i + j) with (i + S j) by lia. exact (Hnode_pos (S j)). }
+      assert (Hterm_pos1 : forall j,
+        nth_error ts j = nth_error (fst (pattern_table p rn)) (S i + j)).
+      { intro j. replace (S i + j) with (i + S j) by lia. exact (Hterm_pos (S j)). }
+      destruct (IH (S i) next1 Hnode_pos1 Hterm_pos1 Hlow1 Hprefix1)
+        as [next2 [Hlow2 [Hprefix2 Hcontinue]]].
+      exists next2. split; [exact Hlow2|]. split.
+      + replace (i + length (n :: ns)) with (S i + length ns) by (cbn [length]; lia).
+        exact Hprefix2.
+      + intros acts Hacts. rewrite pattern_actions_cons. apply Hstep, Hcontinue. exact Hacts.
+  Qed.
+
+  (** A pattern value has the sort of its root node in a sorted source environment. *)
+  Lemma pat_value_sort : forall (M : model (V := V.t)) g s p i c t,
+    model_env_sorted M g s -> pat_sort g p i t ->
+    pat_value M s (nodes V.t p) i c -> value_sort c = t.
+  Proof.
+    intros M g s p i c t Henv [n [Hnode Hsort]] Hvalue.
+    destruct Hvalue as [i x c Hhole Hbound|i v Hliteral|i f ch cs Hconstructor Hbefore Hargs].
+    - assert (n = PHole x) by congruence. subst n. cbn [pnode_sort] in Hsort.
+      destruct (Henv x t Hsort) as [d [Hlookup Hd]]. assert (c = d) by congruence.
+      subst c. exact Hd.
+    - assert (n = PLit v) by congruence. subst n. cbn [pnode_sort] in Hsort.
+      injection Hsort as <-. reflexivity.
+    - assert (n = PApp f ch) by congruence. subst n. cbn [pnode_sort] in Hsort.
+      injection Hsort as <-. reflexivity.
+  Qed.
+
+  (** Right-side construction is valid when its source pattern value equals the left root. *)
+  Lemma pattern_actions_model : forall M sorts kinds g (p : fpat V.t) rn base old_root c,
+    pat_ok sorts kinds g p ->
+    (forall h, In (PHole h) (nodes V.t p) -> (h < rn)%positive) ->
+    model_env_sorted M g base -> (old_root < rn)%positive ->
+    base old_root = Some (inl c) ->
+    (forall y, pat_value M base (nodes V.t p) (root V.t p) (inl y) -> c = y) ->
+    model_actions V.prim M kinds base
+      (pattern_actions (nodes V.t p) (fst (pattern_table p rn)) (fst (pattern_table p rn)) ++
+        [Union (Var old_root) (pattern_get (Var rn) (root V.t p) (fst (pattern_table p rn))) ]).
+  Proof.
+    intros M sorts kinds g p rn base old_root c Hpat Hholes Henv Hfresh Hroot Hequal.
+    assert (Hprefix0 : model_pattern_prefix M base base
+      (nodes V.t p) (fst (pattern_table p rn)) 0) by (intros j Hlt; lia).
+    destruct (model_pattern_actions_fold M sorts kinds g p rn base Hpat Hholes Henv
+      (nodes V.t p) (fst (pattern_table p rn)) (proj1 (pattern_table_facts p rn))
+      0 base (fun j => eq_refl) (fun j => eq_refl) (fun h Hlt => eq_refl) Hprefix0)
+      as [next [Hlow [Hprefix Hcontinue]]].
+    assert (Hindex : root V.t p < 0 + length (nodes V.t p)) by
+      (pose proof (proj1 Hpat); lia).
+    destruct (Hprefix _ Hindex) as [d [Hvalue Hterm]].
+    pose proof (pat_value_sort M g base p _ d SId Henv (proj1 (proj2 Hpat)) Hvalue) as Hsort.
+    destruct d as [y|v]; [|discriminate].
+    apply Hcontinue. cbn [model_actions]. exists (inl c), (inl y). split.
+    - cbn [model_term]. rewrite Hlow; assumption.
+    - split; [apply Hterm|]. split; [apply Hequal; exact Hvalue|exact I].
+  Qed.
+
+  (** Compiled actions realize a valid rewrite in every sorted source model environment. *)
+  Lemma compile_rule_model : forall (M : model (V := V.t)) ds rw g s,
+    rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
+    valid_rw V.prim M (lookup_sorts ds) (lookup_kind ds) rw ->
+    model_env_sorted M g s ->
+    Forall (model_atom V.prim M (lookup_kind ds) s) (flatten_lhs rw) ->
+    model_actions V.prim M (lookup_kind ds) s (actions V.t (compile_rule rw)).
+  Proof.
+    intros M ds rw g s Hrw Hvalid Henv Hatoms.
+    pose proof Hrw as Hrw_all.
+    destruct Hrw as [g0 [Hrooted [Hleft [Hscope [Hquery Hright]]]]].
+    assert (Hflat : flatten_lhs rw = flatten_pat (lhs V.t rw) (root_var rw) ++ cond V.t rw)
+      by (destruct rw; reflexivity).
+    rewrite Hflat in Hatoms. apply Forall_app in Hatoms. destruct Hatoms as [Hleftatoms Hcond].
+    destruct (flatten_pat_model M _ _ g0 _ (root_var rw) s Hleft Hrooted Hleftatoms)
+      as [c [Hroot Hvalue]].
+    destruct (root_var_bounds rw) as [Hleftbound [Hrightbound Hcondbound]].
+    destruct (pattern_table_sorted (lhs V.t rw) (root_var rw) g Hleftbound)
+      as [_ [_ Hnext]].
+    set (next := snd (pattern_table (lhs V.t rw) (root_var rw))).
+    assert (Hactions : actions V.t (compile_rule rw) =
+      pattern_actions (nodes V.t (rhs V.t rw))
+        (fst (pattern_table (rhs V.t rw) next)) (fst (pattern_table (rhs V.t rw) next)) ++
+      [Union (Var (root_var rw)) (pattern_get (Var next) (root V.t (rhs V.t rw))
+        (fst (pattern_table (rhs V.t rw) next)))]).
+    { unfold next. destruct rw as [lp [ns r] conditions]. reflexivity. }
+    rewrite Hactions. eapply pattern_actions_model; [exact Hright| |exact Henv| |exact Hroot|].
+    - intros h Hin. pose proof (pattern_max_hole _ h Hin). unfold next. lia.
+    - exact Hnext.
+    - intros y Hrightvalue. exact (Hvalid g s c y Hrw_all Henv Hcond Hvalue Hrightvalue).
+  Qed.
+
+  (** A well-sorted valid rewrite compiles to a rule valid on every typed query environment. *)
+  Lemma compile_rule_valid : forall (M : model (V := V.t)) ds rw g,
+    rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
+    valid_rw V.prim M (lookup_sorts ds) (lookup_kind ds) rw ->
+    rule_valid_sorted V.prim M (lookup_sorts ds) (lookup_kind ds) (compile_rule rw).
+  Proof.
+    intros M ds rw g Hrw Hvalid h s Hquery Henv Hatoms.
+    assert (Heq : query V.t (compile_rule rw) = flatten_lhs rw).
+    { destruct rw as [lp [ns r] conditions]. reflexivity. }
+    rewrite Heq in Hquery, Hatoms.
+    apply (compile_rule_model M ds rw g s Hrw Hvalid); [|exact Hatoms].
+    eapply model_env_includes; [eapply flatten_lhs_context; eassumption|exact Henv].
+  Qed.
+
+
   Lemma compile_program : forall ds rws ans,
     decls V.t (compile ds rws ans) = ds /\
     rules V.t (compile ds rws ans) = map compile_rule rws ++ ans.
@@ -2405,7 +2826,17 @@ Module Compile (V : VALUE) <: COMPILE V.
     (forall f m k a b, lookup_kind ds f = Some (OLat m) ->
       lat M f k a -> lat M f k b -> lat M f k (V.merge m a b)) ->
     valid_sorted V.prim V.merge M (compile ds rws ans).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M ds rws ans [Hrewrites Hanalyses] Hvalid Hanalysis_valid Hclosed.
+    split; [|exact Hclosed].
+    change (Forall (rule_valid_sorted V.prim M (lookup_sorts ds) (lookup_kind ds))
+      (map compile_rule rws ++ ans)).
+    apply Forall_app. split; [|exact Hanalysis_valid].
+    apply Forall_forall. intros r Hin. apply in_map_iff in Hin.
+    destruct Hin as [rw [<- Hin]].
+    destruct (proj1 (Forall_forall _ _) Hrewrites rw Hin) as [g Hrw].
+    eapply compile_rule_valid; [exact Hrw|]. exact (proj1 (Forall_forall _ _) Hvalid rw Hin).
+  Qed.
 
   Lemma flatten_complete : forall ds w rw g tau c e,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g -> canonical_view w ->
@@ -2535,7 +2966,9 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
     valid_rw V.prim M (lookup_sorts ds) (lookup_kind ds) rw ->
     rule_valid_sorted V.prim M (lookup_sorts ds) (lookup_kind ds) (compile_rule rw).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact compile_rule_valid.
+  Qed.
 
   Lemma F2_compile_rule_sorted : forall ds rw g,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
