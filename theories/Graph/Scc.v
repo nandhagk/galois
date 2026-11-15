@@ -1169,7 +1169,7 @@ Module SccT <: SCC_ALL.
   Definition tarjan_trace := scc_trace.
   TimeFun tarjan_trace.
   Definition k_pop : N := 4096%N.
-  Definition k_callback : N := 1%N. (* STUB *)
+  Definition k_callback : N := 65536%N.
   Definition k_result : N := 8%N.
   Definition k_search : N := 1%N. (* STUB *)
 
@@ -1472,7 +1472,17 @@ Module SccT <: SCC_ALL.
     let s := prefix_state prefix in
     (callback_cost e s + potential w (apply_event s e) <=
       k_callback * N.of_nat (w + 1) + potential w s)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g prefix e suffix Htrace. cbn zeta.
+    assert (Hwidth : event_domain (graph_width (base g)) e).
+    { pose proof (scc_trace_event_width g) as Hdomain.
+      rewrite Forall_forall in Hdomain. apply Hdomain.
+      change (scc_trace g = prefix ++ e :: suffix) in Htrace.
+      rewrite Htrace. apply in_or_app. right. now left. }
+    pose proof (callback_credit (graph_width (base g)) e (prefix_state prefix)
+      (prefix_width g prefix (e :: suffix) Htrace) Hwidth) as Hcredit.
+    unfold k_callback. lia.
+  Qed.
 
   Lemma T3_fold : forall g,
     (T_fold_events tarjan_enter T_tarjan_enter tarjan_leave T_tarjan_leave
