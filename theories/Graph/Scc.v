@@ -3334,6 +3334,298 @@ Module SccCode <: SCC_OPS.
     Scc (tarjan_owners result) (rev_append (tarjan_emitted result) []).
 End SccCode.
 
+Module TarjanFrontierFacts.
+
+(** Newer pending low links are represented by the source or a newer open witness. *)
+Definition frontier open (s : tarjan_state) : Prop :=
+  forall a w da dw la lw, In a open -> In w (tarjan_pending s) ->
+    trie_get a (tarjan_disc s) = Some da -> trie_get w (tarjan_disc s) = Some dw ->
+    trie_get a (tarjan_low s) = Some la -> trie_get w (tarjan_low s) = Some lw ->
+    Pos.to_nat da <= Pos.to_nat dw ->
+    Pos.to_nat la <= Pos.to_nat lw \/
+    exists b db lb, In b open /\ Pos.to_nat da < Pos.to_nat db /\
+      Pos.to_nat db <= Pos.to_nat dw /\ trie_get b (tarjan_disc s) = Some db /\
+      trie_get b (tarjan_low s) = Some lb /\ Pos.to_nat lb <= Pos.to_nat lw.
+
+Lemma initial_frontier : frontier [] tarjan_initial.
+Proof. intros a w da dw la lw Hfalse. contradiction. Qed.
+
+Lemma open_head_number v open s a da dv :
+  tarjan_embeds (v :: open) (tarjan_pending s) -> tarjan_state_ordered s ->
+  In a open -> trie_get a (tarjan_disc s) = Some da ->
+  trie_get v (tarjan_disc s) = Some dv -> Pos.to_nat da < Pos.to_nat dv.
+Proof.
+  intros Hembed Horder Ha Had Hvd.
+  pose proof (tarjan_ordered_embeds _ _ _ Hembed Horder) as Hframes.
+  exact (proj2 Hframes a dv da Ha Hvd Had).
+Qed.
+
+Lemma top_bound v open s w dv dw lv lw :
+  tarjan_embeds (v :: open) (tarjan_pending s) -> tarjan_state_ordered s ->
+  frontier (v :: open) s -> In w (tarjan_pending s) ->
+  trie_get v (tarjan_disc s) = Some dv -> trie_get w (tarjan_disc s) = Some dw ->
+  trie_get v (tarjan_low s) = Some lv -> trie_get w (tarjan_low s) = Some lw ->
+  Pos.to_nat dv <= Pos.to_nat dw -> Pos.to_nat lv <= Pos.to_nat lw.
+Proof.
+  intros Hembed Horder Hfrontier Hw Hvd Hwd Hvl Hwl Hbound.
+  destruct (Hfrontier v w dv dw lv lw (or_introl eq_refl) Hw Hvd Hwd Hvl Hwl Hbound)
+    as [Hle|[b [db [lb [Hb [Hvb [_ [Hbd _]]]]]]]]; [exact Hle|].
+  destruct Hb as [Heq|Hb].
+  - subst b. rewrite Hvd in Hbd. injection Hbd as Heq. subst db. lia.
+  - pose proof (open_head_number v open s b db dv Hembed Horder Hb Hbd Hvd). lia.
+Qed.
+
+Lemma low_set_bound (links : ptrie positive) v old n b lb :
+  trie_get v links = Some old -> trie_get b links = Some lb ->
+  exists next, trie_get b (PTrieCode.set v (Pos.min old n) links) = Some next /\
+    Pos.to_nat next <= Pos.to_nat lb.
+Proof.
+  intros Hold Hb. destruct (Pos.eq_dec b v) as [Heq|Hne].
+  - subst b. rewrite Hold in Hb. injection Hb as Heq. subst lb.
+    exists (Pos.min old n). rewrite PTrie.get_set_same.
+    split; [reflexivity|]. rewrite Pos2Nat.inj_min. apply Nat.le_min_l.
+  - exists lb. rewrite PTrie.get_set_other by exact Hne. split; [exact Hb|lia].
+Qed.
+
+Lemma low_set_inverse (links : ptrie positive) v old n a la :
+  trie_get v links = Some old ->
+  trie_get a (PTrieCode.set v (Pos.min old n) links) = Some la ->
+  exists prior, trie_get a links = Some prior /\ Pos.to_nat la <= Pos.to_nat prior.
+Proof.
+  intros Hold Ha. destruct (Pos.eq_dec a v) as [Heq|Hne].
+  - subst a. rewrite PTrie.get_set_same in Ha. injection Ha as Heq. subst la.
+    exists old. split; [exact Hold|]. rewrite Pos2Nat.inj_min. apply Nat.le_min_l.
+  - rewrite PTrie.get_set_other in Ha by exact Hne. exists la. split; [exact Ha|lia].
+Qed.
+
+Lemma lower_frontier v open s n :
+  tarjan_embeds (v :: open) (tarjan_pending s) -> tarjan_state_ordered s ->
+  frontier (v :: open) s -> frontier (v :: open) (TarjanVisitor.lower v n s).
+Proof.
+  intros Hembed Horder Hfrontier. unfold TarjanVisitor.lower.
+  destruct (trie_get v (tarjan_low s)) as [old|] eqn:Hold; [|exact Hfrontier].
+  intros a w da dw la lw Ha Hw Had Hwd Hal Hwl Hbound.
+  cbn [tarjan_pending tarjan_disc tarjan_low] in *.
+  destruct (Pos.eq_dec w v) as [Heq|Hwne].
+  - subst w. rewrite PTrie.get_set_same in Hwl. injection Hwl as Heq. subst lw.
+    destruct (Pos.eq_dec a v) as [Heq|Hane].
+    + subst a. rewrite PTrie.get_set_same in Hal. injection Hal as Heq. subst la. left. lia.
+    + right. exists v, dw, (Pos.min old n). split; [now left|]. split.
+      * apply (open_head_number v open s a da dw Hembed Horder);
+          [destruct Ha as [Heq|Ha]; [congruence|exact Ha]|exact Had|exact Hwd].
+      * split; [lia|]. split; [exact Hwd|]. rewrite PTrie.get_set_same.
+        split; [reflexivity|lia].
+  - rewrite PTrie.get_set_other in Hwl by exact Hwne.
+    destruct (Pos.eq_dec a v) as [Heq|Hane].
+    + subst a. rewrite PTrie.get_set_same in Hal. injection Hal as Heq. subst la. left.
+      rewrite Pos2Nat.inj_min. eapply Nat.le_trans; [apply Nat.le_min_l|].
+      exact (top_bound v open s w da dw old lw Hembed Horder Hfrontier Hw
+        Had Hwd Hold Hwl Hbound).
+    + rewrite PTrie.get_set_other in Hal by exact Hane.
+      destruct (Hfrontier a w da dw la lw Ha Hw Had Hwd Hal Hwl Hbound)
+        as [Hle|[b [db [lb [Hb [Hab [Hbw [Hbd [Hbl Hle]]]]]]]]]; [now left|].
+      destruct (low_set_bound _ v old n b lb Hold Hbl) as [next [Hnext Hnext_le]].
+      right. exists b, db, next. repeat split; try assumption. lia.
+Qed.
+
+Lemma fresh_open open s v :
+  tarjan_embeds open (tarjan_pending s) -> ~ In v (tarjan_pending s) -> ~ In v open.
+Proof. intros Hembed Hfresh Hin. apply Hfresh. now apply (tarjan_embeds_incl _ _ Hembed). Qed.
+
+Lemma enter_frontier open s v :
+  tarjan_embeds open (tarjan_pending s) -> tarjan_values_below_clock s -> frontier open s ->
+  ~ In v (tarjan_pending s) -> frontier (v :: open) (TarjanVisitor.enter v s).
+Proof.
+  intros Hembed Hvalues Hfrontier Hfresh a w da dw la lw Ha Hw Had Hwd Hal Hwl Hbound.
+  cbn [TarjanVisitor.enter tarjan_pending tarjan_disc tarjan_low In] in *.
+  destruct Hw as [Heqw|Hw], Ha as [Heqa|Ha].
+  - subst w a. rewrite PTrie.get_set_same in Hal, Hwl.
+    injection Hal as Heql. injection Hwl as Heqw. subst la lw. left. lia.
+  - subst w. rewrite PTrie.get_set_same in Hwd, Hwl.
+    injection Hwd as Heqd. injection Hwl as Heql. subst dw lw.
+    assert (Hane : a <> v) by (intro Heq; subst a; exact (fresh_open open s v Hembed Hfresh Ha)).
+    rewrite PTrie.get_set_other in Had by exact Hane.
+    right. exists v, (tarjan_clock s), (tarjan_clock s). split; [now left|].
+    split; [exact (proj1 Hvalues a da Had)|]. split; [lia|].
+    rewrite !PTrie.get_set_same. repeat split; try reflexivity; lia.
+  - subst a. rewrite PTrie.get_set_same in Had. injection Had as Heq. subst da.
+    assert (Hwne : w <> v) by (intro Heq; subst w; contradiction).
+    rewrite PTrie.get_set_other in Hwd by exact Hwne.
+    pose proof (proj1 Hvalues w dw Hwd). lia.
+  - assert (Hwne : w <> v) by (intro Heq; subst w; contradiction).
+    assert (Hane : a <> v) by (intro Heq; subst a; exact (fresh_open open s v Hembed Hfresh Ha)).
+    rewrite PTrie.get_set_other in Had, Hal by exact Hane.
+    rewrite PTrie.get_set_other in Hwd, Hwl by exact Hwne.
+    destruct (Hfrontier a w da dw la lw Ha Hw Had Hwd Hal Hwl Hbound)
+      as [Hle|[b [db [lb [Hb [Hab [Hbw [Hbd [Hbl Hle]]]]]]]]]; [now left|].
+    assert (Hbne : b <> v) by (intro Heq; subst b; exact (fresh_open open s v Hembed Hfresh Hb)).
+    right. exists b, db, lb. rewrite !PTrie.get_set_other by exact Hbne.
+    split; [now right|]. repeat split; assumption.
+Qed.
+
+Lemma nodup_disjoint {A} (prefix suffix : list A) :
+  NoDup (prefix ++ suffix) -> forall x, In x prefix -> ~ In x suffix.
+Proof.
+  intro Hunique. induction prefix as [|head prefix IH]; intros x Hin; [contradiction|].
+  inversion Hunique as [|head' rest Hnot Htail]; subst head' rest.
+  destruct Hin as [Heq|Hin].
+  - subst x. intro Hsuffix. apply Hnot. apply in_or_app. now right.
+  - now apply IH.
+Qed.
+
+Lemma pop_tail_low root index pending low active owners members tail lows actives assigned x :
+  NoDup pending ->
+  tarjan_pop root index pending low active owners = (members, tail, lows, actives, assigned) ->
+  In x tail -> trie_get x lows = trie_get x low.
+Proof.
+  intros Hunique Hpop Hx.
+  destruct (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) as [Hsplit Hlookup].
+  rewrite (proj1 (Hlookup x)). destruct (existsb (Pos.eqb x) members) eqn:Hmember; [|reflexivity].
+  apply tarjan_positive_existsb in Hmember. rewrite Hsplit in Hunique.
+  exfalso. exact (nodup_disjoint members tail Hunique x Hmember Hx).
+Qed.
+
+Lemma pop_frontier v open s members tail low active owners frames emitted clock next :
+  tarjan_embeds (v :: open) (tarjan_pending s) -> tarjan_state_ordered s ->
+  NoDup (tarjan_pending s) -> frontier (v :: open) s ->
+  tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+    (tarjan_active s) (tarjan_owners s) = (members, tail, low, active, owners) ->
+  In v members -> tarjan_embeds open tail ->
+  frontier open (TarjanState (tarjan_disc s) low tail active frames emitted owners clock next).
+Proof.
+  intros Hembed Horder Hunique Hfrontier Hpop Hv Hremaining.
+  pose proof (proj1 (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop)) as Hsplit.
+  intros a w da dw la lw Ha Hw Had Hwd Hal Hwl Hbound.
+  cbn [tarjan_pending tarjan_disc tarjan_low] in *.
+  assert (Hatail : In a tail) by now apply (tarjan_embeds_incl _ _ Hremaining).
+  rewrite (pop_tail_low _ _ _ _ _ _ _ _ _ _ _ a Hunique Hpop Hatail) in Hal.
+  rewrite (pop_tail_low _ _ _ _ _ _ _ _ _ _ _ w Hunique Hpop Hw) in Hwl.
+  assert (Hwold : In w (tarjan_pending s)) by (rewrite Hsplit; apply in_or_app; now right).
+  destruct (Hfrontier a w da dw la lw (or_intror Ha) Hwold Had Hwd Hal Hwl Hbound)
+    as [Hle|[b [db [lb [Hb [Hab [Hbw [Hbd [Hbl Hle]]]]]]]]]; [now left|].
+  destruct Hb as [Heq|Hb].
+  - subst b. pose proof (tarjan_ordered_cross (tarjan_disc s) members tail v w db dw
+      ltac:(unfold tarjan_state_ordered in Horder; now rewrite <- Hsplit)
+      Hv Hw Hbd Hwd). lia.
+  - right. exists b, db, lb. repeat split; try assumption.
+    rewrite (pop_tail_low _ _ _ _ _ _ _ _ _ _ _ b Hunique Hpop).
+    + exact Hbl.
+    + now apply (tarjan_embeds_incl _ _ Hremaining).
+Qed.
+
+Lemma frontier_self v open s lows a da dv la lv :
+  tarjan_embeds (v :: open) (tarjan_pending s) -> tarjan_state_ordered s ->
+  In a (v :: open) -> trie_get a (tarjan_disc s) = Some da ->
+  trie_get v (tarjan_disc s) = Some dv -> trie_get a lows = Some la ->
+  trie_get v lows = Some lv ->
+  Pos.to_nat la <= Pos.to_nat lv \/
+  exists b db lb, In b (v :: open) /\ Pos.to_nat da < Pos.to_nat db /\
+    Pos.to_nat db <= Pos.to_nat dv /\ trie_get b (tarjan_disc s) = Some db /\
+    trie_get b lows = Some lb /\ Pos.to_nat lb <= Pos.to_nat lv.
+Proof.
+  intros Hembed Horder Ha Had Hvd Hal Hvl. destruct (Pos.eq_dec a v) as [Heq|Hne].
+  - subst a. rewrite Hvl in Hal. injection Hal as Heq. subst la. left. lia.
+  - right. exists v, dv, lv. split; [now left|]. split.
+    + apply (open_head_number v open s a da dv Hembed Horder);
+        [destruct Ha as [Heq|Ha]; [congruence|exact Ha]|exact Had|exact Hvd].
+    + split; [lia|]. split; [exact Hvd|]. split; [exact Hvl|lia].
+Qed.
+
+Lemma parent_witness v parent open s a da dp dv dw lp l lw :
+  tarjan_embeds (v :: parent :: open) (tarjan_pending s) -> tarjan_state_ordered s ->
+  In a (parent :: open) -> a <> parent ->
+  trie_get a (tarjan_disc s) = Some da -> trie_get parent (tarjan_disc s) = Some dp ->
+  trie_get v (tarjan_disc s) = Some dv -> Pos.to_nat dv <= Pos.to_nat dw ->
+  Pos.to_nat l <= Pos.to_nat lw ->
+  exists b db lb, In b (parent :: open) /\ Pos.to_nat da < Pos.to_nat db /\
+    Pos.to_nat db <= Pos.to_nat dw /\ trie_get b (tarjan_disc s) = Some db /\
+    trie_get b (PTrieCode.set parent (Pos.min lp l) (tarjan_low s)) = Some lb /\
+    Pos.to_nat lb <= Pos.to_nat lw.
+Proof.
+  intros Hembed Horder Ha Hne Had Hpd Hvd Hvw Hle.
+  exists parent, dp, (Pos.min lp l). split; [now left|]. split.
+  - apply (open_head_number parent open s a da dp
+      (tarjan_embeds_drop _ _ _ Hembed) Horder);
+      [destruct Ha as [Heq|Ha]; [congruence|exact Ha]|exact Had|exact Hpd].
+  - split.
+    + pose proof (open_head_number v (parent :: open) s parent dp dv
+        Hembed Horder (or_introl eq_refl) Hpd Hvd). lia.
+    + split; [exact Hpd|]. rewrite PTrie.get_set_same.
+      split; [reflexivity|]. rewrite Pos2Nat.inj_min. lia.
+Qed.
+
+Lemma close_lower_frontier v parent open s l lp dp :
+  tarjan_embeds (v :: parent :: open) (tarjan_pending s) -> tarjan_state_ordered s ->
+  frontier (v :: parent :: open) s -> trie_get v (tarjan_low s) = Some l ->
+  trie_get parent (tarjan_low s) = Some lp -> trie_get parent (tarjan_disc s) = Some dp ->
+  frontier (parent :: open) (TarjanVisitor.lower parent l s).
+Proof.
+  intros Hembed Horder Hfrontier Hvl Hpl Hpd. unfold TarjanVisitor.lower. rewrite Hpl.
+  intros a w da dw la lw Ha Hw Had Hwd Hal Hwl Hbound.
+  cbn [tarjan_pending tarjan_disc tarjan_low] in *.
+  destruct (Pos.eq_dec w parent) as [Heq|Hwne].
+  - subst w. exact (frontier_self parent open s _ a da dw la lw
+      (tarjan_embeds_drop _ _ _ Hembed) Horder Ha Had Hwd Hal Hwl).
+  - rewrite PTrie.get_set_other in Hwl by exact Hwne.
+    destruct (low_set_inverse _ parent lp l a la Hpl Hal) as [prior [Hal_prior Hla]].
+    destruct (Hfrontier a w da dw prior lw (or_intror Ha) Hw Had Hwd Hal_prior Hwl Hbound)
+      as [Hle|[b [db [lb [Hb [Hab [Hbw [Hbd [Hbl Hle]]]]]]]]].
+    + left. lia.
+    + destruct Hb as [Heq|Hb].
+      * subst b. rewrite Hvl in Hbl. injection Hbl as Heq. subst lb.
+        destruct (Pos.eq_dec a parent) as [Heq|Hane].
+        -- subst a. rewrite PTrie.get_set_same in Hal. injection Hal as Heq. subst la.
+           left. rewrite Pos2Nat.inj_min. lia.
+        -- right. exact (parent_witness v parent open s a da dp db dw lp l lw
+             Hembed Horder Ha Hane Had Hpd Hbd Hbw Hle).
+      * destruct (low_set_bound _ parent lp l b lb Hpl Hbl) as [next [Hnext Hnext_le]].
+        right. exists b, db, next. repeat split; try assumption. lia.
+Qed.
+
+Lemma leave_frontier v open s :
+  tarjan_frames s = v :: open -> tarjan_embeds (v :: open) (tarjan_pending s) ->
+  tarjan_state_ordered s -> NoDup (tarjan_pending s) -> tarjan_pending_domains s ->
+  (forall w, In w (tarjan_pending s) -> exists d, trie_get w (tarjan_disc s) = Some d) ->
+  frontier (v :: open) s -> frontier open (TarjanVisitor.leave v s).
+Proof.
+  intros Hframes Hembed Horder Hunique Hdomains Hdiscover Hfrontier.
+  assert (Hv : In v (tarjan_pending s)) by
+    (apply (tarjan_embeds_incl _ _ Hembed); now left).
+  destruct (proj2 (proj2 Hdomains v) Hv) as [l Hvl].
+  destruct (Hdiscover v Hv) as [d Hvd].
+  unfold TarjanVisitor.leave. rewrite Hframes, Hvl, Hvd. cbn beta iota zeta.
+  destruct (Pos.eqb l d).
+  - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+      (tarjan_active s) (tarjan_owners s))
+      as [[[[members tail] low] active] owners] eqn:Hpop.
+    eapply pop_frontier; try eassumption.
+    + eapply tarjan_pop_root_member; eassumption.
+    + eapply tarjan_embeds_pop; eassumption.
+  - destruct open as [|parent open].
+    + intros a w da dw la lw Hfalse. contradiction.
+    + assert (Hp : In parent (tarjan_pending s)) by
+        (apply (tarjan_embeds_incl _ _ Hembed); right; now left).
+      destruct (proj2 (proj2 Hdomains parent) Hp) as [lp Hpl].
+      destruct (Hdiscover parent Hp) as [dp Hpd].
+      pose proof (close_lower_frontier v parent open s l lp dp
+        Hembed Horder Hfrontier Hvl Hpl Hpd) as Hnext.
+      unfold TarjanVisitor.lower in Hnext |- *. cbn [tarjan_low].
+      rewrite Hpl in Hnext |- *. exact Hnext.
+Qed.
+
+Lemma edge_frontier kind u open s v :
+  tarjan_embeds (u :: open) (tarjan_pending s) -> tarjan_state_ordered s ->
+  frontier (u :: open) s -> frontier (u :: open) (TarjanVisitor.edge kind u v s).
+Proof.
+  intros Hembed Horder Hfrontier. destruct kind; cbn [TarjanVisitor.edge]; try exact Hfrontier.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try exact Hfrontier.
+  all: destruct (trie_get v (tarjan_disc s)); try exact Hfrontier.
+  all: now apply lower_frontier.
+Qed.
+
+End TarjanFrontierFacts.
+
+
 Opaque search_trace.
 
 Module Scc <: SCC.
