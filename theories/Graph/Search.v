@@ -2466,6 +2466,200 @@ Proof.
   nia.
 Qed.
 
+(** A weighted inclusion may omit only keys whose contribution is zero. *)
+Lemma search_weight_support {A} (weight : A -> nat) first last :
+  NoDup first -> (forall x, In x first -> In x last \/ weight x = 0) ->
+  fold_right (fun x n => weight x + n) 0 first <=
+    fold_right (fun x n => weight x + n) 0 last.
+Proof.
+  assert (Happ : forall xs ys,
+    fold_right (fun x n => weight x + n) 0 (xs ++ ys) =
+      fold_right (fun x n => weight x + n) 0 xs +
+      fold_right (fun x n => weight x + n) 0 ys).
+  { intros xs ys. induction xs as [|x xs IH]; cbn [app fold_right]; lia. }
+  intros Hunique. revert last. induction Hunique as [|v first Hfresh Hunique IH];
+    intros last Hincl; [cbn; lia|].
+  destruct (Hincl v (or_introl eq_refl)) as [Hin|Hzero].
+  - destruct (in_split v last Hin) as [before [after Heq]]. subst last.
+    assert (Hrest : forall u, In u first -> In u (before ++ after) \/ weight u = 0).
+    { intros u Hu. destruct (Hincl u (or_intror Hu)) as [Hmember|Hzero]; [|now right].
+      left. apply in_app_or in Hmember. apply in_or_app.
+      destruct Hmember as [Hbefore|[Heq|Hafter]].
+      - now left.
+      - subst u. contradiction.
+      - now right. }
+    specialize (IH (before ++ after) Hrest).
+    rewrite Happ in IH. rewrite Happ. cbn [fold_right]. lia.
+  - specialize (IH last (fun u Hu => Hincl u (or_intror Hu))).
+    cbn [fold_right]. lia.
+Qed.
+
+(** Distinct vertex rows use no more occurrences than the stored adjacency bindings. *)
+Lemma search_raw_row_mass g vertices : NoDup vertices ->
+  fold_right (fun v n => length (succs g v) + n) 0 vertices <=
+    fold_right (fun entry n => length (snd entry) + n) 0 (PTrieCode.elements (succ g)).
+Proof.
+  intro Hunique.
+  assert (Hsupport : forall v, In v vertices ->
+      In v (map fst (PTrieCode.elements (succ g))) \/ length (succs g v) = 0).
+  { intros v _. destruct g as [listed adjacency]. cbn [succ succs].
+    destruct (trie_get v adjacency) as [row|] eqn:Hget; [left|now right].
+    apply in_map_iff. exists (v, row). split; [reflexivity|].
+    now apply PTrie.elements_spec. }
+  pose proof (search_weight_support (fun v => length (succs g v)) vertices
+    (map fst (PTrieCode.elements (succ g))) Hunique Hsupport) as Hbound.
+  assert (Hlookup : forall entry, In entry (PTrieCode.elements (succ g)) ->
+      succs g (fst entry) = snd entry).
+  { intros [v row] Hin. apply PTrie.elements_spec in Hin.
+    destruct g as [listed adjacency]. cbn [succ succs fst snd] in *.
+    change (trie_get v adjacency = Some row) in Hin.
+    now rewrite Hin. }
+  assert (Hsum : fold_right (fun v n => length (succs g v) + n) 0
+      (map fst (PTrieCode.elements (succ g))) =
+      fold_right (fun entry n => length (snd entry) + n) 0 (PTrieCode.elements (succ g))).
+  { revert Hlookup. generalize (PTrieCode.elements (succ g)).
+    intros entries. induction entries as [|[v row] entries IH]; intro Hlookup;
+      [reflexivity|]. cbn [map fold_right fst snd].
+    pose proof (Hlookup (v, row) (or_introl eq_refl)) as Hrow.
+    cbn [fst snd] in Hrow. rewrite Hrow.
+    rewrite IH; [reflexivity|]. intros entry Hin. apply Hlookup. now right. }
+  cbn beta in Hbound. now rewrite Hsum in Hbound.
+Qed.
+
+Definition search_raw_domain g roots :=
+  nodup Pos.eq_dec (roots ++ flat_map snd (PTrieCode.elements (succ g))).
+
+(** All successor targets occur in the finite raw domain, whether their source is listed or not. *)
+Lemma search_raw_domain_closed g roots u v : edge g u v -> In v (search_raw_domain g roots).
+Proof.
+  intro Hedge. unfold search_raw_domain. apply nodup_In. apply in_or_app. right.
+  destruct g as [listed adjacency]. cbn [succ].
+  change (In v (match trie_get u adjacency with Some row => row | None => [] end)) in Hedge.
+  destruct (trie_get u adjacency) as [row|] eqn:Hget; [|exact (False_rect _ Hedge)].
+  apply in_flat_map. exists (u, row). split.
+  - now apply PTrie.elements_spec.
+  - exact Hedge.
+Qed.
+
+Lemma search_raw_domain_size g roots :
+  length (search_raw_domain g roots) <= length roots +
+    fold_right (fun entry n => length (snd entry) + n) 0 (PTrieCode.elements (succ g)).
+Proof.
+  assert (Hin : incl (search_raw_domain g roots)
+      (roots ++ flat_map snd (PTrieCode.elements (succ g)))).
+  { intros v Hv. unfold search_raw_domain in Hv. now apply nodup_In in Hv. }
+  pose proof (NoDup_incl_length (NoDup_nodup Pos.eq_dec _) Hin) as Hlength.
+  rewrite length_app in Hlength.
+  assert (Hflat : length (flat_map snd (PTrieCode.elements (succ g))) =
+      fold_right (fun entry n => length (snd entry) + n) 0 (PTrieCode.elements (succ g))).
+  { clear Hin Hlength. induction (PTrieCode.elements (succ g)) as [|entry entries IH];
+      cbn [flat_map fold_right length]; [reflexivity|]. now rewrite length_app, IH. }
+  now rewrite Hflat in Hlength.
+Qed.
+
+(** Raw completion needs two credits per unentered vertex and per outgoing occurrence. *)
+Definition search_raw_white g vertices (colours : ptrie bool) : nat :=
+  fold_right (fun v n => match trie_get v colours with
+    | None => 2 + 2 * length (succs g v) + n | Some _ => n end) 0 vertices.
+
+Lemma search_raw_white_set_le g vertices colours v b :
+  search_raw_white g vertices (PTrieCode.set v b colours) <= search_raw_white g vertices colours.
+Proof.
+  induction vertices as [|u rest IH]; [reflexivity|].
+  unfold search_raw_white in *. cbn [fold_right]. rewrite search_colour_set.
+  destruct (Pos.eqb u v); destruct (trie_get u colours); lia.
+Qed.
+
+Lemma search_raw_white_discover g vertices colours v b :
+  In v vertices -> trie_get v colours = None ->
+  search_raw_white g vertices (PTrieCode.set v b colours) + 2 + 2 * length (succs g v) <=
+    search_raw_white g vertices colours.
+Proof.
+  intros Hin Hwhite. induction vertices as [|u rest IH]; [contradiction|].
+  destruct Hin as [Heq|Hin].
+  - subst u. unfold search_raw_white. cbn [fold_right].
+    rewrite search_colour_set, Pos.eqb_refl, Hwhite.
+    pose proof (search_raw_white_set_le g rest colours v b) as Hle.
+    unfold search_raw_white in Hle. lia.
+  - specialize (IH Hin). unfold search_raw_white in *. cbn [fold_right].
+    rewrite search_colour_set. destruct (Pos.eqb u v); destruct (trie_get u colours); lia.
+Qed.
+
+Definition search_raw_credit g vertices st :=
+  search_raw_white g vertices (search_colours st) + search_task_credit (search_tasks st).
+
+Lemma search_raw_credit_decreases g vertices st next :
+  Forall (search_task_valid (fun v => In v vertices)) (search_tasks st) ->
+  search_step g st = inl next -> search_raw_credit g vertices next < search_raw_credit g vertices st.
+Proof.
+  intros Hvalid Hstep. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  inversion Hvalid as [|task0 tasks0 Htask Htail]; subst task0 tasks0.
+  destruct task as [v|u vs|v].
+  - cbn [search_step] in Hstep. destruct (trie_get v colours) eqn:Hcolour.
+    + inversion Hstep; subst next. unfold search_raw_credit, search_task_credit.
+      cbn [search_colours search_tasks fold_right]. lia.
+    + inversion Hstep; subst next.
+      pose proof (search_raw_white_discover g vertices colours v true Htask Hcolour) as Hwhite.
+      unfold search_raw_credit, search_task_credit.
+      cbn [search_colours search_tasks fold_right]. lia.
+  - destruct vs as [|v vs]; cbn [search_step] in Hstep.
+    + inversion Hstep; subst next. unfold search_raw_credit, search_task_credit.
+      cbn [search_colours search_tasks fold_right length]. lia.
+    + destruct (trie_get v colours); inversion Hstep; subst next;
+        unfold search_raw_credit, search_task_credit;
+        cbn [search_colours search_tasks fold_right length]; lia.
+  - inversion Hstep; subst next.
+    pose proof (search_raw_white_set_le g vertices colours v false) as Hwhite.
+    unfold search_raw_credit, search_task_credit.
+    cbn [search_colours search_tasks fold_right]. lia.
+Qed.
+
+Lemma search_raw_credit_initial g vertices roots :
+  search_raw_credit g vertices (SearchState (map SearchRoot roots) Empty []) =
+    2 * length vertices +
+    2 * fold_right (fun v n => length (succs g v) + n) 0 vertices + length roots.
+Proof.
+  unfold search_raw_credit. cbn [search_colours search_tasks].
+  assert (Htasks : search_task_credit (map SearchRoot roots) = length roots).
+  { induction roots as [|v rest IH]; [reflexivity|].
+    change (1 + search_task_credit (map SearchRoot rest) = S (length rest)).
+    rewrite IH. lia. }
+  rewrite Htasks. unfold search_raw_white.
+  induction vertices as [|v rest IH]; cbn [fold_right length] in *;
+    rewrite ?search_colour_empty in *; lia.
+Qed.
+
+(** The raw budget completes every finite adjacency trie, including unlisted roots and targets. *)
+Lemma search_complete_raw g roots :
+  exists es, loopN (search_step g) (raw_search_budget g roots)
+    (SearchState (map SearchRoot roots) Empty []) = inr es.
+Proof.
+  eapply (loopN_done search_state (list event) (search_step g)
+    (fun st => Forall (search_task_valid (fun v => In v (search_raw_domain g roots)))
+      (search_tasks st)) (search_raw_credit g (search_raw_domain g roots))).
+  - intros st next Hvalid Hstep. split.
+    + eapply search_tasks_preserved; [|exact Hvalid|exact Hstep].
+      intros u v _ Hedge. now apply (search_raw_domain_closed g roots u v).
+    + eapply search_raw_credit_decreases; eassumption.
+  - cbn [search_tasks]. apply Forall_forall. intros task Hin.
+    apply in_map_iff in Hin. destruct Hin as [v [Heq Hin]]. subst task.
+    unfold search_task_valid, search_raw_domain. apply nodup_In. apply in_or_app. now left.
+  - rewrite search_raw_credit_initial.
+    pose proof (search_raw_domain_size g roots) as Hvertices.
+    pose proof (search_raw_row_mass g (search_raw_domain g roots)
+      (NoDup_nodup Pos.eq_dec _)) as Hrows.
+    unfold raw_search_budget. lia.
+Qed.
+
+(** Raw traces have exact rooted coverage without count caches or graph validity premises. *)
+Lemma search_trace_reach_raw g roots v :
+  In v (entered (search_trace g roots)) <-> reach g roots v.
+Proof.
+  destruct (search_complete_raw g roots) as [es Hdone]. unfold search_trace. rewrite Hdone.
+  exact (search_finished_reach g roots (raw_search_budget g roots) es Hdone v).
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
@@ -2621,7 +2815,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Definition k_step : N := (128 * (PTrieT.c_trie + 1))%N.
   Definition k_trace : N := (16384 * (c_loopN + 1) * (PTrieT.c_trie + 1))%N.
   Definition k_fold : N := 8%N.
-  Definition k_budget : N := 1%N. (* STUB *)
+  Definition k_budget : N := 1%N.
 
   Definition initial (roots : list positive) : search_state :=
     SearchState (map SearchRoot roots) Empty [].
