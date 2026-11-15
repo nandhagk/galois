@@ -4,8 +4,8 @@
     For example, a generated fact survives a simultaneous kill.
     Builds on: Framework.GenKillSig and Framework.Dense. *)
 
-From Stdlib Require Import List Bool NArith.
-From Argent Require Import Time Std.
+From Stdlib Require Import List Bool NArith Arith Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig SetSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -373,11 +373,264 @@ Module GenKillSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
       (must_seed_closed p look entry Hpost Hentry)) as Hbound.
     destruct (look n) as [facts|]; [exists facts; reflexivity|discriminate].
   Qed.
+
+  (** Pointwise Boolean growth cannot reduce the number of listed true values. *)
+  Local Lemma count_mono {A} (xs : list A) (b c : A -> bool) :
+    (forall x, In x xs -> b x = true -> c x = true) ->
+    length (filter b xs) <= length (filter c xs).
+  Proof.
+    induction xs as [|x xs IH]; intro Hbc; cbn; [lia|].
+    assert (Htail : length (filter b xs) <= length (filter c xs)).
+    { apply IH; intros y Hy; apply Hbc; right; exact Hy. }
+    specialize (Hbc x (or_introl eq_refl)).
+    destruct (b x), (c x); cbn in *; try discriminate; lia.
+  Qed.
+
+  (** Boolean growth with unchanged finite count leaves every listed value unchanged. *)
+  Local Lemma count_equal {A} (xs : list A) (b c : A -> bool) :
+    (forall x, In x xs -> b x = true -> c x = true) ->
+    length (filter b xs) = length (filter c xs) ->
+    forall x, In x xs -> b x = c x.
+  Proof.
+    induction xs as [|a xs IH]; intros Hbc Hcount x Hx; [contradiction|].
+    assert (Htail : forall y, In y xs -> b y = true -> c y = true).
+    { intros y Hy; apply Hbc; right; exact Hy. }
+    pose proof (count_mono xs b c Htail) as Hle.
+    specialize (Hbc a (or_introl eq_refl)); cbn in Hcount.
+    destruct (b a) eqn:Hb, (c a) eqn:Hc; cbn in Hcount;
+      try discriminate; try (exfalso; lia).
+    - destruct Hx as [<-|Hx]; [rewrite Hb, Hc; reflexivity|].
+      apply IH; [exact Htail|lia|exact Hx].
+    - destruct Hx as [<-|Hx]; [rewrite Hb, Hc; reflexivity|].
+      apply IH; [exact Htail|lia|exact Hx].
+  Qed.
+
+  (** An inflationary Boolean operator reaches a closed finite observation with its invariant. *)
+  Local Lemma finite_closure {A} (xs : list A)
+      (step : (A -> bool) -> A -> bool) (inv : (A -> bool) -> Prop) :
+    (forall b x, b x = true -> step b x = true) ->
+    (forall b, inv b -> inv (step b)) -> inv (fun _ => false) ->
+    exists b, inv b /\ forall x, In x xs -> step b x = b x.
+  Proof.
+    intros Hgrow Hstep Hempty.
+    assert (Hbound : forall b : A -> bool, length (filter b xs) <= length xs).
+    { intro b; induction xs as [|x xs IH]; cbn; [lia|].
+      destruct (b x); cbn; lia. }
+    assert (Hsearch : forall k b, length xs - length (filter b xs) <= k -> inv b ->
+      exists c, inv c /\ forall x, In x xs -> step c x = c x).
+    { induction k as [|k IH]; intros b Hcapacity Hb.
+      - pose proof (Hbound (step b)) as Hstep_bound.
+        pose proof (count_mono xs b (step b) (fun x _ => Hgrow b x)) as Hgrowth.
+        exists b; split; [exact Hb|]; intros x Hx; symmetry.
+        apply (count_equal xs b (step b)); [intros y _; apply Hgrow|lia|exact Hx].
+      - pose proof (Hbound (step b)) as Hstep_bound.
+        pose proof (count_mono xs b (step b) (fun x _ => Hgrow b x)) as Hgrowth.
+        destruct (Nat.eq_dec (length (filter b xs)) (length (filter (step b) xs)))
+          as [Heq|Hne].
+        + exists b; split; [exact Hb|]; intros x Hx; symmetry.
+          apply (count_equal xs b (step b)); [intros y _; apply Hgrow|exact Heq|exact Hx].
+        + apply (IH (step b)); [lia|apply Hstep; exact Hb]. }
+    apply (Hsearch (length xs) (fun _ => false)); [lia|exact Hempty].
+  Qed.
+
+  Local Definition source p e :=
+    match G.dir with Forward => C.src p e | Backward => C.dst p e end.
+  Local Definition destination p e :=
+    match G.dir with Forward => C.dst p e | Backward => C.src p e end.
+
+  (** A well-formed listed edge has both directional endpoints in the node inventory. *)
+  Local Lemma edge_nodes : forall p e, C.wf p -> In e (C.edges p) ->
+    In (source p e) (C.nodes p) /\ In (destination p e) (C.nodes p).
+  Proof.
+    intros p e Hwf He; pose proof (C.edges_nodes p e Hwf He) as Hnodes.
+    unfold source, destination; destruct G.dir; tauto.
+  Qed.
+
+  (** Appending one listed edge extends a route at its actual endpoint. *)
+  Local Lemma route_snoc : forall p root path n e, route p root path n ->
+    In e (C.edges p) -> source p e = n ->
+    route p root (path ++ e :: nil) (destination p e).
+  Proof.
+    intros p root path n e Hroute He Hend.
+    induction Hroute as [n|edge path n Hedge Hroute IH].
+    - cbn [app]; rewrite <- Hend; constructor; [exact He|constructor].
+    - cbn [app]; eapply Genkill_next with (e := edge); [exact Hedge|].
+      apply IH; exact Hend.
+  Qed.
+
+  (** Path transfer applies an appended edge after the complete prefix. *)
+  Local Lemma path_snoc : forall p initial path e,
+    genkill_path S.union S.diff (G.gen p) (G.kill p) initial (path ++ e :: nil) =
+    S.union (G.gen p e)
+      (S.diff (genkill_path S.union S.diff (G.gen p) (G.kill p) initial path)
+        (G.kill p e)).
+  Proof.
+    intros p initial path e; unfold genkill_path; rewrite fold_left_app; reflexivity.
+  Qed.
+
+  (** Every boundary member has a zero-edge production witness. *)
+  Local Lemma produces_seed : forall p n d, In n (C.entries p) ->
+    S.mem d (G.init p) = true -> produces p n d.
+  Proof.
+    intros p n d Hentry Hd; exists n, (G.init p), nil; split.
+    - apply Genkill_boundary; exact Hentry.
+    - split; [constructor|exact Hd].
+  Qed.
+
+  (** A generated fact or an un-killed produced fact has an extended production witness. *)
+  Local Lemma produces_step : forall p e d, C.wf p -> In e (C.edges p) ->
+    (S.mem d (G.gen p e) = true \/
+      (produces p (source p e) d /\ S.mem d (G.kill p e) = false)) ->
+    produces p (destination p e) d.
+  Proof.
+    intros p e d Hwf He [Hgen|[Hproduce Hkill]].
+    - exists (source p e), S.empty, (e :: nil); split.
+      + apply Genkill_empty; exact (proj1 (edge_nodes p e Hwf He)).
+      + split; [constructor; [exact He|constructor]|].
+        cbn [genkill_path fold_left]; rewrite S.mem_union, Hgen; reflexivity.
+    - destruct Hproduce as [root [initial [path [Hstart [Hroute Hd]]]]].
+      exists root, initial, (path ++ e :: nil); split; [exact Hstart|]; split.
+      + apply route_snoc with (n := source p e); [exact Hroute|exact He|reflexivity].
+      + rewrite path_snoc, S.mem_union, S.mem_diff, Hd, Hkill.
+        apply orb_true_r.
+  Qed.
+
+  (** The client's equality test recognizes exactly equal graph nodes. *)
+  Local Lemma node_eqb_true : forall a b, N.eqb a b = true <-> a = b.
+  Proof.
+    intros a b; destruct (N.eqb_spec a b) as [Heq|Hne]; intuition discriminate.
+  Qed.
+
+  (** Boolean entry membership agrees with the listed boundary nodes. *)
+  Local Lemma entryb_spec : forall p n,
+    existsb (N.eqb n) (C.entries p) = true <-> In n (C.entries p).
+  Proof.
+    intros p n; rewrite existsb_exists; split.
+    - intros [root [Hroot Heq]]; apply node_eqb_true in Heq; now subst root.
+    - intro Hn; exists n; split; [exact Hn|apply node_eqb_true; reflexivity].
+  Qed.
+
+  (* This finite Boolean closure is proof-only separation evidence, not an executable solver. *)
+  Local Definition may_close p d (b : N.t -> bool) n :=
+    b n || (existsb (N.eqb n) (C.entries p) && S.mem d (G.init p)) ||
+    existsb (fun e => N.eqb n (destination p e) &&
+      (S.mem d (G.gen p e) || (b (source p e) && negb (S.mem d (G.kill p e)))))
+      (C.edges p).
+
+  (** One Boolean closure round records existing, boundary, and transferred production. *)
+  Local Lemma may_close_spec : forall p d b n, may_close p d b n = true <->
+    b n = true \/ (In n (C.entries p) /\ S.mem d (G.init p) = true) \/
+    exists e, In e (C.edges p) /\ n = destination p e /\
+      (S.mem d (G.gen p e) = true \/
+        (b (source p e) = true /\ S.mem d (G.kill p e) = false)).
+  Proof.
+    intros p d b n; unfold may_close.
+    rewrite !orb_true_iff, andb_true_iff, entryb_spec, existsb_exists.
+    setoid_rewrite andb_true_iff; setoid_rewrite node_eqb_true.
+    setoid_rewrite orb_true_iff; setoid_rewrite andb_true_iff.
+    setoid_rewrite negb_true_iff; tauto.
+  Qed.
+
+  (** Finite closure supplies a decidable subset of production closed at every listed node. *)
+  Local Lemma may_closure : forall p d, C.wf p ->
+    exists b, (forall n, b n = true -> produces p n d) /\
+      forall n, In n (C.nodes p) -> may_close p d b n = b n.
+  Proof.
+    intros p d Hwf; apply (finite_closure (C.nodes p) (may_close p d)
+      (fun b => forall n, b n = true -> produces p n d)).
+    - intros b n Hb; apply may_close_spec; left; exact Hb.
+    - intros b Hb n Hn; apply may_close_spec in Hn.
+      destruct Hn as [Hn|[[Hentry Hd]|[e [He [-> Hflow]]]]].
+      + apply Hb; exact Hn.
+      + apply produces_seed; assumption.
+      + apply produces_step; [exact Hwf|exact He|].
+        destruct Hflow as [Hgen|[Hsource Hkill]]; [left; exact Hgen|right].
+        split; [apply Hb; exact Hsource|exact Hkill].
+    - intros n Hbad; discriminate.
+  Qed.
+
+  Local Definition may_candidate d (b : N.t -> bool) (look : N.t -> S.t) n :=
+    if b n then look n else S.remove d (look n).
+
+  (** Removing one selected fact never adds an encoded member. *)
+  Local Lemma candidate_subset : forall d b look n,
+    S.subset (may_candidate d b look n) (look n) = true.
+  Proof.
+    intros d b look n; apply S.subset_spec; intros q Hq.
+    unfold may_candidate in Hq; destruct (b n); [exact Hq|].
+    rewrite S.has_remove in Hq; apply andb_true_iff in Hq; exact (proj2 Hq).
+  Qed.
+
+  (** The selected fact survives precisely at nodes marked by the Boolean closure. *)
+  Local Lemma candidate_selected : forall d b look n,
+    S.mem d (may_candidate d b look n) = (S.mem d (look n) && b n).
+  Proof.
+    intros d b look n; unfold may_candidate; destruct (b n).
+    - symmetry; apply andb_true_r.
+    - rewrite S.mem_remove_same, andb_false_r; reflexivity.
+  Qed.
+
+  (** A closed Boolean mask can remove its selected fact from a may post-solution. *)
+  Local Lemma may_candidate_post : forall p d b look, C.wf p ->
+    May.post_solution p look ->
+    (forall n, In n (C.nodes p) -> may_close p d b n = b n) ->
+    May.post_solution p (may_candidate d b look).
+  Proof.
+    intros p d b look Hwf Hpost Hclosed r Hr.
+    rewrite May.rows_spec in Hr; apply in_app_or in Hr.
+    destruct Hr as [Hr|Hr]; apply in_map_iff in Hr; destruct Hr as [v [<- Hv]].
+    - rewrite May.eval_seed, May.target_seed; cbn [row_ok forallb].
+      rewrite andb_true_r; apply S.subset_spec; intros q Hq.
+      pose proof (proj1 (S.subset_spec _ _) (may_seed_closed p look v Hpost Hv)
+        q Hq) as Hlook.
+      unfold may_candidate; destruct (b v) eqn:Hb; [exact Hlook|].
+      rewrite S.has_remove, Hlook, andb_true_r; apply negb_true_iff, Pos.eqb_neq.
+      intro Heq; subst q.
+      assert (Hmarked : b v = true).
+      { rewrite <- Hclosed by (apply C.entries_nodes; assumption).
+        apply may_close_spec; right; left; split; [exact Hv|].
+        rewrite S.mem_has; exact Hq. }
+      congruence.
+    - rewrite May.eval_flow, May.target_flow; cbn [row_ok forallb].
+      rewrite andb_true_r; apply S.subset_spec; intros q Hq.
+      assert (Hbound : S.subset
+        (S.union (G.gen p v) (S.diff (may_candidate d b look (source p v))
+          (G.kill p v))) (look (destination p v)) = true).
+      { eapply subset_trans; [apply transfer_subset, candidate_subset|].
+        apply may_flow_closed; assumption. }
+      pose proof (proj1 (S.subset_spec _ _) Hbound q Hq) as Hlook.
+      change (S.has q (may_candidate d b look (destination p v)) = true).
+      unfold may_candidate; destruct (b (destination p v)) eqn:Hb; [exact Hlook|].
+      rewrite S.has_remove, Hlook, andb_true_r; apply negb_true_iff, Pos.eqb_neq.
+      intro Heq; subst q.
+      assert (Hmarked : b (destination p v) = true).
+      { rewrite <- Hclosed by exact (proj2 (edge_nodes p v Hwf Hv)).
+        apply may_close_spec; right; right; exists v; split; [exact Hv|].
+        split; [reflexivity|].
+        rewrite <- S.mem_has in Hq.
+        change (S.mem d (S.union (G.gen p v)
+          (S.diff (may_candidate d b look (source p v)) (G.kill p v))) = true) in Hq.
+        rewrite S.mem_union, S.mem_diff in Hq.
+        apply orb_true_iff in Hq; destruct Hq as [Hgen|Hkeep]; [left; exact Hgen|right].
+        apply andb_true_iff in Hkeep; destruct Hkeep as [Hsource Hkill].
+        rewrite candidate_selected in Hsource; apply andb_true_iff in Hsource.
+        split; [exact (proj2 Hsource)|apply negb_true_iff; exact Hkill]. }
+      congruence.
+  Qed.
+
   (** A least may post-solution equals production from empty listed starts and boundaries. *)
   Lemma may_exact : forall p look, C.wf p -> G.may = true -> May.post_solution p look ->
     (forall other, May.post_solution p other -> forall n, S.subset (look n) (other n) = true) ->
     forall n d, In n (C.nodes p) -> (S.mem d (look n) = true <-> produces p n d).
-  Proof. Admitted. (* CONVERT: may_least_paths: The variable may_closure was not found *)
+  Proof.
+    intros p look Hwf Hmay Hpost Hleast n d Hn; split.
+    - intro Hd; destruct (may_closure p d Hwf) as [b [Hsound Hclosed]].
+      pose proof (Hleast _ (may_candidate_post p d b look Hwf Hpost Hclosed) n) as Hbound.
+      pose proof (subset_mem _ _ d Hbound Hd) as Hcandidate.
+      rewrite candidate_selected in Hcandidate; apply andb_true_iff in Hcandidate.
+      apply Hsound; exact (proj2 Hcandidate).
+    - apply may_covers; assumption.
+  Qed.
   (** A least reached must post-solution contains exactly the facts on all boundary paths. *)
   Lemma must_exact : forall p look, C.wf p -> G.may = false -> Must.post_solution p look ->
     (forall other, Must.post_solution p other -> forall n,
