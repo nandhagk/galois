@@ -1,13 +1,13 @@
-(** * Placeholder Andersen driver
+(** * Inclusion-based pointer analysis driver
 
-    This driver provides the pointer analysis interface.
-    For example, its placeholder query returns false.
-    Builds on: AndersenSig. *)
+    This driver compiles source constraints and queries their least inclusion solution.
+    For example, an address constraint seeds a row used by the first inclusion rule.
+    Builds on: AndersenSig and the relational database and run interfaces. *)
 
 From Stdlib Require Import List PArith NArith Bool.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
-From Galois.Egglog Require Import Syntax Model ValueSig IndexSig JoinSig DatabaseSig RunSig.
+From Galois.Egglog Require Import Syntax Model Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
 From Galois.Clients Require Import AndersenSig.
 Import List.ListNotations.
 
@@ -152,22 +152,291 @@ Proof.
   - contradiction.
 Qed.
 
+(** Each source instruction is stored in its own binary relation. *)
+Definition pointer_constraint_entry (instruction : pointer_constraint) :
+    positive * (positive * positive) :=
+  match instruction with
+  | Addr x y => (1%positive, (x, y))
+  | Copy x y => (2%positive, (x, y))
+  | Load x y => (3%positive, (x, y))
+  | Store x y => (4%positive, (x, y))
+  end.
+TimeFun pointer_constraint_entry.
+
+(** Initial pointers use the relation chosen by the analysis client. *)
+Definition pointer_seed_entries (initial_relation : positive) (q : pointer_input) :
+    list (positive * (positive * positive)) :=
+  match q with
+  | PointerInput instructions initial =>
+    map pointer_constraint_entry instructions ++
+      map (fun pointer => (initial_relation, pointer)) initial
+  end.
+TimeFun pointer_seed_entries.
+
+(** Reading a plan's slot layout is one record elimination. *)
+Definition pointer_plan_slots {V} (plan : compiled V) : list (positive * list nat) :=
+  match plan with Compiled _ layout _ _ => layout end.
+TimeFun pointer_plan_slots.
+
+(** Entry membership is exactly a source constraint or a listed initial pointer. *)
+Lemma pointer_seed_entries_spec : forall initial_relation q f x y,
+  In (f, (x, y)) (pointer_seed_entries initial_relation q) <->
+    (f = 1%positive /\ In (Addr x y) (constraints q)) \/
+    (f = 2%positive /\ In (Copy x y) (constraints q)) \/
+    (f = 3%positive /\ In (Load x y) (constraints q)) \/
+    (f = 4%positive /\ In (Store x y) (constraints q)) \/
+    (f = initial_relation /\ In (x, y) (initial_pointers q)).
+Proof.
+  intros initial_relation [instructions initial] f x y.
+  cbn [pointer_seed_entries constraints initial_pointers]; rewrite in_app_iff; split.
+  - intros [Hinstruction | Hinitial].
+    + apply in_map_iff in Hinstruction; destruct Hinstruction as [instruction [Heq Hin]].
+      destruct instruction; cbn [pointer_constraint_entry] in Heq; inversion Heq; subst;
+        tauto.
+    + apply in_map_iff in Hinitial; destruct Hinitial as [[a b] [Heq Hin]].
+      inversion Heq; subst; tauto.
+  - intros [[Hf Hin] | [[Hf Hin] | [[Hf Hin] | [[Hf Hin] | [Hf Hin]]]]]; subst f.
+    + left; apply in_map_iff; exists (Addr x y); auto.
+    + left; apply in_map_iff; exists (Copy x y); auto.
+    + left; apply in_map_iff; exists (Load x y); auto.
+    + left; apply in_map_iff; exists (Store x y); auto.
+    + right; apply in_map_iff; exists (x, y); auto.
+Qed.
+
+(** A successful declaration search agrees with both declaration lookup functions. *)
+Lemma pointer_declaration_lookup : forall ds f d,
+  find (fun entry => Pos.eqb (name entry) f) ds = Some d ->
+  lookup_kind ds f = Some (out d) /\ lookup_sorts ds f = Some (arg_sorts d).
+Proof.
+  induction ds as [|entry rest IH]; intros f d Hfind; [discriminate |].
+  cbn [find lookup_kind lookup_sorts] in *.
+  destruct (Pos.eqb (name entry) f) eqn:Hname.
+  - inversion Hfind; subst d; split; reflexivity.
+  - apply IH; exact Hfind.
+Qed.
+
+(** Seeding preserves a relational database and records exactly the inserted value pairs. *)
+Module PointerSeedFacts (V : VALUE with Definition t := positive)
+    (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D).
+  Definition put_entry (db : D.t) (entry : positive * (positive * positive)) : D.t :=
+    D.put (fst entry) [Val (fst (snd entry)); Val (snd (snd entry))] None db.
+  Definition entry_ok (p : program V.t) (entry : positive * (positive * positive)) :=
+    program_kind p (fst entry) = Some ORel /\
+    program_sorts p (fst entry) = Some [SVal; SVal].
+  Definition entry_row (entry : positive * (positive * positive)) f k
+      (o : option (cell V.t)) :=
+    f = fst entry /\ k = [Val (fst (snd entry)); Val (snd (snd entry))] /\ o = None.
+  Definition invariant (p : program V.t) (db : D.t) :=
+    D.wf db /\ R.loaded p (R.plan p) db /\ R.no_ids db.
+
+  (** Every slot of a checked binary relation accepts its two value arguments. *)
+  Lemma entry_kind_ok : forall p db entry, R.plans_ok p (R.plan p) ->
+    R.loaded p (R.plan p) db -> entry_ok p entry ->
+    D.kind_ok db (fst entry) [Val (fst (snd entry)); Val (snd (snd entry))] None.
+  Proof.
+    intros p db [f [x y]] Hplan [Hkinds [Hslots Hsorted]] [Hkind Hsort].
+    cbn [fst snd] in *; split.
+    - intros i Hin; cbn [option_list app] in Hin.
+      destruct Hin as [Heq | [Heq | Hnone]]; discriminate || contradiction.
+    - split.
+      + intros perm Hin; rewrite Hslots in Hin.
+        destruct (R.check_plan_slots p (R.plan p) f perm Hplan Hin)
+          as [d [Hfind [Hdistinct Hbounds]]].
+        destruct (pointer_declaration_lookup (decls V.t p) f d Hfind) as [Hout Hargs].
+        assert (Hout_eq : out d = ORel) by (unfold program_kind in Hkind; congruence).
+        assert (Hargs_eq : arg_sorts d = [SVal; SVal]) by
+          (unfold program_sorts in Hsort; congruence).
+        rewrite Hout_eq, Hargs_eq in Hbounds; cbn in Hbounds.
+        split; [exact Hdistinct | exact Hbounds].
+      + rewrite Hkinds, Hkind; exact I.
+  Qed.
+
+  (** Inserting a relation row adds that row and preserves every old relation row. *)
+  Lemma entry_rows : forall p db entry, R.plans_ok p (R.plan p) ->
+    invariant p db -> entry_ok p entry -> forall f k o,
+    row (D.view (put_entry db entry)) f k o <-> row (D.view db) f k o \/ entry_row entry f k o.
+  Proof.
+    intros p db [g [x y]] Hplan [Hwf [Hloaded [Hids Hrows]]] Hentry f k o.
+    pose proof (entry_kind_ok p db (g, (x, y)) Hplan Hloaded Hentry) as Hkind.
+    assert (Hcombine : D.combine db g (D.old db g [Val x; Val y]) None = None).
+    { destruct (D.old db g [Val x; Val y]) as [[c |] |] eqn:Hlookup; [|reflexivity|reflexivity].
+      pose proof (proj1 (D.old_row db g [Val x; Val y] (Some c) Hwf) Hlookup) as Hrow.
+      destruct (Hrows g [Val x; Val y] (Some c) Hrow) as [Hnone _]; discriminate. }
+    unfold put_entry, entry_row; cbn [fst snd].
+    rewrite (D.put_rows g [Val x; Val y] None db Hwf Hkind).
+    change (((row (D.view db) f k o /\ (f, k) <> (g, [Val x; Val y])) \/
+      (f = g /\ k = [Val x; Val y] /\
+        D.combine db g (D.old db g [Val x; Val y]) None = o)) <->
+      row (D.view db) f k o \/ (f = g /\ k = [Val x; Val y] /\ o = None)).
+    rewrite Hcombine; split.
+    - intros [[Hrow Hneq] | [Hf [Hk Ho]]]; [left; exact Hrow | right; auto].
+    - intros [Hrow | [Hf [Hk Ho]]].
+      + destruct (Pos.eq_dec f g) as [Hf | Hf].
+        * subst f.
+          assert (Hkeys : {k = [Val x; Val y]} + {k <> [Val x; Val y]}).
+          { decide equality; decide equality; apply Pos.eq_dec. }
+          destruct Hkeys as [Hk | Hk].
+          -- right; subst k; repeat split; try reflexivity.
+             symmetry; exact (proj1 (Hrows g [Val x; Val y] o Hrow)).
+          -- left; split; [exact Hrow | congruence].
+        * left; split; [exact Hrow | congruence].
+      + right; auto.
+  Qed.
+
+  (** Adding a well-sorted relation row preserves the complete seeding invariant. *)
+  Lemma entry_invariant : forall p db entry, R.plans_ok p (R.plan p) ->
+    invariant p db -> entry_ok p entry -> invariant p (put_entry db entry).
+  Proof.
+    intros p db entry Hplan Hinv Hentry.
+    destruct Hinv as [Hwf [Hloaded Hnoids]].
+    destruct Hloaded as [Hkinds [Hslots Hsorted]].
+    destruct Hnoids as [Hids Hrows].
+    pose proof (entry_kind_ok p db entry Hplan (conj Hkinds (conj Hslots Hsorted)) Hentry)
+      as Hkind.
+    destruct (D.layout_put (fst entry) [Val (fst (snd entry)); Val (snd (snd entry))]
+      None db Hwf) as [Hkind_next [Hslots_next [Hids_next Hpending]]].
+    assert (Hrow_spec : forall f k o, row (D.view (put_entry db entry)) f k o <->
+      row (D.view db) f k o \/ entry_row entry f k o).
+    { apply entry_rows with (p := p).
+      - exact Hplan.
+      - exact (conj Hwf (conj (conj Hkinds (conj Hslots Hsorted)) (conj Hids Hrows))).
+      - exact Hentry. }
+    unfold invariant, put_entry; split; [apply D.wf_put; assumption | split].
+    - split; [intro f; rewrite Hkind_next; apply Hkinds | split].
+      + rewrite Hslots_next; exact Hslots.
+      + intros f k o Hrow; apply Hrow_spec in Hrow.
+        destruct Hrow as [Hrow | [Hf [Hk Ho]]].
+        * unfold row_sorted; rewrite Hkind_next; apply Hsorted; exact Hrow.
+        * subst f k o; exists ORel; split; [exact (proj2 Hentry) | split; [|reflexivity]].
+          rewrite Hkind_next, Hkinds; exact (proj1 Hentry).
+    - split; [rewrite Hids_next; exact Hids |].
+      intros f k o Hrow; apply Hrow_spec in Hrow.
+      destruct Hrow as [Hrow | [Hf [Hk Ho]]].
+      + exact (Hrows f k o Hrow).
+      + subst k o; split; [reflexivity |].
+        constructor; [eexists; reflexivity | constructor; [eexists; reflexivity | constructor]].
+  Qed.
+
+  (** Folding over compatible entries preserves the seeding invariant. *)
+  Lemma fold_invariant : forall p entries db, R.plans_ok p (R.plan p) ->
+    invariant p db -> Forall (entry_ok p) entries ->
+    invariant p (fold_left put_entry entries db).
+  Proof.
+    intros p entries; induction entries as [|entry rest IH]; intros db Hplan Hinv Hentries.
+    - exact Hinv.
+    - inversion Hentries as [|e es Hentry Hrest]; subst.
+      apply IH; [exact Hplan | eapply entry_invariant; eassumption | exact Hrest].
+  Qed.
+
+  (** Folding inserts exactly the listed entries in addition to the initial rows. *)
+  Lemma fold_rows : forall p entries db, R.plans_ok p (R.plan p) ->
+    invariant p db -> Forall (entry_ok p) entries -> forall f k o,
+    row (D.view (fold_left put_entry entries db)) f k o <->
+      row (D.view db) f k o \/ exists entry, In entry entries /\ entry_row entry f k o.
+  Proof.
+    intros p entries; induction entries as [|entry rest IH]; intros db Hplan Hinv Hentries f k o.
+    - cbn [fold_left]; split; [auto | intros [Hrow | [e [Hnone _]]]; [exact Hrow | contradiction]].
+    - inversion Hentries as [|e es Hentry Hrest]; subst; cbn [fold_left].
+      rewrite (IH (put_entry db entry) Hplan
+        (entry_invariant p db entry Hplan Hinv Hentry) Hrest f k o).
+      rewrite (entry_rows p db entry Hplan Hinv Hentry f k o).
+      split.
+      + intros [[Hrow | Hnew] | [e [Hin He]]].
+        * left; exact Hrow.
+        * right; exists entry; split; [left; reflexivity | exact Hnew].
+        * right; exists e; split; [right; exact Hin | exact He].
+      + intros [Hrow | [e [[Heq | Hin] He]]].
+        * left; left; exact Hrow.
+        * subst e; left; right; exact He.
+        * right; exists e; auto.
+  Qed.
+
+  (** Database initialization establishes the empty relational invariant. *)
+  Lemma init_invariant : forall p,
+    invariant p (D.init (decls V.t p) (Syntax.slots V.t (R.plan p))).
+  Proof.
+    intro p; split; [apply D.wf_init | split].
+    - split.
+      + intro f; exact (proj1 (proj2 (proj2
+          (D.init_view (decls V.t p) (Syntax.slots V.t (R.plan p)) f [] None 1 1)))).
+      + split.
+        * exact (proj1 (proj2 (proj2 (proj2
+            (D.init_view (decls V.t p) (Syntax.slots V.t (R.plan p)) 1 [] None 1 1))))).
+        * intros f k o Hrow.
+          apply (proj1 (proj1
+            (D.init_view (decls V.t p) (Syntax.slots V.t (R.plan p)) f k o 1 1))) in Hrow.
+          contradiction.
+    - split.
+      + exact (proj1 (proj2 (proj2 (proj2 (proj2
+          (D.init_view (decls V.t p) (Syntax.slots V.t (R.plan p)) 1 [] None 1 1)))))).
+      + intros f k o Hrow.
+        apply (proj1 (proj1
+          (D.init_view (decls V.t p) (Syntax.slots V.t (R.plan p)) f k o 1 1))) in Hrow.
+        contradiction.
+  Qed.
+
+  (** An identifier-free relational database is canonical. *)
+  Lemma no_ids_canonical : forall db, R.no_ids db -> D.canonical db.
+  Proof.
+    intros db [Hids Hrows] f k o Hrow i Hin.
+    destruct (Hrows f k o Hrow) as [Ho Hvalues]; subst o.
+    cbn [option_list] in Hin; rewrite app_nil_r in Hin.
+    apply (proj1 (Forall_forall _ _) Hvalues) in Hin.
+    destruct Hin as [v Heq]; discriminate.
+  Qed.
+End PointerSeedFacts.
+
 Module AndersenCode (V : VALUE_OPS with Definition t := positive)
     (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE_OPS V I)
     (R : RUN_OPS V I J D) <: ANDERSEN_OPS V I J D R.
-  (* STUB-CODE *)
   Definition compile (_ : pointer_input) : program V.t := andersen_program.
-  (* STUB-CODE *)
-  Definition seed (_ : pointer_input) : D.t := D.init [] [].
-  (* STUB-CODE *)
-  Definition solve (q : pointer_input) (_ : limits) : stop * D.t := (IterLimit, seed q).
-  (* STUB-CODE *)
-  Definition points (_ : D.t) (_ _ : positive) : bool := false.
+  Definition seed_put (db : D.t) (entry : positive * (positive * positive)) : D.t :=
+    D.put (fst entry) [Val (fst (snd entry)); Val (snd (snd entry))] None db.
+  Definition seed (q : pointer_input) : D.t :=
+    fold_left seed_put (pointer_seed_entries 5 q)
+      (D.init (decls V.t (compile q)) (pointer_plan_slots (R.plan (compile q)))).
+  Definition solve (q : pointer_input) (lim : limits) : stop * D.t :=
+    let p := compile q in R.run p (R.plan p) lim (seed q).
+  Definition points (db : D.t) (x a : positive) : bool :=
+    match fst (D.lookup 5 [Val x; Val a] db) with
+    | Some None => true
+    | _ => false
+    end.
 End AndersenCode.
 
 Module Andersen (V : VALUE with Definition t := positive)
     (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D) <: ANDERSEN V I J D R.
   Include AndersenCode V I J D R.
+  Module Seeds := PointerSeedFacts V I J D R.
+
+  (** The fixed inclusion program passes the source sort checker. *)
+  Lemma program_sorted : forall q, program_ok (compile q).
+  Proof.
+    intro q; apply (proj1 (check_program_spec V.t (compile q))); vm_compute; reflexivity.
+  Qed.
+
+  (** Every seed entry targets a declared binary relation. *)
+  Lemma seed_entries_ok : forall q, Forall (Seeds.entry_ok (compile q)) (pointer_seed_entries 5 q).
+  Proof.
+    intros [instructions initial]; cbn [pointer_seed_entries]; apply Forall_app; split.
+    - apply Forall_forall; intros entry Hin; apply in_map_iff in Hin.
+      destruct Hin as [instruction [Heq Hin]]; subst entry; destruct instruction; split; reflexivity.
+    - apply Forall_forall; intros entry Hin; apply in_map_iff in Hin.
+      destruct Hin as [[x y] [Heq Hin]]; subst entry; split; reflexivity.
+  Qed.
+
+  (** Seeding establishes well-formedness, the plan layout and identifier-free rows. *)
+  Lemma seed_invariant : forall q, Seeds.invariant (compile q) (seed q).
+  Proof.
+    intro q; change (Seeds.invariant (compile q)
+      (fold_left Seeds.put_entry (pointer_seed_entries 5 q)
+        (D.init (decls V.t (compile q)) (Syntax.slots V.t (R.plan (compile q)))))).
+    apply Seeds.fold_invariant.
+    - apply R.plan_checked; apply program_sorted.
+    - apply Seeds.init_invariant.
+    - apply seed_entries_ok.
+  Qed.
+
   Lemma compile_rules : forall q, compile q = andersen_program.
   Proof.
     reflexivity.
@@ -181,29 +450,83 @@ Module Andersen (V : VALUE with Definition t := positive)
   Qed.
 
   Lemma seed_rows : forall q f k o, row (D.view (seed q)) f k o <-> pointer_seed_row q f k o.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q f k o.
+    change (row (D.view (fold_left Seeds.put_entry (pointer_seed_entries 5 q)
+      (D.init (decls V.t (compile q)) (Syntax.slots V.t (R.plan (compile q)))))) f k o <->
+      pointer_seed_row q f k o).
+    rewrite (Seeds.fold_rows (compile q) (pointer_seed_entries 5 q)
+      (D.init (decls V.t (compile q)) (Syntax.slots V.t (R.plan (compile q))))
+      (R.plan_checked (compile q) (program_sorted q)) (Seeds.init_invariant (compile q))
+      (seed_entries_ok q) f k o).
+    split.
+    - intros [Hinitial | [[g [x y]] [Hin [Hf [Hk Ho]]]]].
+      + apply (proj1 (proj1 (D.init_view (decls V.t (compile q))
+          (Syntax.slots V.t (R.plan (compile q))) f k o 1 1))) in Hinitial; contradiction.
+      + cbn [fst snd] in Hf, Hk; subst f k o.
+        split; [reflexivity | exists x, y; split; [reflexivity |]].
+        apply pointer_seed_entries_spec in Hin; exact Hin.
+    - intros [Ho [x [y [Hk Hsource]]]]; subst k o; right.
+      exists (f, (x, y)); split.
+      + apply pointer_seed_entries_spec; exact Hsource.
+      + repeat split; reflexivity.
+  Qed.
 
   Lemma seed_loaded : forall q, R.loaded (compile q) (R.plan (compile q)) (seed q).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro q; exact (proj1 (proj2 (seed_invariant q))).
+  Qed.
 
   Lemma seed_wf : forall q, D.wf (seed q) /\ D.canonical (seed q) /\ R.no_ids (seed q).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro q; destruct (seed_invariant q) as [Hwf [Hloaded Hnoids]].
+    split; [exact Hwf | split; [apply Seeds.no_ids_canonical; exact Hnoids | exact Hnoids]].
+  Qed.
 
   Lemma solve_run : forall q lim,
     solve q lim = R.run (compile q) (R.plan (compile q)) lim (seed q).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma points_spec : forall db x a, D.wf db -> D.canonical db ->
     reflect (row (D.view db) 5 [Val x; Val a] None) (points db x a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db x a Hwf Hcanonical.
+    change (reflect (row (D.view db) 5 [Val x; Val a] None)
+      (match fst (D.lookup 5 [Val x; Val a] db) with Some None => true | _ => false end)).
+    rewrite (proj1 (D.lookup_spec 5 [Val x; Val a] db Hwf)).
+    change (reflect (row (D.view db) 5 [Val x; Val a] None)
+      (match D.old db 5 [Val x; Val a] with Some None => true | _ => false end)).
+    destruct (D.old db 5 [Val x; Val a]) as [[c |] |] eqn:Hlookup.
+    - constructor; intro Hrow.
+      apply (proj2 (D.old_row db 5 [Val x; Val a] None Hwf)) in Hrow; congruence.
+    - constructor; apply (proj1 (D.old_row db 5 [Val x; Val a] None Hwf)); exact Hlookup.
+    - constructor; intro Hrow.
+      apply (proj2 (D.old_row db 5 [Val x; Val a] None Hwf)) in Hrow; congruence.
+  Qed.
 
   Lemma solve_wf : forall q lim, D.wf (snd (solve q lim)) /\ D.canonical (snd (solve q lim)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q lim; rewrite solve_run.
+    destruct (R.run_wf (compile q) (R.plan (compile q)) lim (seed q)
+      (R.plan_checked (compile q) (program_sorted q)) (proj1 (seed_wf q)) (seed_loaded q))
+      as [Hwf [Hcanonical Hloaded]]; auto.
+  Qed.
 
   Lemma solve_saturates : forall q lim,
     N.to_nat (max_iter lim) >= 2 * R.herbrand (compile q) (seed q) + 2 ->
     fst (solve q lim) = Saturated.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q lim Hfuel; rewrite solve_run; apply R.run_terminates.
+    - apply R.plan_checked; apply program_sorted.
+    - exact (proj1 (seed_wf q)).
+    - apply seed_loaded.
+    - reflexivity.
+    - reflexivity.
+    - exact (proj2 (proj2 (seed_wf q))).
+    - exact Hfuel.
+  Qed.
 
   Lemma solve_exact : forall q lim db, solve q lim = (Saturated, db) ->
     forall x a, points db x a = true <-> may_points q x a.
@@ -215,6 +538,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I) (R : RUN_T V I J D) <: ANDERSEN_ALL V I J D R.
   Include Andersen V I J D R.
   TimeFun compile.
+  TimeFun seed_put.
   TimeFun seed.
   TimeFun solve.
   TimeFun points.
