@@ -4392,4 +4392,118 @@ Module WtoT <: WTO_ALL.
 
   Local Transparent loopN Galois.Graph.Wto.wto_components.
 
+  Local Opaque loopN Galois.Graph.Wto.wto_components Galois.Graph.Wto.wto_scoped.
+
+  (** Listed scope keys fit the original graph's width envelope. *)
+  Lemma listed_vertex_width : forall g vs,
+    (forall v, In v vs -> In v (nodes g)) -> vertex_width vs <= graph_width (base g).
+  Proof.
+    intros g vs. unfold vertex_width.
+    induction vs as [|v vs IH]; intro Hlisted; cbn [fold_right]; [lia|].
+    rewrite wto_graph_max_nat. apply Nat.max_lub.
+    - apply wto_listed_width, Hlisted. now left.
+    - apply IH. intros u Hu. apply Hlisted. now right.
+  Qed.
+
+  Lemma scope_work_listed : forall g vs,
+    (forall v, In v vs -> In v (nodes g)) ->
+    scope_work g vs = (source_mass g vs + 1) * (graph_width (base g) + 1).
+  Proof.
+    intros g vs Hlisted. unfold scope_work. rewrite wto_graph_max_nat.
+    rewrite Nat.max_l; [reflexivity|]. now apply listed_vertex_width.
+  Qed.
+
+  Lemma builder_coefficient_positive : (128 <= k_build)%N.
+  Proof. unfold k_build. nia. Qed.
+
+  (** Every recorded step pays only its selected component or its reversed partial output. *)
+  Lemma builder_state_clock_from_scope : forall g roots st coefficient,
+    (128 <= coefficient)%N ->
+    (forall vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
+      (T_wto_scoped g (Some vs) +
+        T_wto_components (wto_scoped g (Some vs)) (rev vs) +
+        T_wto_entries (wto_scoped g (Some vs)) (rev vs)
+          (wto_components (wto_scoped g (Some vs)) (rev vs)) <=
+        4 * coefficient * N.of_nat (scope_work g vs))%N) ->
+    In st (history g roots) ->
+    (T_wto_step g st <= 512 * coefficient *
+      N.of_nat (state_expansion_mass g st + state_partial_mass st + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+  Proof.
+    intros g roots [tasks partial parents] coefficient Hcoefficient Hscope_bound Hin.
+    destruct tasks as [|task tasks].
+    - assert (Hshort : forall within entries owners c tasks h body,
+        wto_tasks (WtoState [] partial parents) = WtoExpand within entries owners c :: tasks ->
+        wto_select (wto_preferred owners entries c) c = Some (h, body) -> body = []).
+      { intros within entries owners c tasks h body Htasks. discriminate Htasks. }
+      pose proof (short_step_clock g roots (WtoState [] partial parents) Hin Hshort) as Hclock.
+      cbn [short_mass state_expansion_mass state_partial_mass wto_tasks wto_partial] in Hclock |- *.
+      unfold k_expand in Hclock. nia.
+    - destruct task as [within entries owners c|h].
+      + destruct (Galois.Graph.Wto.wto_select
+          (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
+        * destruct body as [|v body].
+          -- assert (Hshort : forall within' entries' owners' c' tasks' h' body',
+              wto_tasks (WtoState (WtoExpand within entries owners c :: tasks) partial parents) =
+                WtoExpand within' entries' owners' c' :: tasks' ->
+              wto_select (wto_preferred owners' entries' c') c' = Some (h', body') -> body' = []).
+             { intros within' entries' owners' c' tasks' h' body' Htasks Hselected.
+               inversion Htasks; subst. unfold wto_select, wto_preferred in Hselected.
+               rewrite Hselect in Hselected. now inversion Hselected. }
+             pose proof (short_step_clock g roots
+               (WtoState (WtoExpand within entries owners c :: tasks) partial parents)
+               Hin Hshort) as Hclock.
+             cbn [short_mass state_expansion_mass state_partial_mass wto_tasks wto_partial] in Hclock |- *.
+             unfold k_expand in Hclock. nia.
+          -- destruct (history_component_domain g roots
+               (WtoState (WtoExpand within entries owners c :: tasks) partial parents)
+               within entries owners c tasks Hin eq_refl)
+               as [Hnonempty [Hunique [Hlisted Howners]]].
+             destruct (history_body_domain g roots
+               (WtoState (WtoExpand within entries owners c :: tasks) partial parents)
+               within entries owners c tasks h (v :: body) Hin eq_refl Hselect)
+               as [Hbody_unique Hbody_listed].
+             pose proof (T14_select g roots
+               (WtoState (WtoExpand within entries owners c :: tasks) partial parents)
+               within entries owners c tasks Hin eq_refl) as Hselect_clock.
+             pose proof (Hscope_bound (v :: body) Hbody_unique Hbody_listed) as Hscope_clock.
+             pose proof (T6_expand g within entries owners c tasks partial parents h (v :: body)
+               Hselect ltac:(discriminate)) as Hstep.
+             pose proof (source_mass_permutation g _ _ (wto_select_spec _ _ _ _ Hselect))
+               as Hmass.
+             change (source_mass g c =
+               1 + length (succs (base g) h) + source_mass g (v :: body)) in Hmass.
+             pose proof (source_mass_length g c) as Hlength_c.
+             pose proof (source_mass_length g (v :: body)) as Hlength_body.
+             rewrite (scope_work_listed g c Hlisted) in Hselect_clock.
+             rewrite (scope_work_listed g (v :: body) Hbody_listed) in Hscope_clock.
+             clear Hin Hnonempty Hunique Hlisted Howners Hbody_unique Hbody_listed Hselect Hscope_bound.
+             cbn [state_expansion_mass state_partial_mass wto_tasks].
+             unfold k_expand in Hselect_clock, Hstep.
+             rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
+        * assert (Hshort : forall within' entries' owners' c' tasks' h' body',
+            wto_tasks (WtoState (WtoExpand within entries owners c :: tasks) partial parents) =
+              WtoExpand within' entries' owners' c' :: tasks' ->
+            wto_select (wto_preferred owners' entries' c') c' = Some (h', body') -> body' = []).
+          { intros within' entries' owners' c' tasks' h' body' Htasks Hselected.
+            inversion Htasks; subst. unfold wto_select, wto_preferred in Hselected.
+            rewrite Hselect in Hselected. discriminate. }
+          pose proof (short_step_clock g roots
+            (WtoState (WtoExpand within entries owners c :: tasks) partial parents)
+            Hin Hshort) as Hclock.
+          cbn [short_mass state_expansion_mass state_partial_mass wto_tasks wto_partial] in Hclock |- *.
+          unfold k_expand in Hclock. nia.
+      + assert (Hshort : forall within entries owners c tasks' h' body,
+          wto_tasks (WtoState (WtoClose h :: tasks) partial parents) =
+            WtoExpand within entries owners c :: tasks' ->
+          wto_select (wto_preferred owners entries c) c = Some (h', body) -> body = []).
+        { intros within entries owners c tasks' h' body Htasks. discriminate Htasks. }
+        pose proof (short_step_clock g roots
+          (WtoState (WtoClose h :: tasks) partial parents) Hin Hshort) as Hclock.
+        cbn [short_mass state_expansion_mass state_partial_mass wto_tasks wto_partial] in Hclock |- *.
+        unfold k_expand in Hclock. nia.
+  Qed.
+
+  Local Transparent loopN Galois.Graph.Wto.wto_components Galois.Graph.Wto.wto_scoped.
+
 End WtoT.
