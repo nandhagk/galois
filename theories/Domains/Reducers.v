@@ -1730,8 +1730,15 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Qed.
 End IntervalCongrT.
 
+(** The interval payload stores its width and its raw endpoint bits, as the interval
+    component's own plan law [F_psize] states. Without this pin a lawful payload can store the
+    exchanged interval in quadratic space, as
+    [ReducerIntervalSizeCounterexample.no_linear_precision_left_size] shows. *)
 Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
-    (S : INTERVAL_SCALAR_T T) (A0 : INTERVAL_PAYLOAD_PINNED_T L T S)
+    (S : INTERVAL_SCALAR_T T)
+    (A0 : INTERVAL_PAYLOAD_PINNED_T L T S
+      with Definition psize :=
+        fun (w : positive) (a : itv) => (Pos.to_nat w + interval_bits a + 1)%nat)
     (B0 : KNOWN_BITS_T L C)
     (A : VALUE_DOMAIN_T BitsLangT with Definition t := tagged A0.p
       with Definition size := tagged_size A0.psize
@@ -1758,9 +1765,7 @@ Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
   Lemma left_size : forall a b,
     (N.of_nat (A.size (fst (to_left (a, b))) + B.size b) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* SIG-QUESTION: INTERVAL_PAYLOAD_PINNED_T has no interval size
-    pin. A lawful quadratic premium violates this linear bound for every step
-    preserving F_to_left; see ReducerIntervalSizeCounterexample.no_linear_precision_left_size. *)
+  Proof. Admitted. (* STUB *)
   Lemma right_size : forall a b,
     (N.of_nat (A.size a + B.size (snd (to_right (a, b)))) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
