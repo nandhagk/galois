@@ -7934,15 +7934,386 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     present V.prim V.merge (D.view db) s (actions V.t r).
   Proof. Admitted. (* STUB *)
 
+  (** Database equality is reflexive on every identifier. *)
+  Lemma run_same_refl : forall db i, D.wf db -> same (D.view db) i i.
+  Proof.
+    intros db i Hwf. apply (proj2 (D.same_repr db i i Hwf)). reflexivity.
+  Qed.
+
+  (** Database equality composes through representatives. *)
+  Lemma run_same_trans : forall db i j k, D.wf db ->
+    same (D.view db) i j -> same (D.view db) j k -> same (D.view db) i k.
+  Proof.
+    intros db i j k Hwf Hij Hjk. apply (proj2 (D.same_repr db i k Hwf)).
+    apply (proj1 (D.same_repr db i j Hwf)) in Hij.
+    apply (proj1 (D.same_repr db j k Hwf)) in Hjk. congruence.
+  Qed.
+
+  (** Canonicalizing the source output leaves output containment unchanged. *)
+  Lemma run_out_canon_left : forall db f a b, D.wf db ->
+    (D.out_le db f (option_map (D.canon db) a) b <-> D.out_le db f a b).
+  Proof.
+    intros db f [[i|a]|] [[j|b]|] Hwf;
+      cbn [D.out_le option_map D.canon cell_le]; try reflexivity.
+    rewrite (D.same_repr db (D.repr db i) j Hwf), (D.same_repr db i j Hwf).
+    now rewrite D.repr_idem.
+  Qed.
+
+  (** Enlarging equality while keeping kinds preserves output containment. *)
+  Lemma run_out_le_mono : forall db next f a b,
+    (forall g, kind (D.view next) g = kind (D.view db) g) ->
+    (forall i j, same (D.view db) i j -> same (D.view next) i j) ->
+    D.out_le db f a b -> D.out_le next f a b.
+  Proof.
+    intros db next f [[i|a]|] [[j|b]|] Hkind Hsame Hle;
+      cbn [D.out_le cell_le] in *; try contradiction; try exact I.
+    - now apply Hsame.
+    - destruct Hle as [m [Hdecl Hmerge]]. exists m.
+      split; [now rewrite Hkind|exact Hmerge].
+  Qed.
+
+  (** Output containment composes using equality and the semilattice merge laws. *)
+  Lemma run_out_le_trans : forall db f a b c, D.wf db ->
+    D.out_le db f a b -> D.out_le db f b c -> D.out_le db f a c.
+  Proof.
+    intros db f [a|] [b|] [c|] Hwf Hab Hbc;
+      cbn [D.out_le] in *; try contradiction; try exact I.
+    destruct a as [i|a], b as [j|b], c as [k|c]; cbn [cell_le] in *; try contradiction.
+    - eapply run_same_trans; eassumption.
+    - destruct Hab as [m [Hkind Hab]], Hbc as [n [Hkind' Hbc]].
+      assert (Hequal : m = n) by congruence. subst n. exists m. split; [exact Hkind|].
+      rewrite <- Hbc at 1. rewrite V.merge_assoc, Hab. exact Hbc.
+  Qed.
+
+  (** Enlarging identifier equality preserves a related pair of cells. *)
+  Lemma run_cell_rel_mono : forall db next (a b : cell V.t),
+    (forall i j, same (D.view db) i j -> same (D.view next) i j) ->
+    cell_rel (same (D.view db)) a b -> cell_rel (same (D.view next)) a b.
+  Proof.
+    intros db next a b Hsame Hrel. destruct Hrel; constructor; auto.
+  Qed.
+
+  (** Enlarging identifier equality preserves related keys. *)
+  Lemma run_key_rel_mono : forall db next (a b : list (cell V.t)),
+    (forall i j, same (D.view db) i j -> same (D.view next) i j) ->
+    Forall2 (cell_rel (same (D.view db))) a b ->
+    Forall2 (cell_rel (same (D.view next))) a b.
+  Proof.
+    intros db next a b Hsame Hrel. induction Hrel; constructor; auto.
+    eapply run_cell_rel_mono; eassumption.
+  Qed.
+
+  (** Every key is related to itself in a well-formed database. *)
+  Lemma run_key_rel_refl : forall db (k : list (cell V.t)), D.wf db ->
+    Forall2 (cell_rel (same (D.view db))) k k.
+  Proof.
+    intros db k Hwf. induction k as [|c rest IH]; [constructor|].
+    constructor; [|exact IH]. destruct c as [i|v].
+    - constructor. now apply run_same_refl.
+    - constructor.
+  Qed.
+
+  (** Cell relatedness composes in a well-formed database. *)
+  Lemma run_cell_rel_trans : forall db (a b c : cell V.t), D.wf db ->
+    cell_rel (same (D.view db)) a b -> cell_rel (same (D.view db)) b c ->
+    cell_rel (same (D.view db)) a c.
+  Proof.
+    intros db a b c Hwf Hab Hbc. destruct Hab.
+    - inversion Hbc; subst. constructor. eapply run_same_trans; eassumption.
+    - inversion Hbc; subst. constructor.
+  Qed.
+
+  (** Key relatedness composes in a well-formed database. *)
+  Lemma run_key_rel_trans : forall db (a b c : list (cell V.t)), D.wf db ->
+    Forall2 (cell_rel (same (D.view db))) a b ->
+    Forall2 (cell_rel (same (D.view db))) b c ->
+    Forall2 (cell_rel (same (D.view db))) a c.
+  Proof.
+    intros db a b c Hwf Hab. revert c.
+    induction Hab as [|a b rest more Hab Hrest IH]; intros c Hbc.
+    - inversion Hbc. constructor.
+    - inversion Hbc as [|b' c' more' tail Hhead Htail]; subst b' more' c.
+      constructor; [eapply run_cell_rel_trans; eassumption|now apply IH].
+  Qed.
+
+  (** A well-sorted row contains its own output. *)
+  Lemma run_row_out_refl : forall sorts db f k o, D.wf db ->
+    row_sorted sorts (kind (D.view db)) f k o ->
+    D.out_le db f (option_map (D.canon db) o) o.
+  Proof.
+    intros sorts db f k o Hwf [out [_ [Hkind Hout]]].
+    apply (proj2 (run_out_canon_left db f o o Hwf)).
+    destruct o as [[i|v]|]; cbn [D.out_le cell_le]; [now apply run_same_refl| |exact I].
+    destruct out as [| |m]; cbn [out_sort option_map cell_sort] in Hout; try discriminate.
+    exists m. split; [exact Hkind|apply V.merge_idem].
+  Qed.
+
+  (** A sorted database grows to itself. *)
+  Lemma run_grows_upto_refl : forall sorts db, D.wf db ->
+    view_sorted sorts (D.view db) -> grows_upto db db.
+  Proof.
+    intros sorts db Hwf Hsorted. split; [auto|]. intros f k o Hrow.
+    exists k, o. split; [exact Hrow|]. split; [now apply run_key_rel_refl|].
+    eapply run_row_out_refl; [exact Hwf|eapply Hsorted; exact Hrow].
+  Qed.
+
+  (** Growth composes when later states keep kinds and remain well formed. *)
+  Lemma run_grows_upto_trans : forall before middle after,
+    D.wf middle -> D.wf after ->
+    (forall f, kind (D.view after) f = kind (D.view middle) f) ->
+    grows_upto before middle -> grows_upto middle after -> grows_upto before after.
+  Proof.
+    intros before middle after Hwfmid Hwfafter Hkinds [Hsame1 Hrows1] [Hsame2 Hrows2].
+    split; [intros i j Hsame; apply Hsame2; now apply Hsame1|].
+    intros f k o Hrow. destruct (Hrows1 f k o Hrow) as [k1 [o1 [Hrow1 [Hkey1 Hout1]]]].
+    destruct (Hrows2 f k1 o1 Hrow1) as [k2 [o2 [Hrow2 [Hkey2 Hout2]]]].
+    exists k2, o2. split; [exact Hrow2|]. split.
+    - eapply run_key_rel_trans; [exact Hwfafter| |exact Hkey2].
+      eapply run_key_rel_mono; eassumption.
+    - apply (proj2 (run_out_canon_left after f o o2 Hwfafter)).
+      eapply run_out_le_trans; [exact Hwfafter| |].
+      + eapply run_out_le_mono; [exact Hkinds|exact Hsame2|].
+        exact (proj1 (run_out_canon_left middle f o o1 Hwfmid) Hout1).
+      + exact (proj1 (run_out_canon_left after f o1 o2 Hwfafter) Hout2).
+  Qed.
+
+  (** The value equality test also decides equality of complete cells. *)
+  Lemma run_cell_eq_dec : forall a b : cell V.t, {a = b} + {a <> b}.
+  Proof.
+    intros a b. destruct (run_cell_eqb_spec a b); [left|right]; assumption.
+  Qed.
+
+  (** Combining a row's existing output with another output retains the old information. *)
+  Lemma run_combine_old : forall sorts db next f k old o,
+    D.wf next -> (forall g, kind (D.view next) g = kind (D.view db) g) ->
+    row_sorted sorts (kind (D.view db)) f k old ->
+    D.out_le next f old (D.combine db f (Some old) o).
+  Proof.
+    intros sorts db next f k old o Hwf Hkinds [out [_ [Hkind Hout]]].
+    destruct old as [[i|v]|]; [| |exact I].
+    - destruct out as [| |m]; cbn [out_sort option_map cell_sort] in Hout;
+        try discriminate.
+      cbn [D.combine D.out_le cell_le]. now apply run_same_refl.
+    - destruct out as [| |m]; cbn [out_sort option_map cell_sort] in Hout;
+        try discriminate.
+      unfold D.combine. rewrite Hkind. destruct o as [[j|w]|]; cbn [D.out_le cell_le].
+      + exists m. split; [rewrite Hkinds; exact Hkind|apply V.merge_idem].
+      + exists m. split; [rewrite Hkinds; exact Hkind|].
+        rewrite V.merge_assoc, V.merge_idem. reflexivity.
+      + exists m. split; [rewrite Hkinds; exact Hkind|apply V.merge_idem].
+  Qed.
+
+  (** A well-typed insertion preserves every old row and equality up to output growth. *)
+  Lemma run_put_grows : forall sorts f k o db, D.wf db -> D.kind_ok db f k o ->
+    view_sorted sorts (D.view db) -> grows_upto db (D.put f k o db).
+  Proof.
+    intros sorts f k o db Hwf Hallowed Hsorted.
+    pose proof (D.wf_put f k o db Hwf Hallowed) as Hnext.
+    pose proof (proj1 (D.layout_put f k o db Hwf)) as Hkinds.
+    split.
+    - intros i j Hsame. apply (proj2 (D.put_same f k o db i j Hwf Hallowed)).
+      apply rst_step. now left.
+    - intros g key old Hrow.
+      assert (Hchoice : (g, key) = (f, map (D.canon db) k) \/
+          (g, key) <> (f, map (D.canon db) k)).
+      { destruct (Pos.eq_dec g f) as [Hg|Hg]; [|right; congruence].
+        destruct (list_eq_dec run_cell_eq_dec key (map (D.canon db) k)) as [Hk|Hk].
+        - left. now subst.
+        - right. congruence. }
+      destruct Hchoice as [Hequal|Hother].
+      + injection Hequal as Hgf Hkey. subst g key.
+        assert (Hprevious : D.old db f (map (D.canon db) k) = Some old).
+        { apply (proj2 (D.old_row db f (map (D.canon db) k) old Hwf)). exact Hrow. }
+        exists (map (D.canon db) k),
+          (D.combine db f (Some old) (option_map (D.canon db) o)).
+        split.
+        * apply (proj2 (D.put_rows f k o db Hwf Hallowed _ _ _)). right.
+          split; [reflexivity|]. split; [reflexivity|]. now rewrite Hprevious.
+        * split; [now apply run_key_rel_refl|].
+          apply (proj2 (run_out_canon_left (D.put f k o db) f old _ Hnext)).
+          eapply run_combine_old; [exact Hnext|intro h; now rewrite Hkinds|].
+          apply Hsorted. exact Hrow.
+      + exists key, old. split.
+        * apply (proj2 (D.put_rows f k o db Hwf Hallowed _ _ _)). now left.
+        * split; [now apply run_key_rel_refl|].
+          eapply run_row_out_refl; [exact Hnext|].
+          unfold row_sorted. rewrite Hkinds. apply Hsorted. exact Hrow.
+  Qed.
+
+  (** Constructor allocation preserves every old row and equality. *)
+  Lemma run_make_grows : forall sorts f k db, D.wf db ->
+    D.wf (snd (D.make f k db)) -> kind (D.view db) f = Some OId ->
+    view_sorted sorts (D.view db) -> grows_upto db (snd (D.make f k db)).
+  Proof.
+    intros sorts f k db Hwf Hnext Hkind Hsorted.
+    pose proof (D.make_spec f k db Hwf Hkind) as Hmake.
+    destruct (D.make f k db) as [i next]. cbn [snd] in Hnext |- *.
+    destruct Hmake as [[j [_ [_ ->]]]|[_ [_ [_ [Hkinds [Hsame Hrows]]]]]].
+    - now apply (run_grows_upto_refl sorts).
+    - split.
+      + intros a b Hab. apply (proj2 (Hsame a b)). now left.
+      + intros g key old Hrow. exists key, old. split.
+        * apply (proj2 (Hrows g key old)). now left.
+        * split; [now apply run_key_rel_refl|].
+          eapply run_row_out_refl; [exact Hnext|].
+          unfold row_sorted. rewrite Hkinds. apply Hsorted. exact Hrow.
+  Qed.
+
+  (** Identifier union preserves every old row and equality. *)
+  Lemma run_union_grows : forall sorts i j db, D.wf db -> D.wf (D.union i j db) ->
+    view_sorted sorts (D.view db) -> grows_upto db (D.union i j db).
+  Proof.
+    intros sorts i j db Hwf Hnext Hsorted. split.
+    - intros a b Hab. apply (proj2 (D.union_same i j db a b Hwf)).
+      apply rst_step. now left.
+    - intros f k o Hrow. exists k, o. split.
+      + rewrite (D.union_rows i j db Hwf). exact Hrow.
+      + split; [now apply run_key_rel_refl|]. eapply run_row_out_refl; [exact Hnext|].
+        unfold row_sorted. rewrite (proj1 (D.layout_union i j db Hwf)).
+        apply Hsorted. exact Hrow.
+  Qed.
+
+  (** Growth composes between states loaded for the same program and compiled plan. *)
+  Lemma run_loaded_growth_trans : forall p cp before db next,
+    D.wf db -> D.wf next -> loaded p cp db -> loaded p cp next ->
+    grows_upto before db -> grows_upto db next -> grows_upto before next.
+  Proof.
+    intros p cp before db next Hwf Hnext Hloaded Hloadnext Hbefore Hstep.
+    eapply run_grows_upto_trans; [exact Hwf|exact Hnext| |exact Hbefore|exact Hstep].
+    intro f. rewrite (proj1 Hloadnext), (proj1 Hloaded). reflexivity.
+  Qed.
+
+  (** Typed actions preserve growth from any earlier database. *)
+  Lemma run_apply_go_grows : forall p cp acts g s locals db before,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    grows_upto before db -> grows_upto before (apply_go acts s locals db).
+  Proof.
+    intros p cp acts. induction acts as [|a rest IH]; intros g s locals db before
+      Hchecked Hwf Hloaded Hacts Henv Hallocated Hbefore; [exact Hbefore|].
+    destruct a as [x f args|f args res|t u|x op args]; cbn [actions_ok] in Hacts.
+    - destruct Hacts as [ss [Hsort [Hkind [Hargs Hrest]]]].
+      destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+        as [cells [Hcells Hsorts]]. rewrite <- Hsorts in Hsort.
+      pose proof (run_term_cells_allocated db s locals args cells Hallocated Hcells) as Hids.
+      pose proof (run_make_state p cp f cells db Hchecked Hwf Hloaded Hkind Hsort Hids)
+        as Hstate.
+      pose proof (run_make_grows (program_sorts p) f cells db Hwf (proj1 Hstate)
+        ltac:(rewrite (proj1 Hloaded); exact Hkind) (proj2 (proj2 Hloaded))) as Hstep.
+      destruct (D.make f cells db) as [i next] eqn:Hmake. cbn [fst snd] in Hstate, Hstep.
+      destruct Hstate as [Hwf' [Hloaded' [Hids' [_ [Hnew _]]]]].
+      cbn [apply_go]. rewrite Hcells, Hmake.
+      eapply IH; [exact Hchecked|exact Hwf'|exact Hloaded'|exact Hrest| | |].
+      + apply run_env_sorted_set; [exact Henv|reflexivity].
+      + apply run_env_allocated_set.
+        * eapply run_env_allocated_mono; [exact Hids'|exact Hallocated].
+        * intros j Heq. injection Heq as <-. exact Hnew.
+      + exact (run_loaded_growth_trans p cp before db next Hwf Hwf' Hloaded Hloaded'
+          Hbefore Hstep).
+    - destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hresult Hrest]]]]]].
+      destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+        as [cells [Hcells Hsorts]].
+      destruct (run_result_cell_typed g s locals out res Henv Hresult)
+        as [output [Houtput Houtsort]].
+      assert (Hrow : row_sorted (program_sorts p) (program_kind p) f cells output).
+      { exists out. rewrite Hsorts. repeat split; assumption. }
+      assert (Hids : forall i, In (Id i) (cells ++ option_list output) -> D.allocated db i).
+      { intros i Hin. apply in_app_iff in Hin as [Hin|Hin].
+        - eapply run_term_cells_allocated; eauto.
+        - eapply run_result_cell_allocated; eauto. }
+      destruct (run_put_state p cp f cells output db Hchecked Hwf Hloaded Hrow Hids)
+        as [Hwf' [Hloaded' [Hids' _]]].
+      pose proof (run_put_allowed p cp db f cells output Hchecked Hloaded Hrow Hids)
+        as Hallowed.
+      pose proof (run_put_grows (program_sorts p) f cells output db Hwf Hallowed
+        (proj2 (proj2 Hloaded))) as Hstep.
+      cbn [apply_go]. rewrite Hcells, Houtput.
+      eapply IH; [exact Hchecked|exact Hwf'|exact Hloaded'|exact Hrest|exact Henv| |].
+      + eapply run_env_allocated_mono with (db := db);
+          [rewrite Hids'; reflexivity|exact Hallocated].
+      + exact (run_loaded_growth_trans p cp before db (D.put f cells output db)
+          Hwf Hwf' Hloaded Hloaded' Hbefore Hstep).
+    - destruct Hacts as [Ht [Hu Hrest]].
+      destruct (run_term_cell_typed g s locals t SId Henv Ht)
+        as [[i|v] [Hi Hitype]]; [|discriminate].
+      destruct (run_term_cell_typed g s locals u SId Henv Hu)
+        as [[j|v] [Hj Hjtype]]; [|discriminate].
+      pose proof (run_term_cell_allocated db s locals t i Hallocated Hi) as Hiall.
+      pose proof (run_term_cell_allocated db s locals u j Hallocated Hj) as Hjall.
+      destruct (run_union_state p cp i j db Hwf Hloaded Hiall Hjall)
+        as [Hwf' [Hloaded' [Hids' _]]].
+      pose proof (run_union_grows (program_sorts p) i j db Hwf Hwf'
+        (proj2 (proj2 Hloaded))) as Hstep.
+      cbn [apply_go]. rewrite Hi, Hj.
+      eapply IH; [exact Hchecked|exact Hwf'|exact Hloaded'|exact Hrest|exact Henv| |].
+      + eapply run_env_allocated_mono with (db := db);
+          [rewrite Hids'; reflexivity|exact Hallocated].
+      + exact (run_loaded_growth_trans p cp before db (D.union i j db)
+          Hwf Hwf' Hloaded Hloaded' Hbefore Hstep).
+    - destruct Hacts as [Hargs Hrest].
+      destruct (run_term_values_typed g s locals args Henv Hargs) as [vs Hvalues].
+      cbn [apply_go]. rewrite Hvalues. destruct (V.prim op vs) as [v|]; [|exact Hbefore].
+      eapply IH; [exact Hchecked|exact Hwf|exact Hloaded|exact Hrest| | |exact Hbefore].
+      + apply run_env_sorted_set; [exact Henv|reflexivity].
+      + apply run_env_allocated_set; [exact Hallocated|]. intros i Heq. discriminate.
+  Qed.
+
   Lemma F6_apply_grows : forall p cp r s db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) ->
     rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
     grows_upto db (apply (actions V.t r) s db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp r s db Hchecked Hwf Hloaded Hin Henv Hallocated.
+    destruct (run_rule_context p cp r s Hchecked Hin Henv) as [g [_ [Hacts Hsorted]]].
+    unfold apply. eapply run_apply_go_grows; try eassumption.
+    - intros x ty Hctx. destruct (Hsorted x ty Hctx) as [c [Hc Hty]].
+      exists c. rewrite run_look_empty. split; assumption.
+    - intros x i Hcell. rewrite run_look_empty in Hcell. eapply Hallocated. exact Hcell.
+    - apply (run_grows_upto_refl (program_sorts p)); [exact Hwf|exact (proj2 (proj2 Hloaded))].
+  Qed.
+
+  (** Rebuilding retains every equality already present in the database. *)
+  Lemma run_rebuild_same_incl : forall db i j, D.wf db ->
+    same (D.view db) i j -> same (D.view (D.rebuild db)) i j.
+  Proof.
+    intros db i j Hwf Hsame. apply (proj2 (D.rebuild_same db i j Hwf)).
+    apply cong_same. exact Hsame.
+  Qed.
+
+  (** Related old keys have identical canonical keys after rebuilding. *)
+  Lemma run_rebuild_key_equal : forall db k k', D.wf db ->
+    Forall2 (cell_rel (same (D.view db))) k k' ->
+    map (D.canon (D.rebuild db)) k = map (D.canon (D.rebuild db)) k'.
+  Proof.
+    intros db k k' Hwf Hkeys. induction Hkeys as [|a b rest more Hab Htail IH].
+    - reflexivity.
+    - cbn [map]. rewrite IH. f_equal. destruct Hab as [i j Hij|v].
+      + cbn [D.canon]. f_equal.
+        apply (proj1 (D.same_repr (D.rebuild db) i j (D.wf_rebuild db Hwf))).
+        apply run_rebuild_same_incl; assumption.
+      + reflexivity.
+  Qed.
 
   Lemma F6a_rebuild_grows : forall db0 db, D.wf db -> grows_upto db0 db ->
     grows db0 (D.rebuild db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db0 db Hwf [Hsame Hrows].
+    pose proof (D.wf_rebuild db Hwf) as Hwf'.
+    destruct (D.layout_rebuild db Hwf) as [Hkind Hlayout].
+    assert (Hkeep : forall i j, same (D.view db) i j -> same (D.view (D.rebuild db)) i j).
+    { intros i j Hij. now apply run_rebuild_same_incl. }
+    split; [intros i j Hij; apply Hkeep; now apply Hsame|].
+    intros f k o Hrow. destruct (Hrows f k o Hrow) as [k' [o' [Hrow' [Hkeys Hout]]]].
+    destruct (D.rebuild_keeps db f k' o' Hwf Hrow') as [out [Hreb Hle]].
+    exists out. split.
+    - rewrite <- (run_rebuild_key_equal db k k' Hwf Hkeys) in Hreb. exact Hreb.
+    - apply (proj2 (run_out_canon_left (D.rebuild db) f o out Hwf')).
+      eapply run_out_le_trans; [exact Hwf'| |].
+      + eapply run_out_le_mono; [intro g; now rewrite Hkind|exact Hkeep|].
+        exact (proj1 (run_out_canon_left db f o o' Hwf) Hout).
+      + exact (proj1 (run_out_canon_left (D.rebuild db) f o' out Hwf') Hle).
+  Qed.
 
   Lemma F7_apply_derives : forall p initial db r s, relational_fragment p = true ->
     no_ids initial -> D.wf db -> derived p initial db -> In r (rules V.t p) ->
