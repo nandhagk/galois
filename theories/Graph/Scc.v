@@ -122,6 +122,134 @@ Module TarjanVisitor <: VISITOR_OPS.
   TimeFun leave.
 End TarjanVisitor.
 
+(** Present low-link entries always refer to pending vertices; emitted blocks are nonempty. *)
+Definition tarjan_nonempty_state (s : tarjan_state) : Prop :=
+  (forall v i, trie_get v (tarjan_low s) = Some i -> In v (tarjan_pending s)) /\
+  Forall (fun block => block <> []) (tarjan_emitted s).
+
+(** A nonempty pending stack always contributes a nonempty popped prefix. *)
+Lemma tarjan_pop_nonempty root index pending low active owners
+    members tail low' active' owners' :
+  tarjan_pop root index pending low active owners = (members, tail, low', active', owners') ->
+  pending <> [] -> members <> [].
+Proof.
+  intros Hpop Hpending. destruct pending as [|v pending]; [contradiction|].
+  cbn [tarjan_pop] in Hpop. destruct (Pos.eqb v root).
+  - inversion Hpop; discriminate.
+  - destruct (tarjan_pop root index pending (PTrieCode.remove v low)
+      (PTrieCode.remove v active) (PTrieCode.set v index owners))
+      as [[[[popped remaining] lows] actives] assigned].
+    inversion Hpop; discriminate.
+Qed.
+
+(** Popping retains low-link support only in the surviving pending suffix. *)
+Lemma tarjan_pop_low_domain root index pending low active owners
+    members tail low' active' owners' :
+  (forall v i, trie_get v low = Some i -> In v pending) ->
+  tarjan_pop root index pending low active owners = (members, tail, low', active', owners') ->
+  forall v i, trie_get v low' = Some i -> In v tail.
+Proof.
+  intros Hdomain Hpop v i Hlookup.
+  destruct (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) as [Hsplit Hkeys].
+  destruct (Hkeys v) as [Hlow _]. rewrite Hlow in Hlookup.
+  destruct (existsb (Pos.eqb v) members) eqn:Hmember; [discriminate Hlookup|].
+  apply Hdomain in Hlookup. rewrite Hsplit in Hlookup.
+  apply in_app_or in Hlookup. destruct Hlookup as [Hin|Hin]; [|exact Hin].
+  assert (Hyes : existsb (Pos.eqb v) members = true).
+  { apply existsb_exists. exists v. split; [exact Hin|apply Pos.eqb_refl]. }
+  congruence.
+Qed.
+
+(** The initial visitor state has no low-link entries or emitted components. *)
+Lemma tarjan_nonempty_initial : tarjan_nonempty_state tarjan_initial.
+Proof.
+  split; [|constructor]. intros v i Hlookup.
+  cbn [tarjan_initial tarjan_low] in Hlookup. rewrite PTrie.get_empty in Hlookup.
+  discriminate Hlookup.
+Qed.
+
+(** Entry puts its new low-link key directly on the pending stack. *)
+Local Lemma tarjan_nonempty_enter v s :
+  tarjan_nonempty_state s -> tarjan_nonempty_state (TarjanVisitor.enter v s).
+Proof.
+  intros [Hdomain Hemitted]. split; [|exact Hemitted].
+  intros u i Hlookup. cbn [TarjanVisitor.enter tarjan_low] in Hlookup.
+  cbn [TarjanVisitor.enter tarjan_pending].
+  destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. now left.
+  - rewrite PTrie.get_set_other in Hlookup by exact Hneq.
+    right. now apply (Hdomain u i).
+Qed.
+
+(** Lowering changes an existing low-link value without changing its support. *)
+Local Lemma tarjan_nonempty_lower v n s :
+  tarjan_nonempty_state s -> tarjan_nonempty_state (TarjanVisitor.lower v n s).
+Proof.
+  intros Hstate. unfold TarjanVisitor.lower.
+  destruct (trie_get v (tarjan_low s)) as [old|] eqn:Hlow; [|exact Hstate].
+  destruct Hstate as [Hdomain Hemitted]. split; [|exact Hemitted].
+  intros u i Hlookup. cbn [tarjan_low] in Hlookup. cbn [tarjan_pending].
+  destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. now apply (Hdomain v old).
+  - rewrite PTrie.get_set_other in Hlookup by exact Hneq.
+    now apply (Hdomain u i).
+Qed.
+
+(** Edge callbacks preserve pending support and the existing component list. *)
+Local Lemma tarjan_nonempty_edge kind u v s :
+  tarjan_nonempty_state s -> tarjan_nonempty_state (TarjanVisitor.edge kind u v s).
+Proof.
+  intros Hstate. destruct kind; cbn [TarjanVisitor.edge]; try exact Hstate.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try exact Hstate.
+  all: destruct (trie_get v (tarjan_disc s)); try exact Hstate.
+  all: now apply tarjan_nonempty_lower.
+Qed.
+
+(** A component-closing leave has a present low link and therefore a nonempty stack. *)
+Local Lemma tarjan_nonempty_leave v s :
+  tarjan_nonempty_state s -> tarjan_nonempty_state (TarjanVisitor.leave v s).
+Proof.
+  intros [Hdomain Hemitted]. unfold TarjanVisitor.leave.
+  destruct (trie_get v (tarjan_low s)) as [low|] eqn:Hlow;
+    [|split; assumption].
+  destruct (trie_get v (tarjan_disc s)) as [disc|] eqn:Hdisc;
+    [|split; assumption].
+  destruct (Pos.eqb low disc).
+  - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+      (tarjan_active s) (tarjan_owners s))
+      as [[[[members tail] lows] actives] owners] eqn:Hpop.
+    split; cbn [tarjan_low tarjan_pending tarjan_emitted].
+    + eapply tarjan_pop_low_domain; eassumption.
+    + constructor; [|exact Hemitted]. eapply tarjan_pop_nonempty; [exact Hpop|].
+      intros Hempty. pose proof (Hdomain v low Hlow) as Hin.
+      now rewrite Hempty in Hin.
+  - destruct (match tarjan_frames s with [] => [] | _ :: rest => rest end).
+    + split; assumption.
+    + apply tarjan_nonempty_lower. split; assumption.
+Qed.
+
+(** Arbitrary event folds retain low-link support and nonempty emitted components. *)
+Lemma tarjan_nonempty_fold es s : tarjan_nonempty_state s ->
+  tarjan_nonempty_state
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es s).
+Proof.
+  unfold fold_events. revert s. induction es as [|e es IH]; intros s Hstate;
+    cbn [fold_left]; [exact Hstate|].
+  apply IH. destruct e; cbn [visit_event].
+  - now apply tarjan_nonempty_enter.
+  - now apply tarjan_nonempty_leave.
+  - now apply tarjan_nonempty_edge.
+Qed.
+
+(** Every component emitted from the initial visitor state has a member. *)
+Lemma tarjan_emitted_nonempty es :
+  Forall (fun block => block <> [])
+    (tarjan_emitted
+      (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial)).
+Proof.
+  exact (proj2 (tarjan_nonempty_fold es tarjan_initial tarjan_nonempty_initial)).
+Qed.
+
 Module TarjanSearchCode := SearchCode TarjanVisitor.
 Module TarjanSearch.
   Include TarjanSearchCode.
@@ -281,7 +409,10 @@ Module Scc <: SCC.
 
   Lemma comps_nonempty : forall g, wf_graph (base g) ->
     Forall (fun vs => vs <> []) (comps (run g)).
-  Proof. Admitted. (* CONVERT: GraphTarjan: filtered traversal requires the scoped proof. *)
+  Proof.
+    intros g Hwf. unfold run. cbn [comps].
+    rewrite rev_append_rev, app_nil_r. apply Forall_rev. apply tarjan_emitted_nonempty.
+  Qed.
 
   Lemma owners_spec : forall g, wf_graph (base g) -> forall v i,
     trie_get v (comp (run g)) = Some i <->
