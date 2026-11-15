@@ -4,8 +4,9 @@
     For example, a singleton self edge produces an empty loop body.
     Builds on: Tarjan search, first-order graph data and the WTO signature. *)
 
-From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation.
-From Argent Require Import Time Tactics Std BigO.
+From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation
+  Wellfounded.Inverse_Image.
+From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search SccSig Scc WtoSig.
 Import List.ListNotations.
@@ -39,6 +40,18 @@ Definition wto_scoped (g : prepared) (within : option (list positive)) : prepare
     Prepared (Digraph vs adjacency) Empty (nv g) (ne g)
   end.
 TimeFun wto_scoped.
+
+(** Materialization keeps exactly the selected vertices and their selected successors. *)
+Lemma wto_scoped_spec : forall g vs,
+  nodes (wto_scoped g (Some vs)) = vs /\
+  forall v, In v vs -> succs (base (wto_scoped g (Some vs))) v =
+    filter (fun u => wto_member u vs) (succs (base g) v).
+Proof.
+  intros g vs. split; [reflexivity|]. intros v Hin.
+  unfold wto_scoped. cbn [base succs]. rewrite scc_rows_lookup.
+  assert (Hmember : existsb (Pos.eqb v) vs = true) by (now apply wto_member_spec).
+  rewrite Hmember. apply filter_ext. intro u. apply scc_listed_test.
+Qed.
 
 Definition wto_components g roots :=
   let ready := scc_graph g in
@@ -90,6 +103,22 @@ Fixpoint wto_select (preferred : option positive) (c : list positive) :=
       end
   end.
 TimeFun wto_select.
+
+(** Selection moves one header occurrence to the front and preserves all other occurrences. *)
+Lemma wto_select_spec : forall preferred c h body,
+  wto_select preferred c = Some (h, body) -> Permutation c (h :: body).
+Proof.
+  intros preferred c. induction c as [|v rest IH]; intros h body Hselect.
+  - discriminate.
+  - cbn [wto_select] in Hselect.
+    destruct (match preferred with None => false | Some head => Pos.eqb v head end).
+    + inversion Hselect; subst. apply Permutation_refl.
+    + destruct (wto_select preferred rest) as [[head tail]|] eqn:Htail.
+      * inversion Hselect; subst. eapply Permutation_trans.
+        -- apply perm_skip. now apply IH.
+        -- apply perm_swap.
+      * inversion Hselect; subst. apply Permutation_refl.
+Qed.
 
 Fixpoint wto_reverse_into (w tail : wto) : wto :=
   match w with
@@ -232,6 +261,130 @@ Definition wto_check_index (fuel : N) (width : nat) (listed : ptrie bool)
   | inr result => result
   end.
 TimeFun wto_check_index.
+
+(** The candidate index records exactly its distinct, listed processed vertices. *)
+Definition wto_check_seen (listed : ptrie bool) (s : wto_check_state) : Prop :=
+  NoDup (wto_check_vertices s) /\
+  (forall v, In v (wto_check_vertices s) <->
+    exists r, trie_get v (wto_check_ranks s) = Some r) /\
+  forall v, In v (wto_check_vertices s) -> exists b, trie_get v listed = Some b.
+
+(** Successful index results contain distinct listed vertices. *)
+Definition wto_check_seen_result (listed : ptrie bool)
+    (result : option (ptrie N * ptrie (N * N) * list positive)) : Prop :=
+  match result with
+  | None => True
+  | Some (_, _, vs) => NoDup vs /\
+      forall v, In v vs -> exists b, trie_get v listed = Some b
+  end.
+
+(** A fresh listed vertex preserves the index's processed-vertex invariant. *)
+Lemma wto_check_seen_add : forall listed tasks next ranks intervals vs v b,
+  wto_check_seen listed (WtoCheckState tasks next ranks intervals vs) ->
+  trie_get v ranks = None -> trie_get v listed = Some b ->
+  forall tasks' intervals', wto_check_seen listed
+    (WtoCheckState tasks' (N.succ next) (PTrieCode.set v next ranks) intervals' (v :: vs)).
+Proof.
+  intros listed tasks next ranks intervals vs v b [Hunique [Hrank Hlisted]] Hfresh Hvalid
+    tasks' intervals'. unfold wto_check_seen.
+  cbn [wto_check_vertices wto_check_ranks] in *.
+  split.
+  - constructor; [|exact Hunique]. intro Hin.
+    destruct (proj1 (Hrank v) Hin) as [r Hget]. congruence.
+  - split.
+    + intro u. cbn [In]. destruct (Pos.eq_dec u v) as [->|Hne].
+      * rewrite PTrie.get_set_same. split; [intro H; eauto|intro H; now left].
+      * rewrite PTrie.get_set_other by exact Hne. rewrite <- Hrank. split.
+        -- intros [Heq|Hin]; [congruence|exact Hin].
+        -- intro Hin. now right.
+    + intros u [Heq|Hin].
+      * subst u. now exists b.
+      * now apply Hlisted.
+Qed.
+
+(** Every checker transition preserves the vertex invariant or returns a valid result. *)
+Lemma wto_check_seen_step : forall width listed s,
+  wto_check_seen listed s ->
+  match wto_check_step width listed s with
+  | inl next => wto_check_seen listed next
+  | inr result => wto_check_seen_result listed result
+  end.
+Proof.
+  intros width listed [tasks next ranks intervals vs] Hseen.
+  destruct tasks as [|task tasks].
+  - cbn [wto_check_step wto_check_seen_result]. rewrite rev_append_rev, app_nil_r.
+    destruct Hseen as [Hunique [Hrank Hlisted]]. split.
+    + now apply NoDup_rev.
+    + intros v Hin. apply Hlisted. now apply in_rev in Hin.
+  - destruct task as [w|h].
+    + destruct w as [|v tail|h body tail].
+      * exact Hseen.
+      * cbn [wto_check_step]. destruct (wto_key_fits width v); [|exact I].
+        destruct (trie_get v listed) as [b|] eqn:Hlisted; [|exact I].
+        destruct (trie_get v ranks) as [r|] eqn:Hrank; [exact I|].
+        eapply wto_check_seen_add; eassumption.
+      * cbn [wto_check_step]. destruct (wto_key_fits width h); [|exact I].
+        destruct (trie_get h listed) as [b|] eqn:Hlisted; [|exact I].
+        destruct (trie_get h ranks) as [r|] eqn:Hrank; [exact I|].
+        eapply wto_check_seen_add; eassumption.
+    + cbn [wto_check_step]. destruct (trie_get h ranks); [exact Hseen|exact I].
+Qed.
+
+(** The fuel driver preserves checker invariants for every accessibility witness. *)
+Lemma wto_check_seen_loop : forall width listed fs (Hacc : Acc loopN_lt fs),
+  wto_check_seen listed (snd fs) ->
+  match loop loopN_lt (loopN_step (wto_check_step width listed)) fs Hacc with
+  | inl _ => True
+  | inr result => wto_check_seen_result listed result
+  end.
+Proof.
+  intros width listed fs Hacc.
+  induction Hacc as [[fuel s] Hacc IH] using Acc_ind_dep.
+  cbn [snd]. intro Hseen. destruct fuel as [|p]; [exact I|].
+  cbn [loop loopN_step Acc_inv].
+  pose proof (wto_check_seen_step width listed s Hseen) as Hstep.
+  destruct (wto_check_step width listed s) as [next|result] eqn:Hnext.
+  - apply IH. exact Hstep.
+  - exact Hstep.
+Qed.
+
+(** The supplied fuel cannot turn an invariant run into an invalid successful result. *)
+Lemma wto_check_seen_run : forall fuel width listed s,
+  wto_check_seen listed s ->
+  match loopN (wto_check_step width listed) fuel s with
+  | inl _ => True
+  | inr result => wto_check_seen_result listed result
+  end.
+Proof.
+  intros fuel width listed s Hseen. unfold loopN. now apply wto_check_seen_loop.
+Qed.
+
+Local Opaque loopN.
+
+(** Indexing from empty maps returns only distinct keys present in its listed map. *)
+Lemma wto_check_index_seen : forall fuel width listed w ranks intervals vs,
+  wto_check_index fuel width listed [WtoCheckVisit w] 0 Empty Empty [] =
+    Some (ranks, intervals, vs) ->
+  NoDup vs /\ forall v, In v vs -> exists b, trie_get v listed = Some b.
+Proof.
+  intros fuel width listed w ranks intervals vs Hindex.
+  assert (Hseen : wto_check_seen listed
+    (WtoCheckState [WtoCheckVisit w] 0 Empty Empty [])).
+  { split; [constructor|]. split.
+    - intro v. split; [contradiction|]. intros [r Hget].
+      rewrite PTrie.get_empty in Hget. discriminate.
+    - intros v Hin. contradiction. }
+  pose proof (wto_check_seen_run fuel width listed
+    (WtoCheckState [WtoCheckVisit w] 0 Empty Empty []) Hseen) as Hresult.
+  unfold wto_check_index in Hindex.
+  destruct (loopN (wto_check_step width listed) fuel
+    (WtoCheckState [WtoCheckVisit w] 0 Empty Empty [])) as [s|result]; [discriminate|].
+  destruct result as [[[ranks' intervals'] vs']|]; [|discriminate].
+  inversion Hindex; subst. exact Hresult.
+Qed.
+
+Local Transparent loopN.
+
 
 
 Definition wto_interval_edge (ranks : ptrie N) (intervals : ptrie (N * N))
@@ -861,13 +1014,17 @@ Module WtoT <: WTO_ALL.
 
   Lemma F11_select : forall preferred c h body,
     wto_select preferred c = Some (h, body) -> Permutation c (h :: body).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply wto_select_spec.
+  Qed.
 
   Lemma F12_scope : forall g vs,
     nodes (wto_scoped g (Some vs)) = vs /\
     forall v, In v vs -> succs (base (wto_scoped g (Some vs))) v =
       filter (fun u => wto_member u vs) (succs (base g) v).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply wto_scoped_spec.
+  Qed.
 
   Lemma F13_partition : forall g body,
     NoDup body ->
@@ -927,18 +1084,30 @@ Module WtoT <: WTO_ALL.
     k_index * N.of_nat (graph_n (base g) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  Local Opaque loopN.
+
   (** An index result lists distinct listed vertices. *)
   Lemma F4a_index : forall g w ranks intervals vs,
     wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
       [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
     NoDup vs /\ (forall v, In v vs -> In v (nodes g)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g w ranks intervals vs Hindex.
+    destruct (wto_check_index_seen (check_fuel g) (graph_width (base g)) (listed_of g)
+      w ranks intervals vs Hindex) as [Hunique Hlisted].
+    split; [exact Hunique|]. intros v Hin.
+    apply (proj1 (scc_listed_lookup (nodes g) v)). now apply Hlisted.
+  Qed.
+
+  Local Transparent loopN.
 
   (** The edge scan is the final conjunct of the checker. *)
   Lemma F4b_edges : forall b ranks intervals vs,
     wto_edges_ok b ranks intervals vs =
       forallb (fun u => forallb (wto_interval_edge ranks intervals u) (succs b u)) vs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   (** The edge scan reads the rows of distinct listed vertices once each. *)
   Lemma T4b_edges : forall g w ranks intervals vs,
