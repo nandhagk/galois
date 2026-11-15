@@ -290,3 +290,123 @@ Example nullary_atom_rejected :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** * Rejecting aliases of hidden join variables *)
+
+Definition copy_alias_program : program positive :=
+  Program positive [Decl 1 [SVal; SVal] ORel; Decl 2 [SVal] ORel; Decl 3 [] ORel]
+    [Rule positive [Fun positive 1 [Var 2; Var 2] None;
+       Fun positive 2 [Var 1] None] [Put 3 [] None]].
+
+Definition copy_alias_plan : cplan positive :=
+  CPlan positive 0 (JPlan 2 [[0; 1]; [0]])
+    [All positive 0; All positive 1] [1; 2]%positive [0].
+
+Definition copy_alias_compiled : compiled positive :=
+  Compiled positive [(1%positive, [1; 0]); (2%positive, [0])]
+    [copy_alias_plan] [copy_alias_plan; copy_alias_plan].
+
+Definition copy_alias_seed (cp : compiled positive) : PlanDatabase.t :=
+  let db := PlanRun.load copy_alias_program cp in
+  let db := PlanDatabase.put 1 [val 1; val 1] None db in
+  PlanDatabase.put 2 [val 2] None db.
+
+(** A copy of variable [2] must not reuse the join variable of [1]. *)
+Example copy_alias_rejected :
+  (PlanRun.check_plan copy_alias_program copy_alias_compiled,
+   PlanRun.check_plan copy_alias_program (PlanRun.plan copy_alias_program)) = (false, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The aliased join loses the match witnessed by the two stored rows. *)
+Example copy_alias_loses_match :
+  (lookups 1 (copy_alias_seed copy_alias_compiled) [[val 1; val 1]],
+   lookups 2 (copy_alias_seed copy_alias_compiled) [[val 2]],
+   length (PlanRun.jobs copy_alias_program copy_alias_compiled true
+     (copy_alias_seed copy_alias_compiled)),
+   length (PlanRun.jobs copy_alias_program (PlanRun.plan copy_alias_program) true
+     (copy_alias_seed (PlanRun.plan copy_alias_program)))) =
+  ([Some None], [Some None], 0, 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition literal_alias_program : program positive :=
+  Program positive [Decl 1 [SVal] ORel; Decl 2 [SVal] ORel; Decl 3 [] ORel]
+    [Rule positive [Fun positive 1 [Lit 1%positive] None;
+       Fun positive 2 [Var 1] None] [Put 3 [] None]].
+
+Definition literal_alias_plan : cplan positive :=
+  CPlan positive 0 (JPlan 1 [[0]; [0]; [0]])
+    [All positive 0; Const positive (val 1); All positive 1] [1]%positive [].
+
+Definition literal_alias_compiled : compiled positive :=
+  Compiled positive [(1%positive, [0]); (2%positive, [0])]
+    [literal_alias_plan] [literal_alias_plan; literal_alias_plan].
+
+Definition literal_alias_seed (cp : compiled positive) : PlanDatabase.t :=
+  let db := PlanRun.load literal_alias_program cp in
+  let db := PlanDatabase.put 1 [val 1] None db in
+  PlanDatabase.put 2 [val 2] None db.
+
+(** A literal must not reuse the join variable of a real query variable. *)
+Example literal_alias_rejected :
+  (PlanRun.check_plan literal_alias_program literal_alias_compiled,
+   PlanRun.check_plan literal_alias_program (PlanRun.plan literal_alias_program)) = (false, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The aliased constant excludes a real-variable match with a different value. *)
+Example literal_alias_loses_match :
+  (lookups 1 (literal_alias_seed literal_alias_compiled) [[val 1]],
+   lookups 2 (literal_alias_seed literal_alias_compiled) [[val 2]],
+   length (PlanRun.jobs literal_alias_program literal_alias_compiled true
+     (literal_alias_seed literal_alias_compiled)),
+   length (PlanRun.jobs literal_alias_program (PlanRun.plan literal_alias_program) true
+     (literal_alias_seed (PlanRun.plan literal_alias_program)))) =
+  ([Some None], [Some None], 0, 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition literals_alias_program : program positive :=
+  Program positive [Decl 1 [SVal] ORel; Decl 2 [SVal] ORel; Decl 3 [] ORel]
+    [Rule positive [Fun positive 1 [Lit 1%positive] None;
+       Fun positive 2 [Lit 2%positive] None] [Put 3 [] None]].
+
+Definition literals_alias_plan : cplan positive :=
+  CPlan positive 0 (JPlan 1 [[0]; [0]; [0]; [0]])
+    [All positive 0; Const positive (val 1); All positive 1; Const positive (val 2)]
+    [2]%positive [].
+
+Definition literals_alias_compiled : compiled positive :=
+  Compiled positive [(1%positive, [0]); (2%positive, [0])]
+    [literals_alias_plan] [literals_alias_plan; literals_alias_plan].
+
+Definition literals_alias_seed (cp : compiled positive) : PlanDatabase.t :=
+  let db := PlanRun.load literals_alias_program cp in
+  let db := PlanDatabase.put 1 [val 1] None db in
+  PlanDatabase.put 2 [val 2] None db.
+
+(** Even a fresh name cannot serve two different literal occurrences. *)
+Example literals_alias_rejected :
+  (PlanRun.check_plan literals_alias_program literals_alias_compiled,
+   PlanRun.check_plan literals_alias_program (PlanRun.plan literals_alias_program)) = (false, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Joining different literals through one variable discards their independent match. *)
+Example literals_alias_loses_match :
+  (lookups 1 (literals_alias_seed literals_alias_compiled) [[val 1]],
+   lookups 2 (literals_alias_seed literals_alias_compiled) [[val 2]],
+   length (PlanRun.jobs literals_alias_program literals_alias_compiled true
+     (literals_alias_seed literals_alias_compiled)),
+   length (PlanRun.jobs literals_alias_program (PlanRun.plan literals_alias_program) true
+     (literals_alias_seed (PlanRun.plan literals_alias_program)))) =
+  ([Some None], [Some None], 0, 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.

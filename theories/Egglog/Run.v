@@ -832,6 +832,55 @@ Fixpoint check_query {V : Type} (eqb : V -> V -> bool) (newok : bool) (names : p
   end.
 TimeFun check_query.
 
+(** Copy variables precede the real variables and have names above every query variable.
+    Later fresh names are the only indices that a literal may use. *)
+Fixpoint layout_fresh (bound : positive) (copies : nat) (vars : list positive)
+    (j : N) (allowed : ptrie unit) : option (ptrie unit) :=
+  match vars with
+  | [] =>
+      match copies with
+      | O => Some allowed
+      | S _ => None
+      end
+  | x :: rest =>
+      match copies with
+      | S copies' =>
+          if Pos.ltb bound x then layout_fresh bound copies' rest (N.succ j) allowed
+          else None
+      | O =>
+          let allowed' := if Pos.ltb bound x
+            then PTrieCode.set (N.succ_pos j) tt allowed else allowed in
+          layout_fresh bound 0 rest (N.succ j) allowed'
+      end
+  end.
+TimeFun layout_fresh.
+
+(** A literal consumes one fresh noncopy index, which no later literal may reuse. *)
+Fixpoint layout_literals {V : Type} (srcs : list (source V)) (cols : list (list nat))
+    (allowed : ptrie unit) : bool :=
+  match srcs, cols with
+  | [], [] => true
+  | Const _ _ :: rest, [j] :: tail =>
+      let key := N.succ_pos (nat_n j) in
+      match trie_get key allowed with
+      | Some _ => layout_literals rest tail (PTrieCode.remove key allowed)
+      | None => false
+      end
+  | All _ _ :: rest, _ :: tail | New _ _ :: rest, _ :: tail =>
+      layout_literals rest tail allowed
+  | _, _ => false
+  end.
+TimeFun layout_literals.
+
+(** Copies, query variables and literals occupy separate join variables. *)
+Definition layout_ok {V : Type} (q : list (atom V)) (vars : list positive)
+    (srcs : list (source V)) (cols : list (list nat)) : bool :=
+  match layout_fresh (query_max q 1%positive) (query_copies q 0) vars 0 Empty with
+  | Some allowed => layout_literals srcs cols allowed
+  | None => false
+  end.
+TimeFun layout_ok.
+
 (** A plan names its rule, uses every join variable and lists the post filter of its query. *)
 Definition check_cplan {V : Type} (eqb : V -> V -> bool) (newok : bool)
     (table : ptrie (N * (positive * list nat))) (i : N) (r : rule V) (c : cplan V) : bool :=
@@ -841,12 +890,14 @@ Definition check_cplan {V : Type} (eqb : V -> V -> bool) (newok : bool)
         if Nat.eqb (length vars) n then
           match var_table vars 0 Empty with
           | Some names =>
-              match check_query eqb newok names n table q 0 0 Empty 0 srcs cols [] with
-              | Some (count, [], [], expected) =>
-                  if N.eqb count (nat_n n) then nats_eqb (rev_append expected []) post
-                  else false
-              | _ => false
-              end
+              if layout_ok q vars srcs cols then
+                match check_query eqb newok names n table q 0 0 Empty 0 srcs cols [] with
+                | Some (count, [], [], expected) =>
+                    if N.eqb count (nat_n n) then nats_eqb (rev_append expected []) post
+                    else false
+                | _ => false
+                end
+              else false
           | None => false
           end
         else false
