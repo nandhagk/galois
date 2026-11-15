@@ -5309,3 +5309,677 @@ Proof.
         apply time_of_nat_le in Hheight;
         rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
 Qed.
+
+(** * Aggregate comparison credit for the replay boundary *)
+
+(** Set-bit credit never exceeds the binary representation's width. *)
+Lemma dom_positive_credit_le_size p :
+  (dom_positive_credit p <= N.of_nat (Pos.size_nat p))%N.
+Proof.
+  induction p as [p IH|p IH|]; cbn [dom_positive_credit Pos.size_nat];
+    rewrite ?Nat2N.inj_succ; lia.
+Qed.
+
+(** Binary-counter carry credit is bounded by the counter's representation width. *)
+Lemma dom_counter_credit_le_size n :
+  (dom_counter_credit n <= N.of_nat (N.size_nat n))%N.
+Proof.
+  destruct n as [|p]; cbn [dom_counter_credit N.size_nat];
+    [reflexivity|apply dom_positive_credit_le_size].
+Qed.
+
+(** Carry credit is also bounded by the counter's numeric value. *)
+Lemma dom_counter_credit_le_value n : (dom_counter_credit n <= n)%N.
+Proof.
+  eapply N.le_trans; [apply dom_counter_credit_le_size|apply dom_size_value].
+Qed.
+
+(** Doubling a positive distance extends its predecessor borrow by one bit. *)
+Lemma dom_pred_double_clock n : (0 < n)%N ->
+  (N.T_pred (N.double n) = N.T_pred n + 1)%N.
+Proof.
+  destruct n as [|[p|p|]]; intro Hpositive; [lia| | |];
+    cbn [N.double]; time_unfold N.T_pred; time_unfold Pos.T_pred_N;
+    time_unfold Pos.T_pred_double; lia.
+Qed.
+
+(** Positive equality compares the same low-bit prefix in either argument order. *)
+Lemma dom_positive_eqb_clock_sym p q : Pos.T_eqb p q = Pos.T_eqb q p.
+Proof.
+  revert q. induction p as [p IH|p IH|]; intros [q|q|];
+    time_unfold Pos.T_eqb; try reflexivity; now rewrite IH.
+Qed.
+
+(** Numeric equality has the same generated clock in either argument order. *)
+Lemma dom_eqb_clock_sym a b : N.T_eqb a b = N.T_eqb b a.
+Proof.
+  destruct a as [|p], b as [|q]; time_unfold N.T_eqb; try reflexivity.
+  now rewrite dom_positive_eqb_clock_sym.
+Qed.
+
+(** Equal low bits of unequal positives are bounded by the difference's borrow chain. *)
+Lemma dom_positive_eqb_difference : forall p q,
+  (N.pos p < N.pos q)%N ->
+  (Pos.T_eqb p q <= N.T_pred (N.pos q - N.pos p) + 1)%N.
+Proof.
+  intro p. induction p as [p IH|p IH|]; intros [q|q|] Hlt;
+    time_unfold Pos.T_eqb; try lia.
+  - assert (Hsmaller : (N.pos p < N.pos q)%N).
+    { change (N.succ (N.double (N.pos p)) < N.succ (N.double (N.pos q)))%N in Hlt.
+      rewrite !N.double_spec in Hlt. lia. }
+    assert (Hdifference : (N.pos (xI q) - N.pos (xI p) =
+      N.double (N.pos q - N.pos p))%N).
+    { change (N.succ (N.double (N.pos q)) - N.succ (N.double (N.pos p)) =
+        N.double (N.pos q - N.pos p))%N.
+      rewrite N.sub_succ, !N.double_spec. lia. }
+    rewrite Hdifference, dom_pred_double_clock by lia. specialize (IH q Hsmaller). lia.
+  - assert (Hsmaller : (N.pos p < N.pos q)%N).
+    { change (N.double (N.pos p) < N.double (N.pos q))%N in Hlt.
+      rewrite !N.double_spec in Hlt. lia. }
+    assert (Hdifference : (N.pos (xO q) - N.pos (xO p) =
+      N.double (N.pos q - N.pos p))%N).
+    { change (N.double (N.pos q) - N.double (N.pos p) =
+        N.double (N.pos q - N.pos p))%N.
+      rewrite !N.double_spec. lia. }
+    rewrite Hdifference, dom_pred_double_clock by lia. specialize (IH q Hsmaller). lia.
+Qed.
+
+(** An unequal comparison is bounded by the predecessor work of its positive difference. *)
+Lemma dom_eqb_difference a b : (a < b)%N ->
+  (N.T_eqb a b <= N.T_pred (b - a) + 2)%N.
+Proof.
+  destruct a as [|p], b as [|q]; intro Hlt; time_unfold N.T_eqb; try lia.
+  pose proof (dom_positive_eqb_difference p q Hlt). lia.
+Qed.
+
+(** Increment carries pay for the borrow chain in the successor's predecessor. *)
+Lemma dom_pred_double_succ_clock p :
+  (Pos.T_pred_double (Pos.succ p) <= Pos.T_succ p + 1)%N.
+Proof.
+  induction p as [p IH|p IH|]; cbn [Pos.succ];
+    time_unfold Pos.T_pred_double; time_unfold Pos.T_succ; time_simpl; try lia.
+  time_unfold Pos.T_pred_double. lia.
+Qed.
+
+(** The successor's predecessor work is paid by the original successor carry chain. *)
+Lemma dom_pred_succ_clock n : (N.T_pred (N.succ n) <= N.T_succ n + 2)%N.
+Proof.
+  destruct n as [|[p|p|]]; cbn [N.succ Pos.succ];
+    time_unfold N.T_pred; time_unfold Pos.T_pred_N;
+    time_unfold N.T_succ; time_unfold Pos.T_succ;
+    try pose proof (dom_pred_double_succ_clock p); time_simpl; try lia.
+  time_unfold Pos.T_pred_double. lia.
+Qed.
+
+(** The comparison credit reserves the equality scan and pays both surrounding borrow/carry runs. *)
+Definition dom_eqb_credit (boundary index : N) : N :=
+  if (index <=? boundary)%N then
+    (N.of_nat (N.size_nat boundary) + 1 + loopN_zero_bits (boundary - index))%N
+  else dom_counter_credit (index - boundary - 1)%N.
+
+(** The initial comparison reserve is at most twice the boundary width plus one. *)
+Lemma dom_eqb_credit_initial boundary :
+  (dom_eqb_credit boundary 0 <= 2 * N.of_nat (N.size_nat boundary) + 1)%N.
+Proof.
+  unfold dom_eqb_credit. assert (Hzero : (0 <=? boundary)%N = true).
+  { apply N.leb_le. lia. }
+  rewrite Hzero, N.sub_0_r. pose proof (loopN_zero_bits_le_size boundary). lia.
+Qed.
+
+(** The segment immediately after the boundary starts with zero comparison credit. *)
+Lemma dom_eqb_credit_after_boundary boundary : dom_eqb_credit boundary (N.succ boundary) = 0%N.
+Proof.
+  unfold dom_eqb_credit.
+  assert (Hnext : (N.succ boundary <=? boundary)%N = false) by (apply N.leb_gt; lia).
+  rewrite Hnext. replace (N.succ boundary - boundary - 1)%N with 0%N by lia. reflexivity.
+Qed.
+
+(** Consecutive comparisons against a fixed boundary have constant amortized cost. *)
+Lemma dom_time_eqb_credit index boundary :
+  (N.T_eqb index boundary + dom_eqb_credit boundary (N.succ index) <=
+    dom_eqb_credit boundary index + 8)%N.
+Proof.
+  unfold dom_eqb_credit.
+  destruct (N.lt_trichotomy index boundary) as [Hbefore|[Heq|Hafter]].
+  - assert (Hhere : (index <=? boundary)%N = true) by (apply N.leb_le; lia).
+    assert (Hnext : (N.succ index <=? boundary)%N = true) by (apply N.leb_le; lia).
+    rewrite Hhere, Hnext, N.sub_succ_r.
+    pose proof (dom_eqb_difference index boundary Hbefore) as Hcompare.
+    pose proof (loopN_pred_credit (boundary - index)) as Hborrow. lia.
+  - subst index.
+    assert (Hnext : (N.succ boundary <=? boundary)%N = false) by (apply N.leb_gt; lia).
+    rewrite N.leb_refl, Hnext, N.sub_diag. cbn [loopN_zero_bits].
+    assert (Hzero : (N.succ boundary - boundary - 1 = 0)%N) by lia.
+    rewrite Hzero. cbn [dom_counter_credit].
+    pose proof (N.T_eqb_le boundary boundary). lia.
+  - assert (Hhere : (index <=? boundary)%N = false) by (apply N.leb_gt; lia).
+    assert (Hnext : (N.succ index <=? boundary)%N = false) by (apply N.leb_gt; lia).
+    rewrite Hhere, Hnext.
+    set (distance := (index - boundary - 1)%N).
+    assert (Hdistance : (index - boundary = N.succ distance)%N) by (unfold distance; lia).
+    assert (Hadvance : (N.succ index - boundary - 1 = N.succ distance)%N)
+      by (unfold distance; lia).
+    rewrite Hadvance.
+    pose proof (dom_eqb_difference boundary index Hafter) as Hcompare.
+    rewrite dom_eqb_clock_sym, Hdistance in Hcompare.
+    pose proof (dom_pred_succ_clock distance) as Hborrow.
+    pose proof (dom_time_counter_succ distance) as Hcarry. lia.
+Qed.
+
+(** * Merge and sort occurrence inventories *)
+
+Definition dom_order_merge_mass (st : dom_order_merge_state) : nat :=
+  length (merge_lower st) + length (merge_upper st) + length (merge_reverse st).
+
+(** Each merge callback retains every occurrence in a pending row or its reverse accumulator. *)
+Lemma dom_order_merge_step_mass positions st :
+  match dom_order_merge_step positions st with
+  | inl next => dom_order_merge_mass next
+  | inr result => length result
+  end = dom_order_merge_mass st.
+Proof.
+  destruct st as [lower upper reverse].
+  unfold dom_order_merge_step, dom_order_merge_mass.
+  cbn [merge_lower merge_upper merge_reverse].
+  destruct lower as [|x lower], upper as [|y upper].
+  - rewrite rev_append_rev, length_app, length_rev. cbn [length]. lia.
+  - rewrite rev_append_rev, length_app, length_rev. cbn [length]. lia.
+  - rewrite rev_append_rev, length_app, length_rev. cbn [length]. lia.
+  - destruct (N.leb (dom_anchor_start positions x) (dom_anchor_start positions y));
+      cbn [merge_lower merge_upper merge_reverse length]; lia.
+Qed.
+
+(** Merge preserves total length even if its explicit fuel is exhausted. *)
+Lemma dom_order_merge_length positions lower upper :
+  length (dom_order_merge positions lower upper) = length lower + length upper.
+Proof.
+  set (total := length lower + length upper).
+  pose proof (dom_lt_loop_invariant (dom_order_merge_step positions)
+    (fun st => dom_order_merge_mass st = total) (fun result => length result = total)
+    (N.of_nat (length lower + length upper + 1)) (DomOrderMergeState lower upper [])) as Hloop.
+  specialize (Hloop ltac:(intros st next Hmass Hstep;
+    pose proof (dom_order_merge_step_mass positions st) as Hnext;
+    rewrite Hstep in Hnext; exact (eq_trans Hnext Hmass))).
+  specialize (Hloop ltac:(intros st result Hmass Hstep;
+    pose proof (dom_order_merge_step_mass positions st) as Hresult;
+    rewrite Hstep in Hresult; exact (eq_trans Hresult Hmass))).
+  assert (Hinitial : dom_order_merge_mass (DomOrderMergeState lower upper []) = total).
+  { unfold dom_order_merge_mass, total. cbn [merge_lower merge_upper merge_reverse length]. lia. }
+  specialize (Hloop Hinitial).
+  unfold dom_order_merge.
+  destruct (loopN (dom_order_merge_step positions) (N.of_nat (length lower + length upper + 1))
+    (DomOrderMergeState lower upper [])) as [st|result].
+  - rewrite rev_append_rev, !length_app, length_rev.
+    unfold dom_order_merge_mass in Hloop. lia.
+  - exact Hloop.
+Qed.
+
+(** Every explicit recursion depth of the merge sort preserves the input length. *)
+Lemma dom_order_sort_length fuel positions xs :
+  length (dom_order_sort fuel positions xs) = length xs.
+Proof.
+  revert xs. induction fuel as [|fuel IH]; intro xs; [reflexivity|].
+  destruct xs as [|x [|y rest]]; [reflexivity|reflexivity|].
+  cbn [dom_order_sort].
+  pose proof (dom_order_split_length (dom_order_half (length (x :: y :: rest)))
+    (x :: y :: rest)) as Hlength.
+  destruct (dom_order_split (dom_order_half (length (x :: y :: rest))) (x :: y :: rest))
+    as [lower upper].
+  cbn [fst snd] in Hlength |- *.
+  rewrite dom_order_merge_length, !IH. exact Hlength.
+Qed.
+
+(** Merging retains every element predicate through both pending lists and its accumulator. *)
+Lemma dom_order_merge_step_forall (P : N -> Prop) positions st :
+  Forall P (merge_lower st) -> Forall P (merge_upper st) -> Forall P (merge_reverse st) ->
+  match dom_order_merge_step positions st with
+  | inl next =>
+    Forall P (merge_lower next) /\ Forall P (merge_upper next) /\ Forall P (merge_reverse next)
+  | inr result => Forall P result
+  end.
+Proof.
+  destruct st as [lower upper reverse]. intros Hlower Hupper Hreverse.
+  cbn [merge_lower merge_upper merge_reverse] in *.
+  unfold dom_order_merge_step. cbn [merge_lower merge_upper merge_reverse].
+  destruct lower as [|x lower], upper as [|y upper].
+  - rewrite rev_append_rev. apply Forall_app. split; [now apply Forall_rev|exact Hupper].
+  - rewrite rev_append_rev. apply Forall_app. split; [now apply Forall_rev|exact Hupper].
+  - rewrite rev_append_rev. apply Forall_app. split; [now apply Forall_rev|exact Hlower].
+  - inversion Hlower as [|head tail Hx Hlower_tail]; subst head tail.
+    inversion Hupper as [|head tail Hy Hupper_tail]; subst head tail.
+    destruct (N.leb (dom_anchor_start positions x) (dom_anchor_start positions y));
+      cbn [merge_lower merge_upper merge_reverse].
+    + split; [exact Hlower_tail|]. split; [exact Hupper|]. now constructor.
+    + split; [exact Hlower|]. split; [exact Hupper_tail|]. now constructor.
+Qed.
+
+(** A complete or partial merge contains only elements satisfying its input predicate. *)
+Lemma dom_order_merge_forall (P : N -> Prop) positions lower upper :
+  Forall P lower -> Forall P upper -> Forall P (dom_order_merge positions lower upper).
+Proof.
+  intros Hlower Hupper.
+  pose proof (dom_lt_loop_invariant (dom_order_merge_step positions)
+    (fun st => Forall P (merge_lower st) /\ Forall P (merge_upper st) /\ Forall P (merge_reverse st))
+    (Forall P) (N.of_nat (length lower + length upper + 1))
+    (DomOrderMergeState lower upper [])) as Hloop.
+  specialize (Hloop ltac:(intros st next [Hl [Hu Hr]] Hstep;
+    pose proof (dom_order_merge_step_forall P positions st Hl Hu Hr) as Hnext;
+    rewrite Hstep in Hnext; exact Hnext)).
+  specialize (Hloop ltac:(intros st result [Hl [Hu Hr]] Hstep;
+    pose proof (dom_order_merge_step_forall P positions st Hl Hu Hr) as Hresult;
+    rewrite Hstep in Hresult; exact Hresult)
+    (conj Hlower (conj Hupper (Forall_nil P)))).
+  unfold dom_order_merge.
+  destruct (loopN (dom_order_merge_step positions) (N.of_nat (length lower + length upper + 1))
+    (DomOrderMergeState lower upper [])) as [st|result]; [|exact Hloop].
+  destruct Hloop as [Hl [Hu Hr]]. rewrite rev_append_rev.
+  apply Forall_app. split; [now apply Forall_rev|now apply Forall_app].
+Qed.
+
+(** Every explicit depth of sorting preserves the input element predicate. *)
+Lemma dom_order_sort_forall (P : N -> Prop) fuel positions xs :
+  Forall P xs -> Forall P (dom_order_sort fuel positions xs).
+Proof.
+  revert xs. induction fuel as [|fuel IH]; intro xs; [exact (fun H => H)|].
+  destruct xs as [|x [|y rest]]; intro Hxs; try exact Hxs.
+  cbn [dom_order_sort].
+  pose proof (dom_order_split_forall P (dom_order_half (length (x :: y :: rest)))
+    (x :: y :: rest) Hxs) as Hparts.
+  destruct (dom_order_split (dom_order_half (length (x :: y :: rest))) (x :: y :: rest))
+    as [lower upper].
+  destruct Hparts as [Hlower Hupper]. apply dom_order_merge_forall; now apply IH.
+Qed.
+
+
+(** * Merge callback and loop clocks *)
+
+(** Reading a start position spends only the encoded numeric key width. *)
+Lemma dom_order_anchor_start_clock width positions vertex :
+  N.size_nat vertex <= width ->
+  (T_dom_anchor_start positions vertex <= 16 * N.of_nat (width + 1))%N.
+Proof.
+  intro Hvertex.
+  pose proof (dom_lt_time_key vertex) as Hkey.
+  pose proof (dom_lt_key_width vertex) as Hbits.
+  unfold T_dom_anchor_start. time_simpl. rewrite PTrieT.trie_get_clock.
+  destruct (trie_get (dom_lt_key vertex) positions) as [[lo hi]|];
+    time_simpl; rewrite !Nat2N.inj_add in *; lia.
+Qed.
+
+Definition dom_order_merge_pending (state : dom_order_merge_state) : nat :=
+  length (merge_lower state) + length (merge_upper state).
+
+Definition dom_order_merge_operand width positions vertex : Prop :=
+  N.size_nat vertex <= width /\ N.size_nat (dom_anchor_start positions vertex) <= width.
+
+(** A continuing merge transition retires exactly one pending occurrence. *)
+Lemma dom_order_merge_pending_step positions state next :
+  dom_order_merge_step positions state = inl next ->
+  S (dom_order_merge_pending next) = dom_order_merge_pending state.
+Proof.
+  destruct state as [lower upper reverse].
+  unfold dom_order_merge_step. cbn [merge_lower merge_upper merge_reverse].
+  destruct lower as [|left lower], upper as [|right upper]; intro Hnext;
+    try discriminate Hnext.
+  destruct (N.leb (dom_anchor_start positions left) (dom_anchor_start positions right));
+    injection Hnext as <-; unfold dom_order_merge_pending;
+    cbn [merge_lower merge_upper length]; lia.
+Qed.
+
+(** A continuing callback performs two start lookups and one bounded comparison. *)
+Lemma dom_order_merge_go_clock width positions state next :
+  Forall (dom_order_merge_operand width positions) (merge_lower state) ->
+  Forall (dom_order_merge_operand width positions) (merge_upper state) ->
+  dom_order_merge_step positions state = inl next ->
+  (T_dom_order_merge_step positions state <= 128 * N.of_nat (width + 1))%N.
+Proof.
+  destruct state as [lower upper reverse].
+  cbn [merge_lower merge_upper]. intros Hlower Hupper Hnext.
+  unfold dom_order_merge_step in Hnext.
+  cbn [merge_lower merge_upper merge_reverse] in Hnext.
+  destruct lower as [|left lower], upper as [|right upper]; try discriminate Hnext.
+  inversion Hlower as [|head tail Hleft Hlower_tail]; subst head tail.
+  inversion Hupper as [|head tail Hright Hupper_tail]; subst head tail.
+  destruct Hleft as [Hleft_key Hleft_start], Hright as [Hright_key Hright_start].
+  pose proof (dom_order_anchor_start_clock width positions left Hleft_key) as Hleft_clock.
+  pose proof (dom_order_anchor_start_clock width positions right Hright_key) as Hright_clock.
+  pose proof (N.T_leb_le (dom_anchor_start positions left)
+    (dom_anchor_start positions right)) as Hcompare.
+  unfold T_dom_order_merge_step. cbn [merge_lower merge_upper merge_reverse].
+  destruct (N.leb (dom_anchor_start positions left) (dom_anchor_start positions right));
+    time_simpl; clear -Hleft_start Hleft_clock Hright_clock Hcompare;
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+
+(** A terminal callback reverses the accumulated prefix once. *)
+Lemma dom_order_merge_stop_clock positions state result :
+  dom_order_merge_step positions state = inr result ->
+  (T_dom_order_merge_step positions state <= N.of_nat (length (merge_reverse state)) + 16)%N.
+Proof.
+  destruct state as [lower upper reverse].
+  unfold dom_order_merge_step. cbn [merge_lower merge_upper merge_reverse].
+  destruct lower as [|left lower], upper as [|right upper]; intro Hstop.
+  - pose proof (List.T_rev_append_le reverse []) as Hreverse.
+    unfold T_dom_order_merge_step. cbn [merge_lower merge_upper merge_reverse]. time_simpl.
+    clear -Hreverse. lia.
+  - pose proof (List.T_rev_append_le reverse (right :: upper)) as Hreverse.
+    unfold T_dom_order_merge_step. cbn [merge_lower merge_upper merge_reverse]. time_simpl.
+    clear -Hreverse. lia.
+  - pose proof (List.T_rev_append_le reverse (left :: lower)) as Hreverse.
+    unfold T_dom_order_merge_step. cbn [merge_lower merge_upper merge_reverse]. time_simpl.
+    clear -Hreverse. lia.
+  - destruct (N.leb (dom_anchor_start positions left) (dom_anchor_start positions right));
+      discriminate Hstop.
+Qed.
+
+(** One strict unit of potential pays a continuing callback and the retired cell. *)
+Lemma dom_order_merge_credit_step cost unit before after :
+  (cost <= unit)%N -> (before = after + 1)%N ->
+  (cost + (unit + 1) * after < (unit + 1) * before)%N.
+Proof.
+  intros Hcost Hcount. rewrite Hcount, N.mul_add_distr_l, N.mul_1_r. lia.
+Qed.
+
+(** A common row budget isolates the loop's width and occurrence products. *)
+Lemma dom_order_merge_loop_budget coefficient width count fuel_width clock :
+  (1 <= width)%N -> (fuel_width <= count + 1)%N ->
+  (clock <= coefficient *
+    ((128 * width + 1) * count + (count + 16) + fuel_width + 1))%N ->
+  (clock <= 256 * (coefficient + 1) * ((count + 1) * width))%N.
+Proof.
+  intros Hwidth Hfuel Hclock.
+  set (budget := ((count + 1) * width)%N).
+  assert (Hcount : (count + 1 <= budget)%N).
+  { unfold budget. replace (count + 1)%N with ((count + 1) * 1)%N at 1 by ring.
+    now apply N.mul_le_mono_l. }
+  assert (Hpositive : (1 <= budget)%N) by lia.
+  assert (Hproduct : (count * width <= budget)%N).
+  { unfold budget. apply N.mul_le_mono_r. lia. }
+  assert (Hsteps : ((128 * width + 1) * count <= 129 * budget)%N).
+  { replace ((128 * width + 1) * count)%N with
+      (128 * (count * width) + count)%N by ring.
+    eapply N.le_trans with (128 * budget + budget)%N.
+    - apply N.add_le_mono; [now apply N.mul_le_mono_l|lia].
+    - lia. }
+  assert (Hinside : (((128 * width + 1) * count + (count + 16) + fuel_width + 1)
+    <= 148 * budget)%N) by lia.
+  eapply N.le_trans; [exact Hclock|].
+  eapply N.le_trans with (coefficient * (148 * budget))%N.
+  - now apply N.mul_le_mono_l.
+  - replace (coefficient * (148 * budget))%N with ((148 * coefficient) * budget)%N by ring.
+    apply N.mul_le_mono_r. lia.
+Qed.
+
+(** Setup and fallback work are linear once the loop clock is paid. *)
+Lemma dom_order_merge_total_budget coefficient budget clock loop_clock :
+  (clock <= loop_clock + 64 * budget)%N ->
+  (loop_clock <= 256 * (coefficient + 1) * budget)%N ->
+  (clock <= 1024 * (coefficient + 1) * budget)%N.
+Proof.
+  intros Hclock Hloop. eapply N.le_trans; [exact Hclock|].
+  eapply N.le_trans with (256 * (coefficient + 1) * budget + 64 * budget)%N.
+  - now apply N.add_le_mono_r.
+  - replace (256 * (coefficient + 1) * budget + 64 * budget)%N with
+      ((256 * (coefficient + 1) + 64) * budget)%N by ring.
+    apply N.mul_le_mono_r. lia.
+Qed.
+
+(** The merge loop spends one bounded callback per retired input occurrence. *)
+Lemma dom_order_merge_loop_clock width positions lower upper :
+  Forall (dom_order_merge_operand width positions) lower ->
+  Forall (dom_order_merge_operand width positions) upper ->
+  (T_loopN (dom_order_merge_step positions) (T_dom_order_merge_step positions)
+    (N.of_nat (length lower + length upper + 1)) (DomOrderMergeState lower upper []) <=
+    256 * (c_loopN + 1) * N.of_nat ((length lower + length upper + 1) * (width + 1)))%N.
+Proof.
+  intros Hlower Hupper.
+  set (total := length lower + length upper).
+  set (Inv := fun state => dom_order_merge_mass state = total /\
+    Forall (dom_order_merge_operand width positions) (merge_lower state) /\
+    Forall (dom_order_merge_operand width positions) (merge_upper state) /\
+    Forall (dom_order_merge_operand width positions) (merge_reverse state)).
+  set (unit := (128 * N.of_nat (width + 1))%N).
+  set (credit := fun state => ((unit + 1) * N.of_nat (dom_order_merge_pending state))%N).
+  assert (Hgo : forall state next, Inv state ->
+    dom_order_merge_step positions state = inl next ->
+    Inv next /\ (T_dom_order_merge_step positions state + credit next < credit state)%N).
+  { intros state next [Hmass [Hl [Hu Hr]]] Hstep. split.
+    - unfold Inv. split.
+      + pose proof (dom_order_merge_step_mass positions state) as Hnext.
+        rewrite Hstep in Hnext. exact (eq_trans Hnext Hmass).
+      + pose proof (dom_order_merge_step_forall
+          (dom_order_merge_operand width positions) positions state Hl Hu Hr) as Hnext.
+        now rewrite Hstep in Hnext.
+    - pose proof (dom_order_merge_go_clock width positions state next Hl Hu Hstep) as Hclock.
+      pose proof (dom_order_merge_pending_step positions state next Hstep) as Hcount.
+      apply (f_equal N.of_nat) in Hcount. rewrite Nat2N.inj_succ in Hcount.
+      unfold credit. apply dom_order_merge_credit_step; [exact Hclock|].
+      clear -Hcount. lia. }
+  assert (Hstop : forall state result, Inv state ->
+    dom_order_merge_step positions state = inr result ->
+    (T_dom_order_merge_step positions state <= N.of_nat total + 16)%N).
+  { intros state result [Hmass Hwidths] Hstep.
+    pose proof (dom_order_merge_stop_clock positions state result Hstep) as Hclock.
+    eapply N.le_trans; [exact Hclock|]. apply N.add_le_mono_r.
+    apply time_of_nat_le. unfold dom_order_merge_mass in Hmass. lia. }
+  assert (Hinitial : Inv (DomOrderMergeState lower upper [])).
+  { unfold Inv, dom_order_merge_mass, total.
+    cbn [merge_lower merge_upper merge_reverse length].
+    split; [lia|]. split; [exact Hlower|]. split; [exact Hupper|constructor]. }
+  pose proof (T_loopN_le dom_order_merge_state (list N)
+    (dom_order_merge_step positions) (T_dom_order_merge_step positions)
+    Inv credit (N.of_nat total + 16)%N (N.of_nat (total + 1))
+    (DomOrderMergeState lower upper []) Hgo Hstop Hinitial) as Hloop.
+  change (T_loopN (dom_order_merge_step positions) (T_dom_order_merge_step positions)
+    (N.of_nat (total + 1)) (DomOrderMergeState lower upper []) <=
+    c_loopN * (((128 * N.of_nat (width + 1) + 1) * N.of_nat total) +
+      (N.of_nat total + 16) + N.of_nat (N.size_nat (N.of_nat (total + 1))) + 1))%N in Hloop.
+  pose proof (dom_size_value (N.of_nat (total + 1))) as Hfuel.
+  assert (Hfuel_width : (N.of_nat (N.size_nat (N.of_nat (total + 1))) <=
+    N.of_nat total + 1)%N).
+  { eapply N.le_trans; [exact Hfuel|]. rewrite Nat2N.inj_add. reflexivity. }
+  fold total. rewrite Nat2N.inj_mul.
+  replace (N.of_nat (total + 1) * N.of_nat (width + 1))%N with
+    ((N.of_nat total + 1) * N.of_nat (width + 1))%N by
+    (rewrite (Nat2N.inj_add total 1); reflexivity).
+  eapply dom_order_merge_loop_budget with
+    (fuel_width := N.of_nat (N.size_nat (N.of_nat (total + 1))));
+    [clear -width; rewrite Nat2N.inj_add; lia|exact Hfuel_width|exact Hloop].
+Qed.
+
+(** Setup and the possible exhausted-loop fallback do only linear list work. *)
+Lemma dom_order_merge_overhead positions lower upper :
+  (T_dom_order_merge positions lower upper <=
+    T_loopN (dom_order_merge_step positions) (T_dom_order_merge_step positions)
+      (N.of_nat (length lower + length upper + 1)) (DomOrderMergeState lower upper []) +
+    64 * N.of_nat (length lower + length upper + 1))%N.
+Proof.
+  set (total := length lower + length upper).
+  set (initial := DomOrderMergeState lower upper []).
+  set (fuel := N.of_nat (total + 1)).
+  pose proof (dom_lt_loop_invariant (dom_order_merge_step positions)
+    (fun state => dom_order_merge_mass state = total)
+    (fun result => length result = total) fuel initial) as Hvalue.
+  specialize (Hvalue ltac:(intros state next Hmass Hstep;
+    pose proof (dom_order_merge_step_mass positions state) as Hnext;
+    rewrite Hstep in Hnext; exact (eq_trans Hnext Hmass))).
+  specialize (Hvalue ltac:(intros state result Hmass Hstep;
+    pose proof (dom_order_merge_step_mass positions state) as Hnext;
+    rewrite Hstep in Hnext; exact (eq_trans Hnext Hmass))).
+  assert (Hinitial : dom_order_merge_mass initial = total).
+  { unfold initial, total, dom_order_merge_mass.
+    cbn [merge_lower merge_upper merge_reverse length]. lia. }
+  specialize (Hvalue Hinitial).
+  pose proof (Datatypes.T_length_le lower) as Hlower.
+  pose proof (Datatypes.T_length_le upper) as Hupper.
+  pose proof (Nat.T_add_le (length lower) (length upper)) as Hadd.
+  pose proof (Nat.T_add_le total 1) as Hadd_one.
+  pose proof (dom_time_of_nat (total + 1)) as Hconvert.
+  unfold T_dom_order_merge. time_simpl. fold total. fold fuel. fold initial.
+  change (fun state : dom_order_merge_state => T_dom_order_merge_step positions state)
+    with (T_dom_order_merge_step positions).
+  set (clock := T_loopN (dom_order_merge_step positions) (T_dom_order_merge_step positions)
+    fuel initial).
+  fold clock. clearbody clock.
+  destruct (loopN (dom_order_merge_step positions) fuel initial) as [state|result].
+  - pose proof (Datatypes.T_app_le (merge_lower state) (merge_upper state)) as Happ.
+    pose proof (List.T_rev_append_le (merge_reverse state)
+      (merge_lower state ++ merge_upper state)) as Hreverse.
+    time_simpl. unfold dom_order_merge_mass in Hvalue.
+    clear -Hvalue Hlower Hupper Hadd Hadd_one Hconvert Happ Hreverse.
+    unfold total in *. rewrite !Nat2N.inj_add in *. lia.
+  - time_simpl. clear -Hlower Hupper Hadd Hadd_one Hconvert.
+    unfold total in *. rewrite !Nat2N.inj_add in *. lia.
+Qed.
+
+Definition dom_order_merge_coefficient : N := (1024 * (c_loopN + 1))%N.
+
+(** Full merge time is linear in the row lengths and the bounded operand width. *)
+Lemma dom_order_merge_time width positions lower upper :
+  Forall (dom_order_merge_operand width positions) lower ->
+  Forall (dom_order_merge_operand width positions) upper ->
+  (T_dom_order_merge positions lower upper <= dom_order_merge_coefficient *
+    N.of_nat ((length lower + length upper + 1) * (width + 1)))%N.
+Proof.
+  intros Hlower Hupper.
+  pose proof (dom_order_merge_loop_clock width positions lower upper Hlower Hupper) as Hloop.
+  pose proof (dom_order_merge_overhead positions lower upper) as Hraw.
+  assert (Hsize : (N.of_nat (length lower + length upper + 1) <=
+    N.of_nat ((length lower + length upper + 1) * (width + 1)))%N).
+  { apply time_of_nat_le.
+    replace (length lower + length upper + 1) with
+      ((length lower + length upper + 1) * 1) at 1 by lia.
+    apply Nat.mul_le_mono_l. lia. }
+  unfold dom_order_merge_coefficient.
+  eapply dom_order_merge_total_budget with
+    (loop_clock := T_loopN (dom_order_merge_step positions) (T_dom_order_merge_step positions)
+      (N.of_nat (length lower + length upper + 1)) (DomOrderMergeState lower upper [])).
+  - eapply N.le_trans; [exact Hraw|]. apply N.add_le_mono_l.
+    now apply N.mul_le_mono_l.
+  - exact Hloop.
+Qed.
+
+(** * Sorting clocks with a per-occurrence recursion budget *)
+
+(** The two recursive rows divide their parent mass without duplicating its budget. *)
+Lemma dom_order_sort_children_budget (unit depth lower upper total left_work right_work : N) :
+  (lower + upper = total)%N ->
+  (left_work <= unit * (depth * lower) + 1)%N ->
+  (right_work <= unit * (depth * upper) + 1)%N ->
+  (left_work + right_work <= unit * (depth * total) + 2)%N.
+Proof.
+  intros Hspan Hleft Hright.
+  replace (unit * (depth * total) + 2)%N with
+    ((unit * (depth * lower) + 1) + (unit * (depth * upper) + 1))%N by
+    (rewrite <- Hspan; ring).
+  now apply N.add_le_mono.
+Qed.
+
+(** A nontrivial row pays splitting, merging and fixed wrappers from its own cells. *)
+Lemma dom_order_sort_step_budget coefficient width size overhead merge_clock :
+  (1 <= width)%N -> (2 <= size)%N ->
+  (overhead <= 4 * size + 8)%N ->
+  (merge_clock <= coefficient * ((size + 1) * width))%N ->
+  (overhead + merge_clock + 32 <= 64 * (coefficient + 1) * width * size)%N.
+Proof.
+  intros Hwidth Hsize Hoverhead Hmerge.
+  set (budget := (width * size)%N).
+  assert (Hcells : (size <= budget)%N).
+  { unfold budget. replace size with (1 * size)%N at 1 by ring.
+    now apply N.mul_le_mono_r. }
+  assert (Hpositive : (1 <= budget)%N) by lia.
+  assert (Hspan : ((size + 1) * width <= 2 * budget)%N).
+  { unfold budget. replace (2 * (width * size))%N with ((2 * size) * width)%N by ring.
+    apply N.mul_le_mono_r. lia. }
+  assert (Hmerge_bound : (merge_clock <= (2 * coefficient) * budget)%N).
+  { eapply N.le_trans; [exact Hmerge|].
+    replace ((2 * coefficient) * budget)%N with (coefficient * (2 * budget))%N by ring.
+    now apply N.mul_le_mono_l. }
+  replace (64 * (coefficient + 1) * width * size)%N with
+    (64 * (coefficient + 1) * budget)%N by (unfold budget; ring).
+  eapply N.le_trans with ((44 + 2 * coefficient) * budget)%N.
+  - replace ((44 + 2 * coefficient) * budget)%N with
+      (44 * budget + (2 * coefficient) * budget)%N by ring. lia.
+  - apply N.mul_le_mono_r. lia.
+Qed.
+
+(** The generated sorting wrapper exposes its two recursive calls and one merge. *)
+Lemma dom_order_sort_wrapper_clock fuel positions x y rest lower upper :
+  dom_order_split (dom_order_half (length (x :: y :: rest))) (x :: y :: rest) =
+    (lower, upper) ->
+  (T_dom_order_sort (S fuel) positions (x :: y :: rest) <=
+    16 + Datatypes.T_length (x :: y :: rest) +
+    T_dom_order_half (length (x :: y :: rest)) +
+    T_dom_order_split (dom_order_half (length (x :: y :: rest))) (x :: y :: rest) +
+    T_dom_order_sort fuel positions lower + T_dom_order_sort fuel positions upper +
+    T_dom_order_merge positions (dom_order_sort fuel positions lower)
+      (dom_order_sort fuel positions upper))%N.
+Proof.
+  intro Hsplit. time_unfold T_dom_order_sort. rewrite Hsplit. time_simpl. lia.
+Qed.
+
+Definition dom_order_sort_coefficient : N := (64 * (dom_order_merge_coefficient + 1))%N.
+
+(** Sorting charges a linear row budget per explicit level and one terminal administrative unit. *)
+Lemma dom_order_sort_time width fuel positions xs :
+  Forall (dom_order_merge_operand width positions) xs ->
+  (T_dom_order_sort fuel positions xs <=
+    dom_order_sort_coefficient * N.of_nat (width + 1) *
+      N.of_nat ((fuel + 1) * length xs) + 1)%N.
+Proof.
+  set (unit := (dom_order_sort_coefficient * N.of_nat (width + 1))%N).
+  change (Forall (dom_order_merge_operand width positions) xs ->
+    (T_dom_order_sort fuel positions xs <= unit * N.of_nat ((fuel + 1) * length xs) + 1)%N).
+  revert xs. induction fuel as [|fuel IH]; intros xs Hxs.
+  - time_unfold T_dom_order_sort. time_simpl. lia.
+  - destruct xs as [|x [|y rest]].
+    + time_unfold T_dom_order_sort. time_simpl. lia.
+    + time_unfold T_dom_order_sort. time_simpl. lia.
+    + pose proof (dom_order_split_length (dom_order_half (length (x :: y :: rest)))
+        (x :: y :: rest)) as Hlength.
+      pose proof (dom_order_split_forall (dom_order_merge_operand width positions)
+        (dom_order_half (length (x :: y :: rest))) (x :: y :: rest) Hxs) as Hparts.
+      destruct (dom_order_split (dom_order_half (length (x :: y :: rest)))
+        (x :: y :: rest)) as [lower upper] eqn:Hsplit.
+      cbn [fst snd] in Hlength, Hparts. destruct Hparts as [Hlower Hupper].
+      pose proof (IH lower Hlower) as Hlower_time.
+      pose proof (IH upper Hupper) as Hupper_time.
+      pose proof (dom_order_sort_forall (dom_order_merge_operand width positions)
+        fuel positions lower Hlower) as Hlower_sorted.
+      pose proof (dom_order_sort_forall (dom_order_merge_operand width positions)
+        fuel positions upper Hupper) as Hupper_sorted.
+      pose proof (dom_order_merge_time width positions (dom_order_sort fuel positions lower)
+        (dom_order_sort fuel positions upper) Hlower_sorted Hupper_sorted) as Hmerge.
+      rewrite !dom_order_sort_length, Hlength in Hmerge.
+      pose proof (Datatypes.T_length_le (x :: y :: rest)) as Hlength_time.
+      pose proof (dom_order_half_time (length (x :: y :: rest))) as Hhalf.
+      pose proof (dom_order_split_time (dom_order_half (length (x :: y :: rest)))
+        (x :: y :: rest)) as Hsplit_time.
+      assert (Hspan : (N.of_nat (length lower) + N.of_nat (length upper) =
+        N.of_nat (length (x :: y :: rest)))%N).
+      { rewrite <- Nat2N.inj_add, Hlength. reflexivity. }
+      assert (Hrecursive : (T_dom_order_sort fuel positions lower +
+        T_dom_order_sort fuel positions upper <=
+        unit * ((N.of_nat fuel + 1) * N.of_nat (length (x :: y :: rest))) + 2)%N).
+      { rewrite !Nat2N.inj_mul, !Nat2N.inj_add in Hlower_time, Hupper_time.
+        eapply dom_order_sort_children_budget;
+          [exact Hspan|exact Hlower_time|exact Hupper_time]. }
+      assert (Hoverhead : (Datatypes.T_length (x :: y :: rest) +
+        T_dom_order_half (length (x :: y :: rest)) +
+        T_dom_order_split (dom_order_half (length (x :: y :: rest))) (x :: y :: rest) +
+        T_dom_order_merge positions (dom_order_sort fuel positions lower)
+          (dom_order_sort fuel positions upper) + 32 <=
+        unit * N.of_nat (length (x :: y :: rest)))%N).
+      { unfold unit, dom_order_sort_coefficient.
+        eapply dom_order_sort_step_budget.
+        - clear -width. rewrite Nat2N.inj_add. lia.
+        - cbn [length]. lia.
+        - clear -Hlength_time Hhalf Hsplit_time. lia.
+        - rewrite Nat2N.inj_mul, Nat2N.inj_add in Hmerge. exact Hmerge. }
+      pose proof (dom_order_sort_wrapper_clock fuel positions x y rest lower upper Hsplit) as Hraw.
+      rewrite Nat2N.inj_mul, Nat2N.inj_add, Nat2N.inj_succ.
+      replace (unit * ((N.succ (N.of_nat fuel) + 1) * N.of_nat (length (x :: y :: rest))))%N
+        with (unit * ((N.of_nat fuel + 1) * N.of_nat (length (x :: y :: rest))) +
+          unit * N.of_nat (length (x :: y :: rest)))%N by (rewrite <- N.add_1_r; ring).
+      clear -Hraw Hrecursive Hoverhead. lia.
+Qed.
