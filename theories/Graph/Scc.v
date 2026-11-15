@@ -1713,17 +1713,8 @@ Transparent search_trace.
 Module SccT <: SCC_ALL.
   Include Scc.
   TimeFun run.
-  Definition c_scc : N := 1%N. (* STUB *)
-
-  Lemma T_run_le : forall g,
-    (T_run g <= c_scc * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma run_bigO : bigO (fun _ => True)
-    (fun g => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1))) T_run.
-  Proof. Admitted. (* STUB *)
+  Definition c_scc : N :=
+    (128 * (search_trace_coefficient + 65536 + 16384))%N.
 
   Definition tarjan_initial := tarjan_initial.
   Definition tarjan_enter := TarjanVisitor.enter.
@@ -2214,5 +2205,36 @@ Module SccT <: SCC_ALL.
   Lemma T6_public : forall g,
     (T_run g <= c_scc * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g. pose proof (T5_wrapper g) as Hwrapper.
+    pose proof (T3_fold g) as Hfold. pose proof (T4_trace g) as Htrace.
+    pose proof (scc_trace_size g) as Hsize.
+    change (length (tarjan_trace g) <= 2 * graph_n (base g) + graph_e (base g)) in Hsize.
+    assert (Hresult : (N.of_nat (length (tarjan_emitted (prefix_state (tarjan_trace g)))) <=
+        potential (graph_width (base g)) (prefix_state (tarjan_trace g)))%N).
+    { unfold potential, k_result. nia. }
+    set (events := tarjan_trace g) in *. clearbody events.
+    set (result := prefix_state events) in *. clearbody result.
+    assert (Hlength_product :
+      (N.of_nat (length events + 1) * N.of_nat (graph_width (base g) + 1) <=
+        2 * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+          N.of_nat (graph_width (base g) + 1))%N).
+    { apply N.mul_le_mono_r. lia. }
+    unfold c_scc, k_search, k_callback, k_result in *.
+    nia.
+  Qed.
+
+  Lemma T_run_le : forall g,
+    (T_run g <= c_scc * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+  Proof. exact T6_public. Qed.
+
+  Lemma run_bigO : bigO (fun _ => True)
+    (fun g => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))) T_run.
+  Proof.
+    exists c_scc. intros g _.
+    eapply N.le_trans; [apply T_run_le|].
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 End SccT.
