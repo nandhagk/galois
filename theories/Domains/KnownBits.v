@@ -5,7 +5,7 @@
     Builds on: KnownBitsSig, WordSig and the bit-vector operations. *)
 
 From Stdlib Require Import ZArith NArith List Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Loop.
 From Galois.Bits Require Import Word Op Fun Testbit Arith.
 From Galois.Lattice Require Import LatticeSig.
@@ -360,6 +360,33 @@ Inductive tnum_runs {S R : Type} (step : S -> S + R) : nat -> S -> S + R -> Prop
   | tnum_runs_stop n s r : step s = inr r -> tnum_runs step (Datatypes.S n) s (inr r)
   | tnum_runs_next n s s' result : step s = inl s' -> tnum_runs step n s' result ->
       tnum_runs step (Datatypes.S n) s result.
+
+(** The binary-fuel driver has the same finite-step trace for every accessibility proof. *)
+Local Lemma tnum_loop_runs_acc {S R : Type} (step : S -> S + R) :
+  forall fs (H : Acc loopN_lt fs),
+    tnum_runs step (N.to_nat (fst fs)) (snd fs)
+      (loop loopN_lt (loopN_step step) fs H).
+Proof.
+  intros fs H. induction H as [[fuel s] Hacc IH] using Acc_ind_dep.
+  cbn [fst snd]. destruct fuel as [|p].
+  - cbn [loop loopN_step]. constructor.
+  - assert (Hfuel : N.to_nat (N.pos p) =
+      Datatypes.S (N.to_nat (N.pred (N.pos p)))).
+    { rewrite <- N2Nat.inj_succ, N.succ_pred by discriminate. reflexivity. }
+    rewrite Hfuel at 1. cbn [loop loopN_step Acc_inv].
+    destruct (step s) as [next|r] eqn:Hstep.
+    + eapply tnum_runs_next; [exact Hstep|].
+      apply (IH (N.pred (N.pos p), next)).
+    + apply tnum_runs_stop. exact Hstep.
+Qed.
+
+(** A pure binary-fuel execution supplies a trace for the multiplication invariants. *)
+Lemma tnum_loop_runs : forall S R (step : S -> S + R) fuel s,
+  tnum_runs step (N.to_nat fuel) s (loopN step fuel s).
+Proof.
+  intros S R step fuel s. unfold loopN.
+  apply (tnum_loop_runs_acc step (fuel, s)).
+Qed.
 
 Module KnownBitsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG) <: KNOWN_BITS_OPS L C.
   Definition p := tnum.
@@ -1814,10 +1841,39 @@ Qed.
 Theorem tnum_mul_stages_sound : forall w a b x y,
   is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
   tnum_gamma w (tnum_mul_stages w a b) (wmul w x y).
-Proof. Admitted. (* CONVERT: tnum_mul_stages_sound: The reference tnum_mul_stages_c was not found in the current *)
+Proof.
+  intros w a b x y Hx Hy Ha Hb. unfold tnum_mul_stages.
+  set (a' := tnum_normalise w a). set (b' := tnum_normalise w b).
+  assert (Ha' : tnum_gamma w a' x) by (now apply tnum_normalise_sound).
+  assert (Hb' : tnum_gamma w b' y) by (now apply tnum_normalise_sound).
+  rewrite (tnum_empty_sound w a' x Ha'), (tnum_empty_sound w b' y Hb').
+  cbn [orb].
+  pose proof (tnum_loop_runs _ _ (tnum_mul_stage_step w a' b')
+    (N.pos w) (0, tnum_const w 0)) as Hrun.
+  pose proof (tnum_mul_runs_index w a' b' _ _ _ Hrun) as Hindex.
+  assert (Hzero : tnum_gamma w (tnum_const w 0) (wrap w (x * (y mod 2 ^ 0)))).
+  { rewrite Z.pow_0_r, Z.mod_1_r, Z.mul_0_r. apply tnum_const_sound. }
+  pose proof (tnum_mul_runs_sound w a' b' x y Hx Ha' Hb' _ _ _ Hrun
+    ltac:(cbn; lia) ltac:(cbn; rewrite positive_nat_Z; lia) Hzero) as Hsound.
+  destruct (loopN (tnum_mul_stage_step w a' b') (N.pos w) (0, tnum_const w 0))
+    as [[i r]|r]; [|contradiction].
+  cbn [fst snd N.to_nat] in Hindex, Hsound |- *.
+  rewrite positive_nat_Z, Z.add_0_l in Hindex. subst i.
+  rewrite <- modulus_value, (Z.mod_small y (modulus w) Hy) in Hsound.
+  rewrite wmul_value. exact Hsound.
+Qed.
 
 Theorem tnum_mul_stage_bound : forall w a b, 0 <= tnum_mul_stage_count w a b <= Zpos w.
-Proof. Admitted. (* CONVERT: tnum_mul_stage_bound: The variable iterate_value was not found in the current environment. *)
+Proof.
+  intros w a b. unfold tnum_mul_stage_count.
+  destruct (tnum_empty w a || tnum_empty w b); [lia|].
+  pose proof (tnum_loop_runs _ _ (tnum_mul_stage_step w a b)
+    (N.pos w) (0, tnum_const w 0)) as Hrun.
+  pose proof (tnum_mul_runs_index w a b _ _ _ Hrun) as Hindex.
+  destruct (loopN (tnum_mul_stage_step w a b) (N.pos w) (0, tnum_const w 0))
+    as [[i r]|r]; [|contradiction].
+  cbn [fst N.to_nat] in Hindex |- *. rewrite positive_nat_Z in Hindex. lia.
+Qed.
 
 Lemma tnum_uncertain_sound : forall w m x,
   Z.land x m = x -> tnum_gamma w (tnum_uncertain w m) x.
@@ -1977,17 +2033,81 @@ Theorem tnum_mul_acc_runs_sound : forall w a b x y,
   | inr r =>
     tnum_gamma w r (wrap w (x * y - tnum_min w a * tnum_min w b))
   end.
-Proof. Admitted. (* CONVERT: tnum_mul_acc_runs_sound: The reference tnum_mul_acc_step_c was not found in the current *)
+Proof.
+  intros w a b x y Hx Hy Ha Hb n s result Hrun.
+  induction Hrun as [s|n s r Hstop|n s next result Hnext Hrun IH];
+    intros Hi Hbound Hr.
+  - cbn. split; [lia|exact Hr].
+  - destruct s as [i q]. cbn [fst snd] in *.
+    cbn [tnum_mul_acc_step] in Hstop.
+    destruct (tnum_mul_acc_done w b i) eqn:Hdone; [|discriminate].
+    injection Hstop as <-.
+    destruct (tnum_mul_acc_done_sound w b y i Hy Hb Hi Hdone) as [Hlow Hvlow].
+    unfold tnum_mul_residual in Hr. now rewrite Hlow, Hvlow in Hr.
+  - destruct s as [i q], next as [j q']. cbn [fst snd] in *.
+    cbn [tnum_mul_acc_step] in Hnext.
+    destruct (tnum_mul_acc_done w b i) eqn:Hdone; [discriminate|].
+    injection Hnext as Hj Hq. subst j q'.
+    rewrite tnum_wor_agrees in IH.
+    specialize (IH ltac:(lia) ltac:(rewrite Nat2Z.inj_succ in Hbound; lia)
+      (tnum_mul_acc_next w a b x y i q ltac:(rewrite Nat2Z.inj_succ in Hbound; lia)
+        Hx Ha Hb Hr)).
+    destruct result as [[k q'']|r]; [|exact IH]. cbn [fst snd] in *.
+    destruct IH as [Hk Hgamma]. split; [rewrite Nat2Z.inj_succ; lia|exact Hgamma].
+Qed.
 
 Theorem tnum_mul_acc_sound : forall w a b x y,
   is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
   tnum_gamma w (tnum_mul_acc w a b) (wmul w x y).
-Proof. Admitted. (* CONVERT: tnum_mul_acc_sound: The variable iterate_value was not found in the current environment. *)
+Proof.
+  intros w a b x y Hx Hy Ha Hb. unfold tnum_mul_acc.
+  set (a' := tnum_normalise w a). set (b' := tnum_normalise w b).
+  assert (Ha' : tnum_gamma w a' x) by (now apply tnum_normalise_sound).
+  assert (Hb' : tnum_gamma w b' y) by (now apply tnum_normalise_sound).
+  rewrite (tnum_empty_sound w a' x Ha'), (tnum_empty_sound w b' y Hb').
+  cbn [orb].
+  pose proof (tnum_loop_runs _ _ (tnum_mul_acc_step w a' b')
+    (N.pos w) (0, tnum_const w 0)) as Hrun.
+  assert (Hzero : tnum_gamma w (tnum_const w 0)
+    (wrap w (tnum_mul_residual w a' b' x y 0))).
+  { unfold tnum_mul_residual. rewrite !Z.mod_1_r, !Z.mul_0_r, Z.sub_0_r.
+    apply tnum_const_sound. }
+  pose proof (tnum_mul_acc_runs_sound w a' b' x y Hx Hy Ha' Hb' _ _ _ Hrun
+    ltac:(cbn; lia) ltac:(cbn; rewrite positive_nat_Z; lia) Hzero) as Hsound.
+  assert (Hmask : tnum_gamma w
+    (match loopN (tnum_mul_acc_step w a' b') (N.pos w) (0, tnum_const w 0) with
+     | inl s => snd s
+     | inr r => r
+     end) (wrap w (x * y - tnum_min w a' * tnum_min w b'))).
+  { destruct (loopN (tnum_mul_acc_step w a' b') (N.pos w) (0, tnum_const w 0))
+      as [[i r]|r]; [|exact Hsound].
+    cbn [fst snd N.to_nat] in Hsound |- *. destruct Hsound as [Hi Hgamma].
+    rewrite positive_nat_Z, Z.add_0_l in Hi. subst i.
+    unfold tnum_mul_residual in Hgamma. rewrite <- modulus_value,
+      (Z.mod_small y (modulus w) Hy),
+      (Z.mod_small (tnum_min w b') (modulus w) (tnum_min_word w _)) in Hgamma.
+    exact Hgamma. }
+  pose proof (tnum_add_sound w
+    (tnum_const w (wmul w (tnum_min w a') (tnum_min w b'))) _ _ _
+    (tnum_const_sound w (wmul w (tnum_min w a') (tnum_min w b'))) Hmask) as Hsum.
+  rewrite wadd_value, wmul_value, wrap_wrap, <- wrap_add in Hsum.
+  replace (tnum_min w a' * tnum_min w b' +
+    (x * y - tnum_min w a' * tnum_min w b')) with (x * y) in Hsum by ring.
+  rewrite wmul_value. exact Hsum.
+Qed.
 
 Theorem tnum_mul_with_sound : forall choice w a b x y,
   is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
   tnum_gamma w (tnum_mul_with choice w a b) (wmul w x y).
-Proof. Admitted. (* CONVERT: tnum_mul_with_sound: The reference tnum_mul_with_c was not found in the current *)
+Proof.
+  intros choice w a b x y Hx Hy Ha Hb. destruct choice; cbn [tnum_mul_with].
+  - now apply tnum_mul_sound.
+  - now apply tnum_mul_stages_sound.
+  - now apply tnum_mul_acc_sound.
+  - apply tnum_meet_sound.
+    + now apply tnum_mul_stages_sound.
+    + now apply tnum_mul_acc_sound.
+Qed.
 
 Theorem tnum_mul_both_gamma : forall w a b z,
   tnum_gamma w (tnum_mul_with MulBoth w a b) z <->
