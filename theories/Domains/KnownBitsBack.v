@@ -7,7 +7,7 @@
 From Stdlib Require Import ZArith NArith List Bool Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op Fun Testbit Arith.
-From Galois.Domains Require Import WordSig KnownBitsSig KnownBits KnownBitsOps.
+From Galois.Domains Require Import WordSig KnownBitsSig KnownBits KnownBitsOps BitsLang.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
@@ -155,6 +155,37 @@ Proof.
   apply Nat.leb_le in Hlo. apply Nat.ltb_lt in Hhi.
   cbn [tnum_table_bounded]. apply Nat.ltb_lt. lia.
 Qed.
+
+(** Unary comparison stops after traversing the shorter, right-hand argument. *)
+Lemma tnum_leb_right_time : forall n m,
+  (Nat.T_leb n m <= N.of_nat m + 1)%N.
+Proof.
+  intros n m; revert n. induction m as [|m IH]; intros [|n];
+    time_unfold Nat.T_leb; time_cbn; rewrite ?Nat2N.inj_succ; try lia.
+  specialize (IH n). lia.
+Qed.
+
+(** Checking an extraction offset never traverses more than its operand width. *)
+Lemma tnum_ltb_right_time : forall n m,
+  (Op.Nat.T_ltb n m <= N.of_nat m + 3)%N.
+Proof.
+  intros n m. pose proof (tnum_leb_right_time (S n) m).
+  time_unfold Op.Nat.T_ltb. time_cbn. lia.
+Qed.
+
+(** The table guard has a width-only cost, including rejected raw offsets. *)
+Lemma tnum_table_bounded_time : forall o xs,
+  (T_tnum_table_bounded o xs <= 16 * N.of_nat
+    ((fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1)%nat))%N.
+Proof.
+  intros o xs. destruct o; try (time_unfold T_tnum_table_bounded; time_cbn; nia).
+  destruct xs as [|[w a] [|wp xs]];
+    time_unfold T_tnum_table_bounded; time_cbn; try nia.
+  pose proof (tnum_ltb_right_time lo (Pos.to_nat w)).
+  pose proof (WordTime.positive_to_nat_time_bound w).
+  cbn [map fold_right fst]. rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_table_bounded_time.
 
 
 Theorem tnum_refine_equation : forall wps qs,
