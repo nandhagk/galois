@@ -582,6 +582,63 @@ Proof.
   - exact Hloop.
 Qed.
 
+(** A traversal returns only after its pending task list is empty. *)
+Local Lemma loop_tree_stopping : forall g t st result,
+  tree_step g t st = inr result -> loop_tree_pending st = [].
+Proof.
+  intros g t [pending stack active [order latches backs]] result Hstep.
+  destruct pending as [|task rest]; [reflexivity|].
+  destruct task as [v|v|vs|u vs|v]; cbn [tree_step] in Hstep; try discriminate.
+  - destruct (trie_get v (pre t)), (trie_get v (idom t)); discriminate.
+  - destruct vs; discriminate.
+  - destruct vs as [|v vs]; [discriminate|].
+    destruct (trie_get v active); discriminate.
+Qed.
+
+(** The reverse collector likewise stops only with an empty pending list. *)
+Local Lemma loop_body_stopping : forall g t h st result,
+  body_step g t h st = inr result -> loop_body_pending st = [].
+Proof.
+  intros g t h [pending seen answer] result Hstep.
+  destruct pending as [|v rest]; [reflexivity|].
+  cbn [body_step] in Hstep.
+  destruct (trie_get v seen), (trie_get v (pre t)); discriminate.
+Qed.
+
+Local Lemma loop_path_listed : forall g a xs b,
+  wf_graph g -> path g a xs b -> In a (verts g) -> In b (verts g).
+Proof.
+  intros g a xs b [_ Hclosed] Hpath.
+  induction Hpath as [v|u v xs w Hedge Hpath IH]; intro Hlisted.
+  - exact Hlisted.
+  - apply IH. now apply (Hclosed u v).
+Qed.
+
+Local Lemma loop_reachable_listed : forall g r v,
+  wf_graph g -> In r (verts g) -> reach g [r] v -> In v (verts g).
+Proof.
+  intros g r v Hgraph Hroot Hreach.
+  destruct (loop_reach_path g r v Hreach) as [xs Hpath].
+  now apply (loop_path_listed g r xs v Hgraph Hpath).
+Qed.
+
+(** Stopping pays for one reversal of the accumulated answer. *)
+Local Lemma loop_tree_stop_clock : forall g t stack active order latches backs,
+  (T_tree_step g t (LoopTreeState [] stack active (LoopScan order latches backs)) <=
+    N.of_nat (length order + 3))%N.
+Proof.
+  intros g t stack active order latches backs.
+  pose proof (List.T_rev_append_le order []) as Hreverse.
+  unfold T_tree_step. time_simpl. rewrite Nat2N.inj_add. lia.
+Qed.
+
+Local Lemma loop_body_stop_clock : forall g t h seen answer,
+  (T_body_step g t h (LoopBodyState [] seen answer) <= N.of_nat (length answer + 3))%N.
+Proof.
+  intros g t h seen answer. pose proof (List.T_rev_append_le answer []) as Hreverse.
+  unfold T_body_step. time_simpl. rewrite Nat2N.inj_add. lia.
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -792,10 +849,10 @@ Module LoopsT <: LOOPS_ALL.
   Local Opaque loopN Argent.Loop.loop.
 
   Definition k_tree_step : N := 1. (* STUB *)
-  Definition k_tree_stop : N := 1. (* STUB *)
+  Definition k_tree_stop : N := 8.
   Definition k_classify : N := 1. (* STUB *)
   Definition k_body_step : N := 1. (* STUB *)
-  Definition k_body_stop : N := 1. (* STUB *)
+  Definition k_body_stop : N := 8.
   Definition k_collect : N := 1. (* STUB *)
   Definition k_install : N := 1. (* STUB *)
   Definition k_trace : N := 1. (* STUB *)
@@ -1153,7 +1210,24 @@ Module LoopsT <: LOOPS_ALL.
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r st -> tree_step g t st = inr scan ->
     (T_tree_step g t st <= k_tree_stop * N.of_nat (graph_n (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r st scan Hgraph Hprepared Htree Hinv Hstep.
+    pose proof (loop_tree_stopping g t st scan Hstep) as Hempty.
+    destruct st as [pending stack active [order latches backs]].
+    cbn [loop_tree_pending] in Hempty. subst pending.
+    destruct Hinv as [_ [Hunique [Hreach _]]].
+    cbn [loop_tree_output loop_order] in Hunique, Hreach.
+    assert (Hlisted : incl order (verts (base g))).
+    { intros v Hin. apply (loop_reachable_listed (base g) r v Hgraph (proj1 Htree)).
+      now apply Hreach. }
+    pose proof (@NoDup_incl_length positive order (verts (base g)) Hunique Hlisted) as Hlength.
+    assert (Hsize : length (verts (base g)) = graph_n (base g)).
+    { destruct (base g); reflexivity. }
+    rewrite Hsize in Hlength.
+    pose proof (loop_tree_stop_clock g t stack active order latches backs) as Hclock.
+    unfold T_tree_step. time_simpl.
+    unfold k_tree_stop. rewrite !Nat2N.inj_add in Hclock |- *. lia.
+  Qed.
 
   Lemma T3_classify : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -1172,7 +1246,18 @@ Module LoopsT <: LOOPS_ALL.
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h st -> body_step g t h st = inr result ->
     (T_body_step g t h st <= k_body_stop * N.of_nat (length (collected g t h) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r h st result Hgraph Hprepared Htree Hheader Hinv Hstep.
+    pose proof (loop_body_stopping g t h st result Hstep) as Hempty.
+    destruct st as [pending seen answer].
+    cbn [loop_body_pending] in Hempty. subst pending.
+    destruct Hinv as [_ [Hunique [_ [_ [Hsubset _]]]]].
+    cbn [loop_body_answer] in Hunique, Hsubset.
+    pose proof (@NoDup_incl_length positive answer (collected g t h) Hunique Hsubset) as Hlength.
+    pose proof (loop_body_stop_clock g t h seen answer) as Hclock.
+    unfold T_body_step. time_simpl.
+    unfold k_body_stop. rewrite !Nat2N.inj_add in Hclock |- *. lia.
+  Qed.
 
   Lemma T6_collect : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
