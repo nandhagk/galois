@@ -551,7 +551,7 @@ Module SccT <: SCC_ALL.
   TimeFun tarjan_trace.
   Definition k_pop : N := 1%N. (* STUB *)
   Definition k_callback : N := 1%N. (* STUB *)
-  Definition k_result : N := 1%N. (* STUB *)
+  Definition k_result : N := 8%N.
   Definition k_search : N := 1%N. (* STUB *)
 
   Definition apply_event (s : tarjan_state) (e : event) : tarjan_state :=
@@ -720,12 +720,48 @@ Module SccT <: SCC_ALL.
       N.of_nat (graph_width (base g) + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  Local Opaque scc_trace prepared_search_trace.
+
+  Local Lemma fold_left_clock_mono {A B} (f : A -> B -> A) first second es s :
+    (forall state e, first state e <= second state e)%N ->
+    (List.T_fold_left f first es s <= List.T_fold_left f second es s)%N.
+  Proof.
+    intros Hcost. revert s. induction es as [|e es IH]; intros s;
+      time_unfold @List.T_fold_left.
+    - lia.
+    - specialize (IH (f s e)). specialize (Hcost s e). lia.
+  Qed.
+
+  Local Lemma fold_events_alias_time es s :
+    (T_fold_events TarjanVisitor.enter (fun v s => TarjanVisitor.T_enter v s)
+      TarjanVisitor.leave (fun v s => TarjanVisitor.T_leave v s)
+      TarjanVisitor.edge (fun kind u v s => TarjanVisitor.T_edge kind u v s) es s <=
+    T_fold_events tarjan_enter T_tarjan_enter tarjan_leave T_tarjan_leave
+      tarjan_edge T_tarjan_edge es s)%N.
+  Proof.
+    time_unfold @T_fold_events. apply N.add_le_mono_l.
+    apply fold_left_clock_mono. intros state e. destruct e;
+      time_unfold @T_visit_event;
+      try time_unfold @T_tarjan_enter; try time_unfold @T_tarjan_leave;
+      try time_unfold @T_tarjan_edge; lia.
+  Qed.
+
   Lemma T5_wrapper : forall g,
     (T_run g <= k_result * (T_tarjan_trace g +
       T_fold_events tarjan_enter T_tarjan_enter tarjan_leave T_tarjan_leave
         tarjan_edge T_tarjan_edge (tarjan_trace g) tarjan_initial +
       N.of_nat (length (tarjan_emitted (prefix_state (tarjan_trace g)))) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g.
+    pose proof (List.T_rev_append_le
+      (tarjan_emitted (prefix_state (tarjan_trace g))) []) as Hreverse.
+    pose proof (fold_events_alias_time (tarjan_trace g) tarjan_initial) as Hfold.
+    unfold prefix_state, tarjan_trace, tarjan_enter, tarjan_leave, tarjan_edge,
+      tarjan_initial in *.
+    unfold k_result. time_unfold @T_run. time_unfold @T_tarjan_trace.
+    time_unfold @T_tarjan_owners. time_unfold @T_tarjan_emitted. time_cbn.
+    set (events := scc_trace g) in *. clearbody events. nia.
+  Qed.
 
   Lemma T6_public : forall g,
     (T_run g <= c_scc * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
