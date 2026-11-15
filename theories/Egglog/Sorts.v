@@ -369,7 +369,73 @@ Lemma matches_rule_env : forall V prim (w : view (V := V)) sorts kinds (r : rule
   view_sorted sorts w -> (forall f, kind w f = kinds f) ->
   query_ok sorts kinds ctx_empty (query V r) g -> matches prim w (query V r) s ->
   env_sorted g s.
-Proof. Admitted. (* STUB *)
+Proof.
+  intros V prim w sorts kinds r g s Hrows Hkinds Hquery Hmatches.
+  assert (Hbind : forall g t ty g' (s : env (V := V)) c,
+    binds g t ty g' -> env_sorted g s -> term_value s t c -> cell_sort c = ty ->
+    env_sorted g' s).
+  {
+    intros h t ty h' e c Hbind Henv Hvalue Hsort.
+    destruct Hbind as [x ty Hlookup | x ty Hlookup | v].
+    - exact Henv.
+    - intros y u. unfold ctx_set. destruct (Pos.eqb x y) eqn:Hxy.
+      + apply Pos.eqb_eq in Hxy. subst y. intros Hu. inversion Hu; subst u.
+        exists c. split; assumption.
+      + apply Henv.
+    - exact Henv.
+  }
+  assert (Hlist : forall g ts ss g' (cs : list (cell V)) s,
+    binds_list g ts ss g' -> terms_value s ts cs -> map cell_sort cs = ss ->
+    env_sorted g s -> env_sorted g' s).
+  {
+    intros h ts ss h' cs e Hb. revert cs.
+    induction Hb as [h | h h1 h2 t ts ty ss Hhead Htail IH];
+      intros cs Hvalues Hsort Henv.
+    - exact Henv.
+    - inversion Hvalues as [|t' c ts' cs' Hvalue Hvalues']; subst.
+      cbn in Hsort. injection Hsort as Hcell Hcells.
+      apply (IH cs' Hvalues' Hcells).
+      eapply Hbind; eauto.
+  }
+  assert (Hresult : forall g out res g' o (s : env (V := V)),
+    binds_result g out res g' ->
+    (match res, o with
+     | None, None => True
+     | Some t, Some c => term_value s t c
+     | _, _ => False
+     end) ->
+    option_map cell_sort o = out_sort out -> env_sorted g s -> env_sorted g' s).
+  {
+    intros h out res h' o e Hb Hvalue Hsort Henv.
+    destruct out, res as [t|], o as [c|];
+      cbn [binds_result out_sort option_map] in *; try contradiction; try discriminate.
+    - subst h'. exact Henv.
+    - injection Hsort as Hsort. eapply Hbind; eauto.
+    - injection Hsort as Hsort. eapply Hbind; eauto.
+  }
+  assert (Hquery_env : forall h q h' (e : env (V := V)),
+    query_ok sorts kinds h q h' -> matches prim w q e ->
+    env_sorted h e -> env_sorted h' e).
+  {
+    intros h q h' e Htyped.
+    induction Htyped as
+      [h | h h1 h2 h3 f args res ss out rest Hss Hout Hargs Hres Hrest IH
+         | h h1 p args res rest Hargs Hres Hrest IH]; intros Hmatch Henv.
+    - exact Henv.
+    - inversion Hmatch as [|a q' Hatom Htail]; subst.
+      destruct Hatom as [k [o [Hvalues [Hvalue Hrow]]]].
+      destruct (Hrows f k o Hrow) as [out' [Hss' [Hout' Hsort]]].
+      rewrite Hkinds, Hout in Hout'. inversion Hout'; subst out'.
+      assert (Hcells : map cell_sort k = ss) by congruence.
+      apply IH; [exact Htail|].
+      eapply Hresult; [exact Hres|exact Hvalue|exact Hsort|].
+      eapply Hlist; eauto.
+    - inversion Hmatch as [|a q' Hatom Htail]; subst.
+      apply IH; assumption.
+  }
+  eapply Hquery_env; [exact Hquery|exact Hmatches|].
+  intros x ty Hempty. discriminate Hempty.
+Qed.
 
 (** Validity in every environment gives validity in well-sorted environments. *)
 Lemma valid_sorted_of_valid : forall V prim merge (M : model (V := V)) (p : program V),
