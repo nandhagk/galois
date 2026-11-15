@@ -2314,6 +2314,76 @@ Lemma present_summary_nonempty {A K G} (kept : ptrie A)
 Proof.
   discriminate.
 Qed.
+(** A functional partial table preserves absence of a value at every matching key. *)
+Lemma present_partial_table_none {A B} (key : A -> positive) (f : A -> option B)
+    (Hkey : forall x y, key x = key y -> x = y) rows a :
+  f a = None ->
+  trie_get (key a) (first_table key (flat_map (fun x =>
+    match f x with Some v => [(x, v)] | None => [] end) rows)) = None.
+Proof.
+  intro Hnone; induction rows as [|x rest IH].
+  - apply PTrie.get_empty.
+  - cbn [flat_map]. destruct (f x) as [v|] eqn:Hx; [|exact IH].
+    change (trie_get (key a) (PTrieCode.set (key x) v
+      (first_table key (flat_map (fun y =>
+        match f y with Some z => [(y, z)] | None => [] end) rest))) = None).
+    rewrite PTrie.get_set_other; [exact IH|].
+    intro Heq; apply Hkey in Heq; subst x; congruence.
+Qed.
+
+(** A functional partial table returns a listed key's value without a uniqueness premise. *)
+Lemma present_partial_table {A B} (key : A -> positive) (f : A -> option B)
+    (Hkey : forall x y, key x = key y -> x = y) rows a :
+  In a rows ->
+  trie_get (key a) (first_table key (flat_map (fun x =>
+    match f x with Some v => [(x, v)] | None => [] end) rows)) = f a.
+Proof.
+  destruct (f a) as [value|] eqn:Ha.
+  - induction rows as [|x rest IH]; intro Hin; [contradiction|].
+    cbn [flat_map]. destruct (f x) as [v|] eqn:Hx.
+    + change (trie_get (key a) (PTrieCode.set (key x) v
+        (first_table key (flat_map (fun y =>
+          match f y with Some z => [(y, z)] | None => [] end) rest))) = Some value).
+      destruct (Pos.eq_dec (key a) (key x)) as [Heq|Hneq].
+      * apply Hkey in Heq; subst x. rewrite PTrie.get_set_same; congruence.
+      * rewrite PTrie.get_set_other by exact Hneq. apply IH.
+        destruct Hin as [Heq|Hin]; [subst x; contradiction|exact Hin].
+    + apply IH. destruct Hin as [Heq|Hin]; [subst x; congruence|exact Hin].
+  - intro Hin; now apply present_partial_table_none.
+Qed.
+
+(** Flattening pairs preserves the first projection as the flattened source list. *)
+Lemma present_owner_keys {A B} (rows : list (A * list B)) :
+  map fst (flat_map (fun row => map (fun x => (x, fst row)) (snd row)) rows) =
+    flat_map snd rows.
+Proof.
+  induction rows as [|[owner xs] rest IH]; cbn [flat_map fst snd]; [reflexivity|].
+  rewrite map_app, map_map, IH.
+  change (map (fun x : B => x) xs ++ flat_map snd rest = xs ++ flat_map snd rest).
+  now rewrite map_id.
+Qed.
+
+Lemma present_summary_owner_keys (ss : list block_summary) :
+  map fst (flat_map (fun s => map (fun n => (n, summary_block s)) (summary_points s)) ss) =
+    flat_map summary_points ss.
+Proof.
+  induction ss as [|s rest IH]; cbn [flat_map]; [reflexivity|].
+  rewrite map_app, map_map, IH.
+  change (map (fun n : point_key => n) (summary_points s) ++ flat_map summary_points rest =
+    summary_points s ++ flat_map summary_points rest).
+  now rewrite map_id.
+Qed.
+
+Lemma present_exit_shape_args {K G} (p : func positive K G) source e be args :
+  exit_shape p e -> In (be, args) (exit_edge_args source e) -> edge_shape p (edge_target be) args.
+Proof.
+  destruct e as [target values|guard values yes yesargs no noargs|values];
+    cbn [exit_shape exit_edge_args In].
+  - intros Hshape [Heq|[]]. inversion Heq; subst; exact Hshape.
+  - intros [Hyes Hno] [Heq|[Heq|[]]]; inversion Heq; subst; assumption.
+  - intros _ [].
+Qed.
+
 Module PresentT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G).
   Module Q := Prepared O.
@@ -2521,9 +2591,381 @@ Module PresentT (O : OPS)
     apply present_summary_parameter.
   Qed.
 
+  Definition pp_rows (p : func positive O.K O.G) :=
+    flat_map (fun s => summary_internal s ++ summary_outgoing s) (pp_summaries p).
+
+  Lemma pp_points_covered p n :
+    In n (C.nodes (R.prepare p)) <->
+    exists b, In b (BC.nodes (R.prepare p)) /\ In n (SP.points_in_block (R.prepare p) b).
+  Proof.
+    split.
+    - intro Hin. change (In n (flat_map summary_points (pp_summaries p))) in Hin.
+      apply in_flat_map in Hin as [s [Hs Hpoint]].
+      unfold pp_summaries in Hs; apply in_map_iff in Hs as [[b body] [Heq Hitem]].
+      subst s. exists b; split.
+      + change (In b (map fst (pp_kept p))). now apply in_map with (f := fst) in Hitem.
+      + rewrite pp_points_lookup.
+        assert (Hfind : find_block b (blocks _ _ _ p) = Some body).
+        { rewrite <- first_blocks_find. apply find_block_of_in; [apply pp_kept_unique|exact Hitem]. }
+        now rewrite Hfind.
+    - intros [b [Hb Hpoint]]. destruct (pp_listed_find p b Hb) as [body [Hfind Hitem]].
+      rewrite pp_points_lookup, Hfind in Hpoint.
+      apply (lang_summary_points p (b, body) n Hitem Hpoint).
+  Qed.
+
+  Lemma pp_point_owner p b n : In b (BC.nodes (R.prepare p)) ->
+    In n (SP.points_in_block (R.prepare p) b) -> SP.block_of_point (R.prepare p) n = b.
+  Proof.
+    intros Hb Hpoint. destruct (pp_listed_find p b Hb) as [body [Hfind Hitem]].
+    rewrite pp_points_lookup, Hfind in Hpoint.
+    assert (Hlookup : trie_get (PointKey.encode n)
+      (first_table PointKey.encode (flat_map
+        (fun s => map (fun x => (x, summary_block s)) (summary_points s)) (pp_summaries p))) = Some b).
+    { apply present_table_lookup_unique.
+      - rewrite <- map_map with (f := fst) (g := PointKey.encode).
+        apply present_map_injective_nodup; [exact PointKey.encode_inj|].
+        rewrite present_summary_owner_keys. exact (C.nodes_nodup (R.prepare p) (proj2 (prepared_wf p))).
+      - apply in_flat_map. exists (summarize (pp_params p) (b, body)); split.
+        + unfold pp_summaries. now apply in_map.
+        + apply in_map_iff. exists n; split; [reflexivity|exact Hpoint]. }
+    change ((match trie_get (PointKey.encode n)
+      (first_table PointKey.encode (flat_map
+        (fun s => map (fun x => (x, summary_block s)) (summary_points s)) (pp_summaries p))) with
+      | Some owner => owner | None => entry _ _ _ p end) = b).
+    now rewrite Hlookup.
+  Qed.
+
+  Lemma pp_point_owner_fst p n : In n (C.nodes (R.prepare p)) ->
+    SP.block_of_point (R.prepare p) n = fst n.
+  Proof.
+    intro Hin; apply pp_points_covered in Hin as [b [Hb Hpoint]].
+    rewrite (pp_point_owner p b n Hb Hpoint).
+    destruct (pp_listed_find p b Hb) as [body [Hfind _]].
+    rewrite pp_points_lookup, Hfind in Hpoint.
+    symmetry. exact (summarize_point_owner (pp_params p) (b, body) n Hpoint).
+  Qed.
+
+  Lemma pp_internal_row_listed p item row : In item (pp_kept p) ->
+    In row (summary_internal (summarize (pp_params p) item)) -> In row (pp_rows p).
+  Proof.
+    intros Hitem Hrow. unfold pp_rows. apply in_flat_map.
+    exists (summarize (pp_params p) item); split.
+    - unfold pp_summaries. now apply in_map.
+    - apply in_or_app; now left.
+  Qed.
+
+  Lemma pp_instruction_listed p b e : In b (BC.nodes (R.prepare p)) ->
+    In e (SP.instruction_edges (R.prepare p) b) -> In e (C.edges (R.prepare p)).
+  Proof.
+    intros Hb He. destruct (pp_listed_find p b Hb) as [body [Hfind Hitem]].
+    rewrite pp_instruction_lookup, Hfind in He.
+    apply in_map_iff in He as [row [Heq Hrow]]; subst e.
+    change (In (fst (fst row)) (map (fun r => fst (fst r)) (pp_rows p))).
+    apply in_map_iff. exists row; split; [reflexivity|].
+    now apply pp_internal_row_listed with (item := (b, body)).
+  Qed.
+
+  Lemma pp_points_ordered p b : In b (BC.nodes (R.prepare p)) ->
+    presentation_chain (C.edges (R.prepare p)) (C.src (R.prepare p)) (C.dst (R.prepare p))
+      (SP.points_in_block (R.prepare p) b) (SP.instruction_edges (R.prepare p) b).
+  Proof.
+    intro Hb. destruct (pp_listed_find p b Hb) as [body [Hfind Hitem]].
+    rewrite pp_points_lookup, pp_instruction_lookup, Hfind.
+    apply present_summary_chain. intros e He. apply pp_instruction_listed with (b := b);
+      [exact Hb|]. now rewrite pp_instruction_lookup, Hfind.
+  Qed.
+
+  Lemma pp_block_projection p e : In e (C.edges (R.prepare p)) ->
+    SP.block_edge_of (R.prepare p) e = point_block_edge e.
+  Proof.
+    intro Hin. change (In e (map (fun row => fst (fst row)) (pp_rows p))) in Hin.
+    pose proof (present_partial_table PointEdge.encode point_block_edge PointEdge.encode_inj
+      (map (fun row => fst (fst row)) (pp_rows p)) e Hin) as Hlookup.
+    rewrite flat_map_after_map in Hlookup. exact Hlookup.
+  Qed.
+
+  Lemma pp_instruction_internal p b e : In b (BC.nodes (R.prepare p)) ->
+    In e (SP.instruction_edges (R.prepare p) b) -> SP.block_edge_of (R.prepare p) e = None.
+  Proof.
+    intros Hb He. rewrite pp_block_projection by (eapply pp_instruction_listed; eauto).
+    destruct (pp_listed_find p b Hb) as [body [Hfind _]].
+    rewrite pp_instruction_lookup, Hfind in He.
+    apply in_map_iff in He as [row [Heq Hrow]]; subst e.
+    now apply summarize_internal_no_block in Hrow.
+  Qed.
+
+  Lemma pp_instruction_complete p e : In e (C.edges (R.prepare p)) ->
+    SP.block_edge_of (R.prepare p) e = None ->
+    In e (SP.instruction_edges (R.prepare p) (SP.block_of_point (R.prepare p) (C.src (R.prepare p) e))).
+  Proof.
+    intros He Hprojection. rewrite pp_block_projection in Hprojection by exact He.
+    rewrite pp_point_owner_fst by
+      (exact (proj1 (C.edges_nodes (R.prepare p) e (proj2 (prepared_wf p)) He))).
+    change (In e (map (fun row => fst (fst row)) (pp_rows p))) in He.
+    apply in_map_iff in He as [row [Heq Hrow]]; subst e.
+    unfold pp_rows in Hrow; apply in_flat_map in Hrow as [s [Hs Hrow]].
+    unfold pp_summaries in Hs; apply in_map_iff in Hs as [[b body] [Heq Hitem]]; subst s.
+    assert (Howner : fst (point_src (fst (fst row))) = b).
+    { apply (summarize_edge_owner (pp_params p) (b, body) row Hrow). }
+    change (In (fst (fst row)) (SP.instruction_edges (R.prepare p)
+      (fst (point_src (fst (fst row)))))).
+    rewrite Howner, pp_instruction_lookup.
+    assert (Hfind : find_block b (blocks _ _ _ p) = Some body).
+    { rewrite <- first_blocks_find. apply find_block_of_in; [apply pp_kept_unique|exact Hitem]. }
+    rewrite Hfind. apply in_map_iff. exists row; split; [reflexivity|].
+    apply in_app_or in Hrow as [Hinternal|Houtgoing]; [exact Hinternal|].
+    destruct (summarize_outgoing_block (pp_params p) (b, body) row Houtgoing)
+      as [be Hbe]. congruence.
+  Qed.
+
+  Lemma pp_row_keys_unique p :
+    NoDup (map (fun row => PointEdge.encode (fst (fst row))) (pp_rows p)).
+  Proof.
+    rewrite <- map_map with (f := fun row => fst (fst row)) (g := PointEdge.encode).
+    apply present_map_injective_nodup; [exact PointEdge.encode_inj|].
+    exact (lang_point_edges_nodup p).
+  Qed.
+
+  Lemma pp_uses_lookup p row : In row (pp_rows p) ->
+    U.uses (R.prepare p) (fst (fst row)) = snd (fst row).
+  Proof.
+    intro Hrow.
+    assert (Hlookup : trie_get (PointEdge.encode (fst (fst row)))
+      (first_table PointEdge.encode (map (fun r => (fst (fst r), snd (fst r))) (pp_rows p))) =
+      Some (snd (fst row))).
+    { apply present_table_lookup_unique.
+      - rewrite map_map. apply pp_row_keys_unique.
+      - apply in_map_iff. exists row; now split. }
+    change (index_row (first_table PointEdge.encode
+      (map (fun r => (fst (fst r), snd (fst r))) (pp_rows p))) (PointEdge.encode (fst (fst row))) =
+      snd (fst row)).
+    unfold index_row; now rewrite Hlookup.
+  Qed.
+
+  Lemma pp_defs_lookup p row : In row (pp_rows p) ->
+    U.defs (R.prepare p) (fst (fst row)) = snd row.
+  Proof.
+    intro Hrow.
+    assert (Hlookup : trie_get (PointEdge.encode (fst (fst row)))
+      (first_table PointEdge.encode (map (fun r => (fst (fst r), snd r)) (pp_rows p))) = Some (snd row)).
+    { apply present_table_lookup_unique.
+      - rewrite map_map. apply pp_row_keys_unique.
+      - apply in_map_iff. exists row; now split. }
+    change (index_row (first_table PointEdge.encode
+      (map (fun r => (fst (fst r), snd r)) (pp_rows p))) (PointEdge.encode (fst (fst row))) = snd row).
+    unfold index_row; now rewrite Hlookup.
+  Qed.
+
+  Lemma pp_parameter_defs p b x : In b (BC.nodes (R.prepare p)) ->
+    (In x (U.defs (R.prepare p) (SP.parameter_edge (R.prepare p) b)) <->
+      In x (SP.block_params (R.prepare p) b)).
+  Proof.
+    intro Hb. destruct (pp_listed_find p b Hb) as [body [Hfind Hitem]].
+    assert (Hrow : In (PointEdge (b, 0%N) (b, 1%N) None, [], params _ _ _ body) (pp_rows p)).
+    { eapply pp_internal_row_listed; [exact Hitem|]. left; reflexivity. }
+    pose proof (pp_defs_lookup p _ Hrow) as Hdefs.
+    rewrite (pp_parameter_lookup p b body Hfind).
+    change (U.defs (R.prepare p) (PointEdge (b, 0%N) (b, 1%N) None) = params _ _ _ body) in Hdefs.
+    rewrite Hdefs.
+    change (In x (params _ _ _ body) <-> In x (S.params (R.prepare p) b)).
+    rewrite Link.params_agree, Hfind; reflexivity.
+  Qed.
+
+  Definition pp_block_rows (p : func positive O.K O.G) :=
+    flat_map (fun item => listed_edge_args (pp_params p) (fst item) (term _ _ _ (snd item))) (pp_kept p).
+
+  Lemma pp_block_args_lookup p be args : In (be, args) (pp_block_rows p) ->
+    SP.block_edge_args (R.prepare p) be = args.
+  Proof.
+    intro Hrow.
+    assert (Hlookup : trie_get (BlockEdge.encode be) (first_table BlockEdge.encode (pp_block_rows p)) = Some args).
+    { apply present_table_lookup_unique.
+      - rewrite <- map_map with (f := fst) (g := BlockEdge.encode).
+        apply present_map_injective_nodup; [exact BlockEdge.encode_inj|].
+        exact (lang_block_edges_nodup p).
+      - exact Hrow. }
+    change (index_row (first_table BlockEdge.encode (pp_block_rows p)) (BlockEdge.encode be) = args).
+    unfold index_row; now rewrite Hlookup.
+  Qed.
+
+  Lemma pp_outgoing_shape p e be : In e (C.edges (R.prepare p)) ->
+    point_block_edge e = Some be ->
+    exists body args, In (edge_source be, body) (pp_kept p) /\
+      In (be, args) (listed_edge_args (pp_params p) (edge_source be) (term _ _ _ body)) /\
+      e = PointEdge (summary_exit (summarize (pp_params p) (edge_source be, body)))
+        (edge_target be, 0%N) (Some be) /\
+      In (e, guard_uses (term _ _ _ body) ++ args, []) (pp_rows p).
+  Proof.
+    intros He Hbe.
+    change (In e (map (fun row => fst (fst row)) (pp_rows p))) in He.
+    apply in_map_iff in He as [row [Heq Hrow]]; subst e.
+    pose proof Hrow as Hglobal. unfold pp_rows in Hrow.
+    apply in_flat_map in Hrow as [s [Hs Hrow]].
+    unfold pp_summaries in Hs; apply in_map_iff in Hs as [[b body] [Heq Hitem]]; subst s.
+    apply in_app_or in Hrow as [Hinternal|Houtgoing].
+    - rewrite (summarize_internal_no_block _ _ _ Hinternal) in Hbe; discriminate.
+    - change (In row (map (fun ea =>
+        (PointEdge (summary_exit (summarize (pp_params p) (b, body)))
+          (edge_target (fst ea), 0%N) (Some (fst ea)),
+          guard_uses (term _ _ _ body) ++ snd ea, []))
+        (listed_edge_args (pp_params p) b (term _ _ _ body)))) in Houtgoing.
+      apply in_map_iff in Houtgoing as [[be' args] [Heq Hedge]]; subst row.
+      cbn [fst point_block_edge] in Hbe; inversion Hbe; subst be'.
+      assert (Hsource : edge_source be = b).
+      { apply filter_In in Hedge as [Hsyntax _].
+        exact (proj1 (exit_edge_args_shape b _ be args Hsyntax)). }
+      exists body, args. rewrite Hsource. repeat split; try assumption; reflexivity.
+  Qed.
+
+  Lemma pp_point_projection p e : In e (C.edges (R.prepare p)) ->
+    match SP.block_edge_of (R.prepare p) e with
+    | None => SP.block_of_point (R.prepare p) (C.src (R.prepare p) e) =
+        SP.block_of_point (R.prepare p) (C.dst (R.prepare p) e)
+    | Some be => In be (BC.edges (R.prepare p)) /\
+        BC.src (R.prepare p) be = SP.block_of_point (R.prepare p) (C.src (R.prepare p) e) /\
+        BC.dst (R.prepare p) be = SP.block_of_point (R.prepare p) (C.dst (R.prepare p) e) /\
+        last (SP.points_in_block (R.prepare p) (SP.block_of_point (R.prepare p) (C.src (R.prepare p) e)))
+          (C.src (R.prepare p) e) = C.src (R.prepare p) e /\
+        nth_error (SP.points_in_block (R.prepare p) (BC.dst (R.prepare p) be)) 0 =
+          Some (C.dst (R.prepare p) e)
+    end.
+  Proof.
+    intro He. rewrite pp_block_projection by exact He.
+    destruct (C.edges_nodes (R.prepare p) e (proj2 (prepared_wf p)) He) as [Hsrc Hdst].
+    rewrite (pp_point_owner_fst p _ Hsrc), (pp_point_owner_fst p _ Hdst).
+    destruct (point_block_edge e) as [be|] eqn:Hbe.
+    - destruct (pp_outgoing_shape p e be He Hbe) as [body [args [Hitem [Hargs [Heq Hrow]]]]].
+      assert (Hb : In be (BC.edges (R.prepare p))).
+      { change (In be (map fst (pp_block_rows p))). apply in_map_iff.
+        exists (be, args); split; [reflexivity|].
+        unfold pp_block_rows; apply in_flat_map. exists (edge_source be, body); now split. }
+      assert (Hfind : find_block (edge_source be) (blocks _ _ _ p) = Some body).
+      { rewrite <- first_blocks_find. apply find_block_of_in; [apply pp_kept_unique|exact Hitem]. }
+      destruct (pp_listed_find p (edge_target be)
+        (proj2 (BC.edges_nodes (R.prepare p) be (proj1 (prepared_wf p)) Hb)))
+        as [target [Htarget _]].
+      subst e. change (In be (BC.edges (R.prepare p)) /\ edge_source be = edge_source be /\
+        edge_target be = edge_target be /\
+        last (SP.points_in_block (R.prepare p) (edge_source be))
+          (summary_exit (summarize (pp_params p) (edge_source be, body))) =
+          summary_exit (summarize (pp_params p) (edge_source be, body)) /\
+        nth_error (SP.points_in_block (R.prepare p) (edge_target be)) 0 = Some (edge_target be, 0%N)).
+      rewrite !pp_points_lookup, Hfind, Htarget.
+      split; [exact Hb|].
+      split; [reflexivity|].
+      split; [reflexivity|].
+      split; [apply present_summary_last|apply present_summary_first].
+    - change (In e (map (fun row => fst (fst row)) (pp_rows p))) in He.
+      apply in_map_iff in He as [row [Heq Hrow]]; subst e.
+      unfold pp_rows in Hrow; apply in_flat_map in Hrow as [s [Hs Hrow]].
+      unfold pp_summaries in Hs; apply in_map_iff in Hs as [item [Heq Hitem]]; subst s.
+      apply in_app_or in Hrow as [Hi|Ho].
+      + destruct (summarize_internal_endpoints _ _ _ Hi) as [Hs Hd].
+        apply summarize_point_owner in Hs. apply summarize_point_owner in Hd.
+        change (fst (point_src (fst (fst row))) = fst (point_dst (fst (fst row)))).
+        transitivity (fst item); [exact Hs|symmetry; exact Hd].
+      + destruct (summarize_outgoing_block _ _ _ Ho) as [be Hsome]; congruence.
+  Qed.
+
+  Lemma pp_phi_arity p be : ssa_wf p -> In be (BC.edges (R.prepare p)) ->
+    length (SP.block_edge_args (R.prepare p) be) =
+      length (SP.block_params (R.prepare p) (BC.dst (R.prepare p) be)).
+  Proof.
+    intros [Hunique [_ [_ [_ Hshapes]]]] Hbe.
+    change (In be (map fst (pp_block_rows p))) in Hbe.
+    apply in_map_iff in Hbe as [[edge args] [Heq Hrow]]; cbn in Heq; subst edge.
+    rewrite (pp_block_args_lookup p be args Hrow).
+    unfold pp_block_rows in Hrow; apply in_flat_map in Hrow as [[b body] [Hitem Hedge]].
+    assert (Hraw : In (b, body) (blocks _ _ _ p)).
+    { unfold pp_kept in Hitem. rewrite first_blocks_selected in Hitem.
+      now apply selected_blocks_in in Hitem as [Hitem _]. }
+    apply filter_In in Hedge as [Hsyntax _].
+    destruct (present_exit_shape_args p b (term _ _ _ body) be args (Hshapes b body Hraw) Hsyntax)
+      as [target [Htarget Hlength]].
+    change (length args = length (S.params (R.prepare p) (edge_target be))).
+    rewrite Link.params_agree, (find_block_of_in _ _ _ Hunique Htarget).
+    exact Hlength.
+  Qed.
+
+  Lemma pp_phi_edge_use p e be x : In e (C.edges (R.prepare p)) ->
+    SP.block_edge_of (R.prepare p) e = Some be -> In x (SP.block_edge_args (R.prepare p) be) ->
+    In x (U.uses (R.prepare p) e).
+  Proof.
+    intros He Hprojection Hx. rewrite pp_block_projection in Hprojection by exact He.
+    destruct (pp_outgoing_shape p e be He Hprojection) as [body [args [Hitem [Hargs [Heq Hrow]]]]].
+    assert (Hblockrow : In (be, args) (pp_block_rows p)).
+    { unfold pp_block_rows; apply in_flat_map. exists (edge_source be, body); now split. }
+    rewrite (pp_block_args_lookup p be args Hblockrow) in Hx.
+    pose proof (pp_uses_lookup p _ Hrow) as Huses.
+    change (U.uses (R.prepare p) e = guard_uses (term _ _ _ body) ++ args) in Huses.
+    rewrite Huses. apply in_or_app; now right.
+  Qed.
+
+  Lemma pp_block_edge_covered p be : In be (BC.edges (R.prepare p)) ->
+    exists e, In e (C.edges (R.prepare p)) /\ SP.block_edge_of (R.prepare p) e = Some be.
+  Proof.
+    intro Hbe. change (In be (map fst (pp_block_rows p))) in Hbe.
+    apply in_map_iff in Hbe as [[edge args] [Heq Hrow]]; cbn in Heq; subst edge.
+    unfold pp_block_rows in Hrow; apply in_flat_map in Hrow as [item [Hitem Hedge]].
+    set (e := PointEdge (summary_exit (summarize (pp_params p) item)) (edge_target be, 0%N) (Some be)).
+    assert (He : In e (C.edges (R.prepare p))).
+    { change (In e (map (fun r => fst (fst r)) (pp_rows p))).
+      apply in_map_iff. exists (e, guard_uses (term _ _ _ (snd item)) ++ args, []); split; [reflexivity|].
+      unfold pp_rows; apply in_flat_map. exists (summarize (pp_params p) item); split.
+      - unfold pp_summaries; now apply in_map.
+      - apply in_or_app; right.
+        change (In (e, guard_uses (term _ _ _ (snd item)) ++ args, ([] : list positive))
+          (map (fun ea =>
+            (PointEdge (summary_exit (summarize (pp_params p) item)) (edge_target (fst ea), 0%N)
+              (Some (fst ea)), guard_uses (term _ _ _ (snd item)) ++ snd ea, ([] : list positive)))
+            (listed_edge_args (pp_params p) (fst item) (term _ _ _ (snd item))))).
+        apply in_map_iff. exists (be, args); now split. }
+    exists e; split; [exact He|]. rewrite pp_block_projection by exact He; reflexivity.
+  Qed.
+
+  Lemma pp_block_edge_unique p e1 e2 be : In e1 (C.edges (R.prepare p)) ->
+    In e2 (C.edges (R.prepare p)) -> SP.block_edge_of (R.prepare p) e1 = Some be ->
+    SP.block_edge_of (R.prepare p) e2 = Some be -> e1 = e2.
+  Proof.
+    intros H1 H2 Hbe1 Hbe2.
+    rewrite pp_block_projection in Hbe1 by exact H1.
+    rewrite pp_block_projection in Hbe2 by exact H2.
+    destruct (pp_outgoing_shape p e1 be H1 Hbe1) as [body1 [args1 [Hi1 [Ha1 [He1 Hr1]]]]].
+    destruct (pp_outgoing_shape p e2 be H2 Hbe2) as [body2 [args2 [Hi2 [Ha2 [He2 Hr2]]]]].
+    assert (Hbody : body1 = body2).
+    { pose proof (find_block_of_in (pp_kept p) (edge_source be) body1 (pp_kept_unique p) Hi1) as Hfind1.
+      pose proof (find_block_of_in (pp_kept p) (edge_source be) body2 (pp_kept_unique p) Hi2) as Hfind2.
+      congruence. }
+    subst body2. now rewrite He1, He2.
+  Qed.
+
+  Lemma pp_points_wf_complete p : ssa_wf p -> SP.wf (R.prepare p).
+  Proof.
+    intro Hssa. unfold SP.wf.
+    split; [pose proof (prepared_wf p); tauto|].
+    split; [exact (pp_point_out_unique p)|].
+    split; [exact (pp_block_out_unique p)|].
+    split; [exact (pp_points_covered p)|].
+    split; [exact (pp_points_unique p)|].
+    split; [exact (pp_point_owner p)|].
+    split; [exact (pp_points_nonempty p)|].
+    split; [exact (pp_points_ordered p)|].
+    split; [exact (pp_instruction_internal p)|].
+    split; [exact (pp_instruction_complete p)|].
+    split; [exact (pp_parameter_first p)|].
+    split; [exact (pp_parameter_defs p)|].
+    split; [exact (pp_point_projection p)|].
+    split; [intros be Hbe; exact (pp_phi_arity p be Hssa Hbe)|].
+    split; [exact (pp_phi_edge_use p)|].
+    split; [exact (pp_block_edge_covered p)|].
+    exact (pp_block_edge_unique p).
+  Qed.
+
   (** The point laws hold on the prepared form of an SSA function. *)
   Lemma points_wf : forall p, ssa_wf p -> SP.wf (R.prepare p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact pp_points_wf_complete.
+  Qed.
   (** The block presentation lists each block identifier at most once per listed block. *)
   Lemma block_nodes_le : forall p,
     length (BC.nodes (R.prepare p)) <= length (blocks _ _ _ p).
