@@ -975,109 +975,10 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Definition work := transfer_work.
   Definition gwork := guard_work.
 
+  Definition k_cut : N := 1024%N.
   Definition c_val : N := 1%N. (* STUB *)
   Definition c_lat : N := c_val.
   Definition c_cut : N := 1%N. (* STUB *)
-  Definition k_cut : N := 1024%N.
-
-  (** The lattice constant pays for at least one call. *)
-  Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
-  (** Inclusion testing costs at most the combined abstract sizes. *)
-  Lemma T_leb_le : forall a b,
-    (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Joining costs at most the combined abstract sizes. *)
-  Lemma T_join_le : forall a b,
-    (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Meeting costs at most the combined abstract sizes. *)
-  Lemma T_meet_le : forall a b,
-    (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Bottom testing costs at most the abstract size. *)
-  Lemma T_is_bot_le : forall a,
-    (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Widening charges both values and the widening parameters. *)
-  Lemma T_widen_le : forall q a b,
-    (T_widen q a b <= c_val * N.of_nat (size a + size b + wsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Narrowing charges both abstract values. *)
-  Lemma T_narrow_le : forall a b,
-    (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Forward transfer is bounded by operator work. *)
-  Lemma T_forward_le : forall o xs,
-    (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Backward transfer charges operator work and the requested result. *)
-  Lemma T_backward_le : forall o r xs,
-    (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Guard transfer is bounded by guard work. *)
-  Lemma T_guard_le : forall g xs,
-    (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Forward results fit within the charged operator work. *)
-  Lemma forward_size : forall o xs,
-    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Meet results fit within the combined operand sizes. *)
-  Lemma meet_size : forall a b,
-    (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Join results fit within the combined operand sizes. *)
-  Lemma join_size : forall a b,
-    (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Widening results fit within operand and parameter sizes. *)
-  Lemma widen_size : forall q a b,
-    (N.of_nat (size (widen q a b)) <=
-      c_val * N.of_nat (size a + size b + wsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Backward results fit within charged work and request size. *)
-  Lemma backward_size : forall o r xs,
-    (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
-      c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Guard results fit within the charged guard work. *)
-  Lemma guard_size : forall g xs,
-    (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
-      c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Operator work accounts for every operand size. *)
-  Lemma work_sizes : forall o xs,
-    fold_right Nat.add 0%nat (map size xs) <= work o xs.
-  Proof. Admitted. (* STUB *)
-  (** Guard work accounts for every operand size. *)
-  Lemma gwork_sizes : forall g xs,
-    fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
-  Proof. Admitted. (* STUB *)
-
-  (** The cutoff pays for shape comparisons and endpoint bit scans. *)
-  Lemma T_cut_le : forall a,
-    (T_cut a <= c_cut * N.of_nat (interval_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** The representation measure counts the largest finite endpoint. *)
-  Lemma size_raw : forall a, size a = interval_bits (cut_raw a).
-  Proof. Admitted. (* STUB *)
-  (** The fixed cutoff bounds every value independently of operations and thresholds. *)
-  Lemma size_bound : forall a, size a <= C.bits.
-  Proof. Admitted. (* STUB *)
-  (** Forward and backward work includes literals, list traversal and cutoff scans. *)
-  Lemma work_agrees : forall o xs, work o xs = transfer_work o xs.
-  Proof. Admitted. (* STUB *)
-  (** Guard work includes operand traversal and cutoff scans. *)
-  Lemma gwork_agrees : forall g xs, gwork g xs = guard_work g xs.
-  Proof. Admitted. (* STUB *)
-  (** Widening pays for unrestricted threshold values and their search paths. *)
-  Lemma wsize_agrees : forall q,
-    wsize q = (T.depth q + 1) * (T.tree_bits q + 1) + C.bits.
-  Proof. Admitted. (* STUB *)
-  (** Each finite side contributes at most one plus the threshold count. *)
-  Lemma rank_bound : forall q a, wrank q a <= 2 * (length (T.vals q) + 1).
-  Proof. Admitted. (* STUB *)
 
   (** Projecting packed refinements preserves every paired inward result. *)
   Lemma refinement_projections : forall (xs : list t) (ys : list itv),
@@ -1204,13 +1105,82 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     intro a. pose proof (cut_pack_interval_scan C.bits a) as Hpack.
     unfold T_cut, k_cut. cbn beta iota zeta. lia.
   Qed.
+  (** Mapping adds one list step to each bounded callback and one terminal step. *)
+  Lemma map_scan_bound : forall (A B : Type) (f : A -> B) (clock cost : A -> N)
+      (factor : N) (xs : list A),
+    (forall x, In x xs -> (clock x + 1 <= factor * cost x)%N) ->
+    (Std.ListDef.T_map f clock xs <=
+      factor * fold_right N.add 0%N (map cost xs) + 1)%N.
+  Proof.
+    intros A B f clock cost factor xs.
+    induction xs as [|x xs IH]; intro Hcost.
+    - change (1 <= factor * 0 + 1)%N. lia.
+    - assert (Hhead : (clock x + 1 <= factor * cost x)%N).
+      { apply Hcost. now left. }
+      assert (Htail : forall y, In y xs -> (clock y + 1 <= factor * cost y)%N).
+      { intros y Hy. apply Hcost. now right. }
+      specialize (IH Htail).
+      change (1 + (clock x + Std.ListDef.T_map f clock xs) <=
+        factor * (cost x + fold_right N.add 0%N (map cost xs)) + 1)%N.
+      rewrite N.mul_add_distr_l. lia.
+  Qed.
+
+  (** The paired packing traversal is paid by the inward-cut clocks in its positions. *)
+  Lemma refinement_list_scan : forall (xs : list t) (ys : list itv),
+    (Std.ListDef.T_map
+      (fun yx => pack_cut C.bits (cut_within C.bits (snd yx) (fst yx)))
+      (fun yx => (1 + (((Std.Datatypes.T_snd yx + Std.Datatypes.T_fst yx) +
+        T_cut_within C.bits (snd yx) (fst yx)) +
+        T_pack_cut C.bits (cut_within C.bits (snd yx) (fst yx))))%N)
+      (combine ys (map cut_raw xs)) <=
+      64 * fold_right N.add 0%N
+        (map (fun yx => (T_cut_within C.bits (snd yx) (fst yx) + 1)%N)
+          (combine ys (map cut_raw xs))) + 1)%N.
+  Proof.
+    intros xs ys. apply map_scan_bound.
+    intros [y old] Hposition.
+    apply in_combine_r in Hposition.
+    apply in_map_iff in Hposition as [x [Hraw _]].
+    subst old.
+    pose proof (cut_pack_within_scan C.bits (cut_raw x) y (cut_raw_valid C.bits x)) as Hpack.
+    unfold Std.Datatypes.T_snd, Std.Datatypes.T_fst.
+    cbn beta iota zeta. cbn [fst snd]. lia.
+  Qed.
+
+  (** Raw backward refinement preserves the operand list length. *)
+  Lemma raw_backward_length : forall o (r : t) (xs : list t),
+    length (R.backward o (cut_raw r) (map cut_raw xs)) = length xs.
+  Proof.
+    intros o r xs.
+    pose proof (Forall2_length (R.backward_refines o (cut_raw r) (map cut_raw xs))) as Hlength.
+    now rewrite length_map in Hlength.
+  Qed.
+
+  (** Raw guard refinement preserves the operand list length. *)
+  Lemma raw_guard_length : forall g (xs : list t),
+    length (R.guard g (map cut_raw xs)) = length xs.
+  Proof.
+    intros g xs.
+    pose proof (Forall2_length (R.guard_refines g (map cut_raw xs))) as Hlength.
+    now rewrite length_map in Hlength.
+  Qed.
+
   (** Forward timing includes projection traversal and cutting the actual raw result. *)
   Lemma T_forward_source : forall o xs,
     (T_forward o xs <= k_cut *
       (R.T_forward o (map cut_raw xs) +
        T_cut_interval C.bits (R.forward o (map cut_raw xs)) +
        N.of_nat (length xs) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs.
+    pose proof (cut_projection_scan C.bits xs) as Hprojection.
+    pose proof (cut_pack_interval_scan C.bits (R.forward o (map cut_raw xs))) as Hpack.
+    unfold T_forward, T_cut, T_cut_raw, k_cut in *.
+    unfold t, R.t in *.
+    cbn beta iota zeta in *.
+    lia.
+  Qed.
+
   (** Backward timing includes every returned cutoff and both list traversals. *)
   Lemma T_backward_source : forall o r xs,
     (T_backward o r xs <= k_cut *
@@ -1219,7 +1189,19 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
          (map (fun yx => (T_cut_within C.bits (snd yx) (fst yx) + 1)%N)
            (combine (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs))) +
        N.of_nat (length xs) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs.
+    pose proof (cut_projection_scan C.bits xs) as Hprojection.
+    pose proof (refinement_list_scan xs (R.backward o (cut_raw r) (map cut_raw xs))) as Hpack.
+    pose proof (Std.List.T_combine_le
+      (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs)) as Hcombine.
+    rewrite raw_backward_length in Hcombine.
+    unfold T_backward, T_cut_raw, k_cut in *.
+    unfold t, R.t in *.
+    cbn beta iota zeta in *.
+    lia.
+  Qed.
+
   (** Guard timing includes every returned cutoff and both list traversals. *)
   Lemma T_guard_source : forall g xs,
     (T_guard g xs <= k_cut *
@@ -1227,11 +1209,125 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
        fold_right N.add 0%N
          (map (fun yx => (T_cut_within C.bits (snd yx) (fst yx) + 1)%N)
            (combine (R.guard g (map cut_raw xs)) (map cut_raw xs))) + N.of_nat (length xs) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs.
+    pose proof (cut_projection_scan C.bits xs) as Hprojection.
+    pose proof (refinement_list_scan xs (R.guard g (map cut_raw xs))) as Hpack.
+    pose proof (Std.List.T_combine_le (R.guard g (map cut_raw xs)) (map cut_raw xs)) as Hcombine.
+    rewrite raw_guard_length in Hcombine.
+    unfold T_guard, T_cut_raw, k_cut in *.
+    unfold t, R.t in *.
+    cbn beta iota zeta in *.
+    lia.
+  Qed.
+
   (** Widening timing includes cutting the threshold-selected endpoints. *)
   Lemma T_widen_source : forall q a b,
     (T_widen q a b <= k_cut *
       (R.T_widen q (cut_raw a) (cut_raw b) +
        T_cut_interval C.bits (R.widen q (cut_raw a) (cut_raw b)) + 1))%N.
+  Proof.
+    intros q a b.
+    pose proof (cut_pack_interval_scan C.bits (R.widen q (cut_raw a) (cut_raw b))) as Hpack.
+    unfold T_widen, T_cut, T_cut_raw, k_cut. cbn beta iota zeta. lia.
+  Qed.
+
+  (** The lattice constant pays for at least one call. *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  (** Inclusion testing costs at most the combined abstract sizes. *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Joining costs at most the combined abstract sizes. *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Meeting costs at most the combined abstract sizes. *)
+  Lemma T_meet_le : forall a b,
+    (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Bottom testing costs at most the abstract size. *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Widening charges both values and the widening parameters. *)
+  Lemma T_widen_le : forall q a b,
+    (T_widen q a b <= c_val * N.of_nat (size a + size b + wsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Narrowing charges both abstract values. *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Forward transfer is bounded by operator work. *)
+  Lemma T_forward_le : forall o xs,
+    (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Backward transfer charges operator work and the requested result. *)
+  Lemma T_backward_le : forall o r xs,
+    (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Guard transfer is bounded by guard work. *)
+  Lemma T_guard_le : forall g xs,
+    (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Forward results fit within the charged operator work. *)
+  Lemma forward_size : forall o xs,
+    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Meet results fit within the combined operand sizes. *)
+  Lemma meet_size : forall a b,
+    (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Join results fit within the combined operand sizes. *)
+  Lemma join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Widening results fit within operand and parameter sizes. *)
+  Lemma widen_size : forall q a b,
+    (N.of_nat (size (widen q a b)) <=
+      c_val * N.of_nat (size a + size b + wsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Backward results fit within charged work and request size. *)
+  Lemma backward_size : forall o r xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
+      c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Guard results fit within the charged guard work. *)
+  Lemma guard_size : forall g xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
+      c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Operator work accounts for every operand size. *)
+  Lemma work_sizes : forall o xs,
+    fold_right Nat.add 0%nat (map size xs) <= work o xs.
+  Proof. Admitted. (* STUB *)
+  (** Guard work accounts for every operand size. *)
+  Lemma gwork_sizes : forall g xs,
+    fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
+  Proof. Admitted. (* STUB *)
+
+  (** The cutoff pays for shape comparisons and endpoint bit scans. *)
+  Lemma T_cut_le : forall a,
+    (T_cut a <= c_cut * N.of_nat (interval_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The representation measure counts the largest finite endpoint. *)
+  Lemma size_raw : forall a, size a = interval_bits (cut_raw a).
+  Proof. Admitted. (* STUB *)
+  (** The fixed cutoff bounds every value independently of operations and thresholds. *)
+  Lemma size_bound : forall a, size a <= C.bits.
+  Proof. Admitted. (* STUB *)
+  (** Forward and backward work includes literals, list traversal and cutoff scans. *)
+  Lemma work_agrees : forall o xs, work o xs = transfer_work o xs.
+  Proof. Admitted. (* STUB *)
+  (** Guard work includes operand traversal and cutoff scans. *)
+  Lemma gwork_agrees : forall g xs, gwork g xs = guard_work g xs.
+  Proof. Admitted. (* STUB *)
+  (** Widening pays for unrestricted threshold values and their search paths. *)
+  Lemma wsize_agrees : forall q,
+    wsize q = (T.depth q + 1) * (T.tree_bits q + 1) + C.bits.
+  Proof. Admitted. (* STUB *)
+  (** Each finite side contributes at most one plus the threshold count. *)
+  Lemma rank_bound : forall q a, wrank q a <= 2 * (length (T.vals q) + 1).
   Proof. Admitted. (* STUB *)
 End CutIntervalT.
