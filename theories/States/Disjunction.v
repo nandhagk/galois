@@ -21,6 +21,112 @@ Module Nat.
   TimeFun Nat.pred.
 End Nat.
 
+(** * Value-join accounting shared by state combinations *)
+
+Module ValueJoinBudget (L : LANG_T) (V : VALUE_DOMAIN_T L) (C : CAP).
+  Definition growth : N := (2 * (V.c_val + 1))%N.
+  Definition base_scale : N :=
+    (growth ^ N.of_nat (C.k + 1) * (N.of_nat (V.size V.bot) + 1))%N.
+  Definition coefficient : N :=
+    (16 * (base_scale + N.of_nat (C.k + 1) + 1))%N.
+
+  (** Mapping charges one cell plus the supplied clock at each alternative. *)
+  Lemma map_clock {A B} (f : A -> B) (T_f : A -> N) xs :
+    ListDef.T_map f T_f xs =
+      (fold_right N.add 0%N (map (fun x => T_f x + 1)%N xs) + 1)%N.
+  Proof.
+    induction xs as [|x xs IH]; time_unfold @ListDef.T_map;
+      cbn [map fold_right]; rewrite ?IH; lia.
+  Qed.
+
+  (** Memberwise cost bounds add without increasing the common coefficient. *)
+  Lemma sum_cost {A} (f : A -> N) (work : A -> nat) c xs :
+    (forall x, In x xs -> (f x <= c * N.of_nat (work x))%N) ->
+    (fold_right N.add 0%N (map f xs) <=
+      c * N.of_nat (fold_right Nat.add 0%nat (map work xs)))%N.
+  Proof.
+    induction xs as [|x xs IH]; intro Hcost; cbn [map fold_right]; [lia |].
+    specialize (IH (fun y Hy => Hcost y (or_intror Hy))).
+    pose proof (Hcost x (or_introl eq_refl)); rewrite Nat2N.inj_add; nia.
+  Qed.
+
+  (** One value join pays for its clock, its result size and one traversal step. *)
+  Lemma join_step a b tail :
+    (V.T_join a b + 1 + N.of_nat (V.size (V.join a b)) + tail + 1 <=
+      growth * (N.of_nat (V.size a) + N.of_nat (V.size b) + tail + 2))%N.
+  Proof.
+    pose proof (V.T_join_le a b) as Hclock; pose proof (V.join_size a b) as Hsize.
+    unfold growth; repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** A fold's actual accumulator bounds the total work of all its value joins. *)
+  Lemma join_fold {A} (f : A -> V.t) xs : forall a ticks,
+    (fst (fold_left (fun acc x =>
+      ((fst acc + V.T_join (snd acc) (f x) + 1)%N, V.join (snd acc) (f x)))
+      xs (ticks, a)) <= ticks + growth ^ N.of_nat (length xs) *
+      N.of_nat (V.size a + fold_right Nat.add 0%nat
+        (map (fun x => V.size (f x) + 1)%nat xs) + 1))%N.
+  Proof.
+    induction xs as [|x xs IH]; intros a ticks.
+    - cbn [fold_left fst length map fold_right]; rewrite N.pow_0_r; nia.
+    - specialize (IH (V.join a (f x)) (ticks + V.T_join a (f x) + 1)%N).
+      pose proof (join_step a (f x)
+        (N.of_nat (fold_right Nat.add 0%nat (map (fun x => V.size (f x) + 1)%nat xs))))
+        as Hstep.
+      set (scale := (growth ^ N.of_nat (length xs))%N) in *.
+      assert (Hpositive : (1 <= scale)%N).
+      { unfold scale; assert (Hnonzero : growth <> 0%N) by
+          (unfold growth; lia).
+        pose proof (N.pow_nonzero growth (N.of_nat (length xs)) Hnonzero); lia. }
+      pose proof (N.mul_le_mono_l _ _ scale Hstep) as Hscaled.
+      pose proof (N.mul_le_mono_r 1 scale (V.T_join a (f x) + 1)%N Hpositive) as Hpaid.
+      cbn [fold_left fst snd length map fold_right].
+      rewrite Nat2N.inj_succ, N.pow_succ_r'; fold scale.
+      repeat rewrite Nat2N.inj_add in IH |- *.
+      replace (growth * scale)%N with (scale * growth)%N by ring.
+      repeat rewrite N.mul_add_distr_l in IH, Hscaled, Hpaid.
+      rewrite N.mul_1_l in Hpaid; nia.
+  Qed.
+
+  (** The value-join budget of a capped input is linear in its input value sizes. *)
+  Lemma joins_capped {A} (f : A -> V.t) xs : length xs <= C.k ->
+    (fst (fold_left (fun acc x =>
+      ((fst acc + V.T_join (snd acc) (f x) + 1)%N, V.join (snd acc) (f x)))
+      xs (0%N, V.bot)) <= coefficient *
+      N.of_nat (fold_right Nat.add 0%nat (map (fun x => V.size (f x) + 1)%nat xs) + 1))%N.
+  Proof.
+    intro Hcap; pose proof (join_fold f xs V.bot 0%N) as Hfold.
+    assert (Hgrowth : growth <> 0%N) by (unfold growth; lia).
+    assert (Hpower : (growth ^ N.of_nat (length xs) <=
+      growth ^ N.of_nat (C.k + 1))%N).
+    { apply N.pow_le_mono_r; [exact Hgrowth | lia]. }
+    set (mass := N.of_nat (fold_right Nat.add 0%nat
+      (map (fun x => V.size (f x) + 1)%nat xs) + 1)) in *.
+    assert (Hmass : (1 <= mass)%N) by (unfold mass; lia).
+    assert (Hinput : (N.of_nat (V.size V.bot + fold_right Nat.add 0%nat
+      (map (fun x => V.size (f x) + 1)%nat xs) + 1) <=
+      (N.of_nat (V.size V.bot) + 1) * mass)%N).
+    { unfold mass; repeat rewrite Nat2N.inj_add; nia. }
+    pose proof (N.mul_le_mono _ _ _ _ Hpower Hinput) as Hbudget.
+    unfold coefficient, base_scale; nia.
+  Qed.
+
+  (** Fold timing separates callback work from the actual value-join sequence. *)
+  Lemma fold_clock {A} (f : A -> V.t) (T_f : A -> N) xs : forall a ticks,
+    (List.T_fold_left (fun a x => V.join a (f x))
+      (fun a x => 1 + (T_f x + V.T_join a (f x)))%N xs a + ticks =
+      fold_right N.add 0%N (map (fun x => T_f x + 1)%N xs) +
+      fst (fold_left (fun acc x =>
+        ((fst acc + V.T_join (snd acc) (f x) + 1)%N, V.join (snd acc) (f x)))
+        xs (ticks, a)) + 1)%N.
+  Proof.
+    induction xs as [|x xs IH]; intros a ticks.
+    - time_unfold @List.T_fold_left; cbn [fold_left fst map fold_right]; lia.
+    - specialize (IH (V.join a (f x)) (ticks + V.T_join a (f x) + 1)%N).
+      time_unfold @List.T_fold_left; cbn [fold_left fst snd map fold_right]; lia.
+  Qed.
+End ValueJoinBudget.
+
 Lemma replace_first_length {A} (is_bot : A -> bool) (f : A -> A) xs :
   length (replace_first is_bot f xs) = length xs.
 Proof.
@@ -505,6 +611,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     <: DISJUNCTION_ALL X L V S JS JU C P.
   Module Plain := StateDisjunction X L V S C P.
   Include Plain.
+  Module ValueJoins := ValueJoinBudget L V C.
   Definition T_leb : t -> t -> N := P.T_leb.
   Definition T_join : t -> t -> N := P.T_join.
   Definition T_is_bot : t -> N := P.T_is_bot.
@@ -520,9 +627,16 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   TimeFun assume.
   TimeFun eval.
   Definition size : t -> nat := P.size.
-  Definition c_lat : N := 1%N. (* STUB *)
-  Definition c_state : N := 1%N. (* STUB *)
-  Definition c_disjunction : N := 1%N. (* STUB *)
+  Local Definition state_growth : N := (2 * (S.c_lat + 1))%N.
+  Local Definition state_scale : N := state_growth ^ N.of_nat (C.k + 2).
+  Definition c_disjunction : N :=
+    (16 * (state_scale + N.of_nat (S.size S.bot + S.wunits S.bot) + 1))%N.
+  Definition k_disjunction : N := ValueJoins.coefficient.
+  Definition c_lat : N :=
+    (64 * (P.c_lat + S.c_lat + 1) * (c_disjunction + 1) * (k_disjunction + 1) *
+      N.of_nat ((C.k + 1) * (C.k + 1)) * (N.of_nat (S.size S.top) + 1))%N.
+  Definition c_state : N :=
+    (16 * (S.c_state + k_disjunction + 1) * (k_disjunction + 1))%N.
   Definition wsize : wparam -> nat := S.wsize.
   Definition wunits (d : t) : nat :=
     fold_right Nat.add 0%nat (map S.wunits (proj1_sig d)).
@@ -535,6 +649,44 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Definition eval_work (e : term L.op X.t) (d : t) : nat :=
     fold_right Nat.add 0%nat (map (fun s =>
       S.eval_work e s + V.size (S.eval e s) + 1) (proj1_sig d)).
+
+  Definition eval_joins (e : term L.op X.t) (xs : list S.t) : N :=
+    fst (fold_left (fun acc s =>
+      ((fst acc + V.T_join (snd acc) (S.eval e s) + 1)%N,
+       V.join (snd acc) (S.eval e s))) xs (0%N, V.bot)).
+
+  (** Both fixed coefficients reserve the constant cost of a wrapper. *)
+  Local Lemma coefficients_positive : (16 <= c_disjunction /\ 16 <= k_disjunction)%N.
+  Proof.
+    unfold c_disjunction, k_disjunction, ValueJoins.coefficient; split; nia.
+  Qed.
+
+  (** The lattice coefficient includes its inherited component's coefficient. *)
+  Local Lemma lattice_coefficient : (1 <= c_lat /\ P.c_lat <= c_lat)%N.
+  Proof.
+    assert (Hcap : (1 <= N.of_nat ((C.k + 1) * (C.k + 1)))%N) by lia.
+    unfold c_lat; split; nia.
+  Qed.
+
+  (** Evaluation's derived clock separates component evaluations and actual joins. *)
+  Local Lemma eval_clock : forall e d, T_eval e d =
+    (fold_right N.add 0%N (map (fun s => S.T_eval e s + 1)%N (proj1_sig d)) +
+      eval_joins e (proj1_sig d) + 3)%N.
+  Proof.
+    intros e [xs Hbound]; pose proof
+      (ValueJoins.fold_clock (S.eval e) (S.T_eval e) xs V.bot 0%N) as Hfold.
+    time_unfold @T_eval; time_unfold @Specif.T_proj1_sig.
+    cbn [proj1_sig]; unfold eval_joins; lia.
+  Qed.
+
+  (** Every evaluated value size fits in the published evaluation work sum. *)
+  Local Lemma evaluation_sizes : forall e xs,
+    fold_right Nat.add 0%nat (map (fun s => V.size (S.eval e s) + 1)%nat xs) <=
+    fold_right Nat.add 0%nat
+      (map (fun s => S.eval_work e s + V.size (S.eval e s) + 1)%nat xs).
+  Proof.
+    intros e xs; induction xs as [|x xs IH]; cbn [map fold_right]; lia.
+  Qed.
 
   (** Assignment work is the component work of every alternative. *)
   Lemma assign_work_alternatives : forall x e d, assign_work x e d =
@@ -562,49 +714,122 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     reflexivity.
   Qed.
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact (proj1 lattice_coefficient).
+  Qed.
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; eapply N.le_trans; [apply P.T_leb_le |].
+    apply N.mul_le_mono_r; exact (proj2 lattice_coefficient).
+  Qed.
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; eapply N.le_trans; [apply P.T_join_le |].
+    apply N.mul_le_mono_r; exact (proj2 lattice_coefficient).
+  Qed.
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a; eapply N.le_trans; [apply P.T_is_bot_le |].
+    apply N.mul_le_mono_r; exact (proj2 lattice_coefficient).
+  Qed.
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_lat * N.of_nat
       ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; pose proof c_lat_pos; time_unfold @T_narrow; nia.
+  Qed.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_state * N.of_nat (assign_work x e s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e [xs Hbound].
+    pose proof (ValueJoins.sum_cost (fun s => S.T_assign x e s + 1)%N
+      (fun s => S.assign_work x e s + 1)%nat (S.c_state + 1)%N xs) as Hsum.
+    assert (Hcalls : forall s, In s xs ->
+      (S.T_assign x e s + 1 <= (S.c_state + 1) * N.of_nat (S.assign_work x e s + 1))%N).
+    { intros s Hin; pose proof (S.T_assign_le x e s); nia. }
+    specialize (Hsum Hcalls).
+    time_unfold @T_assign; time_unfold @T_map_bounded.
+    cbn [proj1_sig]; rewrite ValueJoins.map_clock.
+    unfold c_state, assign_work; cbn [proj1_sig]; rewrite Nat2N.inj_add; nia.
+  Qed.
   Lemma T_havoc_le : forall x s,
     (T_havoc x s <= c_state * N.of_nat (havoc_work x s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [xs Hbound].
+    pose proof (ValueJoins.sum_cost (fun s => S.T_havoc x s + 1)%N
+      (fun s => S.havoc_work x s + 1)%nat (S.c_state + 1)%N xs) as Hsum.
+    assert (Hcalls : forall s, In s xs ->
+      (S.T_havoc x s + 1 <= (S.c_state + 1) * N.of_nat (S.havoc_work x s + 1))%N).
+    { intros s Hin; pose proof (S.T_havoc_le x s); nia. }
+    specialize (Hsum Hcalls).
+    time_unfold @T_havoc; time_unfold @T_map_bounded.
+    cbn [proj1_sig]; rewrite ValueJoins.map_clock.
+    unfold c_state, havoc_work; cbn [proj1_sig]; rewrite Nat2N.inj_add; nia.
+  Qed.
   Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_state * N.of_nat (assume_work g es s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es [xs Hbound].
+    pose proof (ValueJoins.sum_cost (fun s => S.T_assume g es s + 1)%N
+      (fun s => S.assume_work g es s + 1)%nat (S.c_state + 1)%N xs) as Hsum.
+    assert (Hcalls : forall s, In s xs ->
+      (S.T_assume g es s + 1 <= (S.c_state + 1) * N.of_nat (S.assume_work g es s + 1))%N).
+    { intros s Hin; pose proof (S.T_assume_le g es s); nia. }
+    specialize (Hsum Hcalls).
+    time_unfold @T_assume; time_unfold @T_map_bounded.
+    cbn [proj1_sig]; rewrite ValueJoins.map_clock.
+    unfold c_state, assume_work; cbn [proj1_sig]; rewrite Nat2N.inj_add; nia.
+  Qed.
   Lemma T_eval_le : forall e s,
     (T_eval e s <= c_state * N.of_nat (eval_work e s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e [xs Hbound]; assert (Hcap : length xs <= C.k) by now apply Nat.leb_le.
+    pose proof (ValueJoins.sum_cost (fun s => S.T_eval e s + 1)%N
+      (fun s => S.eval_work e s + V.size (S.eval e s) + 1)%nat
+      (S.c_state + 1)%N xs) as Hsum.
+    assert (Hcalls : forall s, In s xs -> (S.T_eval e s + 1 <=
+      (S.c_state + 1) * N.of_nat (S.eval_work e s + V.size (S.eval e s) + 1))%N).
+    { intros s Hin; pose proof (S.T_eval_le e s); repeat rewrite Nat2N.inj_add in *; nia. }
+    specialize (Hsum Hcalls).
+    pose proof (ValueJoins.joins_capped (S.eval e) xs Hcap) as Hjoins.
+    pose proof (evaluation_sizes e xs) as Hsizes.
+    rewrite eval_clock; unfold eval_work, eval_joins, k_disjunction in *; cbn [proj1_sig].
+    unfold c_state, k_disjunction; repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_assign_alternatives : forall x e d,
     (T_assign x e d <= c_disjunction *
       (fold_right N.add 0%N (map (fun s => S.T_assign x e s + 1) (proj1_sig d)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e [xs Hbound]; pose proof (proj1 coefficients_positive).
+    time_unfold @T_assign; time_unfold @T_map_bounded; cbn [proj1_sig].
+    rewrite ValueJoins.map_clock; nia.
+  Qed.
   Lemma T_havoc_alternatives : forall x d,
     (T_havoc x d <= c_disjunction *
       (fold_right N.add 0%N (map (fun s => S.T_havoc x s + 1) (proj1_sig d)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [xs Hbound]; pose proof (proj1 coefficients_positive).
+    time_unfold @T_havoc; time_unfold @T_map_bounded; cbn [proj1_sig].
+    rewrite ValueJoins.map_clock; nia.
+  Qed.
   Lemma T_assume_alternatives : forall g es d,
     (T_assume g es d <= c_disjunction *
       (fold_right N.add 0%N (map (fun s => S.T_assume g es s + 1) (proj1_sig d)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es [xs Hbound]; pose proof (proj1 coefficients_positive).
+    time_unfold @T_assume; time_unfold @T_map_bounded; cbn [proj1_sig].
+    rewrite ValueJoins.map_clock; nia.
+  Qed.
   Lemma c_lat_shared : (P.c_lat <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact (proj2 lattice_coefficient).
+  Qed.
   Lemma wunits_alternatives : forall d,
     wunits d = fold_right Nat.add 0%nat (map S.wunits (proj1_sig d)).
   Proof.
@@ -627,11 +852,6 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Definition eval_joins (e : term L.op X.t) (xs : list S.t) : N :=
-    fst (fold_left (fun acc s =>
-      ((fst acc + V.T_join (snd acc) (S.eval e s) + 1)%N,
-       V.join (snd acc) (S.eval e s))) xs (0%N, V.bot)).
-  Definition k_disjunction : N := 1%N. (* STUB *)
   Lemma F2_widen : forall p a b, proj1_sig (widen p a b) =
     if leb b a then proj1_sig a else
     if is_bot a then proj1_sig b else
@@ -684,12 +904,16 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma T2_eval : forall e d, (T_eval e d <= k_disjunction *
     (fold_right N.add 0%N (map (fun s => S.T_eval e s + 1) (proj1_sig d)) +
      eval_joins e (proj1_sig d) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e d; rewrite eval_clock; pose proof (proj2 coefficients_positive); nia.
+  Qed.
   (** The value joins of a capped list charge the sizes of the evaluated values. *)
   Lemma T3_eval_joins : forall e xs, length xs <= C.k ->
     (eval_joins e xs <= k_disjunction * N.of_nat (fold_right Nat.add 0%nat
       (map (fun s => (V.size (S.eval e s) + 1)%nat) xs) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e xs Hcap; exact (ValueJoins.joins_capped (S.eval e) xs Hcap).
+  Qed.
 End StateDisjunctionT.
 
 (* The landed lattice source exposed the following raw-list equations. The shared
