@@ -507,6 +507,121 @@ Proof.
   destruct Hread as [_ [_ [_ [_ Hresult]]]]. exact Hresult.
 Qed.
 
+(** Reconstructed entries either omit the root or name an earlier positioned parent. *)
+Local Definition dom_parent_valid r m pos v : Prop :=
+  (v = r -> trie_get v m = None) /\
+  (v <> r -> exists p pp pv, trie_get v m = Some p /\
+    trie_get p pos = Some pp /\ trie_get v pos = Some pv /\ (pp < pv)%N).
+
+Local Lemma dom_rebuild_valid : forall width r m pos acc v out,
+  dom_rebuild width r m pos acc v = Some out -> dom_parent_valid r m pos v.
+Proof.
+  intros width r m pos [built |] v out Hstep; [| discriminate Hstep].
+  unfold dom_rebuild in Hstep. destruct (Pos.eqb v r) eqn:Hroot.
+  - apply Pos.eqb_eq in Hroot. destruct (trie_get v m) eqn:Hparent;
+      [discriminate Hstep |].
+    split; [intros _; exact Hparent |]. intro Hneq. contradiction.
+  - apply Pos.eqb_neq in Hroot.
+    destruct (trie_get v m) as [p |] eqn:Hparent; [| discriminate Hstep].
+    destruct (dom_key_fits width p); [| discriminate Hstep].
+    destruct (trie_get p pos) as [pp |] eqn:Hp; [| discriminate Hstep].
+    destruct (trie_get v pos) as [pv |] eqn:Hv; [| discriminate Hstep].
+    destruct (N.ltb pp pv) eqn:Hbefore; [| discriminate Hstep].
+    apply N.ltb_lt in Hbefore. split; [intro Heq; contradiction |].
+    intros _. exists p, pp, pv. repeat split; assumption.
+Qed.
+
+Local Lemma dom_rebuild_domain : forall width r m pos acc v out,
+  dom_rebuild width r m pos acc v = Some out ->
+  forall q p, trie_get q out = Some p ->
+    (exists before, acc = Some before /\ trie_get q before = Some p) \/ q = v.
+Proof.
+  intros width r m pos [built |] v out Hstep; [| discriminate Hstep].
+  unfold dom_rebuild in Hstep. destruct (Pos.eqb v r).
+  - destruct (trie_get v m); [discriminate Hstep |].
+    injection Hstep as Heq. subst out. intros q p Hget.
+    left. exists built. now split.
+  - destruct (trie_get v m) as [parent |]; [| discriminate Hstep].
+    destruct (dom_key_fits width parent); [| discriminate Hstep].
+    destruct (trie_get parent pos) as [pp |]; [| discriminate Hstep].
+    destruct (trie_get v pos) as [pv |]; [| discriminate Hstep].
+    destruct (N.ltb pp pv); [| discriminate Hstep].
+    injection Hstep as Heq. subst out. intros q p Hget.
+    destruct (Pos.eq_dec q v) as [Heq | Hneq]; [now right |].
+    rewrite PTrie.get_set_other in Hget by exact Hneq.
+    left. exists built. now split.
+Qed.
+
+Local Lemma dom_rebuild_fold_none : forall width r m pos vs,
+  fold_left (dom_rebuild width r m pos) vs None = None.
+Proof.
+  intros width r m pos vs. induction vs as [| v rest IH];
+    cbn [fold_left dom_rebuild]; assumption || reflexivity.
+Qed.
+
+Local Lemma dom_rebuild_fold_valid : forall width r m pos vs acc out,
+  fold_left (dom_rebuild width r m pos) vs acc = Some out ->
+  (forall v, In v vs -> dom_parent_valid r m pos v) /\
+  (forall q p, trie_get q out = Some p ->
+    (exists before, acc = Some before /\ trie_get q before = Some p) \/ In q vs).
+Proof.
+  intros width r m pos vs. induction vs as [| v rest IH]; intros acc out Hfold.
+  - cbn [fold_left] in Hfold. subst acc. split.
+    + intros q Hin. contradiction.
+    + intros q p Hget. left. exists out. now split.
+  - cbn [fold_left] in Hfold.
+    destruct (dom_rebuild width r m pos acc v) as [built |] eqn:Hstep.
+    2: rewrite dom_rebuild_fold_none in Hfold; discriminate Hfold.
+    destruct (IH (Some built) out Hfold) as [Hvalid Hdomain]. split.
+    + intros q [Heq | Hin].
+      * subst q. eapply dom_rebuild_valid. exact Hstep.
+      * now apply Hvalid.
+    + intros q p Hget. destruct (Hdomain q p Hget) as [[before [Heq Hbefore]] | Hin].
+      * injection Heq as Heq. subst before.
+        destruct (dom_rebuild_domain width r m pos acc v built Hstep q p Hbefore)
+          as [Hinitial | Heq].
+        -- now left.
+        -- right. now left.
+      * right. now right.
+Qed.
+
+(** Successful structural comparison excludes bindings outside the accepted order. *)
+Local Lemma dom_map_check_structure : forall g r m o,
+  dom_map_check_known (dom_scan g) r m o = true ->
+  NoDup o /\ hd_error o = Some r /\ trie_get r m = None /\
+  (forall v, In v o -> v <> r -> exists p,
+    trie_get v m = Some p /\ order_before o p v) /\
+  (forall v p, trie_get v m = Some p -> In v o).
+Proof.
+  intros g r m o Hcheck. unfold dom_map_check_known in Hcheck.
+  destruct (dom_read_known (dom_scan g) r o) as [pos |] eqn:Hread;
+    [| discriminate Hcheck].
+  destruct (fold_left (dom_rebuild (dom_width (dom_scan g)) r m pos) o (Some Empty))
+    as [built |] eqn:Hfold; [| discriminate Hcheck].
+  apply dom_map_eq_spec in Hcheck. subst built.
+  destruct (dom_read_known_success g r o pos Hread) as
+    [Hdistinct [_ [Hhead _]]].
+  pose proof (dom_read_known_positions (dom_scan g) r o pos Hread) as Hpositions.
+  destruct (dom_rebuild_fold_valid (dom_width (dom_scan g)) r m pos o (Some Empty) m
+    Hfold) as [Hvalid Hdomain].
+  assert (Hroot : In r o).
+  { destruct o as [| h rest]; [discriminate Hhead |].
+    injection Hhead as Heq. subst h. now left. }
+  split; [exact Hdistinct |]. split; [exact Hhead |].
+  split; [exact (proj1 (Hvalid r Hroot) eq_refl) |]. split.
+  - intros v Hin Hneq.
+    destruct (proj2 (Hvalid v Hin) Hneq) as [p [pp [pv [Hparent [Hp [Hv Hbefore]]]]]].
+    subst pos.
+    destruct (dom_positions_value o p pp Hdistinct Hp) as [ip [Hip Hpp]].
+    destruct (dom_positions_value o v pv Hdistinct Hv) as [iv [Hiv Hpv]].
+    exists p. split; [exact Hparent |]. exists ip, iv. repeat split; try assumption.
+    subst pp pv. lia.
+  - intros v p Hget. destruct (Hdomain v p Hget) as [[before [Heq Hbefore]] | Hin].
+    + injection Heq as Heq. subst before. rewrite PTrie.get_empty in Hbefore.
+      discriminate Hbefore.
+    + exact Hin.
+Qed.
+
 Local Lemma dom_nodes_verts : forall g, nodes g = verts (base g).
 Proof.
   intros [[vs adjacency] predecessors count_v count_e]. reflexivity.
@@ -790,7 +905,16 @@ Module DomT <: DOM_ALL.
   (** A successful parent check keeps every parent of an ordered vertex in the order. *)
   Lemma F2d_map : forall g r m o, map_check (scan g) r m o = true ->
     forall v p, In v o -> trie_get v m = Some p -> In p o.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o Hcheck v p Hin Hget.
+    destruct (dom_map_check_structure g r m o Hcheck) as
+      [_ [_ [Hroot [Hparents _]]]].
+    destruct (Pos.eq_dec v r) as [Heq | Hneq].
+    - subst v. rewrite Hroot in Hget. discriminate Hget.
+    - destruct (Hparents v Hin Hneq) as [parent [Hparent [ip [iv [Hp [Hv Hlt]]]]]].
+      rewrite Hget in Hparent. injection Hparent as Heq. subst parent.
+      eapply nth_error_In. exact Hp.
+  Qed.
 
   Lemma T1_scan : forall g,
     (T_scan g <= k_scan * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
