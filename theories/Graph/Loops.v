@@ -227,7 +227,7 @@ Module LoopTraceVisitor <: VISITOR.
   TimeFun edge.
 End LoopTraceVisitor.
 
-Module LoopTrace := Search LoopTraceVisitor.
+Module LoopTrace := Galois.Graph.Search.Search LoopTraceVisitor.
 
 Local Opaque Acc_intro_generator.
 
