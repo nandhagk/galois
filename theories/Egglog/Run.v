@@ -1270,7 +1270,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Definition wbits (p : program V.t) : nat :=
     fold_right (fun x n => Nat.max (Pos.size_nat x) n)
       0 (program_words V.encode p).
-  Definition c_run : N := 1. (* STUB *)
+  Definition c_run : N :=
+    (1024 * 4096 * (D.c_db + I.c_ix + J.c_join + V.c_val + V.c_key +
+      PTrieT.c_trie + 1))%N.
   Lemma size_compiled_spec : forall cp,
     size_compiled cp =
       fold_right (fun sl n => Pos.size_nat (fst sl) +
@@ -1349,7 +1351,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
             (apply (actions V.t (job_rule p c)) (fun x => trie_get x (bind_trie c b)) db))%N
     end.
 
-  Definition k_driver : N := 1. (* STUB *)
+  Definition k_driver : N :=
+    (64 * 1024 * (D.c_db + I.c_ix + J.c_join + V.c_val + V.c_key +
+      PTrieT.c_trie + 1))%N.
   Definition env_allocated (db : D.t) (s : Model.env (V := V.t)) : Prop :=
     forall x i, s x = Some (Id i) -> D.allocated db i.
   Definition agrees (s t : Model.env (V := V.t)) (xs : list positive) : Prop :=
@@ -1364,7 +1368,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     (forall f k o, row (D.view db) f k o -> exists k' o',
       row (D.view db') f k' o' /\ Forall2 (cell_rel (same (D.view db'))) k k' /\
       D.out_le db' f (option_map (D.canon db') o) o').
-  Definition k_check : N := 1. (* STUB *)
+  Definition k_check : N := (64 * 1024 * (V.c_key + PTrieT.c_trie + 1))%N.
   (** Two identifiers that occur in rows and are equal in the view are identical. *)
   Definition row_ids_unique (w : Model.view (V := V.t)) : Prop :=
     forall f k o f' k' o' i j, row w f k o -> row w f' k' o' ->
@@ -1624,13 +1628,114 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     rewrite bind_cells_get, PTrie.get_empty. reflexivity.
   Qed.
 
+  (** A binding traversal pays for each variable's lookup and optional insertion once. *)
+  Lemma bind_cells_clock_le : forall vars (cells : list (cell V.t)) t,
+    (T_bind_cells vars cells t <= 16 *
+      N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat vars + 1))%N.
+  Proof.
+    intro vars. induction vars as [|x xs IH]; intros cells t.
+    - time_unfold @T_bind_cells. time_simpl. time_cbn. nia.
+    - destruct cells as [|c cs].
+      + time_unfold @T_bind_cells. time_simpl. time_cbn.
+        rewrite !Nat2N.inj_add. nia.
+      + pose proof (IH cs t) as Hkeep.
+        pose proof (IH cs (PTrieCode.set x c t)) as Hnew.
+        pose proof (PTrieT.replace_clock_bound (cell V.t) x (Some c) t) as Hset.
+        time_unfold @T_bind_cells. time_simpl. time_cbn.
+        unfold PTrieCode.T_set. rewrite PTrieT.trie_get_clock.
+        destruct (trie_get x t); cbn [fold_right];
+          rewrite !Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** The wrapper adds only its own call and the variable-field reader. *)
+  Lemma bind_trie_clock_le : forall c b,
+    (T_bind_trie c b <= 32 *
+      N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
+        (var_of V.t c) + 1))%N.
+  Proof.
+    intros c b. pose proof (bind_cells_clock_le (plan_vars c) b Empty) as Hcells.
+    destruct c as [ix j srcs vars post].
+    time_unfold T_bind_trie. time_simpl. time_cbn.
+    cbn [plan_vars] in Hcells. nia.
+  Qed.
+
   (** Building the trie of a binding pays for the bits of the plan's variables. *)
   Lemma T6_bind_trie_le : forall c b,
     (T_bind_trie c b <= k_driver *
       N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
         (var_of V.t c) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros c b.
+    pose proof (bind_trie_clock_le c b) as Hbind.
+    unfold k_driver. nia.
+  Qed.
 
+  Definition keep_width_program : program V.t :=
+    Program V.t [] [Rule V.t [Fun V.t 1%positive [Var 1%positive; Var 1%positive] None] []].
+
+  Definition keep_width_plan (z : positive) : cplan V.t :=
+    CPlan V.t 0%N (JPlan 0 []) [] [z] [0].
+
+  (** Even an empty binding pays the full width of the first copy-name lookup. *)
+  Lemma keep_width_clock_lower : forall z,
+    (2 * N.of_nat (Pos.size_nat z) <=
+      T_keep keep_width_program (keep_width_plan z) (bind_trie (keep_width_plan z) []))%N.
+  Proof.
+    intro z.
+    unfold T_keep, keep_width_program, keep_width_plan, bind_trie.
+    cbn [plan_rule_ix rules rule_at plan_post plan_vars bind_cells].
+    time_unfold @T_rule_at. time_unfold @T_keep_post.
+    time_simpl. time_cbn.
+    time_unfold @T_copies_ok. time_simpl. time_cbn.
+    time_unfold @T_copies_ok. time_simpl. time_cbn.
+    time_simpl. time_cbn.
+    rewrite ?PTrie.get_empty. time_cbn.
+    rewrite ?PTrieT.trie_get_clock. nia.
+  Qed.
+
+  (** Every charged measure stays fixed while the copy name grows. *)
+  Lemma keep_width_work_fixed : forall z,
+    post_work keep_width_program (keep_width_plan z) = 3%nat /\
+    rule_work keep_width_program (keep_width_plan z) = 2%nat /\
+    wbits keep_width_program = 1%nat /\
+    query_prim_work V.prim_work (query V.t (job_rule keep_width_program
+      (keep_width_plan z))) (env_of (keep_width_plan z) []) = 0%N.
+  Proof.
+    intro z. repeat split; reflexivity.
+  Qed.
+
+  (** Positive keys can have any nonzero width. *)
+  Lemma keep_width_key_exists : forall n, exists z, Pos.size_nat z = S n.
+  Proof.
+    induction n as [|n [z Hz]].
+    - exists 1%positive. reflexivity.
+    - exists (xO z). cbn [Pos.size_nat]. now rewrite Hz.
+  Qed.
+
+  (** No fixed constant can bound the filter by the measures charged in [T7_keep_le]. *)
+  Lemma keep_width_unbounded : forall k : N, exists z,
+    (10 * k < T_keep keep_width_program (keep_width_plan z)
+      (bind_trie (keep_width_plan z) []))%N.
+  Proof.
+    intro k.
+    destruct (keep_width_key_exists (N.to_nat (5 * k)%N)) as [z Hz].
+    exists z. pose proof (keep_width_clock_lower z) as Hclock.
+    rewrite Hz, Nat2N.inj_succ, N2Nat.id in Hclock. nia.
+  Qed.
+
+  (** The proposed filter contract fails for every replacement of its constant. *)
+  Lemma keep_bound_counterexample : forall k : N, exists p c b,
+    ~ (T_keep p c (bind_trie c b) <= k * N.of_nat (post_work p c + 1) *
+      N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
+      k * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
+      k * N.of_nat (rule_work p c))%N.
+  Proof.
+    intro k. destruct (keep_width_unbounded k) as [z Hlarge].
+    exists keep_width_program, (keep_width_plan z), [].
+    destruct (keep_width_work_fixed z) as [Hpost [Hrule [Hwidth Hprim]]].
+    rewrite Hpost, Hrule, Hwidth, Hprim. cbn [fold_right].
+    intro Hbound. nia.
+  Qed.
   (** The filter pays for its atoms at the widest program word or binding cell, and for the
       primitive work of the query. *)
   Lemma T7_keep_le : forall p c b,
@@ -1638,7 +1743,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
       k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
       k_driver * N.of_nat (rule_work p c))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: copy-name widths are uncharged; keep_bound_counterexample. *)
 
   (** A round's jobs are the kept bindings of its plans, plan by plan. *)
   Lemma F31_jobs : forall p cp nv db,
