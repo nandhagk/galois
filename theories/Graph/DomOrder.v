@@ -1034,3 +1034,104 @@ Proof.
   unfold T_dom_build_candidate, T_dom_lt_parents, T_dom_build_order, T_dom_lt_pipeline.
   time_simpl. time_cbn. lia.
 Qed.
+
+Lemma dom_sem_path_prefix g a vs b : path g a vs b ->
+  forall y, In y vs -> exists prefix, path g a prefix y /\ incl prefix vs.
+Proof.
+  intro Hpath. induction Hpath as [v|u v vs w Huv Hpath IH]; intros y Hin.
+  - destruct Hin as [<-|Hin]; [|contradiction].
+    exists [v]. split; [constructor|intros z Hz; exact Hz].
+  - destruct Hin as [<-|Hin].
+    + exists [u]. split; [constructor|].
+      intros z [<-|Hz]; [now left|contradiction].
+    + destruct (IH y Hin) as [prefix [Hprefix Hincl]].
+      exists (u :: prefix). split.
+      * eapply path_step; eassumption.
+      * intros z [<-|Hz]; [now left|right; now apply Hincl].
+Qed.
+
+(** Dominance is transitive because a path prefix witnesses the intermediate target. *)
+Lemma dom_sem_dominates_trans g r x y v :
+  dominates g r x y -> dominates g r y v -> dominates g r x v.
+Proof.
+  intros Hxy Hyv vs Hpath.
+  destruct (dom_sem_path_prefix g r vs v Hpath y (Hyv vs Hpath)) as
+    [prefix [Hprefix Hincl]].
+  apply Hincl. exact (Hxy prefix Hprefix).
+Qed.
+
+Lemma dom_map_no_return m v : Acc (fun u v => trie_get v m = Some u) v ->
+  forall u, trie_get u m = Some v -> ~ tree_anc m u v.
+Proof.
+  intro Hacc. induction Hacc as [v Hacc IH]. intros u Huv Hanc.
+  destruct (dom_cert_anc_cases m u v Hanc) as [Heq|[p [Hvp Hup]]].
+  - subst u. apply (IH v Huv v Huv). constructor.
+  - apply (IH p Hvp v Hvp). eapply dom_cert_anc_trans; [|exact Hup].
+    eapply tree_anc_step; [exact Huv|constructor].
+Qed.
+
+(** Parent ancestry in any exact map implies semantic dominance. *)
+Lemma dom_exact_anc_dominates g r m x v : dom_exact g r m ->
+  tree_anc m x v -> dominates (base g) r x v.
+Proof.
+  intros Hexact Hanc. induction Hanc as [|p v Hparent Hanc IH].
+  - intros vs Hpath. eapply dom_cert_path_end. exact Hpath.
+  - destruct (proj1 Hexact v p Hparent) as [_ [_ [[Hdom Hne] Himmediate]]].
+    eapply dom_sem_dominates_trans; eassumption.
+Qed.
+
+(** A semantic dominator of a reachable vertex occurs in its exact parent ancestry. *)
+Lemma dom_exact_dominates_anc g r m x v : dom_exact g r m ->
+  reach (base g) [r] v -> dominates (base g) r x v -> tree_anc m x v.
+Proof.
+  intros [Hparents [Hnone Hwf]]. revert x.
+  induction v as [v IH] using (well_founded_induction Hwf).
+  intros x Hreach Hdom. destruct (Pos.eq_dec x v) as [Heq|Hne].
+  - subst x. constructor.
+  - destruct (trie_get v m) as [p|] eqn:Hget.
+    + destruct (Hparents v p Hget) as [Hp [_ [Hstrict Himmediate]]].
+      eapply tree_anc_step; [exact Hget|].
+      apply (IH p eq_refl x Hp). apply Himmediate. split; assumption.
+    + exfalso. apply (proj1 (Hnone v Hreach) Hget). exists x. split; assumption.
+Qed.
+
+(** An exact map identifies dominance with its parent ancestry on reachable targets. *)
+Lemma dom_exact_ancestry g r m x v : dom_exact g r m -> reach (base g) [r] v ->
+  (tree_anc m x v <-> dominates (base g) r x v).
+Proof.
+  intros Hexact Hreach. split.
+  - eapply dom_exact_anc_dominates. exact Hexact.
+  - eapply dom_exact_dominates_anc; eassumption.
+Qed.
+
+(** Strict dominators of a child are exactly the ancestors of its exact parent. *)
+Lemma dom_exact_parent_strict g r m x v p : dom_exact g r m ->
+  trie_get v m = Some p ->
+  (strictly_dominates (base g) r x v <-> tree_anc m x p).
+Proof.
+  intros Hexact Hget.
+  destruct (proj1 Hexact v p Hget) as [Hp [Hv [[Hpv Hpv_ne] Himmediate]]].
+  split.
+  - intros [Hdom Hne]. eapply dom_cert_anc_parent; [exact Hget| |exact Hne].
+    eapply dom_exact_dominates_anc; eassumption.
+  - intro Hanc. split.
+    + eapply dom_sem_dominates_trans; [|exact Hpv].
+      eapply dom_exact_anc_dominates; eassumption.
+    + intro Heq. subst x.
+      eapply (dom_map_no_return m p (proj2 (proj2 Hexact) p) v Hget). exact Hanc.
+Qed.
+
+(** Every reachable predecessor lies below the target's exact parent. *)
+Lemma dom_exact_edge_parent g r m p y b : dom_exact g r m -> reach (base g) [r] p ->
+  edge (base g) p y -> trie_get y m = Some b -> tree_anc m b p.
+Proof.
+  intros Hexact Hp Hedge Hget.
+  destruct (proj1 Hexact y b Hget) as [_ [_ [[Hdom Hne] Himmediate]]].
+  apply (dom_exact_dominates_anc g r m b p Hexact Hp).
+  intros vs Hpath.
+  pose proof (Hdom (vs ++ [y]) (dom_cert_path_snoc (base g) r vs p y Hpath Hedge)) as Hin.
+  apply in_app_or in Hin. destruct Hin as [Hin|[Heq|Hin]].
+  - exact Hin.
+  - congruence.
+  - contradiction.
+Qed.
