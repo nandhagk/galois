@@ -109,25 +109,76 @@ Module Calls (P : TYPE) (F S : KEY) (D : CALLS_DATA P F S) <: CALLS P F S.
   Qed.
 
   Lemma functions_nodup : forall p, wf p -> NoDup (functions p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [Hfunctions _]; exact Hfunctions.
+  Qed.
   Lemma roots_listed : forall p, wf p -> incl (roots p) (functions p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [_ [Hroots _]]; exact Hroots.
+  Qed.
   Lemma sites_caller : forall p f site, wf p -> In site (sites_of p f) ->
     caller_of p site = f /\ In f (functions p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p f site [_ [_ [Hsites _]]]; apply Hsites.
+  Qed.
   Lemma resolve_listed : forall p site f, wf p -> In f (resolve p site) ->
     In f (functions p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p site f [_ [_ [_ [Hresolve _]]]]; apply Hresolve.
+  Qed.
   Lemma call_graph_nodes : forall p, verts (call_graph p) = map F.encode (functions p).
   Proof.
     reflexivity.
   Qed.
+
+  (** Inserting a function again retains its same outgoing adjacency list. *)
+  Lemma adjacency_lookup : forall p f fs adj,
+    trie_get (F.encode f) adj = Some (map (fun e => F.encode (call_edge_target e))
+      (call_edges (resolve p) (sites_of p f))) \/ In f fs ->
+    trie_get (F.encode f)
+      (fold_left (fun acc g => PTrieCode.set (F.encode g)
+        (map (fun e => F.encode (call_edge_target e))
+          (call_edges (resolve p) (sites_of p g))) acc) fs adj) =
+    Some (map (fun e => F.encode (call_edge_target e))
+      (call_edges (resolve p) (sites_of p f))).
+  Proof.
+    intros p f fs; induction fs as [|g fs IH]; intros adj Hin; cbn [fold_left].
+    - destruct Hin as [Hget|[]]; exact Hget.
+    - apply IH; destruct (F.eqb_spec f g) as [<-|Hneq].
+      + left; apply PTrie.get_set_same.
+      + destruct Hin as [Hget|[Heq|Hin]].
+        * left; rewrite PTrie.get_set_other; [exact Hget|].
+          intro Hcode; apply Hneq; now apply F.encode_inj.
+        * symmetry in Heq; contradiction.
+        * now right.
+  Qed.
+
   Lemma call_graph_out : forall p f, wf p -> In f (functions p) ->
     succs (call_graph p) (F.encode f) =
       map (fun e => F.encode (edge_callee e)) (call_edges (resolve p) (sites_of p f)).
-  Proof. Admitted. (* CONVERT: graph_out: The reference Graph.out was not found. *)
+  Proof.
+    intros p f Hwf Hf; unfold call_graph, succs.
+    rewrite (adjacency_lookup p f (functions p) PTrieCode.empty (or_intror Hf)).
+    apply map_ext; intros [site g]; reflexivity.
+  Qed.
   Lemma call_graph_wf : forall p, wf p -> wf_graph (call_graph p).
-  Proof. Admitted. (* CONVERT: call_graph_wf: Hnodes has type NoDup (functions p). *)
+  Proof.
+    intros p Hwf; split.
+    - rewrite call_graph_nodes; pose proof (functions_nodup p Hwf) as Hdistinct.
+      induction Hdistinct as [|f fs Hfresh Hdistinct IH]; cbn [map]; constructor.
+      + intro Hin; apply in_map_iff in Hin; destruct Hin as [g [Hcode Hg]].
+        apply F.encode_inj in Hcode; subst g; contradiction.
+      + exact IH.
+    - intros u v Hu Huv; rewrite call_graph_nodes in Hu |- *.
+      apply in_map_iff in Hu; destruct Hu as [f [<- Hf]].
+      unfold edge in Huv; rewrite (call_graph_out p f Hwf Hf) in Huv.
+      apply in_map_iff in Huv; destruct Huv as [[site g] [<- Hcall]].
+      cbn [edge_callee]; apply in_map.
+      unfold call_edges in Hcall; apply in_flat_map in Hcall.
+      destruct Hcall as [site' [Hsite Hcall]].
+      apply in_map_iff in Hcall; destruct Hcall as [g' [Heq Htarget]].
+      injection Heq as <- <-; eapply resolve_listed; eassumption.
+  Qed.
 End Calls.
 
 Module CallsSound (P : TYPE) (F S : KEY) (C : CALLS P F S)
@@ -135,12 +186,68 @@ Module CallsSound (P : TYPE) (F S : KEY) (C : CALLS P F S)
   Lemma reachable_frames_linked : forall p s, C.wf p ->
     reachable (M.initial p) (M.step p) s ->
     frames_linked (C.sites_of p) (C.caller_of p) (C.resolve p) (L.here s) (L.frames s).
-  Proof. Admitted. (* CONVERT: reachable_frames_linked: Unable to unify the induction goal. *)
+  Proof.
+    intros p s Hwf Hreach; induction Hreach as [s Hinitial|s t Hreach IH Hstep].
+    - rewrite (proj2 (L.initial_roots p s Hinitial)); exact I.
+    - destruct (L.step_shape p s t Hreach Hstep) as
+        [[Hhere Hstack]|[[site [Hsite [Hcallee Hstack]]]|[f [site [Hstack Hhere]]]]].
+      + rewrite Hhere, Hstack; exact IH.
+      + rewrite Hstack; cbn [frames_linked].
+        split; [exact (proj1 (C.sites_caller p (L.here s) site Hwf Hsite))|].
+        split; [exact Hsite|]. split; assumption.
+      + rewrite Hstack in IH; cbn [frames_linked] in IH.
+        destruct IH as [_ [_ [_ Htail]]]; now rewrite Hhere.
+  Qed.
+
+  (** Appending a graph edge extends a path without changing its root. *)
+  Lemma path_extend : forall g u vs v w, path g u vs v -> edge g v w ->
+    exists ws, path g u ws w.
+  Proof.
+    intros g u vs v w Hpath; induction Hpath as [v|u v vs z Hedge Hpath IH];
+      intro Hlast.
+    - exists (v :: w :: nil); econstructor; [exact Hlast|constructor].
+    - destruct (IH Hlast) as [ws Htail].
+      exists (u :: ws); econstructor; eassumption.
+  Qed.
+
+  (** A resolved call extends reachability in the encoded function graph. *)
+  Lemma resolved_reachable : forall p f site g, C.wf p ->
+    In f (C.functions p) -> In site (C.sites_of p f) -> In g (C.resolve p site) ->
+    reach (C.call_graph p) (C.graph_roots p) (F.encode f) ->
+    reach (C.call_graph p) (C.graph_roots p) (F.encode g).
+  Proof.
+    intros p f site g Hwf Hf Hsite Hg [root [vs [Hroot Hpath]]].
+    assert (Hedge : edge (C.call_graph p) (F.encode f) (F.encode g)).
+    { unfold edge; rewrite (C.call_graph_out p f Hwf Hf).
+      apply in_map_iff; exists (CallEdge site g); split; [reflexivity|].
+      unfold call_edges; apply in_flat_map; exists site; split; [exact Hsite|].
+      now apply in_map. }
+    destruct (path_extend _ _ _ _ _ Hpath Hedge) as [ws Hextended].
+    exists root, ws; now split.
+  Qed.
 
   Lemma active_reachable : forall p s f, C.wf p ->
     reachable (M.initial p) (M.step p) s -> In f (L.active s) ->
     reach (C.call_graph p) (C.graph_roots p) (F.encode f).
-  Proof. Admitted. (* CONVERT: active_reachable_in_call_graph: Unable to unify the induction goal. *)
+  Proof.
+    intros p s f Hwf Hreach; revert f.
+    induction Hreach as [s Hinitial|s t Hreach IH Hstep]; intros f Hin.
+    - destruct (L.initial_roots p s Hinitial) as [Hroot Hstack].
+      unfold L.active in Hin; rewrite Hstack in Hin; destruct Hin as [<-|[]].
+      exists (F.encode (L.here s)), (F.encode (L.here s) :: nil).
+      split; [unfold C.graph_roots; now apply in_map|constructor].
+    - unfold L.active in Hin.
+      destruct (L.step_shape p s t Hreach Hstep) as
+        [[Hhere Hstack]|[[site [Hsite [Hcallee Hstack]]]|[g [site [Hstack Hhere]]]]].
+      + rewrite Hhere, Hstack in Hin; exact (IH f Hin).
+      + rewrite Hstack in Hin; cbn [map fst] in Hin; destruct Hin as [<-|Hin].
+        * eapply resolved_reachable; [exact Hwf| |exact Hsite|exact Hcallee|].
+          -- apply (L.frames_listed p s Hreach); now left.
+          -- apply IH; now left.
+        * exact (IH f Hin).
+      + rewrite Hhere in Hin; apply IH; unfold L.active; rewrite Hstack.
+        right; exact Hin.
+  Qed.
 End CallsSound.
 
 Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
@@ -186,7 +293,10 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Lemma F1_call_edge : forall p f site target,
     In site (sites_of p f) -> In target (resolve p site) ->
     In (CallEdge site target) (out_edges p f).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p f site target Hsite Htarget; unfold out_edges, call_edges.
+    apply in_flat_map; exists site; split; [exact Hsite|now apply in_map].
+  Qed.
   Definition k_edges : N := 1%N. (* STUB *)
   Definition k_adj : N := 1%N. (* STUB *)
 
