@@ -3159,6 +3159,175 @@ Proof.
     apply Hreducible. now exists (prepared_search_trace g [r]), final.
 Qed.
 
+(** * Ordered loop assembly *)
+
+(** Assigning a body changes exactly the owner lookups of its member vertices. *)
+Local Lemma loop_assign_lookup : forall vs (owners : ptrie positive) (h v : positive),
+  trie_get v (fold_left (fun owners x => PTrieCode.set x h owners) vs owners) =
+    if in_dec Pos.eq_dec v vs then Some h else trie_get v owners.
+Proof.
+  intro vs. induction vs as [|x rest IH]; intros owners h v; [reflexivity|].
+  cbn [fold_left]. rewrite IH.
+  destruct (in_dec Pos.eq_dec v rest) as [Hin|Hnot].
+  - destruct (in_dec Pos.eq_dec v (x :: rest)); [reflexivity|].
+    exfalso. apply n. now right.
+  - destruct (in_dec Pos.eq_dec v (x :: rest)) as [[Heq|Hin]|Hnone].
+    + subst x. apply PTrie.get_set_same.
+    + contradiction.
+    + change (PTrie.get v (PTrie.set x h owners) = trie_get v owners).
+      apply PTrie.get_set_other. intro Heq. subst x. apply Hnone. now left.
+Qed.
+
+(** The three installation projections separate overwrite and previous-owner effects. *)
+Local Lemma loop_install_maps : forall l h vs,
+  body (install l (h, vs)) = PTrieCode.set h vs (body l) /\
+  parent (install l (h, vs)) =
+    match trie_get h (header l) with
+    | Some outer => PTrieCode.set h outer (parent l)
+    | None => parent l
+    end /\
+  header (install l (h, vs)) =
+    fold_left (fun owners v => PTrieCode.set v h owners) vs (header l).
+Proof.
+  intros [owners parents rows] h vs. repeat split; reflexivity.
+Qed.
+
+(** Every key and value already installed belongs to the chosen vertex domain. *)
+Local Definition loop_forest_within (vertices : list positive) (l : loops) : Prop :=
+  (forall v h, trie_get v (header l) = Some h -> In v vertices /\ In h vertices) /\
+  (forall h p, trie_get h (parent l) = Some p -> In h vertices /\ In p vertices) /\
+  forall h vs, trie_get h (body l) = Some vs -> In h vertices /\ incl vs vertices.
+
+Local Lemma loop_empty_within : forall vertices,
+  loop_forest_within vertices (Loops Empty Empty Empty).
+Proof.
+  intro vertices. split; [|split]; intros x value Hget;
+    change (PTrie.get x PTrie.empty = Some value) in Hget;
+    rewrite PTrie.get_empty in Hget; discriminate.
+Qed.
+
+Local Lemma loop_install_within : forall vertices l h vs,
+  loop_forest_within vertices l -> In h vertices -> incl vs vertices ->
+  loop_forest_within vertices (install l (h, vs)).
+Proof.
+  intros vertices l h vs [Howners [Hparents Hrows]] Hh Hvs.
+  destruct (loop_install_maps l h vs) as [Hb [Hp Ho]].
+  split; [|split].
+  - intros v owner Hget. rewrite Ho, loop_assign_lookup in Hget.
+    destruct (in_dec Pos.eq_dec v vs) as [Hin|Hnot].
+    + injection Hget as <-. split; [now apply Hvs|exact Hh].
+    + now apply (Howners v owner).
+  - intros v outer Hget. rewrite Hp in Hget.
+    destruct (trie_get h (header l)) as [previous|] eqn:Hprevious.
+    + destruct (Pos.eq_dec v h) as [->|Hne].
+      * rewrite PTrie.get_set_same in Hget. injection Hget as <-.
+        exact (Howners h previous Hprevious).
+      * rewrite PTrie.get_set_other in Hget by exact Hne.
+        now apply (Hparents v outer).
+    + now apply (Hparents v outer).
+  - intros v row Hget. rewrite Hb in Hget.
+    destruct (Pos.eq_dec v h) as [->|Hne].
+    + rewrite PTrie.get_set_same in Hget. injection Hget as <-. now split.
+    + rewrite PTrie.get_set_other in Hget by exact Hne. now apply (Hrows v row).
+Qed.
+
+(** A fold of supported rows preserves support at every prefix. *)
+Local Lemma loop_fold_within : forall vertices rows,
+  Forall (fun entry => In (fst entry) vertices /\ incl (snd entry) vertices) rows ->
+  forall l, loop_forest_within vertices l ->
+    loop_forest_within vertices (fold_left install rows l).
+Proof.
+  intros vertices rows Hrows. induction Hrows as [|[h vs] rest [Hh Hvs] Hrest IH];
+    intros l Hwithin; [exact Hwithin|].
+  cbn [fold_left]. apply IH, loop_install_within; assumption.
+Qed.
+
+(** Body lookup in a mapped family records exactly whether its header was installed. *)
+Local Lemma loop_fold_body_lookup : forall hs (rows : positive -> list positive) l h,
+  trie_get h (body (fold_left install (map (fun k => (k, rows k)) hs) l)) =
+    if in_dec Pos.eq_dec h hs then Some (rows h) else trie_get h (body l).
+Proof.
+  intro hs. induction hs as [|k rest IH]; intros rows l h; [reflexivity|].
+  cbn [map fold_left]. rewrite IH.
+  destruct (in_dec Pos.eq_dec h rest) as [Hin|Hnot].
+  - destruct (in_dec Pos.eq_dec h (k :: rest)); [reflexivity|].
+    exfalso. apply n. now right.
+  - rewrite (proj1 (loop_install_maps l k (rows k))).
+    destruct (in_dec Pos.eq_dec h (k :: rest)) as [[Heq|Hin]|Hnone].
+    + subst k. apply PTrie.get_set_same.
+    + contradiction.
+    + apply PTrie.get_set_other. intro Heq. subst k. apply Hnone. now left.
+Qed.
+
+Local Lemma loop_assemble_body_lookup : forall hs rows h vs,
+  trie_get h (body (assemble (map (fun k => (k, rows k)) hs))) = Some vs <->
+    In h hs /\ vs = rows h.
+Proof.
+  intros hs rows h vs. unfold assemble. rewrite loop_fold_body_lookup.
+  destruct (in_dec Pos.eq_dec h hs) as [Hin|Hnot].
+  - split; [intro Heq; injection Heq as <-; now split|intros [_ ->]; reflexivity].
+  - cbn [body]. rewrite PTrie.get_empty. split; [discriminate|tauto].
+Qed.
+
+(** Strict semantic loop containment is asymmetric on natural headers. *)
+Local Lemma loop_inside_asym : forall g r inner outer,
+  loop_inside g r inner outer -> ~ loop_inside g r outer inner.
+Proof.
+  intros g r inner outer [Hne [Hinner [Houter Hcontains]]]
+    [_ [_ [_ Hreverse]]].
+  assert (Hio : natural_loop g r outer inner).
+  { apply Hcontains. split; [exact Hinner|now left]. }
+  assert (Hoi : natural_loop g r inner outer).
+  { apply Hreverse. split; [exact Houter|now left]. }
+  exact (loop_strict_dominance_asym g r outer inner
+    (loop_header_reachable g r inner Hinner)
+    (loop_header_dominates g r outer inner Hio) Hne
+    (loop_header_dominates g r inner outer Hoi)).
+Qed.
+
+Local Lemma loop_inside_trans : forall g r a b c,
+  loop_inside g r a b -> loop_inside g r b c -> loop_inside g r a c.
+Proof.
+  intros g r a b c Hab Hbc.
+  destruct Hab as [Habne [Ha [Hb Hab]]]. destruct Hbc as [Hbcne [_ [Hc Hbc]]].
+  assert (Hacne : a <> c).
+  { intro Heq. subst c. apply (loop_inside_asym g r a b).
+    - exact (conj Habne (conj Ha (conj Hb Hab))).
+    - exact (conj Hbcne (conj Hb (conj Hc Hbc))). }
+  split; [exact Hacne|]. split; [exact Ha|]. split; [exact Hc|].
+  intros v Hv. now apply Hbc, Hab.
+Qed.
+
+(** A different natural header in a body determines strict loop containment. *)
+Local Lemma loop_header_containment : forall g r inner outer,
+  natural_header g r inner -> inner <> outer ->
+  (natural_loop g r outer inner <-> loop_inside g r inner outer).
+Proof.
+  intros g r inner outer Hinner Hne. split.
+  - intro Hmember. apply loop_member_containment; try assumption.
+    now apply loop_header_dominates.
+  - intros [_ [_ [_ Hcontains]]]. apply Hcontains. split; [exact Hinner|now left].
+Qed.
+
+(** Meeting natural loops are ordered by strict containment. *)
+Local Lemma loop_family_laminar : forall g r h outer v,
+  natural_loop g r h v -> natural_loop g r outer v -> h <> outer ->
+  loop_inside g r h outer \/ loop_inside g r outer h.
+Proof.
+  intros g r h outer v Hinner Houter Hne.
+  pose proof (loop_member_reachable g r h v Hinner) as Hreach.
+  pose proof (loop_header_dominates g r h v Hinner) as Hinnerdom.
+  pose proof (loop_header_dominates g r outer v Houter) as Houterdom.
+  destruct (loop_dominators_comparable g r h outer v Hreach Hinnerdom Houterdom)
+    as [Hfirst|Hsecond].
+  - right. assert (Hreverse : outer <> h) by congruence.
+    exact (loop_member_containment g r outer h (proj1 Houter)
+      (loop_meeting_header g r outer h v Houter Hinner Hfirst Hreverse) Hfirst Hreverse).
+  - left. exact (loop_member_containment g r h outer (proj1 Hinner)
+      (loop_meeting_header g r h outer v Hinner Houter Hsecond Hne) Hsecond Hne).
+Qed.
+
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
