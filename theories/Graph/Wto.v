@@ -1882,6 +1882,120 @@ Proof.
   split; [exact Hroot|now apply wto_filtered_path].
 Qed.
 
+Local Opaque loopN.
+
+(** The annotation index recognizes exactly textual forward edges and enclosing heads. *)
+Lemma wto_positions_edge_spec w u v :
+  NoDup (wto_order w) -> In u (wto_order w) ->
+  (wto_edge_b (wto_positions (wto_annotate [] w)) u v = true <->
+    graph_before (wto_order w) u v \/ wto_encloses v u w).
+Proof.
+  intros Hunique Hu.
+  destruct (wto_positions_spec (wto_annotate [] w)
+    ltac:(rewrite wto_annotation_order; exact Hunique) u) as [Habsent Hpresent].
+  rewrite wto_annotation_order in Habsent.
+  destruct (trie_get u (wto_positions (wto_annotate [] w))) as [[after stack]|] eqn:Hget.
+  - destruct (Hpresent after stack eq_refl) as [Hrow Hafter].
+    rewrite wto_annotation_order in Hafter.
+    unfold wto_edge_b. rewrite Hget, orb_true_iff, !wto_member_spec, Hafter.
+    rewrite (wto_annotation_spec w Hunique u stack Hrow v). reflexivity.
+  - exfalso. exact (proj1 Habsent eq_refl Hu).
+Qed.
+
+(** Filtering preserves every path inside a listed successor-closed domain. *)
+Lemma wto_filter_path_domain g vertices :
+  incl vertices (nodes g) ->
+  (forall u v, In u vertices -> edge (base g) u v -> In v vertices) ->
+  forall u path_vs v, path (base g) u path_vs v -> In u vertices ->
+    path (base (scc_graph g)) u path_vs v.
+Proof.
+  intros Hlisted Hclosed u path_vs v Hpath.
+  induction Hpath as [u|u v path_vs z Hedge Hpath IH]; intro Hu.
+  - constructor.
+  - assert (Hv : In v vertices) by (eapply Hclosed; eassumption).
+    econstructor; [|now apply IH]. unfold edge.
+    rewrite scc_graph_succs_listed by now apply Hlisted.
+    apply filter_In. split; [exact Hedge|].
+    apply existsb_exists. exists v. split; [now apply Hlisted|apply Pos.eqb_refl].
+Qed.
+
+(** Exact listed rooted coverage is unchanged by the checker's graph filtering. *)
+Lemma wto_filter_coverage g roots vertices :
+  incl vertices (nodes g) ->
+  (forall v, In v vertices <-> reach (base g) roots v) ->
+  forall v, In v vertices <-> reach (base (scc_graph g)) roots v.
+Proof.
+  intros Hlisted Hcover v. split.
+  - intro Hv. destruct (proj1 (Hcover v) Hv) as [r [path_vs [Hr Hpath]]].
+    exists r, path_vs. split; [exact Hr|].
+    eapply wto_filter_path_domain; [exact Hlisted| |exact Hpath|].
+    + intros u z Hu Hedge. apply Hcover.
+      exact (wto_reach_step (base g) roots u z (proj1 (Hcover u) Hu) Hedge).
+    + apply Hcover. exists r, [r]. split; [exact Hr|constructor].
+  - intro Hreach. apply Hcover. now apply wto_filtered_reach.
+Qed.
+
+(** Completed numeric ranks preserve every textual forward edge. *)
+Lemma wto_check_index_forward fuel width listed w ranks intervals vs u v :
+  wto_check_index fuel width listed [WtoCheckVisit w] 0 Empty Empty [] =
+    Some (ranks, intervals, vs) ->
+  graph_before (wto_order w) u v -> wto_interval_edge ranks intervals u v = true.
+Proof.
+  intros Hindex Hbefore.
+  destruct (wto_check_index_spec _ _ _ _ _ _ _ Hindex) as [Hunique [_ [Hdomain Hlegal]]].
+  apply graph_before_indices in Hbefore. destruct Hbefore as [i [j [Hij [Hi Hj]]]].
+  assert (Huin : In u (wto_order w)) by (now apply nth_error_In in Hi).
+  assert (Hvin : In v (wto_order w)) by (now apply nth_error_In in Hj).
+  destruct (proj2 (Hdomain u) Huin) as [ru Hu].
+  destruct (proj2 (Hdomain v) Hvin) as [rv Hv].
+  destruct (wto_check_index_result _ _ _ _ _ _ _ Hindex)
+    as [s [Hinv [Htasks [Hranks [Hintervals Hvs]]]]].
+  pose proof (index_ranks _ _ _ Hinv) as Hpositions. rewrite Hranks in Hpositions.
+  destruct (Hpositions u ru Hu) as [i' [Hi' [Hru Hbi]]].
+  destruct (Hpositions v rv Hv) as [j' [Hj' [Hrv Hbj]]].
+  pose proof (wto_nth_unique _ i' i u Hunique Hi' Hi) as Hii.
+  pose proof (wto_nth_unique _ j' j v Hunique Hj' Hj) as Hjj.
+  unfold wto_interval_edge. rewrite Hu, Hv. apply orb_true_iff. left.
+  apply N.ltb_lt. subst i' j' ru rv. lia.
+Qed.
+
+(** A successful complete numeric index and exact coverage pass the remaining checker scans. *)
+Lemma wto_check_from_coverage g roots w ranks intervals vs :
+  (forall v, In v roots -> In v (nodes g)) ->
+  incl (wto_order w) (nodes g) ->
+  (forall v, In v (wto_order w) <-> reach (base g) roots v) ->
+  wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+    [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
+  (forall u v, In u (wto_order w) -> edge (base g) u v ->
+    wto_interval_edge ranks intervals u v = true) ->
+  wto_check_linear g roots w = true.
+Proof.
+  intros Hroots Hlisted Hcover Hindex Hedges.
+  destruct (wto_check_index_spec _ _ _ _ _ _ _ Hindex) as [_ [Hvs [Hranks Hlegal]]].
+  assert (Hroot_test : forallb (fun v => match trie_get v (listed_of g) with
+    Some _ => true | None => false end) roots = true).
+  { apply forallb_forall. intros v Hin. apply wto_present_test.
+    apply (proj2 (scc_listed_lookup (nodes g) v)). now apply Hroots. }
+  assert (Hlive : forall v,
+      In v (entered (prepared_search_trace (scc_graph g) roots)) <-> In v (wto_order w)).
+  { intro v. rewrite (prepared_search_reach_closed (scc_graph g) roots
+      (scc_graph_counts g)).
+    - symmetry. now apply wto_filter_coverage.
+    - intros u z Hu Hedge. rewrite scc_graph_nodes. now apply (scc_graph_closed g u).
+    - intros r Hin. rewrite scc_graph_nodes. now apply Hroots. }
+  unfold wto_check_linear. rewrite Hroot_test, Hindex.
+  apply andb_true_iff. split.
+  - apply andb_true_iff. split; apply forallb_forall; intros v Hin.
+    + apply wto_present_test. apply (proj2 (scc_listed_lookup _ v)).
+      apply Hlive. now rewrite <- Hvs.
+    + apply wto_present_test, (proj2 (Hranks v)). now apply Hlive.
+  - unfold wto_edges_ok. apply forallb_forall. intros u Hu.
+    apply forallb_forall. intros v Hedge. apply Hedges; [now rewrite <- Hvs|exact Hedge].
+Qed.
+
+
+Local Transparent loopN.
+
 (** A successor-closed vertex list contains every endpoint reached from one of its vertices. *)
 Lemma wto_path_domain : forall g vertices,
   (forall u v, In u vertices -> edge g u v -> In v vertices) ->
@@ -2974,6 +3088,65 @@ Module WtoT <: WTO_ALL.
     - split.
       + now rewrite wto_annotation_order in Hafter.
       + now apply wto_annotation_spec.
+  Qed.
+
+  (** Acceptance also establishes every clause of the plan's annotation-based predicate. *)
+  Lemma wto_checked_from_acceptance g roots w :
+    check g roots w = true -> checked g roots w.
+  Proof.
+    intro Hcheck. pose proof (Wto.check_sound g roots w Hcheck) as Hsound.
+    destruct Hsound as [Hunique [Hcover Hedges]].
+    pose proof Hcheck as Hindex. change (wto_check_linear g roots w = true) in Hindex.
+    unfold wto_check_linear in Hindex.
+    destruct (forallb (fun v => match trie_get v (listed_of g) with
+      Some _ => true | None => false end) roots); [|discriminate].
+    destruct (Galois.Graph.Wto.wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+      [WtoCheckVisit w] 0 Empty Empty []) as [[[ranks intervals] vs]|] eqn:Hindexed;
+      [|discriminate].
+    destruct (wto_check_index_spec _ _ _ _ _ _ _ Hindexed) as [_ [Hvs _]].
+    destruct (wto_check_index_seen _ _ _ _ _ _ _ Hindexed) as [_ Hlisted].
+    unfold checked. split; [now apply wto_check_roots with (w := w)|].
+    split.
+    - intros v Hin. apply (proj1 (scc_listed_lookup (nodes g) v)). apply Hlisted.
+      now rewrite Hvs.
+    - split; [exact Hunique|]. split.
+      + intro v. unfold live, search_trace. rewrite search_trace_reach_raw.
+        apply Hcover.
+      + intros u v Hu Hedge. apply (proj2 (wto_positions_edge_spec w u v Hunique Hu)).
+        apply Hedges; [exact Hedge|now apply Hcover].
+  Qed.
+
+  (** Completeness reduces to storing every structural enclosure in the numeric index. *)
+  Lemma wto_checked_acceptance_from_intervals g roots w :
+    (forall ranks intervals vs,
+      wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+        [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
+      forall h u, wto_encloses h u w ->
+        exists lo hi ru, trie_get h intervals = Some (lo, hi) /\
+          trie_get u ranks = Some ru /\ (lo <= ru < hi)%N) ->
+    checked g roots w -> check g roots w = true.
+  Proof.
+    intros Hcomplete [Hroots [Hlisted [Hunique [Hlive Hedges]]]].
+    destruct (wto_check_index_listed_complete g w Hunique Hlisted)
+      as [ranks [intervals [vs Hindex]]].
+    apply (wto_check_from_coverage g roots w ranks intervals vs);
+      [exact Hroots|exact Hlisted| |exact Hindex|].
+    - intro v. specialize (Hlive v). unfold live, search_trace in Hlive.
+      now rewrite search_trace_reach_raw in Hlive.
+    - intros u v Hu Hedge.
+      pose proof (proj1 (wto_positions_edge_spec w u v Hunique Hu)
+        (Hedges u v Hu Hedge)) as Hlegal.
+      destruct Hlegal as [Hforward|Hencloses].
+      + now apply (wto_check_index_forward _ _ _ _ _ _ _ _ _ Hindex).
+      + destruct (Hcomplete ranks intervals vs Hindex v u Hencloses)
+          as [lo [hi [ru [Hinterval [Huget Hbounds]]]]].
+        destruct (wto_check_index_spec _ _ _ _ _ _ _ Hindex) as [_ [_ [Hdomain Hsound]]].
+        destruct (proj2 (Hdomain v) (proj2 (wto_encloses_member w v u Hencloses)))
+          as [rv Hvget].
+        unfold Galois.Graph.Wto.wto_interval_edge. rewrite Huget, Hvget, Hinterval.
+        apply orb_true_iff. right. apply andb_true_iff. split.
+        * apply N.leb_le. exact (proj1 Hbounds).
+        * apply N.ltb_lt. exact (proj2 Hbounds).
   Qed.
 
   Lemma F4_check : forall g roots w, check g roots w = true <-> checked g roots w.
