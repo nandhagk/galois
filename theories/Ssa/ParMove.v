@@ -453,6 +453,289 @@ Proof.
 Qed.
 
 
+(** A common width bounds both operands of every move under consideration. *)
+Definition moves_width (w : nat) (ms : moves) : Prop :=
+  forall dst src, In (dst, src) ms -> Pos.size_nat dst <= w /\ Pos.size_nat src <= w.
+
+Lemma bits_of_member ms : moves_width (bits_of ms) ms.
+Proof.
+  unfold moves_width.
+  induction ms as [|[dst src] rest IH]; intros x y Hin; [contradiction|].
+  cbn [bits_of fold_right fst snd] in *. destruct Hin as [Hequal|Hin].
+  - inversion Hequal. subst x y. split; lia.
+  - specialize (IH x y Hin). unfold bits_of in IH. split; lia.
+Qed.
+
+Lemma moves_width_tail w dst src rest :
+  moves_width w ((dst, src) :: rest) -> moves_width w rest.
+Proof.
+  intros Hwidth x y Hin. apply Hwidth. now right.
+Qed.
+
+Lemma moves_width_app_left par sq : moves_width (bits_of (par ++ sq)) par.
+Proof.
+  intros dst src Hin. apply bits_of_member. apply in_or_app. now left.
+Qed.
+
+Lemma moves_width_app_right par sq : moves_width (bits_of (par ++ sq)) sq.
+Proof.
+  intros dst src Hin. apply bits_of_member. apply in_or_app. now right.
+Qed.
+
+Definition table_width (w : nat) (table : ptrie positive) : Prop :=
+  forall x y, trie_get x table = Some y -> Pos.size_nat y <= w.
+
+Lemma table_width_empty w : table_width w Empty.
+Proof.
+  intros x y Hget. rewrite PTrie.get_empty in Hget. discriminate.
+Qed.
+
+Lemma table_width_set w table dst src :
+  table_width w table -> Pos.size_nat src <= w ->
+  table_width w (PTrieCode.set dst src table).
+Proof.
+  intros Htable Hsrc x y Hget. destruct (Pos.eq_dec x dst) as [Hequal|Hdifferent].
+  - subst x. rewrite PTrie.get_set_same in Hget. injection Hget as Hvalue.
+    subst y. exact Hsrc.
+  - rewrite PTrie.get_set_other in Hget by exact Hdifferent. exact (Htable x y Hget).
+Qed.
+
+Lemma move_lookup_width w table x :
+  table_width w table -> Pos.size_nat x <= w -> Pos.size_nat (move_lookup table x) <= w.
+Proof.
+  intros Htable Hx. unfold move_lookup. destruct (trie_get x table) as [y|] eqn:Hget.
+  - exact (Htable x y Hget).
+  - exact Hx.
+Qed.
+
+Lemma symbolic_run_width w sq : moves_width w sq -> forall table,
+  table_width w table -> table_width w (symbolic_run sq table).
+Proof.
+  induction sq as [|[dst src] rest IH]; intros Hwidth table Htable; cbn [symbolic_run].
+  - exact Htable.
+  - apply IH.
+    + now apply moves_width_tail with dst src.
+    + apply table_width_set; [exact Htable|]. apply move_lookup_width; [exact Htable|].
+      exact (proj2 (Hwidth dst src (or_introl eq_refl))).
+Qed.
+
+(** The symbolic lookup performs one trie traversal and one default branch. *)
+Lemma T_move_lookup_bound table x :
+  (T_move_lookup table x <= 4 * N.of_nat (Pos.size_nat x + 1))%N.
+Proof.
+  pose proof (PTrieT.trie_get_clock positive x table) as Hget.
+  time_unfold T_move_lookup. destruct (trie_get x table); time_cbn; nia.
+Qed.
+
+(** Symbolic execution charges one lookup and one update for each move. *)
+Lemma T_set_code_bound : forall A p (a : A) table,
+  (PTrieCode.T_set p a table <= PTrieT.c_trie * N.of_nat (Pos.size_nat p + 1))%N.
+Proof.
+  exact PTrieT.T_set_le.
+Qed.
+
+Lemma T_symbolic_run_bound w sq : moves_width w sq -> forall table,
+  (T_symbolic_run sq table <=
+    16 * (PTrieT.c_trie + 1) * N.of_nat (length sq + 1) * N.of_nat (w + 1))%N.
+Proof.
+  induction sq as [|[dst src] rest IH]; intros Hwidth table.
+  - time_step.
+  - destruct (Hwidth dst src (or_introl eq_refl)) as [Hdst Hsrc].
+    pose proof (T_move_lookup_bound table src) as Hlookup.
+    pose proof (T_set_code_bound positive dst (move_lookup table src) table) as Hset.
+    specialize (IH (moves_width_tail w dst src rest Hwidth)
+      (PTrieCode.set dst (move_lookup table src) table)).
+    apply time_of_nat_le in Hdst. apply time_of_nat_le in Hsrc.
+    time_unfold T_symbolic_run. time_simpl. time_cbn.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+Qed.
+
+(** Parallel indexing charges one update for each listed assignment. *)
+Lemma T_parallel_table_bound w par : moves_width w par ->
+  (T_parallel_table par <=
+    8 * (PTrieT.c_trie + 1) * N.of_nat (length par + 1) * N.of_nat (w + 1))%N.
+Proof.
+  induction par as [|[dst src] rest IH]; intro Hwidth.
+  - time_step.
+  - destruct (Hwidth dst src (or_introl eq_refl)) as [Hdst Hsrc].
+    pose proof (T_set_code_bound positive dst src (parallel_table rest)) as Hset.
+    specialize (IH (moves_width_tail w dst src rest Hwidth)).
+    apply time_of_nat_le in Hdst.
+    time_unfold T_parallel_table. time_simpl. time_cbn.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+Qed.
+
+(** Temporary comparison only traverses the checked destination, never the temporary. *)
+Lemma T_move_agrees_bound w parallel sequential tmp x :
+  table_width w sequential -> Pos.size_nat x <= w ->
+  (T_move_agrees parallel sequential tmp x <= 16 * N.of_nat (w + 1))%N.
+Proof.
+  intros Htable Hx.
+  pose proof (T_move_lookup_bound sequential x) as Hseq.
+  pose proof (T_move_lookup_bound parallel x) as Hpar.
+  pose proof (Pos.T_eqb_le x tmp) as Htmp.
+  pose proof (Pos.T_eqb_le (move_lookup sequential x) (move_lookup parallel x)) as Hequal.
+  pose proof (move_lookup_width w sequential x Htable Hx) as Hvalue.
+  apply time_of_nat_le in Hx. apply time_of_nat_le in Hvalue.
+  time_unfold T_move_agrees. time_simpl.
+  destruct (Pos.eqb x tmp); time_cbn; rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+Lemma T_check_destinations_bound w parallel sequential tmp ms :
+  table_width w sequential -> moves_width w ms ->
+  (T_check_destinations parallel sequential tmp ms <=
+    32 * N.of_nat (length ms + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros Htable. induction ms as [|[dst src] rest IH]; intro Hwidth.
+  - time_step.
+  - pose proof (T_move_agrees_bound w parallel sequential tmp dst Htable
+      (proj1 (Hwidth dst src (or_introl eq_refl)))) as Hhead.
+    specialize (IH (moves_width_tail w dst src rest Hwidth)).
+    time_unfold T_check_destinations. time_simpl.
+    destruct (move_agrees parallel sequential tmp dst); time_cbn;
+      rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
+Qed.
+
+
+(** Indexed predecessor lists pay for source-key traversal and one trie update per move. *)
+Lemma T_incoming_moves_bound w par : moves_width w par -> forall table,
+  (T_incoming_moves par table <=
+    16 * (PTrieT.c_trie + 1) * N.of_nat (length par + 1) * N.of_nat (w + 1))%N.
+Proof.
+  induction par as [|[dst src] rest IH]; intros Hwidth table.
+  - time_step.
+  - pose proof (proj2 (Hwidth dst src (or_introl eq_refl))) as Hsrc.
+    pose proof (PTrieT.trie_get_clock moves src table) as Hget.
+    pose proof (T_set_code_bound moves src ((dst, src) :: incoming_at table src) table) as Hset.
+    specialize (IH (moves_width_tail w dst src rest Hwidth)
+      (PTrieCode.set src ((dst, src) :: incoming_at table src) table)).
+    apply time_of_nat_le in Hsrc.
+    time_unfold T_incoming_moves. time_simpl.
+    unfold incoming_at in IH, Hset. destruct (trie_get src table); time_cbn;
+      rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *.
+    all: rewrite Hget.
+    all: eapply N.le_trans.
+    1, 3: apply N.add_le_mono_l; apply N.add_le_mono_l;
+      apply N.add_le_mono; [exact Hset|exact IH].
+    all: unfold PTrieT.c_trie; time_cbn; nia.
+Qed.
+
+Lemma T_incoming_at_bound table x :
+  (T_incoming_at table x <= 4 * N.of_nat (Pos.size_nat x + 1))%N.
+Proof.
+  pose proof (PTrieT.trie_get_clock moves x table) as Hget.
+  time_unfold T_incoming_at. destruct (trie_get x table); time_cbn; nia.
+Qed.
+
+(** A job scans one list cell or performs only a fixed number of indexed operations. *)
+Lemma T_move_step_bound w par incoming tmp st :
+  moves_width w par -> Forall (job_known par) (move_jobs st) ->
+  (T_move_step incoming tmp st <=
+    32 * (PTrieT.c_trie + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros Hwidth Hjobs. destruct st as [jobs seen redirect output cycles].
+  destruct jobs as [|job jobs].
+  - time_step.
+  - cbn [move_jobs] in Hjobs.
+    inversion Hjobs as [|head tail Hjob Htail]; subst head tail.
+    destruct job as [[dst src]|ms|[dst src]]; cbn [job_known] in Hjob.
+    + pose proof (proj1 (Hwidth dst src Hjob)) as Hdst.
+      pose proof (PTrieT.trie_get_clock bool dst seen) as Hseen.
+      pose proof (PTrieT.trie_get_clock unit dst redirect) as Hredirect.
+      pose proof (T_incoming_at_bound incoming dst) as Hincoming.
+      pose proof (T_set_code_bound bool dst false seen) as Hsetseen.
+      pose proof (T_set_code_bound unit dst tt redirect) as Hsetredirect.
+      apply time_of_nat_le in Hdst.
+      time_unfold T_move_step. time_simpl.
+      unfold T_move_jobs, T_move_seen, T_move_redirect, T_move_output, T_move_cycles.
+      time_cbn. destruct (trie_get dst seen) as [[|]|];
+        destruct (trie_get dst redirect); time_cbn; rewrite !Nat2N.inj_add in *; nia.
+    + destruct ms; time_step.
+    + pose proof (proj1 (Hwidth dst src Hjob)) as Hdst.
+      pose proof (PTrieT.trie_get_clock unit dst redirect) as Hredirect.
+      pose proof (T_set_code_bound bool dst true seen) as Hsetseen.
+      apply time_of_nat_le in Hdst.
+      time_unfold T_move_step. time_simpl.
+      unfold T_move_jobs, T_move_seen, T_move_redirect, T_move_output, T_move_cycles.
+      time_cbn. destruct (trie_get dst redirect); time_cbn;
+        rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+Lemma T_move_run_bound fuel w par incoming tmp : forall st,
+  moves_width w par -> incoming_known par incoming -> move_known par tmp st ->
+  (T_move_run fuel incoming tmp st <=
+    64 * (PTrieT.c_trie + 1) * N.of_nat (fuel + 1) * N.of_nat (w + 1))%N.
+Proof.
+  induction fuel as [|fuel IH]; intros st Hwidth Hinput Hstate.
+  - time_step.
+  - pose proof (T_move_step_bound w par incoming tmp st Hwidth (proj1 Hstate)) as Hstep.
+    pose proof (IH (move_step incoming tmp st) Hwidth Hinput
+      (move_step_known par incoming tmp st Hinput Hstate)) as Hrun.
+    time_unfold T_move_run. unfold T_move_jobs. time_cbn.
+    destruct (move_jobs st); time_cbn; rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
+Qed.
+
+(** Each loop iteration emits at most one instruction. *)
+Lemma move_step_output_length incoming tmp st :
+  length (move_output (move_step incoming tmp st)) <= S (length (move_output st)).
+Proof.
+  destruct st as [jobs seen redirect output cycles]. destruct jobs as [|job jobs].
+  - cbn [move_step move_jobs move_output]. lia.
+  - destruct job as [[dst src]|ms|[dst src]];
+      cbn [move_step move_jobs move_seen move_redirect move_output move_cycles].
+    + destruct (trie_get dst seen) as [[|]|];
+        destruct (trie_get dst redirect); cbn [move_output length]; lia.
+    + destruct ms; cbn [move_output length]; lia.
+    + cbn [move_output length]. lia.
+Qed.
+
+Lemma move_run_output_length fuel incoming tmp : forall st,
+  length (move_output (move_run fuel incoming tmp st)) <= fuel + length (move_output st).
+Proof.
+  induction fuel as [|fuel IH]; intro st; cbn [move_run].
+  - lia.
+  - pose proof (move_step_output_length incoming tmp st) as Hstep.
+    pose proof (IH (move_step incoming tmp st)) as Hrun.
+    destruct (move_jobs st); lia.
+Qed.
+
+Lemma move_resolve_output_length par tmp :
+  length (move_output (move_resolve par tmp)) <= 8 * length par + 4.
+Proof.
+  unfold move_resolve. pose proof (move_run_output_length (8 * length par + 4)
+    (incoming_moves par Empty) tmp (move_initial par)) as Hlength.
+  cbn [move_initial move_output length] in Hlength. lia.
+Qed.
+
+Lemma T_move_resolve_bound par tmp :
+  (T_move_resolve par tmp <=
+    1024 * (PTrieT.c_trie + 1) * N.of_nat (length par + 1) *
+      N.of_nat (bits_of par + 1))%N.
+Proof.
+  pose proof (T_incoming_moves_bound (bits_of par) par (bits_of_member par) Empty) as Hindex.
+  assert (Hinput : incoming_known par (incoming_moves par Empty)).
+  { apply incoming_moves_known; [apply incl_refl|]. intros x m Hin.
+    rewrite incoming_at_empty in Hin. contradiction. }
+  assert (Hstate : move_known par tmp (move_initial par)).
+  { split; [|constructor]. constructor; [|constructor].
+    apply Forall_forall. intros m Hin. exact Hin. }
+  pose proof (T_move_run_bound (8 * length par + 4) (bits_of par) par
+    (incoming_moves par Empty) tmp (move_initial par) (bits_of_member par) Hinput Hstate) as Hrun.
+  pose proof (Datatypes.T_length_le par) as Hlength.
+  pose proof (Nat.T_mul_le 8 (length par)) as Hmultiply.
+  pose proof (Nat.T_add_le (8 * length par) 4) as Hadd.
+  time_unfold T_move_resolve. time_unfold T_move_initial. time_cbn.
+  rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. time_cbn_all. nia.
+Qed.
+
+Lemma T_firstn_bound {A} n : forall xs : list A,
+  (ListDef.T_firstn n xs <= N.of_nat n + 1)%N.
+Proof.
+  induction n as [|n IH]; intros [|x xs]; time_step.
+Qed.
+
+
+
 Module ParMove <: PARMOVE.
   Include ParMoveCode.
 
@@ -512,31 +795,22 @@ Module ParMoveT <: PARMOVE_ALL.
   TimeFun seq.
   TimeFun symbolic_all.
   TimeFun check_moves.
-  Definition c_pm : N := 1. (* STUB *)
-  Lemma T_seq_le : forall par tmp,
-    (T_seq par tmp <= c_pm * N.of_nat (length par + 1) * N.of_nat (bits_of par + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_check_moves_le : forall par tmp sq,
-    (T_check_moves par tmp sq <= c_pm * N.of_nat (length par + length sq + 1) *
-      N.of_nat (bits_of (par ++ sq) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
   TimeFun symbolic.
+
   Definition cycle_search (par : moves) : list positive :=
     move_cycles (move_resolve par 1%positive).
   TimeFun cycle_search.
-  Definition k_symbolic : N := 1. (* STUB *)
-  Definition k_cycle : N := 1. (* STUB *)
+
+  Definition c_pm : N := 4096 * (PTrieT.c_trie + 1).
+  Definition k_symbolic : N := 128 * (PTrieT.c_trie + 1).
+  Definition k_cycle : N := 4096 * (PTrieT.c_trie + 1).
+
   Lemma F0_cycle_search : forall par,
     NoDup (cycle_search par) /\ forall x, In x (cycle_search par) -> In x (map fst par).
   Proof.
     intro par. pose proof (move_resolve_cycles_known par 1%positive) as Hcycles.
     exact (conj (proj1 Hcycles) (proj1 (proj2 Hcycles))).
   Qed.
-  Lemma T0_cycle_search : forall par,
-    (T_cycle_search par <= k_cycle * N.of_nat (length par + 1) *
-      N.of_nat (bits_of par + 1))%N.
-  Proof. Admitted. (* STUB *)
   Definition relevant (par sq : moves) := map fst par ++ map snd par ++ map fst sq ++ map snd sq.
   Lemma F1_symbolic_all : forall sq x,
     exec_seq sq (@Some positive) x =
@@ -572,16 +846,114 @@ Module ParMoveT <: PARMOVE_ALL.
   Proof.
     exact symbolic_transport.
   Qed.
+  Lemma symbolic_all_clock_bound w sq : moves_width w sq ->
+    (T_symbolic_all sq <=
+      32 * (PTrieT.c_trie + 1) * N.of_nat (length sq + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intro Hwidth. pose proof (T_symbolic_run_bound w sq Hwidth Empty) as Hrun.
+    time_unfold T_symbolic_all. time_cbn. nia.
+  Qed.
+  
+  Lemma seq_clock_bound par tmp :
+    (T_seq par tmp <=
+      4096 * (PTrieT.c_trie + 1) * N.of_nat (length par + 1) *
+        N.of_nat (bits_of par + 1))%N.
+  Proof.
+    pose proof (T_move_resolve_bound par tmp) as Hresolve.
+    pose proof (move_resolve_output_length par tmp) as Houtput.
+    apply time_of_nat_le in Houtput.
+    pose proof (List.T_rev_append_le (move_output (move_resolve par tmp)) []) as Hreverse.
+    pose proof (T_firstn_bound (2 * length par)
+      (rev_append (move_output (move_resolve par tmp)) [])) as Hprefix.
+    pose proof (Datatypes.T_length_le par) as Hlength.
+    pose proof (Nat.T_mul_le 2 (length par)) as Hmultiply.
+    time_unfold T_seq. unfold T_move_output. time_cbn.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. time_cbn_all. nia.
+  Qed.
+  
+  Lemma cycle_search_clock_bound par :
+    (T_cycle_search par <=
+      4096 * (PTrieT.c_trie + 1) * N.of_nat (length par + 1) *
+        N.of_nat (bits_of par + 1))%N.
+  Proof.
+    pose proof (T_move_resolve_bound par 1%positive) as Hresolve.
+    time_unfold T_cycle_search. unfold T_move_cycles. time_cbn. nia.
+  Qed.
+  
+  Lemma checker_clock_bound par tmp sq :
+    (T_check_moves par tmp sq <= T_symbolic_all sq +
+      128 * (PTrieT.c_trie + 1) * N.of_nat (length par + length sq + 1) *
+        N.of_nat (bits_of (par ++ sq) + 1))%N.
+  Proof.
+    pose proof (moves_width_app_left par sq) as Hpar_width.
+    pose proof (moves_width_app_right par sq) as Hseq_width.
+    assert (Htable : table_width (bits_of (par ++ sq)) (symbolic_all sq)).
+    { apply symbolic_run_width; [exact Hseq_width|apply table_width_empty]. }
+    pose proof (T_parallel_table_bound _ par Hpar_width) as Hparallel.
+    pose proof (T_check_destinations_bound _ (parallel_table par) (symbolic_all sq)
+      tmp par Htable Hpar_width) as Hpar.
+    pose proof (T_check_destinations_bound _ (parallel_table par) (symbolic_all sq)
+      tmp sq Htable Hseq_width) as Hseq.
+    time_unfold T_check_moves. time_simpl.
+    destruct (check_destinations (parallel_table par) (symbolic_all sq) tmp par);
+      time_cbn; rewrite !Nat2N.inj_add in *; nia.
+  Qed.
+  
+  Lemma full_checker_clock_bound par tmp sq :
+    (T_check_moves par tmp sq <=
+      4096 * (PTrieT.c_trie + 1) * N.of_nat (length par + length sq + 1) *
+        N.of_nat (bits_of (par ++ sq) + 1))%N.
+  Proof.
+    pose proof (checker_clock_bound par tmp sq) as Hcheck.
+    pose proof (symbolic_all_clock_bound _ sq (moves_width_app_right par sq)) as Hsymbolic.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** The move producer is linear in move count at the input identifier width. *)
+  Lemma T_seq_le : forall par tmp,
+    (T_seq par tmp <= c_pm * N.of_nat (length par + 1) * N.of_nat (bits_of par + 1))%N.
+  Proof.
+    exact seq_clock_bound.
+  Qed.
+
+  (** The checker charges the source and proposed sequence at their common width. *)
+  Lemma T_check_moves_le : forall par tmp sq,
+    (T_check_moves par tmp sq <= c_pm * N.of_nat (length par + length sq + 1) *
+      N.of_nat (bits_of (par ++ sq) + 1))%N.
+  Proof.
+    exact full_checker_clock_bound.
+  Qed.
+
+  (** Cycle discovery uses the same bounded indexed search as move emission. *)
+  Lemma T0_cycle_search : forall par,
+    (T_cycle_search par <= k_cycle * N.of_nat (length par + 1) *
+      N.of_nat (bits_of par + 1))%N.
+  Proof.
+    exact cycle_search_clock_bound.
+  Qed.
+
+  (** The symbolic table pass pays once for each move at the sequence width. *)
   Lemma T1_symbolic_all : forall sq,
     (T_symbolic_all sq <= k_symbolic * N.of_nat (length sq + 1) *
       N.of_nat (bits_of sq + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro sq. pose proof (symbolic_all_clock_bound _ sq (bits_of_member sq)) as Hsymbolic.
+    unfold k_symbolic. nia.
+  Qed.
+
+  (** The direct producer bound also supplies the cycle-search decomposition. *)
   Lemma T1_seq : forall par tmp,
     (T_seq par tmp <= T_cycle_search par + k_cycle *
       N.of_nat (length par + 1) * N.of_nat (bits_of par + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros par tmp. pose proof (seq_clock_bound par tmp) as Hseq. unfold k_cycle. lia.
+  Qed.
+
+  (** After symbolic execution, two destination passes and one parallel table suffice. *)
   Lemma T2_check : forall par tmp sq,
-    (T_check_moves par tmp sq <= T_symbolic_all sq + k_symbolic * N.of_nat (length par + length sq + 1) *
-      N.of_nat (bits_of (par ++ sq) + 1))%N.
-  Proof. Admitted. (* STUB *)
+    (T_check_moves par tmp sq <= T_symbolic_all sq + k_symbolic *
+      N.of_nat (length par + length sq + 1) * N.of_nat (bits_of (par ++ sq) + 1))%N.
+  Proof.
+    exact checker_clock_bound.
+  Qed.
 End ParMoveT.
