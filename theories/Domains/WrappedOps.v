@@ -1090,6 +1090,309 @@ Proof.
   intros. unfold wrapped_project. apply wrapped_join_bits_bound.
 Qed.
 
+(** Interval payload storage adds only its endpoint bits and two width charges. *)
+Lemma wrapped_interval_input_storage : forall xs : list (width * itv),
+  (fold_right Nat.add 0%nat
+    (map (fun x => WrappedIntervalPayloadBounds.psize (fst x) (snd x)) xs) <=
+    2 * fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) +
+      fold_right Nat.add 0%nat (map (fun x => interval_bits (snd x)) xs))%nat.
+Proof.
+  induction xs as [|[w a] xs IH]; cbn [map fold_right fst snd].
+  - lia.
+  - change (Pos.to_nat w + interval_bits a + 1 +
+      fold_right Nat.add 0%nat
+        (map (fun x => WrappedIntervalPayloadBounds.psize (fst x) (snd x)) xs) <=
+      2 * (Pos.to_nat w + fold_right Nat.add 0%nat
+        (map (fun x => Pos.to_nat (fst x)) xs)) +
+        (interval_bits a + fold_right Nat.add 0%nat
+          (map (fun x => interval_bits (snd x)) xs)))%nat.
+    pose proof (Pos2Nat.is_pos w). lia.
+Qed.
+
+(** The fixed interval implementation has a uniform quadratic forward clock. *)
+Lemma wrapped_interval_forward_time : forall o rw xs,
+  (WrappedIntervalTable.T_wfwd o rw xs <= 8796093022208 * N.of_nat
+    ((Pos.to_nat rw + fold_right Nat.add 0%nat
+      (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+      fold_right Nat.add 0%nat (map (fun x => interval_bits (snd x)) xs)))%N.
+Proof.
+  intros o rw xs.
+  pose proof (WrappedIntervalTableBounds.T_wfwd_le o rw xs) as Htime.
+  rewrite <- wrapped_interval_forward_clock in Htime.
+  assert (Hcoefficient : WrappedIntervalTableBounds.c_word_table = 2132065000000%N)
+    by reflexivity.
+  rewrite Hcoefficient in Htime.
+  pose proof (wrapped_interval_input_storage xs) as Hstorage.
+  set (widths := fold_right Nat.add 0%nat
+    (map (fun x : width * itv => Pos.to_nat (fst x)) xs)) in *.
+  set (bits := fold_right Nat.add 0%nat
+    (map (fun x : width * itv => interval_bits (snd x)) xs)) in *.
+  set (inputs := fold_right Nat.add 0%nat
+    (map (fun x : width * itv =>
+      WrappedIntervalPayloadBounds.psize (fst x) (snd x)) xs)) in *.
+  change (inputs <= 2 * widths + bits)%nat in Hstorage.
+  change (WrappedIntervalTable.T_wfwd o rw xs <= 2132065000000 * N.of_nat
+    ((Pos.to_nat rw + widths + 1) ^ 2 + inputs))%N in Htime.
+  change (WrappedIntervalTable.T_wfwd o rw xs <= 8796093022208 * N.of_nat
+    ((Pos.to_nat rw + widths + 1) ^ 2 + bits))%N.
+  clearbody widths bits inputs.
+  assert (Hbudget : ((Pos.to_nat rw + widths + 1) ^ 2 + inputs <=
+    3 * ((Pos.to_nat rw + widths + 1) ^ 2 + bits))%nat).
+  { clear -Hstorage. cbn [Nat.pow]. nia. }
+  pose proof (time_of_nat_le _ _ Hbudget) as HbudgetN.
+  rewrite Nat2N.inj_mul in HbudgetN.
+  set (budget := N.of_nat ((Pos.to_nat rw + widths + 1) ^ 2 + bits)) in *.
+  clearbody budget. clear Hbudget Hstorage. nia.
+Qed.
+TimeBound wrapped_interval_forward_time.
+
+(** Forward interval results have linear endpoint storage in the requested widths. *)
+Lemma wrapped_interval_forward_bits : forall o rw xs r,
+  WrappedIntervalTable.wfwd o rw xs = Some r ->
+  (interval_bits r <= 128 * (Pos.to_nat rw + fold_right Nat.add 0%nat
+    (map (fun x => Pos.to_nat (fst x)) xs) + 1))%nat.
+Proof.
+  exact WrappedIntervalTableBounds.table_wfwd_linear_bits.
+Qed.
+
+(** Sign inspection has the certified primitive interval clock. *)
+Lemma wrapped_interval_sign_time : forall w a,
+  (WrappedIntervalBack.T_interval_sign w a <=
+    300 * N.of_nat ((Pos.to_nat w + interval_bits a + 1) ^ 2))%N.
+Proof.
+  exact WrappedIntervalTableBounds.table_sign_time.
+Qed.
+TimeBound wrapped_interval_sign_time.
+
+(** Negating an interval has the certified primitive interval clock. *)
+Lemma wrapped_interval_neg_time : forall w a,
+  (WrappedIntervalBack.T_interval_neg w a <=
+    1000 * N.of_nat ((Pos.to_nat w + interval_bits a + 1) ^ 2))%N.
+Proof.
+  exact WrappedIntervalTableBounds.table_neg_time.
+Qed.
+TimeBound wrapped_interval_neg_time.
+
+(** Primitive quotient approximation charges endpoint arithmetic quadratically. *)
+Lemma wrapped_interval_udiv_time : forall w a b,
+  (WrappedIntervalBack.T_interval_udiv w a b <= 2000 * N.of_nat
+    ((Pos.to_nat w + interval_bits a + interval_bits b + 1) ^ 2))%N.
+Proof.
+  exact WrappedIntervalTableBounds.table_udiv_time.
+Qed.
+TimeBound wrapped_interval_udiv_time.
+
+(** Primitive remainder approximation charges endpoint arithmetic quadratically. *)
+Lemma wrapped_interval_urem_time : forall w a b,
+  (WrappedIntervalBack.T_interval_urem w a b <= 2000 * N.of_nat
+    ((Pos.to_nat w + interval_bits a + interval_bits b + 1) ^ 2))%N.
+Proof.
+  exact WrappedIntervalTableBounds.table_urem_time.
+Qed.
+TimeBound wrapped_interval_urem_time.
+
+(** Pairwise circular joins normalize each coordinate at its own width. *)
+Lemma wrapped_pair_join_bits : forall wa wb a b,
+  (wrapped_bits (fst (wrapped_pair_join wa wb a b)) <= 2 * Pos.to_nat wa)%nat /\
+  (wrapped_bits (snd (wrapped_pair_join wa wb a b)) <= 2 * Pos.to_nat wb)%nat.
+Proof.
+  intros. unfold wrapped_pair_join. cbn [fst snd]. split; apply wrapped_join_bits_bound.
+Qed.
+
+
+(** Projection splits a normalized source and joins two normalized target intervals. *)
+Lemma wrapped_project_time : forall target source q,
+  (T_wrapped_project target source q <= 1048576 * N.of_nat
+    (Pos.to_nat target + Pos.to_nat source + wrapped_bits q + 1))%N.
+Proof.
+  intros target source q.
+  pose proof (wrapped_parts_bits source q) as [Hl Hr].
+  set (parts := wrapped_parts source q) in *.
+  pose proof (wrapped_of_interval_bits target (fst parts)) as Hleft.
+  pose proof (wrapped_of_interval_bits target (snd parts)) as Hright.
+  set (left := wrapped_of_interval target (fst parts)) in *.
+  set (right := wrapped_of_interval target (snd parts)) in *.
+  time_unfold T_wrapped_project. cbn beta iota zeta.
+  fold parts left right. clearbody parts left right.
+  time_simpl. time_pose. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_project_time.
+
+(** A coordinatewise join charges its two normalized circular joins. *)
+Lemma wrapped_pair_join_time : forall wa wb a b,
+  (T_wrapped_pair_join wa wb a b <= 262144 * N.of_nat
+    (Pos.to_nat wa + Pos.to_nat wb + wrapped_bits (fst a) + wrapped_bits (snd a) +
+      wrapped_bits (fst b) + wrapped_bits (snd b) + 1))%N.
+Proof.
+  intros wa wb a b. time_unfold T_wrapped_pair_join. cbn beta iota zeta.
+  time_simpl. time_pose. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_pair_join_time.
+
+(** Binary width checking never reads metadata belonging to unary operations. *)
+Lemma wrapped_binary_result_width_bits : forall o wa wb rw,
+  result_width o [wa; wb] = Some rw ->
+  (Pos.to_nat rw <= Pos.to_nat wa + Pos.to_nat wb + 1)%nat.
+Proof.
+  intros o wa wb rw Hresult. destruct o; cbn [result_width] in Hresult;
+    try discriminate Hresult;
+    try (destruct (Pos.eqb wa wb); [injection Hresult as <-; cbn; lia|discriminate]).
+  injection Hresult as <-. rewrite Pos2Nat.inj_add. lia.
+Qed.
+
+(** The binary width checker uses one positive comparison or addition. *)
+Lemma wrapped_binary_result_width_time : forall o wa wb,
+  (T_result_width o [wa; wb] <=
+    128 * N.of_nat (Pos.to_nat wa + Pos.to_nat wb + 1))%N.
+Proof.
+  intros o wa wb.
+  pose proof (WordTime.positive_size_value wa) as Ha.
+  pose proof (WordTime.positive_size_value wb) as Hb.
+  destruct o; time_unfold T_result_width; cbn beta iota zeta;
+    time_simpl; time_pose;
+    repeat match goal with
+    | |- context [if ?test then _ else _] => destruct test
+    end;
+    cbn beta iota zeta; rewrite ?Nat2N.inj_add in *; lia.
+Qed.
+
+(** Pair refinement shares the certified concrete interval primitive clock. *)
+Lemma wrapped_interval_refine_time : forall o w a b q,
+  (WrappedIntervalBack.T_interval_assume_pair o w a b q <= 1073741824 * N.of_nat
+    ((Pos.to_nat w + interval_bits a + interval_bits b + 1) ^ 2 + interval_bits q))%N.
+Proof.
+  intros o w a b q.
+  pose proof (WrappedIntervalTableBounds.table_assume_pair_time o w a b q) as Htime.
+  rewrite <- wrapped_interval_pair_clock in Htime.
+  change (WrappedIntervalBack.T_interval_assume_pair o w a b q <=
+    328010000 * N.of_nat
+      ((Pos.to_nat w + interval_bits a + interval_bits b + 1) ^ 2 + interval_bits q))%N
+    in Htime.
+  lia.
+Qed.
+TimeBound wrapped_interval_refine_time.
+
+(** Pair refinement adds only linear endpoint storage to both coordinates. *)
+Lemma wrapped_interval_refine_bits : forall o w a b q,
+  (interval_bits (fst (WrappedIntervalBack.interval_assume_pair o w a b q)) +
+    interval_bits (snd (WrappedIntervalBack.interval_assume_pair o w a b q)) <=
+    2 * (interval_bits a + interval_bits b + interval_bits q + 2))%nat.
+Proof.
+  exact WrappedIntervalTableBounds.table_assume_pair_bits.
+Qed.
+
+(** Truncation refinement uses the same generated clock as the interval table. *)
+Lemma wrapped_interval_rewrap_clock : forall rw a q,
+  WrappedIntervalBack.T_interval_assume_rewrap rw a q =
+    WrappedIntervalTableBounds.T_interval_assume_rewrap rw a q.
+Proof.
+  reflexivity.
+Qed.
+
+(** Rewrapping keeps the requested result's raw endpoint cost linear. *)
+Lemma wrapped_interval_rewrap_time : forall rw a q,
+  (WrappedIntervalBack.T_interval_assume_rewrap rw a q <= 8388608 * N.of_nat
+    ((Pos.to_nat rw + interval_bits a + 1) ^ 2 + interval_bits q))%N.
+Proof.
+  intros rw a q.
+  pose proof (WrappedIntervalTableBounds.table_assume_rewrap_time rw a q) as Htime.
+  rewrite <- wrapped_interval_rewrap_clock in Htime.
+  change (WrappedIntervalBack.T_interval_assume_rewrap rw a q <=
+    3280100 * N.of_nat ((Pos.to_nat rw + interval_bits a + 1) ^ 2 + interval_bits q))%N
+    in Htime.
+  lia.
+Qed.
+TimeBound wrapped_interval_rewrap_time.
+
+(** Rewrapping retains its input or intersects it with the requested result. *)
+Lemma wrapped_interval_rewrap_bits : forall rw a q,
+  (interval_bits (WrappedIntervalBack.interval_assume_rewrap rw a q) <=
+    interval_bits a + interval_bits q)%nat.
+Proof.
+  intros rw a q. unfold WrappedIntervalBack.interval_assume_rewrap.
+  destruct (interval_finite_helper a) as [[lo hi]|]; [|lia].
+  destruct ((0 <=? lo) && (hi <? modulus rw))%bool; [|lia].
+  apply WrappedScalar.interval_meet_bits.
+Qed.
+
+(** The backward fallback uses the already bounded full unsigned interval. *)
+Lemma wrapped_backward_top_time : forall w,
+  (WrappedIntervalBack.T_interval_top w <= 64 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  exact wrapped_interval_top_time.
+Qed.
+TimeBound wrapped_backward_top_time.
+
+(** The backward full interval has one word-sized finite endpoint. *)
+Lemma wrapped_backward_top_bits : forall w,
+  (interval_bits (WrappedIntervalBack.interval_top w) <= Pos.to_nat w)%nat.
+Proof.
+  exact wrapped_interval_top_bits.
+Qed.
+
+(** Clipping at the pole bounds each result independently of raw endpoint size. *)
+Lemma wrapped_backward_pole_bits : forall w a,
+  (interval_bits (fst (wrapped_pole_cut w a)) <= Pos.to_nat w)%nat /\
+  (interval_bits (snd (wrapped_pole_cut w a)) <= Pos.to_nat w)%nat.
+Proof.
+  exact wrapped_pole_cut_bits_bound.
+Qed.
+
+(** Addition finishes in a normalized arc or a constant extreme. *)
+Lemma wrapped_backward_add_bits : forall w a b,
+  (wrapped_bits (wrapped_add w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w [| |la ha] [| |lb hb];
+    try (change (0 <= 2 * Pos.to_nat w)%nat; lia).
+  unfold wrapped_add. destruct (modulus w <?
+    wrapped_size w (WItv la ha) + wrapped_size w (WItv lb hb));
+    [change (0 <= 2 * Pos.to_nat w)%nat; lia|apply wrapped_norm_bits_bound].
+Qed.
+
+(** Subtraction inherits the normalized result of circular addition. *)
+Lemma wrapped_backward_sub_bits : forall w a b,
+  (wrapped_bits (wrapped_sub w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros. unfold wrapped_sub. apply wrapped_backward_add_bits.
+Qed.
+
+(** A fixed width expansion scales a square without involving clock expressions. *)
+Lemma wrapped_backward_square_scale : forall a b k,
+  (a <= k * b)%nat -> (a ^ 2 <= k * k * b ^ 2)%nat.
+Proof.
+  intros a b k Hle. rewrite !Nat.pow_2_r.
+  eapply Nat.le_trans; [apply Nat.mul_le_mono; exact Hle|].
+  clear Hle a. nia.
+Qed.
+
+(** Linear width work is contained in a positive width-square budget. *)
+Lemma wrapped_backward_square_floor : forall n,
+  (1 <= n)%nat -> (n <= n ^ 2)%nat.
+Proof.
+  intros n Hpositive. rewrite Nat.pow_2_r.
+  replace n with (n * 1)%nat at 1 by lia. now apply Nat.mul_le_mono_l.
+Qed.
+
+(** Rewrapping two width-bounded pieces uses only their declared width square. *)
+Lemma wrapped_interval_rewrap_time_word : forall w rw a q,
+  (interval_bits a <= Pos.to_nat w)%nat ->
+  (interval_bits q <= Pos.to_nat rw)%nat ->
+  (WrappedIntervalBack.T_interval_assume_rewrap rw a q <= 16777216 * N.of_nat
+    ((Pos.to_nat w + Pos.to_nat rw + 1) ^ 2))%N.
+Proof.
+  intros w rw a q Ha Hq.
+  pose proof (wrapped_interval_rewrap_time rw a q) as Htime.
+  assert (Hsquare : ((Pos.to_nat rw + interval_bits a + 1) ^ 2 <=
+    (Pos.to_nat w + Pos.to_nat rw + 1) ^ 2)%nat)
+    by (apply Nat.pow_le_mono_l; lia).
+  pose proof (wrapped_backward_square_floor (Pos.to_nat w + Pos.to_nat rw + 1)
+    ltac:(lia)) as Hfloor.
+  assert (Hbudget : ((Pos.to_nat rw + interval_bits a + 1) ^ 2 + interval_bits q <=
+    2 * (Pos.to_nat w + Pos.to_nat rw + 1) ^ 2)%nat) by lia.
+  pose proof (time_of_nat_le _ _ Hbudget) as HbudgetN.
+  rewrite Nat2N.inj_mul in HbudgetN. lia.
+Qed.
+
 Module WrappedTableStorageProof (L : WORD_LANGUAGE_T) (W : WRAPPED_T L).
   Module O := WrappedOpsCode L W.
 
