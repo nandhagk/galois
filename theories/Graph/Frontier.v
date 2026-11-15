@@ -2586,6 +2586,64 @@ Proof.
   lia.
 Qed.
 
+(** A fixed envelope absorbs actual-support credit into visited-row work and key width. *)
+Lemma frontier_idf_total_arithmetic : forall loop_cost unit_cost width seed_count work_count
+    output_count potential elapsed,
+  (1 <= unit_cost -> 1 <= width -> output_count <= work_count ->
+   potential <= 7 * (seed_count + work_count + 1) ->
+   elapsed + 2 <= 16 *
+     ((64 * unit_cost * width + 1) * potential + 16 * (output_count + 1) + seed_count + 1) ->
+   elapsed + 1 <= (16 * 4096 * (loop_cost + 1) * unit_cost) *
+     (seed_count + work_count + 1) * width)%N.
+Proof.
+  intros loop_cost unit_cost width seed_count work_count output_count potential elapsed
+    Hunit Hwidth Houtput Hpotential Hrun.
+  set (size := (seed_count + work_count + 1)%N) in *.
+  assert (Hseed : (seed_count + 1 <= size)%N) by (unfold size; lia).
+  assert (Hout : (output_count + 1 <= size)%N) by (unfold size; lia).
+  set (rate := (unit_cost * width)%N).
+  assert (Hrate : (1 <= rate)%N) by (unfold rate; nia).
+  replace (64 * unit_cost * width)%N with (64 * rate)%N in Hrun by (unfold rate; nia).
+  assert (Hpaid : ((64 * rate + 1) * potential <= (64 * rate + 1) * (7 * size))%N).
+  { now apply N.mul_le_mono_l. }
+  assert (Hinside : ((64 * rate + 1) * potential +
+    16 * (output_count + 1) + seed_count + 1 <= (7 * (64 * rate + 1) + 17) * size)%N) by nia.
+  assert (Hscale : (7 * (64 * rate + 1) + 17 <= 4096 * (loop_cost + 1) * rate)%N) by nia.
+  assert (Htime : (elapsed + 1 <= 16 * (7 * (64 * rate + 1) + 17) * size)%N) by nia.
+  replace ((16 * 4096 * (loop_cost + 1) * unit_cost) * size * width)%N with
+    (16 * (4096 * (loop_cost + 1) * rate) * size)%N by (unfold rate; nia).
+  eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_r. now apply N.mul_le_mono_l.
+Qed.
+
+(** Raw iteration pays seed occurrences, visited row occurrences, and their actual key width. *)
+Lemma frontier_idf_total_time : forall rows seeds,
+  (T_idf rows seeds + 1 <= frontier_total_cost *
+    N.of_nat (length seeds + idf_work idf rows seeds + 1) *
+      N.of_nat (frontier_idf_width rows seeds + 1))%N.
+Proof.
+  intros rows seeds.
+  pose proof (frontier_idf_walk_time rows seeds) as Hrun.
+  pose proof (frontier_idf_initial_progress rows seeds) as Hpotential.
+  pose proof (frontier_idf_output_size rows seeds) as Houtput.
+  unfold frontier_idf_credit, frontier_step_cost in Hrun.
+  set (width := N.of_nat (frontier_idf_width rows seeds + 1)) in *.
+  assert (Hwidth : (1 <= width)%N) by (unfold width; rewrite Nat2N.inj_add; lia).
+  apply time_of_nat_le in Hpotential, Houtput.
+  rewrite Nat2N.inj_mul in Hpotential.
+  repeat rewrite Nat2N.inj_add in Hpotential. repeat rewrite Nat2N.inj_add in Hrun.
+  repeat rewrite Nat2N.inj_add. unfold frontier_total_cost.
+  set (seed_count := N.of_nat (length seeds)) in *.
+  set (work_count := N.of_nat (idf_work idf rows seeds)) in *.
+  set (output_count := N.of_nat (length (idf rows seeds))) in *.
+  set (potential := N.of_nat (frontier_idf_progress rows
+    (frontier_idf_support rows seeds) (idf_initial seeds))) in *.
+  set (elapsed := T_idf rows seeds) in *.
+  clearbody seed_count work_count output_count potential elapsed width.
+  refine (frontier_idf_total_arithmetic c_loopN frontier_unit_cost width seed_count work_count
+    output_count potential elapsed _ Hwidth Houtput Hpotential Hrun).
+  unfold frontier_unit_cost. lia.
+Qed.
+
 Module FrontierT <: FRONTIER_ALL.
   Include Frontier.
 
@@ -2611,7 +2669,14 @@ Module FrontierT <: FRONTIER_ALL.
       (length seeds + idf_work idf rows seeds + 1) *
       N.of_nat (vertex_width
         (seeds ++ flat_map (frontier_row rows) (seeds ++ idf rows seeds)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds. pose proof (frontier_idf_total_time rows seeds) as Hbound.
+    change (Frontier.T_idf rows seeds + 1 <= c_frontier *
+      N.of_nat (length seeds + idf_work idf rows seeds + 1) *
+        N.of_nat (vertex_width
+          (seeds ++ flat_map (frontier_row rows) (seeds ++ idf rows seeds)) + 1))%N in Hbound.
+    time_unfold T_idf. lia.
+  Qed.
 
   Lemma df_bigO : bigO (fun '(g, t, r) =>
       wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
@@ -2629,7 +2694,10 @@ Module FrontierT <: FRONTIER_ALL.
       ((length seeds + idf_work idf rows seeds + 1) *
         (vertex_width (seeds ++ flat_map (frontier_row rows) (seeds ++ idf rows seeds)) + 1)))
     (fun '(rows, seeds) => T_idf rows seeds).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_frontier. intros [rows seeds] Htrue.
+    pose proof (T_idf_le rows seeds) as Hbound. rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   Definition df_step := df_step.
   TimeFun df_step.
@@ -2871,9 +2939,9 @@ Module FrontierT <: FRONTIER_ALL.
   TimeFun idf_step.
   Definition idf_walk := idf.
   TimeFun idf_walk.
-  Definition k_idf_step : N := 1. (* STUB *)
-  Definition k_idf_stop : N := 1. (* STUB *)
-  Definition k_idf_walk : N := 1. (* STUB *)
+  Definition k_idf_step : N := frontier_step_cost.
+  Definition k_idf_stop : N := 16.
+  Definition k_idf_walk : N := 16.
 
   Definition idf_initial (seeds : list positive) : idf_state :=
     IdfState (map IdfSeed seeds) Empty Empty [].
@@ -3088,12 +3156,30 @@ Module FrontierT <: FRONTIER_ALL.
     idf_invariant rows seeds st -> idf_step rows st = inl next ->
     (T_idf_step rows st + idf_credit rows seeds next <
       idf_credit rows seeds st)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds st next [Hreach [Hunique [Hmarks [Hsound [Hexpanded Htasks]]]]] Hstep.
+    pose proof (frontier_idf_tasks_within rows seeds st Htasks) as Hwithin.
+    pose proof (frontier_idf_step_credit rows seeds st next Hwithin Hstep) as Hbound.
+    change (frontier_idf_credit rows seeds next) with (idf_credit rows seeds next) in Hbound.
+    change (frontier_idf_credit rows seeds st) with (idf_credit rows seeds st) in Hbound.
+    time_unfold T_idf_step. lia.
+  Qed.
 
   Lemma T2_idf_stop : forall rows seeds st result,
     idf_invariant rows seeds st -> idf_step rows st = inr result ->
     (T_idf_step rows st <= k_idf_stop * N.of_nat (length (idf rows seeds) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds st result Hinv Hstep.
+    destruct (idf_step_stop rows st result Hstep) as [Hpending Hresult].
+    pose proof (frontier_idf_answer_size rows seeds st
+      (idf_closure_reachable rows seeds st (proj1 Hinv))) as Hlength.
+    change (length (idf_answer st) <= length (idf rows seeds)) in Hlength.
+    destruct st as [pending expanded discovered answer].
+    cbn [idf_pending idf_answer] in Hpending, Hlength. subst pending.
+    pose proof (frontier_idf_stop_time rows expanded discovered answer) as Htime.
+    unfold k_idf_stop. time_unfold T_idf_step.
+    repeat rewrite Nat2N.inj_add in Htime. repeat rewrite Nat2N.inj_add. lia.
+  Qed.
 
   Lemma T2a_idf_checked_step : forall rows seeds st next Hnext,
     idf_checked_step rows seeds st = inl (exist _ next Hnext) ->
@@ -3118,15 +3204,25 @@ Module FrontierT <: FRONTIER_ALL.
       (idf_credit rows seeds (idf_initial seeds) +
         k_idf_stop * N.of_nat (length (idf rows seeds) + 1) +
         N.of_nat (length seeds) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds. pose proof (frontier_idf_walk_time rows seeds) as Hbound.
+    change (Frontier.T_idf rows seeds + 2 <= 16 *
+      (idf_credit rows seeds (idf_initial seeds) +
+        16 * N.of_nat (length (idf rows seeds) + 1) + N.of_nat (length seeds) + 1))%N in Hbound.
+    unfold k_idf_walk, k_idf_stop. time_unfold T_idf_walk. time_unfold T_idf. lia.
+  Qed.
 
   Lemma T4_idf_wrapper : forall rows seeds,
     (T_idf rows seeds <= k_idf_walk * (T_idf_walk rows seeds + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds. unfold k_idf_walk. time_unfold T_idf_walk. lia.
+  Qed.
 
   Lemma T5_idf_public : forall rows seeds,
     (T_idf rows seeds <= c_frontier *
       N.of_nat (length seeds + idf_work idf rows seeds + 1) *
       N.of_nat (idf_width rows seeds + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T_idf_le.
+  Qed.
 End FrontierT.
