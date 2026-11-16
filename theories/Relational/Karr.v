@@ -4,7 +4,7 @@
     For example, eliminating x from x + y = 2 and x = 1 gives y = 1.
     Builds on: KarrSig and the binary trie code. *)
 From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring ArithRing Lqa Permutation.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -23472,4 +23472,52 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     assert (Hpositive : (1 <= N.of_nat (size a + size b + 1))%N) by lia.
     time_unfold T_narrow. nia.
   Qed.
+
+  Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
+    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
+    (fun x => N.of_nat (havoc_work (fst x) (snd x)))
+    (fun x => T_havoc (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
+    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
+    (fun x => N.of_nat (range_work (fst x) (snd x)))
+    (fun x => T_range (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma leb_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
+    (fun x => N.of_nat (elimination_work (fst x) (snd x)))
+    (fun x => T_leb (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma join_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
+    (fun x => N.of_nat (elimination_work (fst x) (snd x)))
+    (fun x => T_join (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma widen_bigO : bigO (fun x : wparam * t * t =>
+      normal_s (snd (fst x)) /\ normal_s (snd x))
+    (fun x => N.of_nat (elimination_work (snd (fst x)) (snd x)))
+    (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma affine_hull_bigO : bigO
+    (fun x : list (lcons X.t) * list (lcons X.t) => normal (fst x) /\ normal (snd x))
+    (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x))))
+    (fun x => T_affine_hull (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma entail_cert_bigO : bigO
+    (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
+    (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x :: nil))))
+    (fun x => T_entail_cert (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
 End KarrT.

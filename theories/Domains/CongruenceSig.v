@@ -147,6 +147,45 @@ Module Type CONGRUENCE_TIME (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE L).
     (fun x : positive * (congr * congr) => N.of_nat
       (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
     (fun x => T_congr_mul (fst x) (fst (snd x)) (snd (snd x))))%N.
+  (** Remainder has the published quadratic class, because it takes a gcd. *)
+  Parameter congr_urem_bigO : bigO (X := positive * (congr * congr)) (fun _ => True)
+    (fun x => N.of_nat
+      (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
+    (fun x => T_congr_urem (fst x) (fst (snd x)) (snd (snd x))).
+  (** Canonical payloads normalize in linear time. *)
+  Parameter congr_norm_lin_bigO : bigO (X := positive * congr)
+    (fun x => canonical (fst x) (snd x))
+    (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
+    (fun x => T_congr_norm (fst x) (snd x)).
+  (** Negation of a canonical payload is linear. *)
+  Parameter congr_neg_lin_bigO : bigO (X := positive * congr)
+    (fun x => canonical (fst x) (snd x))
+    (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
+    (fun x => T_congr_neg (fst x) (snd x)).
+  (** Addition of canonical payloads is linear. *)
+  Parameter congr_add_lin_bigO : bigO (X := positive * (congr * congr))
+    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
+    (fun x => N.of_nat
+      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
+    (fun x => T_congr_add (fst x) (fst (snd x)) (snd (snd x))).
+  (** Subtraction of canonical payloads is linear. *)
+  Parameter congr_sub_lin_bigO : bigO (X := positive * (congr * congr))
+    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
+    (fun x => N.of_nat
+      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
+    (fun x => T_congr_sub (fst x) (fst (snd x)) (snd (snd x))).
+  (** Shifting a canonical payload by a canonical amount is linear. *)
+  Parameter congr_shl_lin_bigO : bigO (X := positive * (congr * congr))
+    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
+    (fun x => N.of_nat
+      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
+    (fun x => T_congr_shl (fst x) (fst (snd x)) (snd (snd x))).
+  (** Projection of a canonical payload is linear in both widths. *)
+  Parameter congr_project_lin_bigO : bigO (X := positive * (positive * congr))
+    (fun x => (fst (snd x) <= fst x)%positive /\ canonical (fst x) (snd (snd x)))
+    (fun x => N.of_nat
+      (Pos.to_nat (fst x) + Pos.to_nat (fst (snd x)) + congr_bits (snd (snd x)) + 1))
+    (fun x => T_congr_project (fst x) (fst (snd x)) (snd (snd x))).
 End CONGRUENCE_TIME.
 
 Module Type CONGRUENCE_T (L : WORD_LANGUAGE_T) :=

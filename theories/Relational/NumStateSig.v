@@ -5,7 +5,7 @@
     Builds on: LatticeSig, LinearizeSig and ValueSig. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import Std.
+From Argent Require Import Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -93,6 +93,22 @@ Module Type NUM_STATE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
        match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
      c_num * N.of_nat (range_bits e s + 1))%N.
+  (** Assignment is linear in its stated numeric work. *)
+  Parameter assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
+    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  (** Havoc is linear in its stated numeric work. *)
+  Parameter havoc_bigO : bigO (fun _ : X.t * t => True)
+    (fun x => N.of_nat (havoc_work (fst x) (snd x)))
+    (fun x => T_havoc (fst x) (snd x)).
+  (** Assumption is linear in its stated numeric work. *)
+  Parameter assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
+    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
+  (** A range query is linear in its stated numeric work. *)
+  Parameter range_bigO : bigO (fun _ : term L.op X.t * t => True)
+    (fun x => N.of_nat (range_work (fst x) (snd x)))
+    (fun x => T_range (fst x) (snd x)).
 End NUM_STATE_TIME.
 
 Module Type NUM_STATE_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)

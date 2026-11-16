@@ -5,7 +5,7 @@
     Builds on: CutIntervalSig and the shared interval operations. *)
 
 From Stdlib Require Import List ZArith NArith Bool Lia Eqdep_dec.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig CutIntervalSig Interval.
 
 Definition pack_cut (bits : nat) (raw : itv) : cut_itv bits :=
@@ -1420,6 +1420,12 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     rewrite <- RL.raw_wrank.
     apply R.F3_wrank_le.
   Qed.
+
+  (** Forward transfer has the published operator-work class. *)
+  Lemma forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
+    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Proof. Admitted. (* STUB *)
 
   (** Operator work accounts for every operand size. *)
   Lemma work_sizes : forall o xs,

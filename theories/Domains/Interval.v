@@ -325,6 +325,31 @@ Module IntervalBaseT (T : THRESHOLDS_T) <: INTERVAL_SCALAR_T T.
     destruct (interval_leb b a); [lia | apply interval_widen_bits].
   Qed.
 
+  (** Scalar inclusion has the published endpoint-bit class. *)
+  Lemma interval_leb_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
+    (fun x => T_interval_leb (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** Scalar join has the published endpoint-bit class. *)
+  Lemma interval_join_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
+    (fun x => T_interval_join (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** Scalar meet has the published endpoint-bit class. *)
+  Lemma interval_meet_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
+    (fun x => T_interval_meet (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** Scalar widening has the published bits-plus-search-path class. *)
+  Lemma interval_stable_widen_bigO : bigO (X := ttree * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (interval_bits (fst (snd x)) + interval_bits (snd (snd x)) +
+      (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
+    (fun x => T_interval_stable_widen (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+
   Local Close Scope nat_scope.
 End IntervalBaseT.
 
@@ -3305,4 +3330,85 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     unfold bigO. exists 64%N. intros [a b] _.
     cbn [fst snd]. pose proof (mul_time_quadratic a b). nia.
   Qed.
+  (** Addition has the published linear class. *)
+  Lemma add_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
+    (fun x => T_add (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Subtraction has the published linear class. *)
+  Lemma sub_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
+    (fun x => T_sub (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Unsigned division has the published quadratic endpoint class. *)
+  Lemma udiv_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_udiv (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Unsigned remainder has the published quadratic endpoint class. *)
+  Lemma urem_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_urem (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Shift has the published quadratic endpoint class. *)
+  Lemma shl_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_shl (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Threshold widening has the published bits-plus-search-path class. *)
+  Lemma widen_bigO : bigO (X := ttree * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) +
+      (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
+    (fun x => T_widen (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Backward addition is linear in the result and operand sizes. *)
+  Lemma add_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_add_back (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Backward subtraction is linear in the result and operand sizes. *)
+  Lemma sub_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_sub_back (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Bitwise conjunction is linear, because the result is a minimum of upper endpoints. *)
+  Lemma bitand_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitand (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Bitwise disjunction is linear, because the result is a mask of one bit length. *)
+  Lemma bitor_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitor (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Comparison has the published linear class. *)
+  Lemma cmp_bigO : bigO (X := comparison * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_cmp (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Backward multiplication is linear, because a preimage only reads a point. *)
+  Lemma mul_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_mul_back (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Backward division is linear, because it only meets with fixed bounds. *)
+  Lemma udiv_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_udiv_back (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Backward remainder is linear, because it only meets with fixed bounds. *)
+  Lemma urem_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_urem_back (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Backward comparison is linear in the result and operand sizes. *)
+  Lemma ult_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_ult_back (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Signed splitting is linear in the width and the endpoints. *)
+  Lemma signed_split_bigO : bigO (X := positive * itv) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + size (snd x) + 1))
+    (fun x => T_signed_split (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Forward transfer has the published operator-work class. *)
+  Lemma forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
+    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Proof. Admitted. (* STUB *)
 End IntervalT.

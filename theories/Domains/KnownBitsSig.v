@@ -127,7 +127,7 @@ Module Type KNOWN_BITS_TIME (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   Parameter c_tnum : N.
   (** Normalization charges the width and the raw masks. *)
   Parameter T_tnum_normalise_le : forall w a, (T_tnum_normalise w a <=
-    c_tnum * N.of_nat ((Pos.to_nat w + tnum_bits a + 1) ^ 2))%N.
+    c_tnum * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
   (** Bitwise negation charges the width and the raw masks. *)
   Parameter T_tnum_not_le : forall w a, (T_tnum_not w a <=
     c_tnum * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
@@ -163,6 +163,54 @@ Module Type KNOWN_BITS_TIME (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     (fun x : positive * (tnum * tnum) => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
       tnum_bits (fst (snd x)) + tnum_bits (snd (snd x))))
     (fun x => T_tnum_mul (fst x) (fst (snd x)) (snd (snd x))).
+  (** Normalization is linear in the width and the raw masks. *)
+  Parameter normalise_bigO : bigO (X := positive * tnum) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
+    (fun x => T_tnum_normalise (fst x) (snd x)).
+  (** Bitwise negation is linear. *)
+  Parameter not_bigO : bigO (X := positive * tnum) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
+    (fun x => T_tnum_not (fst x) (snd x)).
+  (** Arithmetic negation is linear. *)
+  Parameter neg_bigO : bigO (X := positive * tnum) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
+    (fun x => T_tnum_neg (fst x) (snd x)).
+  (** Addition is linear. *)
+  Parameter add_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
+      tnum_bits (snd (snd x)) + 1))
+    (fun x => T_tnum_add (fst x) (fst (snd x)) (snd (snd x))).
+  (** Subtraction is linear. *)
+  Parameter sub_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
+      tnum_bits (snd (snd x)) + 1))
+    (fun x => T_tnum_sub (fst x) (fst (snd x)) (snd (snd x))).
+  (** Conjunction is linear. *)
+  Parameter and_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
+      tnum_bits (snd (snd x)) + 1))
+    (fun x => T_tnum_and (fst x) (fst (snd x)) (snd (snd x))).
+  (** Disjunction is linear. *)
+  Parameter or_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
+      tnum_bits (snd (snd x)) + 1))
+    (fun x => T_tnum_or (fst x) (fst (snd x)) (snd (snd x))).
+  (** Exclusive disjunction is linear. *)
+  Parameter xor_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
+      tnum_bits (snd (snd x)) + 1))
+    (fun x => T_tnum_xor (fst x) (fst (snd x)) (snd (snd x))).
+  (** Unknown shifts and rotations have the published quadratic class. *)
+  Parameter variable_bigO : bigO (X := Op.op * (positive * (tnum * tnum))) (fun _ => True)
+    (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + 1) ^ 2 +
+      tnum_bits (fst (snd (snd x))) + tnum_bits (snd (snd (snd x)))))
+    (fun x => T_tnum_variable (fst x) (fst (snd x)) (fst (snd (snd x))) (snd (snd (snd x)))).
+  (** Unknown shifts take logarithmically many expansion steps of linear cost. *)
+  Parameter variable_shift_bigO : bigO (X := Op.op * (positive * (tnum * tnum)))
+    (fun x => fst x = Op.bvshl \/ fst x = Op.bvlshr \/ fst x = Op.bvashr)
+    (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + tnum_bits (fst (snd (snd x))) +
+      tnum_bits (snd (snd (snd x))) + 1) * (Nat.log2 (Pos.to_nat (fst (snd x))) + 2)))
+    (fun x => T_tnum_variable (fst x) (fst (snd x)) (fst (snd (snd x))) (snd (snd (snd x)))).
   (** Payload size includes the width and the stored mask bits. *)
   Parameter psize_bits : forall w a, psize w a = Pos.to_nat w + tnum_bits a + 1.
   (** Every unary operation returns masks within the width. *)

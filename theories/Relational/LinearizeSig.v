@@ -5,7 +5,7 @@
     Builds on: KeySig, LangSig, ValueSig and LinForm. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import Std.
+From Argent Require Import Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.Relational Require Import LinForm.
@@ -60,6 +60,15 @@ Module Type LINEARIZE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter T_atoms_of_le : forall g es,
     (T_atoms_of g es <= c_linearize * N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
       N.of_nat ((bits_es g es + 1)%nat))%N.
+  (** Linearization of a term is linear in its size and bit measure. *)
+  Parameter lin_of_bigO : bigO (fun _ : term L.op X.t => True)
+    (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
+    (fun e => T_lin_of e).
+  (** Guard linearization is linear in the operand sizes and bit measure. *)
+  Parameter atoms_of_bigO : bigO (fun _ : L.guard * list (term L.op X.t) => True)
+    (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
+      (bits_es (fst x) (snd x) + 1))%nat))
+    (fun x => T_atoms_of (fst x) (snd x)).
 End LINEARIZE_TIME.
 
 Module Type LINEARIZE_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) :=

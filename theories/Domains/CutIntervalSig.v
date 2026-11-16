@@ -5,7 +5,7 @@
     Builds on: IntervalSig, ThresholdsSig and ValueSig. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std BigO.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig.
 
@@ -144,6 +144,10 @@ Module Type CUT_INTERVAL_TIME (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     wsize q = (T.depth q + 1) * (T.tree_bits q + 1) + C.bits.
   (** Each finite side contributes at most one plus the threshold count. *)
   Parameter rank_bound : forall q a, wrank q a <= 2 * (length (T.vals q) + 1).
+  (** Forward transfer has the published operator-work class. *)
+  Parameter forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
+    (fun ox => T_forward (fst ox) (snd ox)))%N.
 End CUT_INTERVAL_TIME.
 
 Module Type CUT_INTERVAL_T (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)

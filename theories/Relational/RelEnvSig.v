@@ -5,7 +5,7 @@
     Builds on: NumStateSig, StateSig and ValueSig. *)
 
 From Stdlib Require Import NArith List ZArith.
-From Argent Require Import Std.
+From Argent Require Import Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -95,6 +95,20 @@ Module Type REL_ENV_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DO
   Parameter c_lat_pair : (P.c_lat <= c_lat)%N.
   (** The shared lattice measures a pair by its two components. *)
   Parameter size_pair : forall a, P.size a = R.size (fst a) + E.size (snd a).
+  (** Evaluation is linear in the work of both components. *)
+  Parameter eval_bigO : bigO (fun _ : term L.op X.t * t => True)
+    (fun x => N.of_nat (eval_work (fst x) (snd x))) (fun x => T_eval (fst x) (snd x)).
+  (** Assignment is linear in the work of both components. *)
+  Parameter assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
+    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  (** Havoc is linear in the work of both components. *)
+  Parameter havoc_bigO : bigO (fun _ : X.t * t => True)
+    (fun x => N.of_nat (havoc_work (fst x) (snd x))) (fun x => T_havoc (fst x) (snd x)).
+  (** Assumption is linear in the work of both components. *)
+  Parameter assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
+    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
 End REL_ENV_TIME.
 
 Module Type REL_ENV_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)

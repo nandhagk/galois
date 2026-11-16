@@ -6,7 +6,7 @@
     Builds on: LinearizeSig, ZLang, BitsLang and Word. *)
 
 From Stdlib Require Import List NArith ZArith ArithRing Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Bits Require Import Word Fun Arith Op.
 From Galois.Domains Require Import LangSig ValueSig IntervalSig ZLang BitsLang.
@@ -107,6 +107,15 @@ Module LinearizeT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) <: LINEARIZE_ALL X L
     intros lo hi z Hbounds. unfold wrap_into.
     rewrite Z.mod_small by lia. lia.
   Qed.
+  Lemma lin_of_bigO : bigO (fun _ : term L.op X.t => True)
+    (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
+    (fun e => T_lin_of e).
+  Proof. Admitted. (* STUB *)
+  Lemma atoms_of_bigO : bigO (fun _ : L.guard * list (term L.op X.t) => True)
+    (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
+      (bits_es (fst x) (snd x) + 1))%nat))
+    (fun x => T_atoms_of (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
 End LinearizeT.
 
 (** * Integer affine forms *)
@@ -2467,6 +2476,17 @@ Module ZLinearizeT (X : KEY_T) <: LINEARIZE_ALL X ZLangT ZNum.
   Proof.
     intros lo hi z Hbounds. unfold wrap_into. rewrite Z.mod_small by lia. lia.
   Qed.
+
+  Lemma lin_of_bigO : bigO (fun _ : term ZLangT.op X.t => True)
+    (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
+    (fun e => T_lin_of e).
+  Proof. Admitted. (* STUB *)
+
+  Lemma atoms_of_bigO : bigO (fun _ : ZLangT.guard * list (term ZLangT.op X.t) => True)
+    (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
+      (bits_es (fst x) (snd x) + 1))%nat))
+    (fun x => T_atoms_of (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
 End ZLinearizeT.
 
 Module BitsLinearizeUT (X : KEY_T) <: LINEARIZE_ALL X BitsLangT BitsNumU.
@@ -2581,6 +2601,17 @@ Module BitsLinearizeUT (X : KEY_T) <: LINEARIZE_ALL X BitsLangT BitsNumU.
   Proof.
     intros lo hi z Hbounds. unfold wrap_into. rewrite Z.mod_small by lia. lia.
   Qed.
+
+  Lemma lin_of_bigO : bigO (fun _ : term BitsLangT.op X.t => True)
+    (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
+    (fun e => T_lin_of e).
+  Proof. Admitted. (* STUB *)
+
+  Lemma atoms_of_bigO : bigO (fun _ : BitsLangT.guard * list (term BitsLangT.op X.t) => True)
+    (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
+      (bits_es (fst x) (snd x) + 1))%nat))
+    (fun x => T_atoms_of (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
 End BitsLinearizeUT.
 
 Module BitsLinearizeST (X : KEY_T) <: LINEARIZE_ALL X BitsLangT BitsNumS.
@@ -2695,4 +2726,15 @@ Module BitsLinearizeST (X : KEY_T) <: LINEARIZE_ALL X BitsLangT BitsNumS.
   Proof.
     intros lo hi z Hbounds. unfold wrap_into. rewrite Z.mod_small by lia. lia.
   Qed.
+
+  Lemma lin_of_bigO : bigO (fun _ : term BitsLangT.op X.t => True)
+    (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
+    (fun e => T_lin_of e).
+  Proof. Admitted. (* STUB *)
+
+  Lemma atoms_of_bigO : bigO (fun _ : BitsLangT.guard * list (term BitsLangT.op X.t) => True)
+    (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
+      (bits_es (fst x) (snd x) + 1))%nat))
+    (fun x => T_atoms_of (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
 End BitsLinearizeST.

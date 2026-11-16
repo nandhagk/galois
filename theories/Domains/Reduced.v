@@ -841,6 +841,14 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     pose proof (T_forward_le o xs) as Htime.
     rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
   Qed.
+  Lemma backward_bigO : (bigO (fun _ => True)
+    (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
+    (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma guard_bigO : (bigO (fun _ => True)
+    (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
+    (fun gx => T_guard (fst gx) (snd gx)))%N.
+  Proof. Admitted. (* STUB *)
 
   Definition k_red : N := 16%N.
   Lemma F1_red_eq : forall x,

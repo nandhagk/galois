@@ -157,6 +157,10 @@ Module Type SIGN_TABLE_TIME (L : WORD_LANGUAGE_T) (S : SIGN_T L)
   Parameter c_sign_table : N.
   (** Sign table dispatch has the published constant entry bound. *)
   Parameter T_sign_entry_le : forall o rw xs, (T_wfwd o rw xs <= c_sign_table)%N.
+  (** Sign table dispatch takes constant time. *)
+  Parameter sign_entry_bigO : bigO
+    (X := L.op * (positive * list (positive * S.p))) (fun _ => True)
+    (fun _ => 0%N) (fun x => T_wfwd (fst x) (fst (snd x)) (snd (snd x))).
 End SIGN_TABLE_TIME.
 Module Type SIGN_TABLE_T (L : WORD_LANGUAGE_T) (S : SIGN_T L) :=
   SIGN_TABLE L S <+ SIGN_TABLE_TIME L S.

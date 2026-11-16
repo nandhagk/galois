@@ -49,6 +49,12 @@ Module Type WORD_LANGUAGE_TIME (Import L : WORD_LANGUAGE).
       fold_right Nat.add 0
         (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) cs) + 1) ^
     2)%nat))%N.
+  (** Concrete word evaluation has the published quadratic class. *)
+  Parameter eval_op_bigO : bigO (X := op * list (positive * Z)) (fun _ => True)
+    (fun x => N.of_nat (((Op.op_widths (fst x) +
+      fold_right Nat.add 0
+        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) (snd x)) + 1) ^ 2)%nat))
+    (fun x => T_eval_op (fst x) (snd x)).
 End WORD_LANGUAGE_TIME.
 
 Module Type WORD_LANGUAGE_T := WORD_LANGUAGE <+ WORD_LANGUAGE_TIME.

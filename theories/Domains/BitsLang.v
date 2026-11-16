@@ -5,7 +5,7 @@
     Builds on: LangSig and bit-vector operations. *)
 
 From Stdlib Require Import List ZArith NArith Bool Lia Ring.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Bits Require Import Word Fun Testbit Op Arith.
 From Galois.Domains Require Import LangSig WordSig.
 Import List.ListNotations.
@@ -1518,4 +1518,11 @@ Module WordLanguageT <: WORD_LANGUAGE_T.
     clearbody budget units. time_unfold T_eval_op.
     unfold word, width in *. time_cbn_all. lia.
   Qed.
+
+  Lemma eval_op_bigO : bigO (X := op * list (positive * Z)) (fun _ => True)
+    (fun x => N.of_nat (((Op.op_widths (fst x) +
+      fold_right Nat.add 0
+        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) (snd x)) + 1) ^ 2)%nat))
+    (fun x => T_eval_op (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
 End WordLanguageT.

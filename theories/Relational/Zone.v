@@ -5,7 +5,7 @@
     Builds on: ZoneSig and keyed map operations. *)
 
 From Stdlib Require Import List Bool NArith ZArith Lia ArithRing.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig MapSig Code.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -2344,6 +2344,12 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     (rows m)).
   Definition skel (m : dbm) : nat := M.nodes m + fold_right Nat.add 0 (map M.nodes (rows m)).
   Definition skels (s : t) : nat := match s with Unreached => 0 | Reached m => skel m end.
+  Definition entries (s : t) : nat :=
+    match s with
+    | Unreached => 0
+    | Reached m => length (M.codes m) +
+        fold_right Nat.add 0 (map (fun r => length (M.codes r)) (rows m))
+    end.
   Definition keys (m : dbm) : list K.t :=
     fold_left (fun acc x => if existsb (K.eqb x) acc then acc else x :: acc)
       (map fst (M.elements m) ++
@@ -8914,5 +8920,63 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       + pose proof assume_time_coefficient. nia.
   Qed.
 
+  Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
+    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
 
+  Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
+    (fun x => N.of_nat (havoc_work (fst x) (snd x)))
+    (fun x => T_havoc (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
+    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
+    (fun x => N.of_nat (range_work (fst x) (snd x)))
+    (fun x => T_range (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma close_bigO : bigO (fun m : dbm => dbm_wf m)
+    (fun m => N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
+    (fun m => T_close m).
+  Proof. Admitted. (* STUB *)
+
+  Lemma incr_close_bigO : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
+    (fun x => N.of_nat ((supp (snd x) + 1)^2 *
+      (b (snd x) + K.bits (fst (fst (fst x))) + K.bits (snd (fst (fst x))) +
+        ell (snd x) + Z.size_nat (snd (fst x)) + 1)))
+    (fun x => T_incr_close (fst (fst (fst x))) (snd (fst (fst x))) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma leb_bigO : bigO (fun _ : t * t => True)
+    (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) + 1) *
+      (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
+    (fun x => T_leb (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma join_bigO : bigO (fun _ : t * t => True)
+    (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) + 1) *
+      (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
+    (fun x => T_join (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma widen_bigO : bigO (fun _ : wparam * t * t => True)
+    (fun x => N.of_nat ((skels (snd (fst x)) + skels (snd x) +
+        entries (snd (fst x)) + entries (snd x) + 1) *
+      (bs (snd (fst x)) + bs (snd x) + ells (snd (fst x)) + ells (snd x) + 1)))
+    (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma assign_fast_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+    (fun x => (N.of_nat (skels (snd x) +
+      (ns (snd x) + 1) * (bs (snd x) + ells (snd x) + X.bits (fst (fst x)) +
+        F.bits_e (snd (fst x)) + lin_bits (snd (fst x)) + 1) +
+      (tsize (snd (fst x)) + 1) * (bs (snd x) + ells (snd x) + F.bits_e (snd (fst x)) +
+        Nat.log2 (tsize (snd (fst x))) + 1)^2) + F.T_lin_of (snd (fst x)))%N)
+    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
 End ZoneT.

@@ -220,6 +220,23 @@ Module Type INTERVAL_SCALAR_TIME (T : THRESHOLDS_T) (Import S : INTERVAL_SCALAR_
   Parameter interval_stable_widen_bits : forall ts a b,
     interval_bits (interval_stable_widen ts a b) <=
       interval_bits a + interval_bits b + T.tree_bits ts.
+  (** Scalar inclusion has the published endpoint-bit class. *)
+  Parameter interval_leb_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
+    (fun x => T_interval_leb (fst x) (snd x)).
+  (** Scalar join has the published endpoint-bit class. *)
+  Parameter interval_join_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
+    (fun x => T_interval_join (fst x) (snd x)).
+  (** Scalar meet has the published endpoint-bit class. *)
+  Parameter interval_meet_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
+    (fun x => T_interval_meet (fst x) (snd x)).
+  (** Scalar widening has the published bits-plus-search-path class. *)
+  Parameter interval_stable_widen_bigO : bigO (X := ttree * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (interval_bits (fst (snd x)) + interval_bits (snd (snd x)) +
+      (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
+    (fun x => T_interval_stable_widen (fst x) (fst (snd x)) (snd (snd x))).
 End INTERVAL_SCALAR_TIME.
 
 Module Type INTERVAL_SCALAR_T (T : THRESHOLDS_T) :=
@@ -362,6 +379,70 @@ Module Type INTERVAL_TIME (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
   Parameter mul_bigO : (bigO (fun _ => True)
     (fun ab => N.of_nat ((binary_work (fst ab) (snd ab))%nat))
     (fun ab => T_mul (fst ab) (snd ab)))%N.
+  (** Addition has the published linear class. *)
+  Parameter add_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
+    (fun x => T_add (fst x) (snd x)).
+  (** Subtraction has the published linear class. *)
+  Parameter sub_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
+    (fun x => T_sub (fst x) (snd x)).
+  (** Unsigned division has the published quadratic endpoint class. *)
+  Parameter udiv_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_udiv (fst x) (snd x)).
+  (** Unsigned remainder has the published quadratic endpoint class. *)
+  Parameter urem_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_urem (fst x) (snd x)).
+  (** Shift has the published quadratic endpoint class. *)
+  Parameter shl_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_shl (fst x) (snd x)).
+  (** Threshold widening has the published bits-plus-search-path class. *)
+  Parameter widen_bigO : bigO (X := ttree * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) +
+      (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
+    (fun x => T_widen (fst x) (fst (snd x)) (snd (snd x))).
+  (** Backward addition is linear in the result and operand sizes. *)
+  Parameter add_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_add_back (fst x) (fst (snd x)) (snd (snd x))).
+  (** Backward subtraction is linear in the result and operand sizes. *)
+  Parameter sub_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_sub_back (fst x) (fst (snd x)) (snd (snd x))).
+  (** Bitwise conjunction is linear, because the result is a minimum of upper endpoints. *)
+  Parameter bitand_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitand (fst x) (snd x)).
+  (** Bitwise disjunction is linear, because the result is a mask of one bit length. *)
+  Parameter bitor_bigO : bigO (X := itv * itv) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitor (fst x) (snd x)).
+  (** Comparison has the published linear class. *)
+  Parameter cmp_bigO : bigO (X := comparison * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_cmp (fst x) (fst (snd x)) (snd (snd x))).
+  (** Backward multiplication is linear, because a preimage only reads a point. *)
+  Parameter mul_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_mul_back (fst x) (fst (snd x)) (snd (snd x))).
+  (** Backward division is linear, because it only meets with fixed bounds. *)
+  Parameter udiv_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_udiv_back (fst x) (fst (snd x)) (snd (snd x))).
+  (** Backward remainder is linear, because it only meets with fixed bounds. *)
+  Parameter urem_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_urem_back (fst x) (fst (snd x)) (snd (snd x))).
+  (** Backward comparison is linear in the result and operand sizes. *)
+  Parameter ult_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
+    (fun x => T_ult_back (fst x) (fst (snd x)) (snd (snd x))).
+  (** Signed splitting is linear in the width and the endpoints. *)
+  Parameter signed_split_bigO : bigO (X := positive * itv) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + size (snd x) + 1))
+    (fun x => T_signed_split (fst x) (snd x)).
+  (** Forward transfer has the published operator-work class. *)
+  Parameter forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
+    (fun ox => T_forward (fst ox) (snd ox)))%N.
 End INTERVAL_TIME.
 
 Module Type INTERVAL_T (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) :=

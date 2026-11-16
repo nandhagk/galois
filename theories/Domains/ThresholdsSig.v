@@ -82,6 +82,14 @@ Module Type THRESHOLDS_TIME (Import T : THRESHOLDS).
   Parameter make_bigO : (bigO (fun _ => True)
     (fun zs => N.of_nat
       (((length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1))%nat)) T_make)%N.
+  (** Upper search has the published path-times-bits class. *)
+  Parameter above_bigO : bigO (X := ttree * Z) (fun _ => True)
+    (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
+    (fun x => T_above (fst x) (snd x)).
+  (** Lower search has the published path-times-bits class. *)
+  Parameter below_bigO : bigO (X := ttree * Z) (fun _ => True)
+    (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
+    (fun x => T_below (fst x) (snd x)).
 End THRESHOLDS_TIME.
 
 Module Type THRESHOLDS_T := THRESHOLDS <+ THRESHOLDS_TIME.

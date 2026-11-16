@@ -167,6 +167,18 @@ Module Type HARNESS_TIME (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
     (T_meet_all xs ys <= c_harness *
       N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) +
         fold_right Nat.add 0%nat (map B.bsize ys) + length xs + length ys + 1)%nat))%N.
+  (** Forward transfer has the published operator-work class. *)
+  Parameter forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
+    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  (** Backward transfer has the published work-plus-request class. *)
+  Parameter backward_bigO : (bigO (fun _ => True)
+    (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
+    (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
+  (** Guard transfer has the published guard-work class. *)
+  Parameter guard_bigO : (bigO (fun _ => True)
+    (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
+    (fun gx => T_guard (fst gx) (snd gx)))%N.
 End HARNESS_TIME.
 
 Module Type HARNESS_T (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B) :=

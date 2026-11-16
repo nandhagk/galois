@@ -5,7 +5,7 @@
     Builds on: EnvSig, NumStateSig and LinCertSig. *)
 
 From Stdlib Require Import List ZArith QArith.
-From Argent Require Import Std.
+From Argent Require Import Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -80,6 +80,29 @@ Module Type KARR_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter T_join_karr_le : forall a b, normal_s a -> normal_s b ->
     (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
     N.of_nat (((ellB (n a + n b + 1) (ell a + ell b) + 1)^2)%nat))%N.
+  (** Inclusion of normal states costs one elimination of both and one cheap check per row. *)
+  Parameter leb_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
+    (fun x => N.of_nat (elimination_work (fst x) (snd x)))
+    (fun x => T_leb (fst x) (snd x)).
+  (** Join of normal states is one elimination. *)
+  Parameter join_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
+    (fun x => N.of_nat (elimination_work (fst x) (snd x)))
+    (fun x => T_join (fst x) (snd x)).
+  (** Widening is an inclusion test followed by at most one join. *)
+  Parameter widen_bigO : bigO (fun x : wparam * t * t =>
+      normal_s (snd (fst x)) /\ normal_s (snd x))
+    (fun x => N.of_nat (elimination_work (snd (fst x)) (snd x)))
+    (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
+  (** The affine hull is one elimination of the stacked rows. *)
+  Parameter affine_hull_bigO : bigO
+    (fun x : list (lcons X.t) * list (lcons X.t) => normal (fst x) /\ normal (snd x))
+    (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x))))
+    (fun x => T_affine_hull (fst x) (snd x)).
+  (** Certificate production is one elimination of the premises and the conclusion. *)
+  Parameter entail_cert_bigO : bigO
+    (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
+    (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x :: nil))))
+    (fun x => T_entail_cert (fst x) (snd x)).
 End KARR_TIME.
 
 Module Type KARR_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)

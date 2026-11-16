@@ -5,7 +5,7 @@
     Builds on: MapSig, EnvSig and NumStateSig. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std BigO.
 From Galois.Base Require Import KeySig MapSig Code Key.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -73,6 +73,13 @@ Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     (rows m)).
   Definition skel (m : dbm) : nat := M.nodes m + fold_right Nat.add 0 (map M.nodes (rows m)).
   Definition skels (s : t) : nat := match s with Unreached => 0 | Reached m => skel m end.
+  (** Entries count the stored codes of the outer map and of every row. *)
+  Definition entries (s : t) : nat :=
+    match s with
+    | Unreached => 0
+    | Reached m => length (M.codes m) +
+        fold_right Nat.add 0 (map (fun r => length (M.codes r)) (rows m))
+    end.
   Definition keys (m : dbm) : list K.t :=
     fold_left (fun acc x => if existsb (K.eqb x) acc then acc else x :: acc)
       (map fst (M.elements m) ++
@@ -106,6 +113,34 @@ Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     c_octagon * N.of_nat (((supp m + 1)^2)%nat) *
       N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat) +
     c_octagon * N.of_nat (M.weight m))%N.
+  (** Tight closure is cubic in the support. *)
+  Parameter tclose_bigO : bigO (fun m : dbm => dbm_wf m)
+    (fun m => N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
+    (fun m => T_tclose m).
+  (** Incremental closure is quadratic in the support, plus the stored key weight. *)
+  Parameter incr_close_bigO : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
+    (fun x => N.of_nat ((supp (snd x) + 1)^2 *
+      (b (snd x) + K.bits (fst (fst (fst x))) + K.bits (snd (fst (fst x))) +
+        ell (snd x) + Z.size_nat (snd (fst x)) + 1) + M.weight (snd x)))
+    (fun x => T_incr_close (fst (fst (fst x))) (snd (fst (fst x))) (snd (fst x)) (snd x)).
+  (** Inclusion walks the skeletons, stored entries and key weights of both matrices. *)
+  Parameter leb_bigO : bigO (fun _ : t * t => True)
+    (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
+        labs (fst x) + labs (snd x) + 1) *
+      (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
+    (fun x => T_leb (fst x) (snd x)).
+  (** Join merges the skeletons, stored entries and key weights of both matrices. *)
+  Parameter join_bigO : bigO (fun _ : t * t => True)
+    (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
+        labs (fst x) + labs (snd x) + 1) *
+      (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
+    (fun x => T_join (fst x) (snd x)).
+  (** Widening is an inclusion test followed by one merge. *)
+  Parameter widen_bigO : bigO (fun _ : wparam * t * t => True)
+    (fun x => N.of_nat ((skels (snd (fst x)) + skels (snd x) +
+        entries (snd (fst x)) + entries (snd x) + labs (snd (fst x)) + labs (snd x) + 1) *
+      (bs (snd (fst x)) + bs (snd x) + ells (snd (fst x)) + ells (snd x) + 1)))
+    (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
 End OCTAGON_TIME.
 
 Module Type OCTAGON_T (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
@@ -276,6 +311,15 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   (** A range endpoint is a sum of coefficient-entry products. *)
   Parameter F_range_bits : forall e s,
     range_bits e s = ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
+  (** Assignment copies a row and a column, so it is linear in the support. *)
+  Parameter assign_fast_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+    (fun x => (N.of_nat (skels (snd x) +
+      (ns (snd x) + 1) * (bs (snd x) + ells (snd x) + X.bits (fst (fst x)) +
+        F.bits_e (snd (fst x)) + lin_bits (snd (fst x)) + 1) +
+      (tsize (snd (fst x)) + 1) * (bs (snd x) + ells (snd x) + F.bits_e (snd (fst x)) +
+        Nat.log2 (tsize (snd (fst x))) + 1)^2 + labs (snd x)) +
+      F.T_lin_of (snd (fst x)))%N)
+    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
   Fixpoint fw_trace (ks : list K.t) (m : dbm) : list (K.t * dbm) :=
     match ks with
     | nil => nil

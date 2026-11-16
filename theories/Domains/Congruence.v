@@ -2957,6 +2957,52 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     exists c_congruence. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_congr_mul_le w a b). nia.
   Qed.
+  (** Remainder has the published quadratic class, because it takes a gcd. *)
+  Lemma congr_urem_bigO : bigO (X := positive * (congr * congr)) (fun _ => True)
+    (fun x => N.of_nat
+      (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
+    (fun x => T_congr_urem (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Canonical payloads normalize in linear time. *)
+  Lemma congr_norm_lin_bigO : bigO (X := positive * congr)
+    (fun x => canonical (fst x) (snd x))
+    (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
+    (fun x => T_congr_norm (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Negation of a canonical payload is linear. *)
+  Lemma congr_neg_lin_bigO : bigO (X := positive * congr)
+    (fun x => canonical (fst x) (snd x))
+    (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
+    (fun x => T_congr_neg (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Addition of canonical payloads is linear. *)
+  Lemma congr_add_lin_bigO : bigO (X := positive * (congr * congr))
+    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
+    (fun x => N.of_nat
+      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
+    (fun x => T_congr_add (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Subtraction of canonical payloads is linear. *)
+  Lemma congr_sub_lin_bigO : bigO (X := positive * (congr * congr))
+    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
+    (fun x => N.of_nat
+      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
+    (fun x => T_congr_sub (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Shifting a canonical payload by a canonical amount is linear. *)
+  Lemma congr_shl_lin_bigO : bigO (X := positive * (congr * congr))
+    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
+    (fun x => N.of_nat
+      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
+    (fun x => T_congr_shl (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+  (** Projection of a canonical payload is linear in both widths. *)
+  Lemma congr_project_lin_bigO : bigO (X := positive * (positive * congr))
+    (fun x => (fst (snd x) <= fst x)%positive /\ canonical (fst x) (snd (snd x)))
+    (fun x => N.of_nat
+      (Pos.to_nat (fst x) + Pos.to_nat (fst (snd x)) + congr_bits (snd (snd x)) + 1))
+    (fun x => T_congr_project (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
   (** Normalization produces a canonical representation. *)
   Lemma F3_norm_canonical : forall w a, canonical w (congr_norm w a).
   Proof.

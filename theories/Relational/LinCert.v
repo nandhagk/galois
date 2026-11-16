@@ -5,7 +5,7 @@
     Builds on: LinCertSig. *)
 
 From Stdlib Require Import List ZArith QArith Lia Bool Lqa.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Relational Require Import LinForm LinCertSig.
 Local Open Scope nat_scope.
@@ -2013,6 +2013,24 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
       unfold c_lc, lc_zero_factor, lc_insert_factor in *. nia.
     - unfold c_lc. nia.
   Qed.
+  (** Combination charges the rows with a nonzero multiplier. *)
+  Lemma combine_bigO : bigO (fun _ : list (lcons X.t) * list Z => True)
+    (fun x => N.of_nat (csize_nz (fst x) (snd x)))
+    (fun x => T_combine (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Entailment checking charges the nonzero rows, the certificate scale and the conclusion. *)
+  Lemma check_entails_bigO :
+    bigO (fun _ : list (lcons X.t) * lcons X.t * cert => True)
+    (fun x => N.of_nat (csize_nz (fst (fst x)) (mults (snd x)) +
+      (Z.size_nat (scale (snd x)) + 1) *
+        (lsize (snd (fst x)) + cbits (fst (fst x)) (mults (snd x)) + 1)))
+    (fun x => T_check_entails (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Contradiction checking charges the nonzero rows. *)
+  Lemma check_empty_bigO : bigO (fun _ : list (lcons X.t) * list Z => True)
+    (fun x => N.of_nat (csize_nz (fst x) (snd x)))
+    (fun x => T_check_empty (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
   Definition accumulate_term (m : Z) (acc : PTrieCode.t (Z * Z)) (p : X.t * Z)
       : PTrieCode.t (Z * Z) :=
     let key := X.encode (fst p) in

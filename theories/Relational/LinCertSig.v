@@ -5,7 +5,7 @@
     Builds on: KeySig and LinForm. *)
 
 From Stdlib Require Import List ZArith QArith.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std BigO.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Relational Require Import LinForm.
 Local Open Scope nat_scope.
@@ -38,6 +38,15 @@ Module Type LINCERT_SPEC (X : KEY_OPS).
     | p :: ps, m :: ns =>
       (length (lhs p) + 1) * (row_key_bits p + (Z.size_nat m + 1) * (row_bits p + 1)) +
       csize ps ns
+    | _, _ => length P + length ms
+    end.
+  (** The certificate size that charges only the rows with a nonzero multiplier. *)
+  Fixpoint csize_nz (P : list (lcons X.t)) (ms : list Z) : nat :=
+    match P, ms with
+    | p :: ps, m :: ns =>
+      (if Z.eqb m 0 then 1
+       else (length (lhs p) + 1) * (row_key_bits p + (Z.size_nat m + 1) * (row_bits p + 1))) +
+      csize_nz ps ns
     | _, _ => length P + length ms
     end.
   Definition cbits (P : list (lcons X.t)) (ms : list Z) : nat :=
@@ -119,6 +128,21 @@ Module Type LINCERT_TIME (X : KEY_T) (Import C : LINCERT X).
   (** Contradiction checking charges the certificate-weighted input. *)
   Parameter T_check_empty_le : forall P ms,
     (T_check_empty P ms <= c_lc * N.of_nat ((csize P ms + 1)%nat))%N.
+  (** Combination charges the rows with a nonzero multiplier. *)
+  Parameter combine_bigO : bigO (fun _ : list (lcons X.t) * list Z => True)
+    (fun x => N.of_nat (csize_nz (fst x) (snd x)))
+    (fun x => T_combine (fst x) (snd x)).
+  (** Entailment checking charges the nonzero rows, the certificate scale and the conclusion. *)
+  Parameter check_entails_bigO :
+    bigO (fun _ : list (lcons X.t) * lcons X.t * cert => True)
+    (fun x => N.of_nat (csize_nz (fst (fst x)) (mults (snd x)) +
+      (Z.size_nat (scale (snd x)) + 1) *
+        (lsize (snd (fst x)) + cbits (fst (fst x)) (mults (snd x)) + 1)))
+    (fun x => T_check_entails (fst (fst x)) (snd (fst x)) (snd x)).
+  (** Contradiction checking charges the nonzero rows. *)
+  Parameter check_empty_bigO : bigO (fun _ : list (lcons X.t) * list Z => True)
+    (fun x => N.of_nat (csize_nz (fst x) (snd x)))
+    (fun x => T_check_empty (fst x) (snd x)).
 End LINCERT_TIME.
 
 Module Type LINCERT_T (X : KEY_T) := LINCERT X <+ LINCERT_TIME X.

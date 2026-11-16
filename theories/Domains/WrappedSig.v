@@ -123,6 +123,46 @@ Module Type WRAPPED_TIME (L : WORD_LANGUAGE_T) (Import W : WRAPPED L).
       ((Pos.to_nat (fst x) + 1) ^ 2 +
        wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_mul (fst x) (fst (snd x)) (snd (snd x))).
+  (** Normalization is linear in the width and the raw endpoints. *)
+  Parameter norm_bigO : bigO (X := positive * wrapped) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
+    (fun x => T_wrapped_norm (fst x) (snd x)).
+  (** Arithmetic negation is linear. *)
+  Parameter neg_bigO : bigO (X := positive * wrapped) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
+    (fun x => T_wrapped_neg (fst x) (snd x)).
+  (** Circular expansion is linear. *)
+  Parameter double_bigO : bigO (X := positive * wrapped) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
+    (fun x => T_wrapped_double (fst x) (snd x)).
+  (** Bitwise negation is linear. *)
+  Parameter not_bigO : bigO (X := positive * wrapped) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
+    (fun x => T_wrapped_not (fst x) (snd x)).
+  (** Pole splitting is linear. *)
+  Parameter split_bigO : bigO (X := positive * wrapped) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
+    (fun x => T_wrapped_split (fst x) (snd x)).
+  (** Addition is linear. *)
+  Parameter add_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
+      wrapped_bits (snd (snd x)) + 1))
+    (fun x => T_wrapped_add (fst x) (fst (snd x)) (snd (snd x))).
+  (** Subtraction is linear. *)
+  Parameter sub_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
+      wrapped_bits (snd (snd x)) + 1))
+    (fun x => T_wrapped_sub (fst x) (fst (snd x)) (snd (snd x))).
+  (** Unsigned division has the published quadratic class. *)
+  Parameter udiv_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+    (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
+      wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
+    (fun x => T_wrapped_udiv (fst x) (fst (snd x)) (snd (snd x))).
+  (** Unsigned remainder has the published quadratic class. *)
+  Parameter urem_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+    (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
+      wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
+    (fun x => T_wrapped_urem (fst x) (fst (snd x)) (snd (snd x))).
   (** Arc payload size charges width and raw endpoint storage. *)
   Parameter psize_bits : forall w a, psize w a = Pos.to_nat w + wrapped_bits a + 1.
   (** Every arithmetic result the table reads has endpoints within the width. *)

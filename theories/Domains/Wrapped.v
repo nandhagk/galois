@@ -3348,6 +3348,55 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     time_unfold T_wrapped_mul. cbn beta iota zeta. time_simpl. lia.
   Qed.
 
+  Lemma norm_bigO : bigO (X := positive * wrapped) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
+    (fun x => T_wrapped_norm (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma neg_bigO : bigO (X := positive * wrapped) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
+    (fun x => T_wrapped_neg (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma double_bigO : bigO (X := positive * wrapped) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
+    (fun x => T_wrapped_double (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma not_bigO : bigO (X := positive * wrapped) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
+    (fun x => T_wrapped_not (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma split_bigO : bigO (X := positive * wrapped) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
+    (fun x => T_wrapped_split (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma add_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
+      wrapped_bits (snd (snd x)) + 1))
+    (fun x => T_wrapped_add (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+
+  Lemma sub_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
+      wrapped_bits (snd (snd x)) + 1))
+    (fun x => T_wrapped_sub (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+
+  Lemma udiv_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+    (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
+      wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
+    (fun x => T_wrapped_udiv (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+
+  Lemma urem_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+    (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
+      wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
+    (fun x => T_wrapped_urem (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+
   Definition mul_piece (w : positive) (a b : Z * Z) : wrapped :=
     wrapped_mul_piece w
       (I (Fin (fst a)) (Fin (snd a)))

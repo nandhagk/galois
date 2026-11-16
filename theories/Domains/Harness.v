@@ -642,6 +642,18 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Proof.
     exact meet_all_time_bound.
   Qed.
+  Lemma forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
+    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma backward_bigO : (bigO (fun _ => True)
+    (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
+    (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma guard_bigO : (bigO (fun _ => True)
+    (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
+    (fun gx => T_guard (fst gx) (snd gx)))%N.
+  Proof. Admitted. (* STUB *)
 
   Definition k_points : N := 1%N.
   Definition k_meet : N := c_harness.

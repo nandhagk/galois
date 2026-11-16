@@ -5,7 +5,7 @@
     Builds on: SignSig and the fixed-width word operations. *)
 
 From Stdlib Require Import ZArith NArith List Bool Lia Ring PeanoNat.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Bits Require Import Word Fun Testbit Op Arith.
 From Galois.Domains Require Import SignSig WordSig BitsLang.
 Import List.ListNotations.
@@ -1199,6 +1199,10 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_ALL L S.
   Proof.
     exact sign_entry_ticks.
   Qed.
+  Lemma sign_entry_bigO : bigO
+    (X := L.op * (positive * list (positive * S.p))) (fun _ => True)
+    (fun _ => 0%N) (fun x => T_wfwd (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
   (** The result stays within its declared work budget. *)
   Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
     (N.of_nat (S.psize rw r) <= c_word_table * N.of_nat

@@ -5,7 +5,7 @@
     Builds on: RelEnvSig, NumStateSig, StateSig and ValueSig. *)
 
 From Stdlib Require Import NArith List Bool Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig Product.
@@ -543,6 +543,24 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
   (** The pair's public size agrees with the sum of component sizes. *)
   Lemma size_pair : forall a, P.size a = R.size (fst a) + E.size (snd a).
   Proof. reflexivity. Qed.
+  (** Evaluation is linear in the work of both components. *)
+  Lemma eval_bigO : bigO (fun _ : term L.op X.t * t => True)
+    (fun x => N.of_nat (eval_work (fst x) (snd x))) (fun x => T_eval (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Assignment is linear in the work of both components. *)
+  Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
+    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Havoc is linear in the work of both components. *)
+  Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
+    (fun x => N.of_nat (havoc_work (fst x) (snd x))) (fun x => T_havoc (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+  (** Assumption is linear in the work of both components. *)
+  Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
+    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
   (** Relational environments denote the intersection of their two meanings. *)
   Lemma F1_gamma : forall r s st,
     gamma (r, s) st <-> R.ngamma r (fun x => N.num (st x)) /\ E.gamma s st.

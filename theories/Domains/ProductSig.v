@@ -75,6 +75,14 @@ Module Type PRODUCT_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   (** Product forward transfer has the published work bound. *)
   Parameter forward_bigO : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat)) (fun ox => T_forward (fst ox) (snd ox)))%N.
+  (** Backward transfer has the published work-plus-request class. *)
+  Parameter backward_bigO : (bigO (fun _ => True)
+    (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
+    (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
+  (** Guard transfer has the published guard-work class. *)
+  Parameter guard_bigO : (bigO (fun _ => True)
+    (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
+    (fun gx => T_guard (fst gx) (snd gx)))%N.
 End PRODUCT_TIME.
 
 Module Type PRODUCT_T (L : LANG_T) (A B : VALUE_DOMAIN_T L) :=
@@ -135,6 +143,14 @@ Module Type REDUCED_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   (** Reduced transfer has the published work bound. *)
   Parameter forward_bigO : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat)) (fun ox => T_forward (fst ox) (snd ox)))%N.
+  (** Backward transfer has the published work-plus-request class. *)
+  Parameter backward_bigO : (bigO (fun _ => True)
+    (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
+    (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
+  (** Guard transfer has the published guard-work class. *)
+  Parameter guard_bigO : (bigO (fun _ => True)
+    (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
+    (fun gx => T_guard (fst gx) (snd gx)))%N.
 End REDUCED_TIME.
 
 Module Type REDUCED_T (L : LANG_T) (A B : VALUE_DOMAIN_T L)

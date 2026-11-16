@@ -844,6 +844,18 @@ Module ThresholdsT <: THRESHOLDS_ALL.
     pose proof (T_make_le zs). nia.
   Qed.
 
+  (** Upper search has the published path-times-bits class. *)
+  Lemma above_bigO : bigO (X := ttree * Z) (fun _ => True)
+    (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
+    (fun x => T_above (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** Lower search has the published path-times-bits class. *)
+  Lemma below_bigO : bigO (X := ttree * Z) (fun _ => True)
+    (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
+    (fun x => T_below (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
   (** Merge sort orders every input list. *)
   Lemma F1_msort_sorted : forall zs, Sorted Z.le (msort zs).
   Proof.
