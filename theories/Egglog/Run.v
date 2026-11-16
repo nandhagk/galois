@@ -14729,17 +14729,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     time_cbn. lia.
   Qed.
 
-  Lemma T_run_le : forall B U p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    (D.ids (snd (run p cp lim db)) <= B)%N -> D.unit (snd (run p cp lim db)) <= U ->
-    (T_run p cp lim db <=
-      c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
-        (fold_right N.add 0 (map (fun start =>
-          N.of_nat (round_work p cp (fst start) (snd start) + 1)) (trace p cp lim db)) +
-         N.of_nat (D.pending db + 1)) +
-      c_run * N.of_nat (N.size_nat (max_iter lim) + 1) +
-      N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* STUB *)
-
   Fixpoint T_apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
       (db : D.t) : N :=
     match js with
@@ -20276,5 +20265,325 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     eapply N.le_trans; [eapply run_round_cost_sharp; eassumption|].
     apply N.add_le_mono_r. apply N.mul_le_mono_r.
     apply N.mul_le_mono_r. apply N.mul_le_mono_r. exact Hcoefficient.
+  Qed.
+
+  (** * Amortized run cost *)
+
+
+  (** A positive size code denotes its natural bit width. *)
+  Lemma run_timing_positive_size : forall p, Pos.to_nat (Pos.size p) = Pos.size_nat p.
+  Proof.
+    intro p. induction p; cbn [Pos.size Pos.size_nat];
+      rewrite ?Pos2Nat.inj_succ, ?IHp; reflexivity.
+  Qed.
+
+  (** The allocation counter's bit width fits the database spending unit. *)
+  Lemma run_timing_ids_width : forall db, N.size_nat (D.ids db) <= D.unit db.
+  Proof.
+    intro db. assert (Hlog : forall n, N.size_nat n <= N.to_nat (N.log2 n) + 1).
+    { intros [|[p|p|]]; cbn [N.size_nat N.log2 N.to_nat Pos.size_nat];
+        rewrite ?run_timing_positive_size; lia. }
+    pose proof (Hlog (D.ids db)). unfold D.unit. nia.
+  Qed.
+
+  (** Advance preserves both factors of the database spending unit. *)
+  Lemma run_timing_advance_unit : forall db, D.wf db -> D.unit (D.advance db) = D.unit db.
+  Proof.
+    intros db Hwf. unfold D.unit.
+    rewrite (proj1 (D.advance_keeps db Hwf)), (proj1 (D.advance_credit 0 db Hwf)).
+    reflexivity.
+  Qed.
+
+  (** The fixed run coefficient leaves room for driver and fuel overhead. *)
+  Lemma run_timing_constants : (c_run = 64 * k_driver /\ 32 <= k_driver /\
+      D.c_db <= k_driver)%N.
+  Proof.
+    pose proof driver_constant_fields. unfold c_run, k_driver in *. nia.
+  Qed.
+
+  (** The allocation and syntax factors cover a terminal rebuild and fixed overhead. *)
+  Lemma run_timing_factor : forall B U p, 1 <= U ->
+    (1 <= N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)))%N /\
+    (D.c_db * N.of_nat U <= 32 * k_driver * N.of_nat U *
+      N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)))%N.
+  Proof.
+    intros B U p HU. destruct run_timing_constants as [_ [Hdriver Hdb]].
+    assert (HL : (1 <= N.of_nat (N.to_nat (N.log2 B) + 1))%N) by lia.
+    assert (HW : (1 <= N.of_nat (wbits p + 1))%N) by lia.
+    rewrite Nat2N.inj_mul. split; nia.
+  Qed.
+
+  (** Binary and unary fuel return the same callback outcome. *)
+  Lemma run_timing_loopN_fuel : forall (St Out : Type) (step : St -> St + Out) fuel state,
+    loopN step fuel state = loop_fuel step (N.to_nat fuel) state.
+  Proof.
+    intros St Out step fuel state.
+    assert (Hacc : forall fs (H : Acc (@loopN_lt St) fs),
+      loop loopN_lt (loopN_step step) fs H =
+        loop_fuel step (N.to_nat (fst fs)) (snd fs)).
+    { intros fs H. induction H as [[n s] Hsmaller IH] using Acc_ind_dep.
+      destruct n as [|n]; [reflexivity|].
+      assert (Hpos : 0 < N.to_nat (N.pos n)) by apply Pos2Nat.is_pos.
+      assert (Hpred : N.to_nat (N.pos n) = S (N.to_nat (N.pred (N.pos n)))).
+      { rewrite N2Nat.inj_pred. lia. }
+      cbn [fst snd]. rewrite Hpred.
+      cbn [loop loopN_step loop_fuel]. destruct (step s) as [next|result];
+        [apply IH|reflexivity]. }
+    unfold loopN. apply Hacc.
+  Qed.
+
+  (** Every final driver state has at least the input allocation and spending unit. *)
+  Lemma run_timing_loop_mono : forall p cp lim fuel nv db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    match loopN (driver p cp lim) fuel (nv, db) with
+    | inl state => D.wf (snd state) /\ loaded p cp (snd state) /\
+        (D.ids db <= D.ids (snd state))%N /\ D.unit db <= D.unit (snd state)
+    | inr state => D.wf (snd state) /\ loaded p cp (snd state) /\
+        (D.ids db <= D.ids (snd state))%N /\ D.unit db <= D.unit (snd state)
+    end.
+  Proof.
+    intros p cp lim fuel nv db Hchecked Hwf Hloaded.
+    refine (run_loop_database_invariant p cp lim
+      (fun current => D.wf current /\ loaded p cp current /\
+        (D.ids db <= D.ids current)%N /\ D.unit db <= D.unit current)
+      _ _ fuel nv db _).
+    - intros flag current [Hcurrent [Hloadcurrent [Hids Hunit]]].
+      destruct (F17_round_mono p cp flag current Hchecked Hcurrent Hloadcurrent)
+        as [Hnext [Hloadnext [Hidsnext Hunitnext]]].
+      split; [exact Hnext|]. split; [exact Hloadnext|]. split; lia.
+    - intros current [Hcurrent [Hloadcurrent [Hids Hunit]]].
+      destruct (run_advance_state p cp current Hcurrent Hloadcurrent)
+        as [Hnext [Hloadnext Hidsnext]].
+      split; [exact Hnext|]. split; [exact Hloadnext|]. split.
+      + rewrite Hidsnext. exact Hids.
+      + rewrite run_timing_advance_unit by exact Hcurrent. exact Hunit.
+    - split; [exact Hwf|]. split; [exact Hloaded|]. split; reflexivity.
+  Qed.
+
+  (** Bounds on the rebuilt final state bound the input of any suffix of the run. *)
+  Lemma run_timing_fuel_bounds : forall B U p cp lim fuel nv db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    let final := match loop_fuel (driver p cp lim) fuel (nv, db) with
+      | inl (_, last) | inr (_, last) => last end in
+    (D.ids (D.rebuild final) <= B)%N -> D.unit (D.rebuild final) <= U ->
+    (D.ids db <= B)%N /\ D.unit db <= U.
+  Proof.
+    intros B U p cp lim fuel nv db Hchecked Hwf Hloaded.
+    pose proof (run_timing_loop_mono p cp lim (N.of_nat fuel) nv db
+      Hchecked Hwf Hloaded) as Hmono.
+    rewrite run_timing_loopN_fuel, Nat2N.id in Hmono.
+    destruct (loop_fuel (driver p cp lim) fuel (nv, db))
+      as [[last_nv final]|[status final]]; cbn [snd] in Hmono |- *.
+    all: intros Hids Hunit; destruct Hmono as [Hfinal [Hloadfinal [Hidsmono Hunitmono]]].
+    all: rewrite (proj2 (proj2 (D.layout_rebuild final Hfinal))) in Hids.
+    all: pose proof (D.unit_mono_rebuild final Hfinal); split; lia.
+  Qed.
+
+  (** Continuing callbacks advance the completed round. *)
+  Lemma run_timing_driver_continue : forall p cp lim nv db next_nv next,
+    driver p cp lim (nv, db) = inl (next_nv, next) ->
+    next = D.advance (round p cp nv db).
+  Proof.
+    intros p cp lim nv db next_nv next Hstep. rewrite F21_driver_step in Hstep.
+    cbn zeta in Hstep.
+    destruct (max_ids lim <? D.ids (round p cp nv db))%N; [discriminate|].
+    destruct (nv && negb (D.changed (round p cp nv db))); [discriminate|].
+    now injection Hstep as <- <-.
+  Qed.
+
+  (** Stopping callbacks return the completed round without advance. *)
+  Lemma run_timing_driver_stop : forall p cp lim nv db status next,
+    driver p cp lim (nv, db) = inr (status, next) -> next = round p cp nv db.
+  Proof.
+    intros p cp lim nv db status next Hstep. rewrite F21_driver_step in Hstep.
+    cbn zeta in Hstep.
+    destruct (max_ids lim <? D.ids (round p cp nv db))%N.
+    - now injection Hstep as <- <-.
+    - destruct (nv && negb (D.changed (round p cp nv db))); [|discriminate].
+      now injection Hstep as <- <-.
+  Qed.
+
+  (** A canonical round with no pending work pays only a fixed terminal rebuild charge. *)
+  Lemma run_timing_idle_rebuild : forall B U db,
+    D.wf db -> D.canonical db -> D.pending db = 0 ->
+    (D.ids db <= B)%N -> D.unit db <= U ->
+    (D.T_rebuild db <= D.c_db * N.of_nat U)%N.
+  Proof.
+    intros B U db Hwf Hcanonical Hpending Hids Hunit.
+    pose proof (D.rebuild_idle db Hwf Hcanonical Hpending) as Hidle.
+    assert (Hids' : (D.ids (D.rebuild db) <= B)%N) by now rewrite Hidle.
+    assert (Hunit' : D.unit (D.rebuild db) <= U) by now rewrite Hidle.
+    pose proof (run_cost_rebuild B U db Hwf Hids' Hunit') as Hcost.
+    rewrite Hidle, Hpending in Hcost. cbn [N.of_nat] in Hcost. nia.
+  Qed.
+
+  (** Driver bookkeeping fits the spare half of the round coefficient. *)
+  Lemma run_timing_driver_credit : forall k u f work pending slots bits,
+    (32 <= k -> 1 <= u -> 1 <= f -> slots <= work -> bits <= u ->
+      k * (slots + bits + 1) + 8 <= 16 * k * u * f * (work + pending + 1))%N.
+  Proof.
+    intros k u f work pending slots bits Hk Hu Hf Hslots Hbits.
+    set (a := (u * f)%N). set (q := (work + pending + 1)%N).
+    assert (Ha : (1 <= a)%N) by (unfold a; nia).
+    assert (Hua : (u <= a)%N) by (unfold a; nia).
+    assert (Hq : (1 <= q)%N) by (unfold q; lia).
+    assert (Hwq : (work + 1 <= q)%N) by (unfold q; lia).
+    assert (Huq : (u <= a * q)%N) by nia.
+    assert (Hwork : (work + 1 <= a * q)%N) by nia.
+    assert (Hsmall : (k * (slots + bits + 1) + 8 <= 16 * k * a * q)%N) by nia.
+    unfold a, q in Hsmall. nia.
+  Qed.
+
+  (** The sharper round estimate also pays one callback and its loop overhead. *)
+  Lemma run_timing_driver_amort : forall B U p cp lim nv db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> D.unit (round p cp nv db) <= U ->
+    (T_round p cp nv db + N.of_nat U * D.potential B (round p cp nv db) <=
+      16 * k_driver * N.of_nat U *
+        N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        N.of_nat (round_work p cp nv db + D.pending db + 1) +
+      N.of_nat U * D.potential B db)%N ->
+    (T_driver p cp lim (nv, db) + c_loopN +
+      N.of_nat U * D.potential B (round p cp nv db) <=
+      32 * k_driver * N.of_nat U *
+        N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        N.of_nat (round_work p cp nv db + D.pending db + 1) +
+      N.of_nat U * D.potential B db)%N.
+  Proof.
+    intros B U p cp lim nv db Hchecked Hwf Hloaded Hunit Hround.
+    pose proof (T2a_driver_le p cp lim nv db Hchecked Hwf Hloaded) as Hdriver.
+    pose proof (run_timing_ids_width (round p cp nv db)) as Hbits.
+    assert (HU : 1 <= U) by (pose proof (F16_unit_pos (round p cp nv db)); lia).
+    destruct (run_timing_factor B U p HU) as [Hfactor Hdb].
+    assert (Hslots : length (Syntax.slots V.t cp) <= round_work p cp nv db).
+    { rewrite F20_round_work. lia. }
+    destruct run_timing_constants as [_ [Hconstant Hdbconstant]].
+    pose proof (run_timing_driver_credit k_driver (N.of_nat U)
+      (N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)))
+      (N.of_nat (round_work p cp nv db)) (N.of_nat (D.pending db))
+      (N.of_nat (length (Syntax.slots V.t cp)))
+      (N.of_nat (N.size_nat (D.ids (round p cp nv db)))) Hconstant
+      ltac:(lia) Hfactor ltac:(lia) ltac:(lia)) as Hcredit.
+    rewrite !Nat2N.inj_add in Hdriver, Hround |- *. unfold c_loopN. nia.
+  Qed.
+
+  (** Callback costs telescope, retaining only initial pending work and a terminal rebuild. *)
+  Lemma run_timing_fuel_cost : forall B U p cp lim,
+    (forall nv db, D.wf db -> loaded p cp db ->
+      (D.ids (round p cp nv db) <= B)%N -> D.unit (round p cp nv db) <= U ->
+      (T_round p cp nv db + N.of_nat U * D.potential B (round p cp nv db) <=
+        16 * k_driver * N.of_nat U *
+          N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+          N.of_nat (round_work p cp nv db + D.pending db + 1) +
+        N.of_nat U * D.potential B db)%N) ->
+    plans_ok p cp -> forall fuel nv db, D.wf db -> loaded p cp db ->
+    let final := match loop_fuel (driver p cp lim) fuel (nv, db) with
+      | inl (_, last) | inr (_, last) => last end in
+    (D.ids (D.rebuild final) <= B)%N -> D.unit (D.rebuild final) <= U ->
+    (fold_right N.add 0 (map (fun st => T_driver p cp lim st + c_loopN)
+        (firstn fuel (driver_trace (driver p cp lim) fuel (nv, db)))) +
+      D.T_rebuild final <=
+      32 * k_driver * N.of_nat U *
+        N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        (fold_right N.add 0 (map (fun start =>
+          N.of_nat (round_work p cp (fst start) (snd start) + 1))
+          (driver_trace (driver p cp lim) fuel (nv, db))) +
+         N.of_nat (D.pending db + 1)) + N.of_nat U * D.potential B db)%N.
+  Proof.
+    intros B U p cp lim Hround Hchecked fuel.
+    induction fuel as [|fuel IH]; intros nv db Hwf Hloaded.
+    - cbn [loop_fuel driver_trace firstn map fold_right fst snd]. intros Hids Hunit.
+      pose proof (run_cost_rebuild B U db Hwf Hids Hunit) as Hcost.
+      assert (HU : 1 <= U) by (pose proof (F16_unit_pos (D.rebuild db)); lia).
+      destruct (run_timing_factor B U p HU) as [Hfactor Hconstant].
+      nia.
+    - cbn [loop_fuel driver_trace firstn map fold_right fst snd].
+      destruct (driver p cp lim (nv, db)) as [[next_nv next]|[status next]] eqn:Hdriver.
+      + pose proof (run_timing_driver_continue p cp lim nv db next_nv next Hdriver) as Hnext.
+        subst next. intros Hids Hunit.
+        destruct (run_round_state p cp nv db Hchecked Hwf Hloaded)
+          as [Hnext [Hloadnext Hidsnext]].
+        destruct (run_advance_state p cp (round p cp nv db) Hnext Hloadnext)
+          as [Hadvance [Hloadadvance Hidsadvance]].
+        destruct (run_timing_fuel_bounds B U p cp lim fuel next_nv
+          (D.advance (round p cp nv db)) Hchecked Hadvance Hloadadvance Hids Hunit)
+          as [Hround_ids Hround_unit].
+        rewrite Hidsadvance in Hround_ids.
+        rewrite run_timing_advance_unit in Hround_unit by exact Hnext.
+        pose proof (run_timing_driver_amort B U p cp lim nv db Hchecked Hwf Hloaded
+          Hround_unit (Hround nv db Hwf Hloaded Hround_ids Hround_unit)) as Hstep.
+        pose proof (IH next_nv (D.advance (round p cp nv db)) Hadvance Hloadadvance
+          Hids Hunit) as Htail.
+        destruct (F18_round_idle p cp nv db Hchecked Hwf Hloaded) as [Hcanonical Hpending].
+        rewrite (proj1 (proj2 (D.advance_keeps _ Hnext))), Hpending,
+          (proj2 (D.advance_credit B _ Hnext)) in Htail.
+        cbn [N.of_nat] in Htail.
+        rewrite !Nat2N.inj_add in Hstep, Htail |- *.
+        nia.
+      + pose proof (run_timing_driver_stop p cp lim nv db status next Hdriver) as Hnext.
+        subst next. intros Hids Hunit. rewrite firstn_nil. cbn [map fold_right].
+        destruct (run_round_state p cp nv db Hchecked Hwf Hloaded)
+          as [Hnext [Hloadnext Hidsnext]].
+        destruct (F18_round_idle p cp nv db Hchecked Hwf Hloaded) as [Hcanonical Hpending].
+        pose proof (D.rebuild_idle _ Hnext Hcanonical Hpending) as Hidle.
+        rewrite Hidle in Hids, Hunit.
+        pose proof (run_timing_driver_amort B U p cp lim nv db Hchecked Hwf Hloaded
+          Hunit (Hround nv db Hwf Hloaded Hids Hunit)) as Hstep.
+        pose proof (run_timing_idle_rebuild B U _ Hnext Hcanonical Hpending Hids Hunit)
+          as Hrebuild.
+        assert (HU : 1 <= U) by (pose proof (F16_unit_pos (round p cp nv db)); lia).
+        destruct (run_timing_factor B U p HU) as [Hfactor Hconstant].
+        rewrite !Nat2N.inj_add in Hstep |- *. nia.
+  Qed.
+
+  (** The public run estimate follows from the sharper private round estimate. *)
+  Lemma run_run_from_round :
+    (forall B U p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+      (D.ids (round p cp nv db) <= B)%N -> D.unit (round p cp nv db) <= U ->
+      (T_round p cp nv db + N.of_nat U * D.potential B (round p cp nv db) <=
+        16 * k_driver * N.of_nat U *
+          N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+          N.of_nat (round_work p cp nv db + D.pending db + 1) +
+        N.of_nat U * D.potential B db)%N) ->
+    forall B U p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    (D.ids (snd (run p cp lim db)) <= B)%N -> D.unit (snd (run p cp lim db)) <= U ->
+    (T_run p cp lim db <=
+      c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        (fold_right N.add 0 (map (fun start =>
+          N.of_nat (round_work p cp (fst start) (snd start) + 1)) (trace p cp lim db)) +
+         N.of_nat (D.pending db + 1)) +
+      c_run * N.of_nat (N.size_nat (max_iter lim) + 1) +
+      N.of_nat U * D.potential B db)%N.
+  Proof.
+    intros Hround B U p cp lim db Hchecked Hwf Hloaded Hids Hunit.
+    pose proof (T3_driver_wrapper p cp lim db Hchecked Hwf Hloaded) as Hwrapper.
+    pose proof (T2b_loop_trace p cp lim db) as Hloop.
+    pose proof (run_timing_fuel_cost B U p cp lim
+      (fun nv current Hcurrent Hloadcurrent Hbound Hspending =>
+        Hround B U p cp nv current Hchecked Hcurrent Hloadcurrent Hbound Hspending)
+      Hchecked (N.to_nat (max_iter lim)) false db Hwf Hloaded) as Hcost.
+    pose proof (F10_run_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
+    rewrite run_timing_loopN_fuel in Hwrapper, Hrun.
+    destruct (loop_fuel (driver p cp lim) (N.to_nat (max_iter lim)) (false, db))
+      as [[nv final]|[status final]] eqn:Houtcome.
+    all: rewrite Hrun in Hids, Hunit; cbn [snd] in Hids, Hunit.
+    all: specialize (Hcost Hids Hunit).
+    all: rewrite trace_spec in Hloop |- *.
+    all: destruct run_timing_constants as [Hconstants [Hdriver Hdb]].
+    all: assert (Hbits : (1 <= N.of_nat (N.size_nat (max_iter lim) + 1))%N) by lia.
+    all: unfold c_loopN in Hloop, Hcost; rewrite Hconstants in *; nia.
+  Qed.
+
+  (** A run charges its visited rounds, initial pending work and binary fuel. *)
+  Lemma T_run_le : forall B U p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    (D.ids (snd (run p cp lim db)) <= B)%N -> D.unit (snd (run p cp lim db)) <= U ->
+    (T_run p cp lim db <=
+      c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        (fold_right N.add 0 (map (fun start =>
+          N.of_nat (round_work p cp (fst start) (snd start) + 1)) (trace p cp lim db)) +
+         N.of_nat (D.pending db + 1)) +
+      c_run * N.of_nat (N.size_nat (max_iter lim) + 1) +
+      N.of_nat U * D.potential B db)%N.
+  Proof.
+    apply run_run_from_round. exact run_round_cost_sharp.
   Qed.
 End RunT.
