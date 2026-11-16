@@ -36,6 +36,9 @@ Module UnionFindCode <: UNION_FIND_OPS.
   Definition walk (x : positive) (u : t) : positive * list positive :=
     match loop_fuel (walk_step u) (S (N.size_nat (count u))) (x, []) with inl s => s | inr s => s end.
   TimeFun walk.
+  (** A read-only lookup walks to the root and leaves the forest as it is. *)
+  Definition root_of (x : positive) (u : t) : positive := fst (walk x u).
+  TimeFun root_of.
   Definition compress (root : positive) (path : list positive) (u : t) : t :=
     UF (fold_left (fun m y => PTrieCode.set y root m) path (parents u)) (sizes u) (count u).
   TimeFun compress.
@@ -1287,6 +1290,16 @@ Module UnionFind <: UNION_FIND.
   Proof.
     intros x u Hwf. exact (proj1 (find_correct x u Hwf)).
   Qed.
+  (** The read-only root is the root that find returns. *)
+  Lemma root_of_find : forall x u, root_of x u = fst (find x u).
+  Proof.
+    intros x u. reflexivity.
+  Qed.
+  (** On a well-formed forest the read-only root is the representative. *)
+  Lemma root_of_repr : forall x u, wf u -> root_of x u = repr u x.
+  Proof.
+    intros x u Hwf. exact (walk_root x u Hwf).
+  Qed.
   Lemma find_same  : forall x u y, wf u -> repr (snd (find x u)) y = repr u y.
   Proof.
     intros x u y Hwf.
@@ -1747,6 +1760,18 @@ Module UnionFindT <: UNION_FIND_ALL.
   Proof.
     intros x u Hwf. eapply N.le_trans; [exact (find_clock x u Hwf)|].
     apply N.mul_le_mono_r, N.mul_le_mono_r. unfold c_uf. lia.
+  Qed.
+
+  (** A read-only root lookup pays one walk, within the bound of find. *)
+  Lemma T_root_of_le : forall x u, (wf u ->
+    T_root_of x u <= c_uf * N.of_nat (Nat.log2 (card u) + 1) *
+      N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
+  Proof.
+    intros x u Hwf. pose proof (T3_walk x u Hwf) as Hwalk.
+    assert (Hunit : (1 <= N.of_nat (Nat.log2 (card u) + 1) *
+      N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N) by nia.
+    time_unfold T_root_of. time_unfold @Datatypes.T_fst.
+    unfold k_walk, c_uf in *. nia.
   Qed.
 
   Local Lemma add_clock_cap x u Q W :
