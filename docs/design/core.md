@@ -289,7 +289,7 @@ Module Type TRIE_TIME (Import T : TRIE).
     (forall a b, T_f a b <= k) -> T_merge f T_f m1 m2 <= c_trie * (k + 1) * (nodes m1 + nodes m2 + 1).
   (* T_forall2b_le: the same shape.  T_existsb_le, T_map_le, T_fold_le: c_trie * (k + 1) * (nodes m + 1) *)
   Parameter T_elements_le : forall A (m : t A), T_elements m <= c_trie * (weight m + 1).
-  Parameter get_tight : forall A p (m : t A), Pos.size_nat p <= T_get p m.      (* lower-bound witness *)
+  Parameter get_tight : forall A p (m : t A), get p m <> None -> Pos.size_nat p <= T_get p m.
 End TRIE_TIME.
 ```
 

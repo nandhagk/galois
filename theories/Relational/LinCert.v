@@ -1516,17 +1516,23 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   Proof.
     intros f key. induction key as [key IH|key IH|]; intros z tr;
       pose proof (lc_trie_sum_parts f tr) as Hparts.
-    - change (lc_trie_sum f (PTrieCode.node (PTrieCode.left tr) (PTrieCode.value tr)
+    - replace (PTrieCode.get (xI key) tr) with (PTrieCode.get key (PTrieCode.right tr))
+        by exact (eq_sym (trie_get_xI key tr)).
+      change (lc_trie_sum f (PTrieCode.node (PTrieCode.left tr) (PTrieCode.value tr)
         (PTrieCode.set key z (PTrieCode.right tr))) +
         lc_option_sum f (PTrieCode.get key (PTrieCode.right tr)) =
         lc_trie_sum f tr + f z)%N.
       rewrite lc_trie_sum_node. pose proof (IH z (PTrieCode.right tr)). lia.
-    - change (lc_trie_sum f (PTrieCode.node (PTrieCode.set key z (PTrieCode.left tr))
+    - replace (PTrieCode.get (xO key) tr) with (PTrieCode.get key (PTrieCode.left tr))
+        by exact (eq_sym (trie_get_xO key tr)).
+      change (lc_trie_sum f (PTrieCode.node (PTrieCode.set key z (PTrieCode.left tr))
         (PTrieCode.value tr) (PTrieCode.right tr)) +
         lc_option_sum f (PTrieCode.get key (PTrieCode.left tr)) =
         lc_trie_sum f tr + f z)%N.
       rewrite lc_trie_sum_node. pose proof (IH z (PTrieCode.left tr)). lia.
-    - change (lc_trie_sum f (PTrieCode.node (PTrieCode.left tr) (Some z)
+    - replace (PTrieCode.get xH tr) with (PTrieCode.value tr)
+        by exact (eq_sym (trie_get_xH tr)).
+      change (lc_trie_sum f (PTrieCode.node (PTrieCode.left tr) (Some z)
         (PTrieCode.right tr)) + lc_option_sum f (PTrieCode.value tr) =
         lc_trie_sum f tr + f z)%N.
       rewrite lc_trie_sum_node. change (lc_option_sum f (Some z)) with (f z). lia.

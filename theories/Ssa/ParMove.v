@@ -523,7 +523,7 @@ Qed.
 Lemma T_move_lookup_bound table x :
   (T_move_lookup table x <= 4 * N.of_nat (Pos.size_nat x + 1))%N.
 Proof.
-  pose proof (PTrieT.trie_get_clock positive x table) as Hget.
+  pose proof (PTrieT.T_trie_get_le positive x table) as Hget.
   time_unfold T_move_lookup. destruct (trie_get x table); time_cbn; nia.
 Qed.
 
@@ -605,7 +605,7 @@ Proof.
   induction par as [|[dst src] rest IH]; intros Hwidth table.
   - time_step.
   - pose proof (proj2 (Hwidth dst src (or_introl eq_refl))) as Hsrc.
-    pose proof (PTrieT.trie_get_clock moves src table) as Hget.
+    pose proof (PTrieT.T_trie_get_le moves src table) as Hget.
     pose proof (T_set_code_bound moves src ((dst, src) :: incoming_at table src) table) as Hset.
     specialize (IH (moves_width_tail w dst src rest Hwidth)
       (PTrieCode.set src ((dst, src) :: incoming_at table src) table)).
@@ -613,7 +613,6 @@ Proof.
     time_unfold T_incoming_moves. time_simpl.
     unfold incoming_at in IH, Hset. destruct (trie_get src table); time_cbn;
       rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *.
-    all: rewrite Hget.
     all: eapply N.le_trans.
     1, 3: apply N.add_le_mono_l; apply N.add_le_mono_l;
       apply N.add_le_mono; [exact Hset|exact IH].
@@ -623,7 +622,7 @@ Qed.
 Lemma T_incoming_at_bound table x :
   (T_incoming_at table x <= 4 * N.of_nat (Pos.size_nat x + 1))%N.
 Proof.
-  pose proof (PTrieT.trie_get_clock moves x table) as Hget.
+  pose proof (PTrieT.T_trie_get_le moves x table) as Hget.
   time_unfold T_incoming_at. destruct (trie_get x table); time_cbn; nia.
 Qed.
 
@@ -640,8 +639,8 @@ Proof.
     inversion Hjobs as [|head tail Hjob Htail]; subst head tail.
     destruct job as [[dst src]|ms|[dst src]]; cbn [job_known] in Hjob.
     + pose proof (proj1 (Hwidth dst src Hjob)) as Hdst.
-      pose proof (PTrieT.trie_get_clock bool dst seen) as Hseen.
-      pose proof (PTrieT.trie_get_clock unit dst redirect) as Hredirect.
+      pose proof (PTrieT.T_trie_get_le bool dst seen) as Hseen.
+      pose proof (PTrieT.T_trie_get_le unit dst redirect) as Hredirect.
       pose proof (T_incoming_at_bound incoming dst) as Hincoming.
       pose proof (T_set_code_bound bool dst false seen) as Hsetseen.
       pose proof (T_set_code_bound unit dst tt redirect) as Hsetredirect.
@@ -652,7 +651,7 @@ Proof.
         destruct (trie_get dst redirect); time_cbn; rewrite !Nat2N.inj_add in *; nia.
     + destruct ms; time_step.
     + pose proof (proj1 (Hwidth dst src Hjob)) as Hdst.
-      pose proof (PTrieT.trie_get_clock unit dst redirect) as Hredirect.
+      pose proof (PTrieT.T_trie_get_le unit dst redirect) as Hredirect.
       pose proof (T_set_code_bound bool dst true seen) as Hsetseen.
       apply time_of_nat_le in Hdst.
       time_unfold T_move_step. time_simpl.

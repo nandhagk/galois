@@ -56,15 +56,48 @@ Definition trie_right {A} (tr : ptrie A) : ptrie A :=
 
 TimeFun trie_right.
 
-(** Lookup visits all key bits, including those below an absent subtree. *)
+(** Lookup reads one node for each key digit and stops at the first absent child.
+    The recursion is structural on the key, so a lookup with an unknown key stays folded under
+    conversion, whatever the trie. *)
 Fixpoint trie_get {A} (p : positive) (tr : ptrie A) : option A :=
-  match p with
-  | xH => trie_value tr
-  | xO q => trie_get q (trie_left tr)
-  | xI q => trie_get q (trie_right tr)
+  match tr with
+  | Empty => None
+  | Nodes n =>
+    match p, n with
+    | xH, (N010 v | N011 v _ | N110 _ v | N111 _ v _) => Some v
+    | xO q, (N100 l | N101 l _ | N110 l _ | N111 l _ _) => trie_get q (Nodes l)
+    | xI q, (N001 r | N011 _ r | N101 _ r | N111 _ _ r) => trie_get q (Nodes r)
+    | _, _ => None
+    end
   end.
 
 TimeFun trie_get.
+
+(** Lookup in the empty trie fails. *)
+Lemma trie_get_empty {A} (p : positive) : trie_get p (@Empty A) = None.
+Proof.
+  destruct p; reflexivity.
+Qed.
+
+(** Lookup of the root key reads the node value. *)
+Lemma trie_get_xH {A} (tr : ptrie A) : trie_get xH tr = trie_value tr.
+Proof.
+  destruct tr as [|n]; [|destruct n]; reflexivity.
+Qed.
+
+(** Lookup below a left edge continues in the left child. *)
+Lemma trie_get_xO {A} (q : positive) (tr : ptrie A) :
+  trie_get (xO q) tr = trie_get q (trie_left tr).
+Proof.
+  destruct tr as [|n]; [|destruct n]; destruct q; reflexivity.
+Qed.
+
+(** Lookup below a right edge continues in the right child. *)
+Lemma trie_get_xI {A} (q : positive) (tr : ptrie A) :
+  trie_get (xI q) tr = trie_get q (trie_right tr).
+Proof.
+  destruct tr as [|n]; [|destruct n]; destruct q; reflexivity.
+Qed.
 
 Module PTrieCode <: TRIE_OPS.
   Definition t := ptrie.
@@ -416,14 +449,29 @@ Module PTrie <: TRIE.
 
   Lemma get_empty : forall A p, get p (@empty A) = None.
   Proof.
-    intros A p; induction p; cbn [get trie_get trie_left trie_right trie_value empty];
-      assumption || reflexivity.
+    intros A p. destruct p; reflexivity.
   Qed.
   Lemma get_equation {A} p (tr : t A) :
     get p tr =
     match p with xH => value tr | xO q => get q (left tr) | xI q => get q (right tr) end.
   Proof.
-    destruct p; reflexivity.
+    destruct p as [q|q|];
+      [exact (trie_get_xI q tr)|exact (trie_get_xO q tr)|exact (trie_get_xH tr)].
+  Qed.
+  (** Lookup of the root key reads the node value. *)
+  Lemma get_xH {A} (tr : t A) : get xH tr = value tr.
+  Proof.
+    exact (get_equation xH tr).
+  Qed.
+  (** Lookup below a left edge continues in the left child. *)
+  Lemma get_xO {A} q (tr : t A) : get (xO q) tr = get q (left tr).
+  Proof.
+    exact (get_equation (xO q) tr).
+  Qed.
+  (** Lookup below a right edge continues in the right child. *)
+  Lemma get_xI {A} q (tr : t A) : get (xI q) tr = get q (right tr).
+  Proof.
+    exact (get_equation (xI q) tr).
   Qed.
   Lemma left_node {A} (l r : t A) o : left (node l o r) = l.
   Proof. destruct l, o, r; reflexivity. Qed.
@@ -434,14 +482,16 @@ Module PTrie <: TRIE.
   Lemma get_node {A} (p : positive) (l r : t A) o :
     get p (node l o r) =
     match p with xH => o | xO q => get q l | xI q => get q r end.
-  Proof. destruct p; cbn [get trie_get]; rewrite ?left_node, ?right_node, ?value_node; reflexivity. Qed.
+  Proof.
+    rewrite get_equation, left_node, value_node, right_node. reflexivity.
+  Qed.
   Lemma get_replace_same {A} (tr : t A) p o : get p (replace p o tr) = o.
   Proof. revert tr; induction p; intro tr; cbn [replace]; rewrite get_node; auto. Qed.
   Lemma get_replace_other {A} (tr : t A) p q o :
     p <> q -> get q (replace p o tr) = get q tr.
   Proof.
     revert tr q; induction p; intros tr q Hneq; destruct q;
-      cbn [replace get trie_get]; rewrite ?left_node, ?right_node, ?value_node;
+      cbn [replace]; rewrite get_node, (get_equation _ tr); cbv iota;
       try reflexivity; try congruence; apply IHp; congruence.
   Qed.
   Lemma get_set_same : forall A p (a : A) m, get p (set p a m) = Some a.
@@ -520,10 +570,12 @@ Module PTrie <: TRIE.
         destruct p; rewrite get_equation; [apply Hr|apply Hl|]; try exact Hget.
         subst o. exact Ho.
       + intro Htest. split.
-        * intros p a Hget. apply (Htest (xO p) a). rewrite get_node. exact Hget.
+        * intros p a Hget. rewrite <- get_xO. apply (Htest (xO p) a).
+          rewrite get_node. exact Hget.
         * split.
           -- destruct o as [a|]; [apply (Htest xH a); apply get_node|reflexivity].
-          -- intros p a Hget. apply (Htest (xI p) a). rewrite get_node. exact Hget.
+          -- intros p a Hget. rewrite <- get_xI. apply (Htest (xI p) a).
+             rewrite get_node. exact Hget.
   Qed.
 
   Lemma forall2b_spec : forall A B (f : option A -> option B -> bool) m1 m2,
@@ -850,12 +902,93 @@ Module PTrieT <: TRIE_ALL.
 
   Definition c_trie : N := 1024.
 
-  (** Lookup pays one traversal and one observation call per key digit. *)
-  Lemma trie_get_clock : forall A p (m : t A),
-    T_trie_get p m = (2 * N.of_nat (Pos.size_nat p))%N.
+  (** Lookup pays one unit for each node it reads, so at most one for each key digit. *)
+  Lemma T_trie_get_size_le : forall A p (m : t A),
+    (T_trie_get p m <= N.of_nat (Pos.size_nat p))%N.
   Proof.
-    intros A p. induction p; intro m.
-    all: unfold T_trie_get; fold (@T_trie_get A); time_simpl; time_cbn; rewrite ?IHp; nia.
+    intros A p. induction p as [p IH|p IH|]; intro m.
+    all: unfold T_trie_get; fold (@T_trie_get A); time_simpl; time_cbn.
+    all: destruct m as [|n]; [|destruct n]; time_cbn.
+    all: try match goal with
+      | |- context [T_trie_get _ ?c] => pose proof (IH c) as Hchild
+      end.
+    all: cbn [Pos.size_nat]; lia.
+  Qed.
+
+  (** A lookup that finds a binding reads one node for each key digit. *)
+  Lemma T_trie_get_hit : forall A p (m : t A),
+    trie_get p m <> None -> T_trie_get p m = N.of_nat (Pos.size_nat p).
+  Proof.
+    intros A p. induction p as [p IH|p IH|]; intros m Hhit.
+    all: destruct m as [|n]; [exfalso; apply Hhit; reflexivity|].
+    all: destruct n; cbn [trie_get] in Hhit; try (exfalso; apply Hhit; reflexivity).
+    all: unfold T_trie_get; fold (@T_trie_get A); time_simpl; time_cbn.
+    all: try rewrite (IH _ Hhit).
+    all: cbn [Pos.size_nat]; lia.
+  Qed.
+
+  (** Lookup pays at most two units for each key digit. *)
+  Lemma T_trie_get_le : forall A p (m : t A),
+    (T_trie_get p m <= 2 * N.of_nat (Pos.size_nat p))%N.
+  Proof.
+    intros A p m. pose proof (T_trie_get_size_le A p m) as Hsize. lia.
+  Qed.
+
+  (** Add the bound of [T_trie_get_le] for each lookup clock that the goal mentions. *)
+  Ltac trie_get_le :=
+    repeat match goal with
+    | |- context [T_trie_get ?p ?m] =>
+      lazymatch goal with
+      | _ : (T_trie_get p m <= _)%N |- _ => fail
+      | _ => pose proof (T_trie_get_le _ p m)
+      end
+    end.
+
+  (** The bound tactic covers two lookups of the same key in different tries. *)
+  Local Lemma trie_get_le_twice : forall A p (m n : t A),
+    (T_trie_get p m + T_trie_get p n <= 4 * N.of_nat (Pos.size_nat p))%N.
+  Proof.
+    intros A p m n. trie_get_le. lia.
+  Qed.
+
+  (** Lookup reads the root and continues in the child that the first key digit selects. *)
+  Lemma T_trie_get_cases : forall A p (m : t A),
+    T_trie_get p m =
+      if is_empty m then 1%N else
+      (1 + match p with
+        | xH => 0
+        | xO q => if is_empty (left m) then 0 else T_trie_get q (left m)
+        | xI q => if is_empty (right m) then 0 else T_trie_get q (right m)
+        end)%N.
+  Proof.
+    intros A [q|q|] [|n]; try destruct n; reflexivity.
+  Qed.
+
+  (** Replacement with a value never yields the empty trie. *)
+  Lemma replace_some_nonempty : forall A k (a : A) m,
+    is_empty (replace k (Some a) m) = false.
+  Proof.
+    intros A k a. induction k as [k IH|k IH|]; intro m; cbn [replace].
+    - specialize (IH (right m)).
+      destruct (left m), (value m), (replace k (Some a) (right m));
+        try discriminate IH; reflexivity.
+    - specialize (IH (left m)).
+      destruct (replace k (Some a) (left m)), (value m), (right m);
+        try discriminate IH; reflexivity.
+    - destruct (left m), (right m); reflexivity.
+  Qed.
+
+  (** Setting a key never shortens the path that a later lookup reads. *)
+  Lemma T_trie_get_set_le : forall A k p (a : A) m,
+    (T_trie_get p m <= T_trie_get p (set k a m))%N.
+  Proof.
+    intros A k. unfold set. induction k as [k IH|k IH|]; intros [q|q|] a m.
+    all: rewrite (T_trie_get_cases _ _ (replace _ (Some a) m)), (T_trie_get_cases _ _ m),
+      replace_some_nonempty; cbn [replace].
+    all: rewrite ?left_node, ?right_node, ?replace_some_nonempty.
+    all: try pose proof (IH q a (right m)) as Hright.
+    all: try pose proof (IH q a (left m)) as Hleft.
+    all: destruct (is_empty m), (is_empty (left m)), (is_empty (right m)); lia.
   Qed.
 
   (** Replacement pays for the three observations and canonical reconstruction. *)
@@ -868,6 +1001,23 @@ Module PTrieT <: TRIE_ALL.
       try pose proof (IH o (right m)); nia.
   Qed.
 
+  (** Replacement rebuilds one node for each key digit, so it pays at least one unit each. *)
+  Lemma replace_clock_lower : forall A p o (m : t A),
+    (N.of_nat (Pos.size_nat p) <= T_replace p o m)%N.
+  Proof.
+    intros A p. induction p as [p IH|p IH|]; intros o m; time_unfold @T_replace.
+    all: try pose proof (IH o (left m)) as Hleft; try pose proof (IH o (right m)) as Hright.
+    all: cbn [Pos.size_nat]; lia.
+  Qed.
+
+  (** Setting a key pays at least one unit for each key digit. *)
+  Lemma T_set_lower : forall A p (a : A) m,
+    (N.of_nat (Pos.size_nat p) <= T_set p a m)%N.
+  Proof.
+    intros A p a m. pose proof (replace_clock_lower A p (Some a) m) as Hreplace.
+    time_unfold @T_set. lia.
+  Qed.
+
   Lemma T_is_empty_le : forall A (m : t A), (T_is_empty m <= c_trie)%N.
   Proof.
     intros A m. unfold c_trie. time_step.
@@ -875,7 +1025,8 @@ Module PTrieT <: TRIE_ALL.
   Lemma T_get_le : forall A p (m : t A),
     (T_get p m <= c_trie * N.of_nat (Pos.size_nat p + 1))%N.
   Proof.
-    intros A p m. unfold T_get, c_trie. rewrite trie_get_clock. nia.
+    intros A p m. pose proof (T_trie_get_le A p m) as Hget.
+    unfold T_get, c_trie. time_cbn. nia.
   Qed.
   Lemma T_set_le : forall A p (a : A) m,
     (T_set p a m <= c_trie * N.of_nat (Pos.size_nat p + 1))%N.
@@ -1106,9 +1257,11 @@ Module PTrieT <: TRIE_ALL.
     rewrite folding_weight in Hnodes |- *. apply time_of_nat_le in Hnodes.
     unfold c_trie. rewrite !Nat2N.inj_add in *. nia.
   Qed.
-  Lemma get_tight : forall A p (m : t A), (N.of_nat (Pos.size_nat p) <= T_get p m)%N.
+  Lemma get_tight : forall A p (m : t A),
+    get p m <> None -> (N.of_nat (Pos.size_nat p) <= T_get p m)%N.
   Proof.
-    intros A p m. unfold T_get. rewrite trie_get_clock. nia.
+    intros A p m Hhit. pose proof (T_trie_get_hit A p m Hhit) as Hclock.
+    unfold T_get. time_cbn. lia.
   Qed.
 
   Definition k_node : N := 8.
@@ -1512,14 +1665,16 @@ Module PTrieT <: TRIE_ALL.
     all: try pose proof (IHn (right u)) as Hright.
     all: try pose proof (IHn1 (left u)) as Hleft.
     all: try pose proof (IHn2 (right u)) as Hright.
-    all: cbn [fst snd get trie_get left right value] in *.
+    all: try setoid_rewrite get_xO; try setoid_rewrite get_xI;
+      cbn [fst snd left right value] in *.
     all: time_unfold @T_left; time_unfold @T_value; time_unfold @T_right.
     all: time_simpl; time_cbn_all; rewrite ?Nat2N.inj_add in *.
     all: repeat match goal with
       | |- context [if ?test then _ else _] => destruct test
       end; time_cbn.
     all: repeat rewrite map_map in *.
-    all: cbn [fst snd get trie_get] in *.
+    all: try setoid_rewrite get_xH; try setoid_rewrite get_xO; try setoid_rewrite get_xI;
+      cbn [fst snd] in *.
     all: unfold left, right, value in *.
     all: lia.
   Qed.

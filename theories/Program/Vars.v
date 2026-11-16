@@ -232,7 +232,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Proof.
     intros p e; pose proof (D.T_tables_le p) as Htables.
     pose proof (E.T_encode_le e) as Hcode.
-    unfold T_uses; time_simpl; rewrite PTrieT.trie_get_clock.
+    unfold T_uses; time_simpl; PTrieT.trie_get_le.
     unfold c_vars, E.bits in *; rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
   Qed.
 
@@ -242,7 +242,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Proof.
     intros p e; pose proof (D.T_tables_le p) as Htables.
     pose proof (E.T_encode_le e) as Hcode.
-    unfold T_defs; time_simpl; rewrite PTrieT.trie_get_clock.
+    unfold T_defs; time_simpl; PTrieT.trie_get_le.
     unfold c_vars, E.bits in *; rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
   Qed.
 
@@ -252,7 +252,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Proof.
     intros p n; pose proof (D.T_tables_le p) as Htables.
     pose proof (N.T_encode_le n) as Hcode.
-    unfold T_exits; time_simpl; rewrite PTrieT.trie_get_clock.
+    unfold T_exits; time_simpl; PTrieT.trie_get_le.
     unfold c_vars, N.bits in *; rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
   Qed.
 

@@ -466,13 +466,13 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
     (T_sites_of p f <= c_calls * N.of_nat (F.bits f + length (sites_of p f) + 1))%N.
   Proof.
     intros p f.
-    pose proof (PTrieT.trie_get_clock (list S.t) (F.encode f)
+    pose proof (PTrieT.T_trie_get_le (list S.t) (F.encode f)
       (call_sites (D.tables p))) as Hget.
     pose proof (D.T_tables_le p) as Htables.
     pose proof (F.T_encode_le f) as Hencode.
     eapply N.le_trans with
       (m := ((F.c_key + D.c_tables + 4) * N.of_nat (F.bits f + 1))%N).
-    - unfold T_sites_of; rewrite Hget; unfold T_call_sites, F.bits in *.
+    - unfold T_sites_of; unfold T_call_sites, F.bits in *.
       time_cbn_all; nia.
     - apply N.mul_le_mono.
       + pose proof reader_coefficient; lia.
@@ -483,13 +483,13 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
     (T_caller_of p site <= c_calls * N.of_nat (S.bits site + 1))%N.
   Proof.
     intros p site.
-    pose proof (PTrieT.trie_get_clock F.t (S.encode site)
+    pose proof (PTrieT.T_trie_get_le F.t (S.encode site)
       (call_callers (D.tables p))) as Hget.
     pose proof (D.T_tables_le p) as Htables.
     pose proof (S.T_encode_le site) as Hencode.
     eapply N.le_trans with
       (m := ((S.c_key + 2 * D.c_tables + 6) * N.of_nat (S.bits site + 1))%N).
-    - unfold T_caller_of; rewrite Hget.
+    - unfold T_caller_of.
       unfold T_call_callers, T_call_default_caller, S.bits in *.
       destruct (trie_get (S.encode site) (call_callers (D.tables p)));
         time_cbn_all; nia.
@@ -500,13 +500,13 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
     (T_resolve p site <= c_calls * N.of_nat (S.bits site + length (resolve p site) + 1))%N.
   Proof.
     intros p site.
-    pose proof (PTrieT.trie_get_clock (list F.t) (S.encode site)
+    pose proof (PTrieT.T_trie_get_le (list F.t) (S.encode site)
       (call_targets (D.tables p))) as Hget.
     pose proof (D.T_tables_le p) as Htables.
     pose proof (S.T_encode_le site) as Hencode.
     eapply N.le_trans with
       (m := ((S.c_key + D.c_tables + 4) * N.of_nat (S.bits site + 1))%N).
-    - unfold T_resolve; rewrite Hget; unfold T_call_targets, S.bits in *.
+    - unfold T_resolve; unfold T_call_targets, S.bits in *.
       time_cbn_all; nia.
     - apply N.mul_le_mono.
       + pose proof reader_coefficient; lia.

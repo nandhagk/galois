@@ -572,13 +572,13 @@ Lemma val_mem_time : forall known x w, Pos.size_nat x <= w ->
   (T_val_mem known x <= 3 * N.of_nat (w + 1))%N.
 Proof.
   intros known x w Hwidth; time_unfold T_val_mem.
-  rewrite PTrieT.trie_get_clock; destruct (trie_get x known); time_cbn; nia.
+  PTrieT.trie_get_le; destruct (trie_get x known); time_cbn; nia.
 Qed.
 
 Lemma val_maps_time : forall rho x y w, Pos.size_nat x <= w -> Pos.size_nat y <= w ->
   (T_val_maps rho x y <= 4 * N.of_nat (w + 1))%N.
 Proof.
-  intros rho x y w Hx Hy; time_unfold T_val_maps; rewrite PTrieT.trie_get_clock.
+  intros rho x y w Hx Hy; time_unfold T_val_maps; PTrieT.trie_get_le.
   destruct (trie_get x rho) as [z|]; [pose proof (Pos.T_eqb_le y z)|]; time_cbn; nia.
 Qed.
 
@@ -797,21 +797,21 @@ Qed.
 Lemma val_symbol_time : forall m x w, Pos.size_nat x <= w ->
   (T_val_symbol m x <= 3 * N.of_nat (w + 1))%N.
 Proof.
-  intros m x w Hx; time_unfold T_val_symbol; rewrite PTrieT.trie_get_clock.
+  intros m x w Hx; time_unfold T_val_symbol; PTrieT.trie_get_le.
   destruct (trie_get x m); time_cbn; nia.
 Qed.
 
 Lemma val_size_time : forall m x w, Pos.size_nat x <= w ->
   (T_val_size m x <= 3 * N.of_nat (w + 1))%N.
 Proof.
-  intros m x w Hx; time_unfold T_val_size; rewrite PTrieT.trie_get_clock.
+  intros m x w Hx; time_unfold T_val_size; PTrieT.trie_get_le.
   destruct (trie_get x m); time_cbn; nia.
 Qed.
 
 Lemma val_row_time {A} : forall (m : ptrie (list A)) x w, Pos.size_nat x <= w ->
   (T_index_row m x <= 3 * N.of_nat (w + 1))%N.
 Proof.
-  intros m x w Hx; time_unfold @T_index_row; rewrite PTrieT.trie_get_clock.
+  intros m x w Hx; time_unfold @T_index_row; PTrieT.trie_get_le.
   destruct (trie_get x m); time_cbn; nia.
 Qed.
 
@@ -962,7 +962,7 @@ Proof.
       ltac:(intros [seen kept] [b body] Hin;
         pose proof (Hwidth b body Hin) as Hb;
         pose proof (PTrieT.T_set_le unit b tt seen) as Hset;
-        time_cbn; rewrite PTrieT.trie_get_clock;
+        time_cbn; PTrieT.trie_get_le;
         destruct (trie_get b seen); time_simpl; time_cbn; nia) (Empty, [])) as Hfold
   end.
   lazymatch goal with
@@ -1529,7 +1529,7 @@ Lemma val_target_live_time nextrow rho known bound x w :
 Proof.
   intros Hnext Hrho Hx.
   pose proof (val_mem_time known x w Hx) as Hmem.
-  time_unfold T_val_target_live; time_simpl; rewrite !PTrieT.trie_get_clock.
+  time_unfold T_val_target_live; time_simpl; PTrieT.trie_get_le.
   destruct (trie_get x (val_index nextrow)) as [y|] eqn:Hy; [|lia].
   destruct (trie_get x (val_index rho)) as [z|] eqn:Hz; [|lia].
   rewrite val_index_lookup in Hy, Hz.
@@ -1588,9 +1588,9 @@ Proof.
         pose proof (Hdst e Hin) as Hd;
         pose proof (PTrieT.T_set_le (list positive) (src e)
           (dst e :: index_row rows (src e)) rows) as Hset;
-        time_simpl; rewrite PTrieT.trie_get_clock;
+        time_simpl; PTrieT.trie_get_le;
         change (1 + (Tsrc e + (Tdst e +
-          (2 * N.of_nat (Pos.size_nat (src e))) +
+          T_trie_get (src e) rows +
           PTrieCode.T_set (src e) (dst e :: index_row rows (src e)) rows)) <=
           (PTrieT.c_trie + 2 * c + 5) * N.of_nat (w + 1))%N;
         rewrite !Nat2N.inj_add in *; nia) initial) as Hfold
@@ -3042,7 +3042,7 @@ Module ValidateT (O : OPS)
       (D.c_dom + 8) * N.of_nat (w + 1))%N.
   Proof.
     intros Hcheck Hgraph Hsyntax Hb Hx.
-    time_unfold T_ssa_cross. rewrite PTrieT.trie_get_clock.
+    time_unfold T_ssa_cross. PTrieT.trie_get_le.
     destruct (trie_get x (val_index (val_home_rows (blocks _ _ _ s)))) as [home|] eqn:Hhome.
     - destruct (val_home_source _ _ _ Hhome) as [body [Hbody Hdefinition]].
       pose proof (val_block_width s home body Hbody) as Hhome_width.
@@ -3078,7 +3078,7 @@ Module ValidateT (O : OPS)
     (T_ssa_edge_shape bodies target args <=
       8 * N.of_nat (length args + 1) * N.of_nat (w + 1))%N.
   Proof.
-    intro Hwidth. time_unfold T_ssa_edge_shape. rewrite PTrieT.trie_get_clock.
+    intro Hwidth. time_unfold T_ssa_edge_shape. PTrieT.trie_get_le.
     destruct (trie_get target bodies) as [body|].
     - pose proof (val_same_length_time args (params _ _ _ body)) as Hlength.
       time_simpl; rewrite !Nat2N.inj_add in *; nia.
@@ -3191,7 +3191,7 @@ Module ValidateT (O : OPS)
         { destruct (trie_get y inverse) as [owner|].
           - pose proof (Pos.T_eqb_le x owner); lia.
           - lia. }
-        time_unfold T_code_scan; rewrite PTrieT.trie_get_clock;
+        time_unfold T_code_scan; PTrieT.trie_get_le;
           time_simpl; time_cbn; unfold val_scan_cost in *.
         destruct (K.eqb op sop && val_args forward known args sargs &&
           match trie_get y inverse with Some owner => Pos.eqb x owner | None => true end);
@@ -3377,7 +3377,7 @@ Module ValidateT (O : OPS)
       12 * N.of_nat (w + 1))%N.
   Proof.
     intros Hrho Hy; time_unfold T_available_target; time_simpl;
-      rewrite PTrieT.trie_get_clock.
+      PTrieT.trie_get_le.
     destruct (trie_get y (val_inverse rho)) as [x|] eqn:Hx; [|lia].
     pose proof (proj1 (Hrho x y (val_inverse_member rho y x Hx))) as Hxwidth.
     pose proof (val_mem_time known x w Hxwidth) as Hmem.
@@ -3455,7 +3455,7 @@ Module ValidateT (O : OPS)
     fold width in Henvrow, Hliverow.
     clearbody budget width total w; unfold PTrieT.c_trie in *.
     time_unfold T_check_entry; time_simpl; fold rho live known;
-      rewrite !PTrieT.trie_get_clock.
+      PTrieT.trie_get_le.
     destruct (row_budget p c); [|lia].
     destruct (trie_get (entry _ _ _ p) (source_bodies (tables p s c))) as [ib|]; [|lia].
     destruct (trie_get (entry _ _ _ s) (target_bodies (tables p s c))) as [sb|]; [|lia].
@@ -3511,7 +3511,7 @@ Module ValidateT (O : OPS)
     replace ((8 * PTrieT.c_trie + 256) * N.of_nat (total + 1) * width)%N with
       ((8 * PTrieT.c_trie + 256) * budget)%N by (unfold budget; ring).
     clear Hindex Hinverse Hnext.
-    time_unfold T_check_target; time_simpl; rewrite !PTrieT.trie_get_clock.
+    time_unfold T_check_target; time_simpl; PTrieT.trie_get_le.
     destruct (trie_get target (source_bodies t)) as [ib|] eqn:Hib; [|nia].
     destruct (trie_get target (target_bodies t)) as [sb|] eqn:Hsb; [|nia].
     destruct (params _ _ _ ib); [|nia].
@@ -3743,7 +3743,7 @@ Module ValidateT (O : OPS)
     clear Hknown Harms Hfit Hrholen Hrho Htable Hibwidth Hsbwidth
       Hicounts Hscounts Hlocal Harm Henvnext Hlivenext Htarget Htargetwidth.
     time_unfold T_check_edge; rewrite Hib, Hsb; time_simpl;
-      rewrite !PTrieT.trie_get_clock; fold known.
+      PTrieT.trie_get_le; fold known.
     revert Hknown'; time_simpl; intro Hknown'.
     clearbody budget width charge; unfold PTrieT.c_trie in *; lia.
   Qed.
@@ -3875,7 +3875,7 @@ Module ValidateT (O : OPS)
     pose proof (val_row_time (cert_rows t) b w Hb) as Hliverow; fold width in Hliverow.
     replace (val_block_cost * N.of_nat charge * width)%N with
       (val_block_cost * budget)%N by (unfold budget; ring).
-    time_unfold T_check_block; time_simpl; rewrite !PTrieT.trie_get_clock.
+    time_unfold T_check_block; time_simpl; PTrieT.trie_get_le.
     unfold val_checked_bits; destruct (trie_get b (source_bodies t)) as [ib|] eqn:Hib;
       [|unfold val_block_cost; nia].
     destruct (trie_get b (target_bodies t)) as [sb|] eqn:Hsb;
@@ -3920,6 +3920,7 @@ Module ValidateT (O : OPS)
         by (unfold budget; ring).
       clearbody budget width charge.
       clear - Hwidth Hbudget Hbits Henvrow Hliverow Hscan' Hexit.
+      PTrieT.trie_get_le.
       unfold val_body_bits; rewrite Nat2N.inj_add in Hscan' |- *.
       change (N.of_nat 1) with 1%N in Hscan'.
       eapply N.le_trans with (m :=
@@ -3931,6 +3932,7 @@ Module ValidateT (O : OPS)
         unfold val_block_cost; lia.
     - clearbody budget width charge.
       clear - Hwidth Hbudget Hbits Henvrow Hliverow Hscan'.
+      PTrieT.trie_get_le.
       unfold val_body_bits; rewrite Nat2N.inj_add in Hscan' |- *.
       change (N.of_nat 1) with 1%N in Hscan'.
       eapply N.le_trans with (m :=
@@ -4142,7 +4144,7 @@ Module ValidateT (O : OPS)
       ltac:(unfold total; rewrite length_app in Hcounts; lia) Htotal Hwidth) as Happend'.
     assert (Hentry : (@T_trie_get (block positive O.K O.G) (entry _ _ _ s)
       (val_index (blocks _ _ _ s)) <= 2 * budget)%N).
-    { rewrite PTrieT.trie_get_clock. apply N.mul_le_mono_l.
+    { eapply N.le_trans; [apply PTrieT.T_trie_get_le|]. apply N.mul_le_mono_l.
       eapply N.le_trans with (m := N.of_nat (w + 1)).
       - pose proof (val_entry_width s); unfold w; lia.
       - unfold budget. replace (N.of_nat (w + 1)) with (1 * N.of_nat (w + 1))%N at 1 by ring.

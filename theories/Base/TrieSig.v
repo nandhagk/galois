@@ -139,8 +139,9 @@ Module Type TRIE_TIME (Import T : TRIE).
   (** Enumeration charges the bits of the keys it returns. *)
   Parameter T_elements_le : forall A (m : t A),
     (T_elements m <= c_trie * N.of_nat (weight m + 1))%N.
-  (** Lookup visits every key bit even below absent subtrees. *)
-  Parameter get_tight : forall A p (m : t A), (N.of_nat (Pos.size_nat p) <= T_get p m)%N.
+  (** Lookup of a stored key reads every key bit. *)
+  Parameter get_tight : forall A p (m : t A),
+    get p m <> None -> (N.of_nat (Pos.size_nat p) <= T_get p m)%N.
   Parameter T_merge_sum_le : forall A B C (f : option A -> option B -> option C) T_f m1 m2,
     (T_merge f T_f m1 m2 <= c_trie *
       ((T_f None None + 1) * N.of_nat (nodes m1 + nodes m2 + 1) +

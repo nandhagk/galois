@@ -109,13 +109,14 @@ TimeFun live_initial.
 Lemma live_lookup_correct : forall A key (table : ptrie A),
   live_lookup key table = trie_get key table.
 Proof.
-  intros A key; induction key as [key IH|key IH|]; intro table; destruct table.
-  - change (None = trie_get (xI key) (@Empty A)). symmetry; apply PTrie.get_empty.
-  - cbn [live_lookup trie_get]. apply IH.
-  - change (None = trie_get (xO key) (@Empty A)). symmetry; apply PTrie.get_empty.
-  - cbn [live_lookup trie_get]. apply IH.
-  - reflexivity.
-  - reflexivity.
+  intros A key; induction key as [key IH|key IH|]; intro table.
+  - rewrite trie_get_xI. destruct table as [|n].
+    + cbn [live_lookup trie_right]. symmetry. apply trie_get_empty.
+    + cbn [live_lookup]. apply IH.
+  - rewrite trie_get_xO. destruct table as [|n].
+    + cbn [live_lookup trie_left]. symmetry. apply trie_get_empty.
+    + cbn [live_lookup]. apply IH.
+  - rewrite trie_get_xH. destruct table; reflexivity.
 Qed.
 
 Lemma live_member_spec : forall key table,
@@ -707,7 +708,7 @@ Lemma T_live_member_bound : forall key tree,
   (T_live_member key tree <= 4 * N.of_nat (Pos.size_nat key + 1))%N.
 Proof.
   intros key tree. time_unfold T_live_member.
-  pose proof (PTrieT.trie_get_clock unit key tree).
+  pose proof (PTrieT.T_trie_get_le unit key tree).
   destruct (trie_get key tree); rewrite Nat2N.inj_add; nia.
 Qed.
 
@@ -1604,7 +1605,7 @@ Module LiveT (O : OPS)
     (N.of_nat (Pos.size_nat key + 1) <= live_clock_scale * live_clock_width p ->
       T_trie_get key table <= live_clock_atom p)%N.
   Proof.
-    intros A p key table Hkey. rewrite PTrieT.trie_get_clock.
+    intros A p key table Hkey. PTrieT.trie_get_le.
     pose proof (live_clock_units p _ Hkey) as Hbound. rewrite Nat2N.inj_add in Hbound. nia.
   Qed.
 
@@ -1629,7 +1630,7 @@ Module LiveT (O : OPS)
       T_index_row table key <= live_clock_atom p)%N.
   Proof.
     intros A p table key Hkey. time_unfold @T_index_row.
-    rewrite PTrieT.trie_get_clock. pose proof (live_clock_units p _ Hkey) as Hbound.
+    PTrieT.trie_get_le. pose proof (live_clock_units p _ Hkey) as Hbound.
     rewrite Nat2N.inj_add in Hbound. destruct (trie_get key table); nia.
   Qed.
 

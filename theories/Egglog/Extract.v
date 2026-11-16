@@ -340,7 +340,7 @@ Lemma T_inventory_slot_le : forall tb f positions,
       fold_right (fun i m => (i + 1 + m)%nat) 0%nat positions + 1)%nat)%N.
 Proof.
   intros tb f positions.
-  pose proof (PTrieT.trie_get_clock (nat * output) f tb) as Hget.
+  pose proof (PTrieT.T_trie_get_le (nat * output) f tb) as Hget.
   time_unfold @T_inventory_slot. time_simpl. time_cbn.
   destruct (trie_get f tb) as [[arity o] |]; [destruct o |].
   - rewrite !Nat2N.inj_add in *. unfold PTrieT.c_trie in *. lia.
@@ -1144,7 +1144,7 @@ Qed.
 Lemma T_dag_seen_le : forall seen i,
   (T_dag_seen seen i <= 8 * N.of_nat (Pos.size_nat i + 1))%N.
 Proof.
-  intros seen i. pose proof (PTrieT.trie_get_clock unit i seen) as Hget.
+  intros seen i. pose proof (PTrieT.T_trie_get_le unit i seen) as Hget.
   time_unfold @T_dag_seen. time_simpl. time_cbn.
   destruct (trie_get i seen); rewrite !Nat2N.inj_add; lia.
 Qed.
@@ -1153,7 +1153,7 @@ Qed.
 Lemma T_dag_get_cost_le : forall costs i,
   (T_dag_get_cost costs i <= 8 * N.of_nat (Pos.size_nat i + 1))%N.
 Proof.
-  intros costs i. pose proof (PTrieT.trie_get_clock N i costs) as Hget.
+  intros costs i. pose proof (PTrieT.T_trie_get_le N i costs) as Hget.
   time_unfold @T_dag_get_cost. time_simpl. time_cbn.
   destruct (trie_get i costs); rewrite !Nat2N.inj_add; lia.
 Qed.
@@ -5491,7 +5491,7 @@ Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
     search_cell_bound costs ((C.c_cost + 3) * N.of_nat (w + 1))%N todo.
   Proof.
     intros costs w todo Hids Hvalues [i|v] Hin.
-    - specialize (Hids i Hin). rewrite PTrieT.trie_get_clock.
+    - specialize (Hids i Hin). PTrieT.trie_get_le.
       rewrite Nat2N.inj_add. nia.
     - specialize (Hvalues v Hin). pose proof (C.T_val_cost_le v) as Hcost.
       rewrite !Nat2N.inj_add in *. nia.
@@ -5535,7 +5535,7 @@ Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
       PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hset.
     time_unfold @T_search_park. time_simpl. time_cbn.
     time_unfold @T_search_restate. time_simpl. time_cbn.
-    rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+    PTrieT.trie_get_le. rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
   Lemma T_search_ltb_le : forall n old,
@@ -5565,13 +5565,13 @@ Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
       destruct (N.ltb n old) eqn:Hbetter.
       + time_unfold @T_search_offer. time_simpl. time_cbn. rewrite Hget, Hbetter.
         time_unfold @T_search_restate. time_simpl. time_cbn.
-        cbn [search_restate search_queue]. rewrite PTrieT.trie_get_clock.
+        cbn [search_restate search_queue]. PTrieT.trie_get_le.
         rewrite !Nat2N.inj_add in *. nia.
       + time_unfold @T_search_offer. time_simpl. time_cbn. rewrite Hget, Hbetter.
-        rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+        PTrieT.trie_get_le. rewrite !Nat2N.inj_add in *. nia.
     - time_unfold @T_search_offer. time_simpl. time_cbn. rewrite Hget.
       time_unfold @T_search_restate. time_simpl. time_cbn.
-      cbn [search_restate search_queue]. rewrite PTrieT.trie_get_clock.
+      cbn [search_restate search_queue]. PTrieT.trie_get_le.
       rewrite !Nat2N.inj_add in *. nia.
   Qed.
   (** Residual cells pay repeated wakeups; the original key pays completion once. *)
@@ -5883,7 +5883,7 @@ Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
     intros DB P w f k i todo acc n s Hget Hwidth.
     eapply N.le_trans; [|apply search_frame_credit_unit].
     time_unfold @T_search_resume. time_simpl. time_cbn. rewrite Hget.
-    rewrite PTrieT.trie_get_clock. unfold search_work_unit, search_cell_unit.
+    PTrieT.trie_get_le. unfold search_work_unit, search_cell_unit.
     rewrite Nat2N.inj_add. nia.
   Qed.
 
@@ -5919,7 +5919,7 @@ Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
     pose proof (search_park_overhead DB w i child
       (ExtractionFrame (f, k, i) rest values) s Hi Hchild) as Hfixed.
     rewrite (T_search_resume_wait_eq DB f k i todo acc child rest values s Hget Hscan).
-    rewrite PTrieT.trie_get_clock.
+    PTrieT.trie_get_le.
     unfold search_frame_credit, search_frame_work, search_work_unit.
     cbn [frame_rest frame_row fst snd]. rewrite !Nat2N.inj_add.
     destruct fresh.
@@ -5976,7 +5976,7 @@ Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
     fold (search_push_unit P w) in Hoffer.
     pose proof (search_completion_charge w (length k) (Pos.size_nat i) ltac:(lia)) as Hbody.
     rewrite (T_search_resume_ready_eq DB f k i todo acc values s Hget Hscan).
-    rewrite PTrieT.trie_get_clock.
+    PTrieT.trie_get_le.
     unfold search_frame_credit, search_frame_work, search_work_unit.
     cbn [frame_rest frame_row fst snd]. rewrite !Nat2N.inj_add in *. nia.
   Qed.
@@ -6176,7 +6176,7 @@ Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
       PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hwaiting.
     time_unfold @T_search_finish. time_simpl. time_cbn.
     time_unfold @T_search_restate. time_simpl. time_cbn.
-    unfold search_detached. rewrite PTrieT.trie_get_clock.
+    unfold search_detached. PTrieT.trie_get_le.
     rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
@@ -6277,7 +6277,7 @@ Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
     destruct (Q.size (search_queue s)) as [|size] eqn:Hsize.
     - unfold search_step in Hstep. rewrite Hsize in Hstep. discriminate.
     - time_unfold @T_search_step. time_simpl. time_cbn.
-      rewrite Hsize, Hpop, Hcandidate, Hmissing, !PTrieT.trie_get_clock. lia.
+      rewrite Hsize, Hpop, Hcandidate, Hmissing. PTrieT.trie_get_le. lia.
   Qed.
 
 

@@ -50,7 +50,7 @@ Module IcfgT (P : TYPE) (N : KEY_T) (E : KEY_T)
     intros p e.
     pose proof (E.T_encode_le e) as Hencode.
     pose proof (D.T_kinds_le p) as Hkinds.
-    pose proof (PTrieT.trie_get_clock _ (E.encode e) (D.kinds p)) as Hlookup.
+    pose proof (PTrieT.T_trie_get_le _ (E.encode e) (D.kinds p)) as Hlookup.
     unfold c_icfg; time_step.
     unfold E.bits in *; time_cbn_all; nia.
   Qed.

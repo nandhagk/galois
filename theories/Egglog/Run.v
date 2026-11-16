@@ -13710,7 +13710,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     - pose proof (run_planner_set_clock unit x tt seen).
       pose proof (IH seen (S n)).
       pose proof (IH (PTrieCode.set x tt seen) n).
-      time_unfold @T_term_copies. rewrite PTrieT.trie_get_clock.
+      time_unfold @T_term_copies. PTrieT.trie_get_le.
       destruct (trie_get x seen); cbn [terms_bits term_bits fold_right] in *;
         unfold terms_bits in *; nia.
     - pose proof (IH seen n).
@@ -13852,7 +13852,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     pose proof (run_slot_code_bits f positions).
     pose proof (run_planner_set_clock N (slot_code f positions) next table).
     pose proof (N.T_succ_le next).
-    time_unfold T_add_slot. rewrite PTrieT.trie_get_clock.
+    time_unfold T_add_slot. PTrieT.trie_get_le.
     destruct (trie_get (slot_code f positions) table);
       cbn [run_slot_counter_bits]; nia.
   Qed.
@@ -14072,7 +14072,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           (VarLayout names (S nc) nm (Pos.succ fresh) (fresh :: cn) mn)
           ((nc, pos) :: pairs) lits true (S budget) cap
           (run_layout_copy base budget names nc nm fresh cn mn Hready) Htail) as Hrest.
-        rewrite !PTrieT.trie_get_clock.
+        PTrieT.trie_get_le.
         cbn [terms_bits fold_right term_bits] in *. unfold terms_bits in *. nia.
       + destruct (trie_get x names) as [j|].
         * assert (Hnext : run_layout_ok base (S budget)
@@ -14081,13 +14081,13 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           pose proof (IH (S pos) (PTrieCode.set x tt seen)
             (VarLayout names nc nm fresh cn mn) ((j, pos) :: pairs) lits copied
             (S budget) cap Hnext Htail) as Hrest.
-          rewrite !PTrieT.trie_get_clock.
+          PTrieT.trie_get_le.
           cbn [terms_bits fold_right term_bits] in *. unfold terms_bits in *. nia.
         * pose proof (IH (S pos) (PTrieCode.set x tt seen)
             (VarLayout (PTrieCode.set x (base + nm) names) nc (S nm) fresh cn (x :: mn))
             ((base + nm, pos) :: pairs) lits copied (S budget) cap
             (run_layout_variable base budget names nc nm fresh cn mn x Hready) Htail) as Hrest.
-          rewrite !PTrieT.trie_get_clock.
+          PTrieT.trie_get_le.
           cbn [terms_bits fold_right term_bits] in *. unfold terms_bits in *. nia.
     - assert (Htail : S budget + terms_bits ts <= cap)
         by (cbn [terms_bits fold_right term_bits] in Hcap; unfold terms_bits in *; lia).
@@ -14129,11 +14129,11 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       time_unfold T_full_slots. time_simpl.
       destruct (trie_get f seen).
       + pose proof (IH seen st cap Htail) as Hrest.
-        rewrite PTrieT.trie_get_clock.
+        PTrieT.trie_get_le.
         cbn [fold_right decl_bits name arg_sorts] in *. nia.
       + destruct out.
         * pose proof (IH (PTrieCode.set f tt seen) st cap Htail) as Hrest.
-          rewrite PTrieT.trie_get_clock.
+          PTrieT.trie_get_le.
           cbn [fold_right decl_bits name arg_sorts] in *. nia.
         * set (st' := snd (add_slot f (count_from 0 (S (length ss))) st)).
           pose proof (run_add_slot_counter_bits f (count_from 0 (S (length ss))) st) as Hwidth.
@@ -14166,12 +14166,12 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
               N.of_nat (Pos.size_nat f + length ss + 1) * N.of_nat (cap + 1))%N)
             by (clear; nia).
           clear Hcap Htail.
-          rewrite PTrieT.trie_get_clock.
+          PTrieT.trie_get_le.
           time_simpl. cbn [fold_right decl_bits name arg_sorts] in *.
           rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *.
           nia.
         * pose proof (IH (PTrieCode.set f tt seen) st cap Htail) as Hrest.
-          rewrite PTrieT.trie_get_clock.
+          PTrieT.trie_get_le.
           cbn [fold_right decl_bits name arg_sorts] in *. nia.
   Qed.
 
@@ -15263,7 +15263,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     intros table f positions slot.
     pose proof (run_slot_code_time f positions) as Hcode.
     pose proof (run_slot_code_bits f positions) as Hbits.
-    time_unfold T_slot_matches. rewrite PTrieT.trie_get_clock.
+    time_unfold T_slot_matches. PTrieT.trie_get_le.
     destruct (trie_get (slot_code f positions) table) as [[slot' [f' positions']] |].
     - pose proof (run_counter_eqb_right slot' slot) as Hslot.
       pose proof (run_positive_eqb_right f' f) as Hname.
@@ -15309,7 +15309,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       pose proof (PTrieT.T_set_le unit (nat_code i) tt seen) as Hset.
       rewrite run_nat_code_bits in Hset.
       pose proof (IH (PTrieCode.set (nat_code i) tt seen)) as Htail.
-      time_unfold T_perm_ok. rewrite PTrieT.trie_get_clock, run_nat_code_bits.
+      pose proof (PTrieT.T_trie_get_le unit (nat_code i) seen) as Hget.
+      rewrite run_nat_code_bits in Hget.
+      time_unfold T_perm_ok.
       change (run_positions_size (i :: positions)) with
         (i + 1 + run_positions_size positions).
       destruct (trie_get (nat_code i) seen); destruct (Nat.leb (S i) width);
@@ -15332,7 +15334,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     - pose proof (run_counter_succ_amort j) as Hstep.
       pose proof (PTrieT.T_set_le N x j table) as Hset.
       pose proof (IH (N.succ j) (PTrieCode.set x j table)) as Htail.
-      time_unfold T_var_table. rewrite PTrieT.trie_get_clock.
+      time_unfold T_var_table. PTrieT.trie_get_le.
       change (run_vars_size (x :: vars)) with (Pos.size_nat x + 1 + run_vars_size vars).
       destruct (trie_get x table); time_cbn; nia.
   Qed.
@@ -15352,7 +15354,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       pose proof (IH (PTrieCode.set f (S (length ss)) table)) as Hfun.
       change (fold_right (fun d n => decl_bits d + n) 0 (Decl f ss out :: ds)) with
         (Pos.size_nat f + length ss + 1 + fold_right (fun d n => decl_bits d + n) 0 ds).
-      time_unfold T_decl_widths. rewrite PTrieT.trie_get_clock.
+      time_unfold T_decl_widths. PTrieT.trie_get_le.
       destruct (trie_get f table); destruct out; time_cbn; nia.
   Qed.
 
@@ -15396,7 +15398,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         (PTrieCode.set (slot_code f perm) (next, (f, perm)) table)) as Hnew.
       change (run_slot_syntax_size ((f, perm) :: sl)) with
         (Pos.size_nat f + run_positions_size perm + 1 + run_slot_syntax_size sl).
-      time_unfold T_slot_table. rewrite !PTrieT.trie_get_clock.
+      time_unfold T_slot_table. PTrieT.trie_get_le.
       destruct (trie_get f widths) as [width |].
       + pose proof (run_perm_ok_time width perm Empty) as Hperm.
         destruct (perm_ok width perm Empty);
@@ -15503,7 +15505,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       pose proof (IH (PTrieCode.set (N.succ_pos (nat_n i)) tt used) (N.succ count)) as Hnew.
       change (run_positions_size (i :: positions)) with
         (i + 1 + run_positions_size positions).
-      time_unfold T_column_perm. rewrite !PTrieT.trie_get_clock.
+      time_unfold T_column_perm. PTrieT.trie_get_le.
       cbn [column_perm].
       destruct (trie_get (N.succ_pos (nat_n i)) inv) as [pos |];
         [| time_cbn; fold (run_positions_size positions); lia].
@@ -15817,10 +15819,10 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
                   pose proof (N.T_succ_pos_le copy) as Hcode.
                   pose proof (run_counter_key_bits_lower copy) as Hbits.
                   clear -Hterm Hset Hsucc Hcode Hbits. nia. }
-                time_unfold @T_check_terms. rewrite Hseen, PTrieT.trie_get_clock.
+                time_unfold @T_check_terms. rewrite Hseen. PTrieT.trie_get_le.
                 change (run_key_size (N.succ_pos copy :: keys)) with
                   (Pos.size_nat (N.succ_pos copy) + 1 + run_key_size keys).
-                cbn [length]. clear -Hclock Hlocal. nia.
+                cbn [length]. clear -Hclock Hlocal. PTrieT.trie_get_le. nia.
         * destruct (trie_get x names) as [ordinal |] eqn:Hname; [| discriminate].
           destruct (IH width (S pos) (PTrieCode.set x tt seen) copy
             (PTrieCode.set (N.succ_pos ordinal) pos inv) srcs columns copied
@@ -15840,10 +15842,10 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
                   pose proof (N.T_succ_pos_le ordinal) as Hcode.
                   pose proof (run_counter_key_bits_lower ordinal) as Hbits.
                   clear -Hterm Hseen_set Hset Hcode Hbits. nia. }
-                time_unfold @T_check_terms. rewrite Hseen, Hname, !PTrieT.trie_get_clock.
+                time_unfold @T_check_terms. rewrite Hseen, Hname. PTrieT.trie_get_le.
                 change (run_key_size (N.succ_pos ordinal :: keys)) with
                   (Pos.size_nat (N.succ_pos ordinal) + 1 + run_key_size keys).
-                cbn [length]. clear -Hclock Hlocal. nia.
+                cbn [length]. clear -Hclock Hlocal. PTrieT.trie_get_le. nia.
       + destruct srcs as [| src srcs]; [discriminate |].
         destruct src as [slot | slot | cell]; [discriminate | discriminate |].
         destruct cell as [identifier | stored]; [discriminate |].
@@ -15943,14 +15945,14 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
             64 * (V.c_key + PTrieT.c_trie + 1) *
               N.of_nat (width + run_key_width upper + 1))%N).
         { clear -Hterm Hsucc Hcode Hset Hcopy_bits Hcopy_key. nia. }
-        time_unfold @T_check_terms. rewrite !PTrieT.trie_get_clock.
+        time_unfold @T_check_terms. PTrieT.trie_get_le.
         destruct (trie_get x seen) as [present |] eqn:Hseen.
         * assert (Hcopy_step : N.to_nat (N.succ copy) + length ts <= upper).
           { rewrite N2Nat.inj_succ. cbn [length] in Hcopy. lia. }
           pose proof (IH width upper (S pos) seen (N.succ copy)
             (PTrieCode.set (N.succ_pos copy) pos inv) srcs columns true
             Htail Hnames Hcopy_step) as Hclock.
-          cbn [length]. clear -Hduplicate Hclock. nia.
+          cbn [length]. clear -Hduplicate Hclock. PTrieT.trie_get_le. nia.
         * destruct (trie_get x names) as [ordinal |] eqn:Hname.
           -- destruct (run_counter_key_bound ordinal upper (Hnames x ordinal Hname))
                as [Hordinal_bits Hordinal_key].
@@ -15966,8 +15968,8 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
              pose proof (IH width upper (S pos) (PTrieCode.set x tt seen) copy
                (PTrieCode.set (N.succ_pos ordinal) pos inv) srcs columns copied
                Htail Hnames Hcopy_tail) as Hclock.
-             cbn [length]. clear -Hlocal Hclock. nia.
-          -- cbn [length]. clear -Hterm. nia.
+             cbn [length]. clear -Hlocal Hclock. PTrieT.trie_get_le. nia.
+          -- cbn [length]. clear -Hterm. PTrieT.trie_get_le. nia.
       + destruct srcs as [| src srcs].
         * time_unfold @T_check_terms. cbn [length]. nia.
         * destruct columns as [| column columns].
@@ -16976,7 +16978,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
              pose proof (PTrieT.T_remove_le unit (N.succ_pos (nat_n j)) allowed) as Hremove.
              pose proof (IH cols allowed) as Htail.
              pose proof (IH cols (PTrieCode.remove (N.succ_pos (nat_n j)) allowed)) as Htail_remove.
-             time_unfold @T_layout_literals. rewrite PTrieT.trie_get_clock.
+             time_unfold @T_layout_literals. PTrieT.trie_get_le.
              destruct (trie_get (N.succ_pos (nat_n j)) allowed); time_cbn; nia.
           -- time_unfold @T_layout_literals. time_cbn. nia.
   Qed.
@@ -17570,7 +17572,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         pose proof (IH cs (PTrieCode.set x c t)) as Hnew.
         pose proof (PTrieT.replace_clock_bound (cell V.t) x (Some c) t) as Hset.
         time_unfold @T_bind_cells. time_simpl. time_cbn.
-        unfold PTrieCode.T_set. rewrite PTrieT.trie_get_clock.
+        unfold PTrieCode.T_set. PTrieT.trie_get_le.
         destruct (trie_get x t); cbn [fold_right];
           rewrite !Nat2N.inj_add in *; nia.
   Qed.
@@ -17604,21 +17606,29 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Definition keep_width_plan (z : positive) : cplan V.t :=
     CPlan V.t 0%N (JPlan 0 []) [] [z] [0].
 
-  (** Even an empty binding pays the full width of the first copy-name lookup. *)
+  (** A bound copy name makes the first copy-name lookup pay its full width. *)
   Lemma keep_width_clock_lower : forall z,
-    (2 * N.of_nat (Pos.size_nat z) <=
-      T_keep keep_width_program (keep_width_plan z) (bind_trie (keep_width_plan z) []))%N.
+    (N.of_nat (Pos.size_nat z) <=
+      T_keep keep_width_program (keep_width_plan z)
+        (bind_trie (keep_width_plan z) [Id 1%positive]))%N.
   Proof.
     intro z.
     unfold T_keep, keep_width_program, keep_width_plan, bind_trie.
     cbn [plan_rule_ix rules rule_at plan_post plan_vars bind_cells].
+    rewrite trie_get_empty.
     time_unfold @T_rule_at. time_unfold @T_keep_post.
     time_simpl. time_cbn.
     time_unfold @T_copies_ok. time_simpl. time_cbn.
     time_unfold @T_copies_ok. time_simpl. time_cbn.
     time_simpl. time_cbn.
-    rewrite ?PTrie.get_empty. time_cbn.
-    rewrite ?PTrieT.trie_get_clock. nia.
+    match goal with
+    | |- context [T_trie_get z ?bound] =>
+      assert (Hhit : T_trie_get z bound = N.of_nat (Pos.size_nat z))
+    end.
+    { apply PTrieT.T_trie_get_hit.
+      change (PTrieCode.get z (PTrieCode.set z (@Id V.t 1%positive) Empty) <> None).
+      rewrite PTrie.get_set_same. discriminate. }
+    lia.
   Qed.
 
   (** Every charged measure stays fixed while the copy name grows. *)
@@ -17627,7 +17637,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     rule_work keep_width_program (keep_width_plan z) = 2%nat /\
     wbits keep_width_program = 1%nat /\
     query_prim_work V.prim_work (query V.t (job_rule keep_width_program
-      (keep_width_plan z))) (env_of (keep_width_plan z) []) = 0%N.
+      (keep_width_plan z))) (env_of (keep_width_plan z) [Id 1%positive]) = 0%N.
   Proof.
     intro z. repeat split; reflexivity.
   Qed.
@@ -17643,12 +17653,12 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   (** The old filter bound, which omitted copied-variable name widths, has no fixed constant. *)
   Lemma keep_width_unbounded : forall k : N, exists z,
     (10 * k < T_keep keep_width_program (keep_width_plan z)
-      (bind_trie (keep_width_plan z) []))%N.
+      (bind_trie (keep_width_plan z) [Id 1%positive]))%N.
   Proof.
     intro k.
-    destruct (keep_width_key_exists (N.to_nat (5 * k)%N)) as [z Hz].
+    destruct (keep_width_key_exists (N.to_nat (10 * k)%N)) as [z Hz].
     exists z. pose proof (keep_width_clock_lower z) as Hclock.
-    rewrite Hz, Nat2N.inj_succ, N2Nat.id in Hclock. nia.
+    rewrite Hz, Nat2N.inj_succ, N2Nat.id in Hclock. lia.
   Qed.
 
   (** The proposed filter contract fails for every replacement of its constant. *)
@@ -17658,10 +17668,10 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       k * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
       k * N.of_nat (rule_work p c))%N.
   Proof.
-    intro k. destruct (keep_width_unbounded k) as [z Hlarge].
-    exists keep_width_program, (keep_width_plan z), [].
+    intro k. destruct (keep_width_unbounded (2 * k)) as [z Hlarge].
+    exists keep_width_program, (keep_width_plan z), [Id 1%positive].
     destruct (keep_width_work_fixed z) as [Hpost [Hrule [Hwidth Hprim]]].
-    rewrite Hpost, Hrule, Hwidth, Hprim. cbn [fold_right].
+    rewrite Hpost, Hrule, Hwidth, Hprim. cbn [fold_right cell_bits Pos.size_nat Nat.max].
     intro Hbound. nia.
   Qed.
   (** * Round scheduling costs *)
@@ -18253,7 +18263,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     (@T_look V.t s Ts locals x <= 2 * N.of_nat (Pos.size_nat x) + Ts x + 1)%N.
   Proof.
     intros s Ts locals x. time_unfold @T_look.
-    rewrite PTrieT.trie_get_clock. destruct (trie_get x locals); lia.
+    PTrieT.trie_get_le. destruct (trie_get x locals); lia.
   Qed.
 
   (** Reading a term pays its variable width and its external callback once. *)
@@ -19247,7 +19257,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Proof.
     intros t [name|value] width Hwidth.
     - inversion Hwidth as [|word words Hname Hrest]; subst word words.
-      time_unfold @T_trie_term. rewrite PTrieT.trie_get_clock.
+      time_unfold @T_trie_term. PTrieT.trie_get_le.
       destruct (trie_get name t) as [[id|v]|]; rewrite Nat2N.inj_add; lia.
     - time_unfold @T_trie_term. rewrite Nat2N.inj_add. lia.
   Qed.
@@ -19363,13 +19373,13 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       destruct run_filter_factor_bounds as [Hfactor [Hkey [Hvalue Htrie]]].
       pose proof (PTrieT.T_set_le unit name tt seen) as Hset.
       time_unfold @T_copies_ok. cbn [copies_ok].
-      rewrite PTrieT.trie_get_clock.
+      PTrieT.trie_get_le.
       destruct (trie_get name seen) as [[]|] eqn:Hseen.
       + destruct copies as [|copy more].
         * cbn [run_filter_copy_credit run_vars_size fold_right length].
           rewrite !Nat2N.inj_add, !Nat2N.inj_succ. nia.
         * pose proof (IH t seen more width cells Hterms Hcells) as Htail.
-          rewrite !PTrieT.trie_get_clock.
+          PTrieT.trie_get_le.
           destruct (trie_get copy t) as [left|] eqn:Hleft;
             destruct (trie_get name t) as [right|] eqn:Hright.
           -- pose proof (run_filter_cell_clock left right cells (Hcells copy left Hleft))
@@ -19718,7 +19728,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Proof.
     intros names t W Hnames. induction Hnames as [|x xs Hx Hxs IH].
     - cbn [map fold_right length]. nia.
-    - cbn [map fold_right length]. rewrite PTrieT.trie_get_clock, Nat2N.inj_succ.
+    - cbn [map fold_right length]. rewrite Nat2N.inj_succ. PTrieT.trie_get_le.
       assert (Hwidth : (N.of_nat (Pos.size_nat x) <= N.of_nat W)%N) by lia.
       rewrite Nat2N.inj_add. nia.
   Qed.

@@ -1271,7 +1271,7 @@ Lemma dom_lt_time_identity table rank :
 Proof.
   pose proof (dom_lt_time_key rank) as Hkey.
   pose proof (dom_lt_key_width rank) as Hwidth.
-  unfold T_dom_lt_identity. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_lt_identity. PTrieT.trie_get_le.
   destruct (trie_get (dom_lt_key rank) table); time_simpl;
     rewrite !Nat2N.inj_add in *; lia.
 Qed.
@@ -1601,7 +1601,7 @@ Proof.
   pose proof (dom_lt_time_key v) as Hkey.
   pose proof (dom_lt_key_width v) as Hwidth.
   unfold T_dom_lt_settle. time_simpl. rewrite Hparent. time_simpl.
-  rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+  PTrieT.trie_get_le. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
 (** A live settlement retains its exact predecessor fold and final link clock. *)
@@ -1640,7 +1640,7 @@ Proof.
     PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key v) + 1))%N in Hsemi.
   change (PTrieCode.T_set (dom_lt_key v) witness (lt_minimizer st) <=
     PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key v) + 1))%N in Hmin.
-  rewrite !PTrieT.trie_get_clock. time_simpl.
+  PTrieT.trie_get_le. time_simpl.
   rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
@@ -1664,11 +1664,12 @@ Proof.
     pose proof (PTrieT.T_set_le (list N) (dom_lt_key s) (v :: row) buckets) as Hset.
     change (PTrieCode.T_set (dom_lt_key s) (v :: row) buckets <=
       PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key s) + 1))%N in Hset.
-    fold row. time_simpl. rewrite !PTrieT.trie_get_clock.
+    fold row. time_simpl.
     clearbody row. clear -Hv Hs Hvkey Hvwidth Hskey Hswidth Hset.
+    PTrieT.trie_get_le.
     rewrite !Nat2N.inj_add in *. nia.
-  - time_simpl. rewrite PTrieT.trie_get_clock.
-    clear -Hv Hvkey Hvwidth. rewrite !Nat2N.inj_add in *. nia.
+  - time_simpl.
+    clear -Hv Hvkey Hvwidth. PTrieT.trie_get_le. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
 (** A bucket member retains its exact evaluator clock and pays one relative-parent write. *)
@@ -1719,7 +1720,7 @@ Proof.
     T_dom_lt_bucket_member (lt_numeric_limit numeric) semis s current v) with
     (T_dom_lt_bucket_member (lt_numeric_limit numeric) semis s).
   destruct (trie_get (dom_lt_key s) (lt_numeric_parent numeric));
-    time_simpl; rewrite !PTrieT.trie_get_clock;
+    time_simpl; PTrieT.trie_get_le;
     rewrite !Nat2N.inj_add in *; nia.
 Qed.
 
@@ -1744,13 +1745,13 @@ Proof.
     + pose proof (PTrieT.T_set_le N (dom_lt_key v) p corrected) as Hset.
       change (PTrieCode.T_set (dom_lt_key v) p corrected <=
         PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key v) + 1))%N in Hset.
-      time_simpl. rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+      time_simpl. PTrieT.trie_get_le. rewrite !Nat2N.inj_add in *. nia.
     + pose proof (PTrieT.T_set_le N (dom_lt_key v) (dom_lt_identity corrected p) corrected)
         as Hset.
       change (PTrieCode.T_set (dom_lt_key v) (dom_lt_identity corrected p) corrected <=
         PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key v) + 1))%N in Hset.
-      time_simpl. rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
-  - time_simpl. rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+      time_simpl. PTrieT.trie_get_le. rewrite !Nat2N.inj_add in *. nia.
+  - time_simpl. PTrieT.trie_get_le. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
 (** Building buckets scans the order once and performs one bounded insertion per rank. *)
@@ -1807,7 +1808,7 @@ Lemma dom_lt_pipeline_rank_get_clock ranks v :
   (T_dom_lt_rank_get ranks v <= 2 * N.of_nat (Pos.size_nat v) + 2)%N.
 Proof.
   unfold T_dom_lt_rank_get. destruct (trie_get v ranks); time_simpl;
-    rewrite PTrieT.trie_get_clock; lia.
+    PTrieT.trie_get_le; lia.
 Qed.
 
 (** Reading a prepared predecessor row has only an original-key trie lookup. *)
@@ -1815,7 +1816,7 @@ Lemma dom_lt_pipeline_preds_clock g v :
   (T_preds g v <= 2 * N.of_nat (Pos.size_nat v) + 2)%N.
 Proof.
   destruct g as [graph predecessors vertex_count edge_count].
-  unfold T_preds. time_simpl. rewrite PTrieT.trie_get_clock. lia.
+  unfold T_preds. time_simpl. PTrieT.trie_get_le. lia.
 Qed.
 
 (** A right fold needs a uniform callback bound only on the entries it actually visits. *)
@@ -1849,7 +1850,7 @@ Proof.
     pose proof (proj1 (Forall_forall _ _) Hrow v Hv) as Hwidth;
     change (Pos.size_nat v <= width) in Hwidth;
     time_simpl; destruct (trie_get v ranks); time_simpl;
-    rewrite PTrieT.trie_get_clock; clear -Hwidth; rewrite !Nat2N.inj_add in *; lia)).
+    clear -Hwidth; PTrieT.trie_get_le; rewrite !Nat2N.inj_add in *; lia)).
   rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. clear -Hfold. nia.
 Qed.
 
@@ -1889,14 +1890,16 @@ Proof.
       (lt_numeric_parent st)) as Hsetparent.
     change (PTrieCode.T_set key (dom_lt_rank_get (lt_rank layout) parent)
       (lt_numeric_parent st) <= PTrieT.c_trie * N.of_nat (Pos.size_nat key + 1))%N in Hsetparent.
-    time_simpl. rewrite PTrieT.trie_get_clock.
+    time_simpl.
     clearbody rank key.
     clear -Hv Hrank Hrankget Hkey Hkeywidth Hpreds Hranked Hsetpred Hsetvertex
       Hparent Hparentget Hsetparent.
+    PTrieT.trie_get_le.
     rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
-  - time_simpl. rewrite PTrieT.trie_get_clock.
+  - time_simpl.
     clearbody rank key.
     clear -Hv Hrank Hrankget Hkey Hkeywidth Hpreds Hranked Hsetpred Hsetvertex.
+    PTrieT.trie_get_le.
     rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
 Qed.
 
@@ -2018,7 +2021,7 @@ Proof.
          change (PTrieCode.T_set child parent result <=
            PTrieT.c_trie * N.of_nat (Pos.size_nat child + 1))%N in Hset|]
        | | | ];
-       time_simpl; rewrite !PTrieT.trie_get_clock;
+       time_simpl; PTrieT.trie_get_le;
        rewrite !Nat2N.inj_add in *; nia);
     pose proof (dom_time_fold_left step T_step
       (256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N
@@ -2958,11 +2961,12 @@ Proof.
     + pose proof (Hshort (dom_lt_key vertex) parent Hget) as Hparent.
       pose proof (Hwidth parent Hparent) as Hparent_width.
       pose proof (dom_lt_time_ltb parent vertex) as Hcompare.
-      destruct (N.ltb parent vertex); rewrite PTrieT.trie_get_clock; time_simpl;
+      destruct (N.ltb parent vertex); time_simpl;
         clear -Hvertex_width Hkey_width Hkey_time Hparent_width Hcompare;
-        rewrite !Nat2N.inj_add in *; nia.
-    + rewrite PTrieT.trie_get_clock. time_simpl.
-      clear -Hvertex_width Hkey_width Hkey_time. rewrite !Nat2N.inj_add in *. nia.
+        PTrieT.trie_get_le; rewrite !Nat2N.inj_add in *; nia.
+    + time_simpl.
+      clear -Hvertex_width Hkey_width Hkey_time. PTrieT.trie_get_le.
+      rewrite !Nat2N.inj_add in *. nia.
   - cbn [dom_lt_walk_bounded lt_walk_links lt_walk_phase].
     intros [[Hshort Hlabels] [Hroot [Hpart Hstack]]].
     destruct stack as [|vertex stack].
@@ -3022,46 +3026,49 @@ Local Transparent dom_lt_identity T_dom_lt_identity dom_lt_minimum T_dom_lt_mini
 Local Transparent dom_lt_compress_step T_dom_lt_compress_step dom_lt_eval T_dom_lt_eval.
 Local Transparent dom_lt_settle.
 
-(** Two accessibility loops agree without proof irrelevance when they share the same proof. *)
+(** Two accessibility loops agree without proof irrelevance when they share the same proof,
+    and the right loop pays at least the left one when each of its steps does. *)
 Lemma dom_lt_accessibility_agree {S R : Type} (lt : S -> S -> Prop)
     (left right : forall state, {next : S | lt next state} + R)
     (T_left T_right : S -> N) (Inv : S -> Prop) :
-  (forall state, Inv state -> left state = right state /\ T_left state = T_right state) ->
+  (forall state, Inv state ->
+    left state = right state /\ (T_left state <= T_right state)%N) ->
   (forall state next decrease, Inv state -> left state = inl (exist _ next decrease) ->
     Inv next) ->
   forall state (access : Acc lt state), Inv state ->
     Argent.Loop.loop lt left state access = Argent.Loop.loop lt right state access /\
-    T_loop lt left T_left state access = T_loop lt right T_right state access.
+    (T_loop lt left T_left state access <= T_loop lt right T_right state access)%N.
 Proof.
   intros Hagree Hpreserve state access.
   induction access as [state Hacc IH] using Acc_ind_dep. intro Hinv.
   destruct (Hagree state Hinv) as [Hstep Hclock].
-  cbn [Argent.Loop.loop]. time_unfold @T_loop. rewrite <- Hstep, <- Hclock.
+  cbn [Argent.Loop.loop]. time_unfold @T_loop. rewrite <- Hstep.
   destruct (left state) as [[next decrease]|result] eqn:Hnext.
   - specialize (IH next decrease (Hpreserve state next decrease Hinv Hnext)).
-    cbn [Acc_inv]. destruct IH as [Hvalue Htime]. split; [exact Hvalue|now rewrite Htime].
-  - split; reflexivity.
+    cbn [Acc_inv]. destruct IH as [Hvalue Htime]. split; [exact Hvalue|lia].
+  - split; [reflexivity|lia].
 Qed.
 
-(** Binary-fuel evaluation and its generated clock preserve callback agreement. *)
+(** Binary-fuel evaluation preserves callback agreement and a pointwise clock bound. *)
 Lemma dom_lt_binary_loop_agree {S R : Type} (left right : S -> S + R)
     (T_left T_right : S -> N) (Inv : S -> Prop) :
-  (forall state, Inv state -> left state = right state /\ T_left state = T_right state) ->
+  (forall state, Inv state ->
+    left state = right state /\ (T_left state <= T_right state)%N) ->
   (forall state next, Inv state -> left state = inl next -> Inv next) ->
   forall fuel state, Inv state ->
     loopN left fuel state = loopN right fuel state /\
-    T_loopN left T_left fuel state = T_loopN right T_right fuel state.
+    (T_loopN left T_left fuel state <= T_loopN right T_right fuel state)%N.
 Proof.
   intros Hagree Hpreserve fuel state Hinv.
   assert (Hstep : forall fs : N * S, Inv (snd fs) ->
     loopN_step left fs = loopN_step right fs /\
-      T_loopN_step left T_left fs = T_loopN_step right T_right fs).
+      (T_loopN_step left T_left fs <= T_loopN_step right T_right fs)%N).
   { intros [[|positive] current] Hcurrent.
-    - split; [reflexivity|time_unfold @T_loopN_step; reflexivity].
+    - split; [reflexivity|time_unfold @T_loopN_step; apply N.le_refl].
     - destruct (Hagree current Hcurrent) as [Hvalue Hclock].
       split.
       + cbn [loopN_step]. now rewrite Hvalue.
-      + time_unfold @T_loopN_step. now rewrite Hvalue, Hclock. }
+      + time_unfold @T_loopN_step. rewrite Hvalue. lia. }
   assert (Hnext : forall fs next decrease, Inv (snd fs) ->
     loopN_step left fs = inl (exist _ next decrease) -> Inv (snd next)).
   { intros [[|positive] current] next decrease Hcurrent Hcontinue; [discriminate|].
@@ -3076,18 +3083,24 @@ Proof.
       (fun fs => T_loopN_step left T_left fs) (fun fs => T_loopN_step right T_right fs)
       (fun fs => Inv (snd fs)) Hstep Hnext (fuel, state) access Hinv) as Hloop
   end.
-  destruct Hloop as [Hvalue Htime]. split; [exact Hvalue|]. now rewrite Htime.
+  destruct Hloop as [Hvalue Htime]. split; [exact Hvalue|]. lia.
 Qed.
 
 Local Opaque Argent.Loop.loop T_loopN.
 
-(** Identity lookup performs the same work for every table at a fixed numeric key. *)
+(** Every lookup in the right table reads at least as many nodes as in the left table. *)
+Definition dom_lt_clock_below (left right : ptrie N) : Prop :=
+  forall key, (T_trie_get key left <= T_trie_get key right)%N.
+
+(** Identity lookup in a table whose lookups read more nodes pays at least as much. *)
 Lemma dom_lt_identity_clock_table left right vertex :
-  T_dom_lt_identity left vertex = T_dom_lt_identity right vertex.
+  dom_lt_clock_below left right ->
+  (T_dom_lt_identity left vertex <= T_dom_lt_identity right vertex)%N.
 Proof.
-  unfold T_dom_lt_identity. rewrite !PTrieT.trie_get_clock.
+  intro Hbelow. pose proof (Hbelow (dom_lt_key vertex)) as Hkey.
+  unfold T_dom_lt_identity.
   destruct (trie_get (dom_lt_key vertex) left), (trie_get (dom_lt_key vertex) right);
-    time_simpl; reflexivity.
+    time_simpl; lia.
 Qed.
 
 Definition dom_lt_scores_agree (known : N -> Prop) (left right : ptrie N) : Prop :=
@@ -3097,17 +3110,18 @@ Definition dom_lt_scores_agree (known : N -> Prop) (left right : ptrie N) : Prop
 Lemma dom_lt_minimum_agree known left right first second :
   dom_lt_scores_agree known left right -> known first -> known second ->
   dom_lt_minimum left first second = dom_lt_minimum right first second /\
-    T_dom_lt_minimum left first second = T_dom_lt_minimum right first second.
+    (dom_lt_clock_below left right ->
+      (T_dom_lt_minimum left first second <= T_dom_lt_minimum right first second)%N).
 Proof.
   intros Hagree Hfirst Hsecond.
   pose proof (Hagree first Hfirst) as Hfirst_score.
   pose proof (Hagree second Hsecond) as Hsecond_score.
   split.
   - unfold dom_lt_minimum. now rewrite Hfirst_score, Hsecond_score.
-  - unfold T_dom_lt_minimum.
-    rewrite Hfirst_score, Hsecond_score.
-    rewrite (dom_lt_identity_clock_table left right first),
-      (dom_lt_identity_clock_table left right second). reflexivity.
+  - intro Hbelow.
+    pose proof (dom_lt_identity_clock_table left right first Hbelow) as Hfirst_clock.
+    pose proof (dom_lt_identity_clock_table left right second Hbelow) as Hsecond_clock.
+    unfold T_dom_lt_minimum. rewrite Hfirst_score, Hsecond_score. lia.
 Qed.
 
 Definition dom_lt_links_known (known : N -> Prop) (links : dom_lt_links) : Prop :=
@@ -3211,13 +3225,14 @@ Qed.
 Lemma dom_lt_compress_agree known left right st :
   dom_lt_scores_agree known left right -> dom_lt_walk_known known st ->
   dom_lt_compress_step left st = dom_lt_compress_step right st /\
-    T_dom_lt_compress_step left st = T_dom_lt_compress_step right st.
+    (dom_lt_clock_below left right ->
+      (T_dom_lt_compress_step left st <= T_dom_lt_compress_step right st)%N).
 Proof.
   intros Hagree. destruct st as [links [vertex stack|root part stack]].
-  - intro Hinv. split; reflexivity.
+  - intro Hinv. split; [reflexivity|intros _; apply N.le_refl].
   - cbn [dom_lt_walk_known lt_walk_links lt_walk_phase]. intros [Hlinks [Hpart Hstack]].
-    destruct stack as [|vertex stack]; [split; reflexivity|].
-    destruct part as [previous|]; [|split; reflexivity].
+    destruct stack as [|vertex stack]; [split; [reflexivity|intros _; apply N.le_refl]|].
+    destruct part as [previous|]; [|split; [reflexivity|intros _; apply N.le_refl]].
     inversion Hstack as [|head tail Hpresent Htail]; subst head tail.
     pose proof (dom_lt_linked_label_known known links vertex Hlinks Hpresent) as Hlabel.
     destruct (dom_lt_minimum_agree known left right
@@ -3225,15 +3240,18 @@ Proof.
       as [Hvalue Htime].
     split.
     + cbn [dom_lt_compress_step lt_walk_links lt_walk_phase]. now rewrite Hvalue.
-    + unfold T_dom_lt_compress_step. cbn [lt_walk_links lt_walk_phase].
-      now rewrite Hvalue, Htime.
+    + intro Hbelow. specialize (Htime Hbelow).
+      unfold T_dom_lt_compress_step. cbn [lt_walk_links lt_walk_phase].
+      rewrite Hvalue. lia.
 Qed.
 
-(** Replay may use final semidominators once they agree on every already-linked label. *)
+(** Replay may use final semidominators once they agree on every already-linked label, and
+    it costs at least as much when its score lookups read at least as many nodes. *)
 Lemma dom_lt_eval_agree known left right fuel before vertex :
   dom_lt_scores_agree known left right -> dom_lt_links_known known before ->
   dom_lt_eval fuel left before vertex = dom_lt_eval fuel right before vertex /\
-    T_dom_lt_eval fuel left before vertex = T_dom_lt_eval fuel right before vertex.
+    (dom_lt_clock_below left right ->
+      (T_dom_lt_eval fuel left before vertex <= T_dom_lt_eval fuel right before vertex)%N).
 Proof.
   intros Hagree Hlinks.
   set (initial := DomLtWalk
@@ -3241,20 +3259,30 @@ Proof.
     (DomLtDescend vertex [])).
   assert (Hinitial : dom_lt_walk_known known initial).
   { split; [exact Hlinks|constructor]. }
-  assert (Hstep : forall st, dom_lt_walk_known known st ->
-    dom_lt_compress_step left st = dom_lt_compress_step right st /\
-      T_dom_lt_compress_step left st = T_dom_lt_compress_step right st).
-  { intros st Hst. now apply (dom_lt_compress_agree known). }
   assert (Hpreserve : forall st next, dom_lt_walk_known known st ->
     dom_lt_compress_step left st = inl next -> dom_lt_walk_known known next).
   { intros st next Hst Hnext.
     pose proof (dom_lt_compress_known known left st Hst) as Hknown. now rewrite Hnext in Hknown. }
-  destruct (dom_lt_binary_loop_agree (dom_lt_compress_step left) (dom_lt_compress_step right)
-    (T_dom_lt_compress_step left) (T_dom_lt_compress_step right) (dom_lt_walk_known known)
-    Hstep Hpreserve (N.double fuel + 3)%N initial Hinitial) as [Hvalue Htime].
+  assert (Hloop : forall T_left T_right : dom_lt_walk -> N,
+    (forall st, dom_lt_walk_known known st -> (T_left st <= T_right st)%N) ->
+    loopN (dom_lt_compress_step left) (N.double fuel + 3)%N initial =
+      loopN (dom_lt_compress_step right) (N.double fuel + 3)%N initial /\
+    (T_loopN (dom_lt_compress_step left) T_left (N.double fuel + 3)%N initial <=
+      T_loopN (dom_lt_compress_step right) T_right (N.double fuel + 3)%N initial)%N).
+  { intros T_left T_right Hclock.
+    apply (dom_lt_binary_loop_agree (dom_lt_compress_step left) (dom_lt_compress_step right)
+      T_left T_right (dom_lt_walk_known known)); [|exact Hpreserve|exact Hinitial].
+    intros st Hst. split; [|exact (Hclock st Hst)].
+    exact (proj1 (dom_lt_compress_agree known left right st Hagree Hst)). }
+  destruct (Hloop (T_dom_lt_compress_step left) (T_dom_lt_compress_step left)
+    (fun st _ => N.le_refl _)) as [Hvalue _].
   split.
   - unfold dom_lt_eval. fold initial. now rewrite Hvalue.
-  - unfold T_dom_lt_eval. fold initial. time_simpl.
+  - intro Hbelow.
+    destruct (Hloop (T_dom_lt_compress_step left) (T_dom_lt_compress_step right)
+      (fun st Hst => proj2 (dom_lt_compress_agree known left right st Hagree Hst) Hbelow))
+      as [_ Htime].
+    unfold T_dom_lt_eval. fold initial. time_simpl.
     change (T_loopN (dom_lt_compress_step left)
       (fun st => T_dom_lt_compress_step left st) (N.double fuel + 3)%N initial)
       with (T_loopN (dom_lt_compress_step left) (T_dom_lt_compress_step left)
@@ -3263,7 +3291,7 @@ Proof.
       (fun st => T_dom_lt_compress_step right st) (N.double fuel + 3)%N initial)
       with (T_loopN (dom_lt_compress_step right) (T_dom_lt_compress_step right)
         (N.double fuel + 3)%N initial).
-    now rewrite Hvalue, Htime.
+    rewrite Hvalue. lia.
 Qed.
 
 (** Evaluating a query preserves the known-label invariant, including fuel exhaustion. *)
@@ -3343,6 +3371,30 @@ Proof.
     [reflexivity|].
   cbn [fold_left]. rewrite IH by (intro Hin; apply Houtside; now right).
   apply dom_lt_settle_score_other. intro Heq. apply Houtside. left. now symmetry.
+Qed.
+
+(** A settlement sets one score and removes none, so no later score lookup reads fewer nodes. *)
+Lemma dom_lt_settle_clock_below numeric before vertex :
+  dom_lt_clock_below (lt_semis before) (lt_semis (dom_lt_settle numeric before vertex)).
+Proof.
+  intro key. unfold dom_lt_settle.
+  destruct (trie_get (dom_lt_key vertex) (lt_numeric_parent numeric)) as [parent|];
+    [|apply N.le_refl].
+  destruct (fold_left (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis before))
+    (match trie_get (dom_lt_key vertex) (lt_numeric_pred numeric) with
+      None => [] | Some row => row end) (lt_semi_links before, parent, parent))
+    as [[links best] witness].
+  cbn [lt_semis]. apply PTrieT.T_trie_get_set_le.
+Qed.
+
+(** Later settlements make no score lookup cheaper. *)
+Lemma dom_lt_settlements_clock_below numeric order before :
+  dom_lt_clock_below (lt_semis before)
+    (lt_semis (fold_left (dom_lt_settle numeric) order before)).
+Proof.
+  revert before. induction order as [|vertex rest IH]; intros before key;
+    [apply N.le_refl|].
+  cbn [fold_left]. eapply N.le_trans; [apply dom_lt_settle_clock_below|apply IH].
 Qed.
 
 (** The operation-only phase uses the same evaluator and linker as the producer. *)
@@ -4364,10 +4416,11 @@ Qed.
 Local Opaque dom_lt_eval T_dom_lt_eval dom_lt_predecessor T_dom_lt_predecessor.
 Local Opaque dom_lt_settle T_dom_lt_settle.
 
-(** Predecessor overhead is linear; every evaluator call is charged to its exact replay. *)
+(** Predecessor overhead is linear, and every evaluator call is charged to its final replay. *)
 Lemma dom_lt_predecessors_phase_clock bound width known limit current final incoming :
   (forall n, (n <= bound)%N -> N.size_nat n <= width) ->
   dom_lt_scores_agree known current final ->
+  dom_lt_clock_below current final ->
   dom_lt_trie_all (fun n => (n <= bound)%N) current ->
   Forall (fun n => (n <= bound)%N) incoming -> forall acc,
   dom_lt_predecessor_bounded bound acc ->
@@ -4378,7 +4431,7 @@ Lemma dom_lt_predecessors_phase_clock bound width known limit current final inco
       (map LtEval incoming) (fst (fst acc)) +
     64 * N.of_nat (length incoming) * N.of_nat (width + 1))%N.
 Proof.
-  intros Hwidth Hscores Hcurrent Hincoming.
+  intros Hwidth Hscores Hbelow Hcurrent Hincoming.
   induction Hincoming as [|source rest Hsource Hrest IH]; intros acc Hbounded Hknown.
   - cbn [map length]. time_unfold @List.T_fold_left. nia.
   - pose proof (dom_lt_predecessor_range bound limit current acc source
@@ -4389,6 +4442,7 @@ Proof.
     specialize (IH (dom_lt_predecessor limit current acc source) Hnextbound Hnextknown).
     destruct (dom_lt_eval_agree known current final limit (fst (fst acc)) source
       Hscores Hknown) as [Heval Hclock].
+    specialize (Hclock Hbelow).
     assert (Hnext : fst (fst (dom_lt_predecessor limit current acc source)) =
       dom_lt_phase_step limit final (fst (fst acc)) (LtEval source)).
     { rewrite dom_lt_predecessor_links, Heval. reflexivity. }
@@ -4404,9 +4458,9 @@ Proof.
         (snd (dom_lt_eval limit current links source)) Hcurrent Hchosen) as Hcandidate.
       pose proof (dom_lt_semi_predecessor_clock width limit current links best witness source
         (Hwidth _ Hchosen) (Hwidth _ Hcandidate)) as Hcost.
-      cbn [fst] in Hclock. rewrite Hclock in Hcost.
+      cbn [fst] in Hclock.
       pose proof (dom_lt_phase_eval_clock limit final links source) as Hphase.
-      cbn [fst]. clear -Hcost Hphase. lia. }
+      cbn [fst]. clear -Hcost Hclock Hphase. lia. }
     cbn [map length]. time_unfold @List.T_fold_left.
     fold (List.T_fold_left (dom_lt_predecessor limit current)
       (T_dom_lt_predecessor limit current)).
@@ -4421,6 +4475,7 @@ Lemma dom_lt_settle_phase_clock bound width known numeric before vertex final :
   dom_lt_numeric_ranges bound numeric -> dom_lt_semi_bounded bound before ->
   (vertex <= bound)%N ->
   dom_lt_scores_agree known (lt_semis before) final ->
+  dom_lt_clock_below (lt_semis before) final ->
   dom_lt_links_known known (lt_semi_links before) ->
   (T_dom_lt_settle numeric before vertex + 2 <=
     List.T_fold_left (dom_lt_phase_step (lt_numeric_limit numeric) final)
@@ -4430,7 +4485,7 @@ Lemma dom_lt_settle_phase_clock bound width known numeric before vertex final :
       N.of_nat ((length (match trie_get (dom_lt_key vertex) (lt_numeric_pred numeric) with
         None => [] | Some row => row end) + 1) * (width + 1)))%N.
 Proof.
-  intros Hwidth Hnumeric Hbefore Hvertex Hscores Hknown.
+  intros Hwidth Hnumeric Hbefore Hvertex Hscores Hbelow Hknown.
   destruct Hnumeric as [Horder Hparents Hpreds].
   destruct Hbefore as [Hsemis [Hmin Hlinks]].
   unfold dom_lt_settle_sequence.
@@ -4446,7 +4501,7 @@ Proof.
       (lt_semi_links before, parent, parent)).
     { split; [exact Hlinks|now split]. }
     pose proof (dom_lt_predecessors_phase_clock bound width known (lt_numeric_limit numeric)
-      (lt_semis before) final incoming Hwidth Hscores Hsemis Hincoming
+      (lt_semis before) final incoming Hwidth Hscores Hbelow Hsemis Hincoming
       (lt_semi_links before, parent, parent) Hinitial Hknown) as Hrow.
     destruct (dom_lt_predecessors_phase known (lt_numeric_limit numeric)
       (lt_semis before) final incoming Hscores (lt_semi_links before, parent, parent) Hknown)
@@ -4533,9 +4588,11 @@ Proof.
     assert (Hafter : dom_lt_semi_bounded bound after).
     { unfold after. now apply dom_lt_settle_range. }
     specialize (IH Hrest after Hafter Hnext). fold final in IH.
+    assert (Hbelow : dom_lt_clock_below (lt_semis before) final).
+    { exact (dom_lt_settlements_clock_below numeric (vertex :: rest) before). }
     pose proof (dom_lt_settle_phase_clock bound width
       (fun query => ~ In query (vertex :: rest)) numeric before vertex final
-      Hwidth Hnumeric Hbefore Hvertex Hscores Hknown) as Hhead.
+      Hwidth Hnumeric Hbefore Hvertex Hscores Hbelow Hknown) as Hhead.
     pose proof (dom_lt_fold_clock_app (dom_lt_phase_step (lt_numeric_limit numeric) final)
       (T_dom_lt_phase_step (lt_numeric_limit numeric) final)
       (dom_lt_settle_sequence numeric vertex) (dom_lt_settlements_sequence numeric rest)
@@ -5601,7 +5658,7 @@ Proof.
   intro Hvertex.
   pose proof (dom_lt_time_key vertex) as Hkey.
   pose proof (dom_lt_key_width vertex) as Hbits.
-  unfold T_dom_anchor_start. time_simpl. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_anchor_start. time_simpl. PTrieT.trie_get_le.
   destruct (trie_get (dom_lt_key vertex) positions) as [[lo hi]|];
     time_simpl; rewrite !Nat2N.inj_add in *; lia.
 Qed.
@@ -6884,7 +6941,7 @@ Lemma dom_order_row_clock rows vertex :
 Proof.
   pose proof (dom_lt_time_key vertex) as Hkey.
   pose proof (dom_lt_key_width vertex) as Hwidth.
-  unfold T_dom_order_row. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_order_row. PTrieT.trie_get_le.
   destruct (trie_get (dom_lt_key vertex) rows); time_simpl;
     rewrite !Nat2N.inj_add in *; lia.
 Qed.
@@ -6895,7 +6952,7 @@ Lemma dom_order_number_clock rows vertex :
 Proof.
   pose proof (dom_lt_time_key vertex) as Hkey.
   pose proof (dom_lt_key_width vertex) as Hwidth.
-  unfold T_dom_order_number. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_order_number. PTrieT.trie_get_le.
   destruct (trie_get (dom_lt_key vertex) rows); time_simpl;
     rewrite !Nat2N.inj_add in *; lia.
 Qed.
@@ -6906,7 +6963,7 @@ Lemma dom_order_active_clock active vertex :
 Proof.
   pose proof (dom_lt_time_key vertex) as Hkey.
   pose proof (dom_lt_key_width vertex) as Hwidth.
-  unfold T_dom_order_active. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_order_active. PTrieT.trie_get_le.
   destruct (trie_get (dom_lt_key vertex) active) as [[|]|]; time_simpl;
     rewrite !Nat2N.inj_add in *; lia.
 Qed.
@@ -6921,7 +6978,7 @@ Proof.
   intros Hvertex Hparents.
   pose proof (dom_lt_time_key vertex) as Hkey.
   pose proof (dom_lt_key_width vertex) as Hkey_width.
-  unfold T_dom_order_child_add. time_simpl. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_order_child_add. time_simpl. PTrieT.trie_get_le.
   destruct (trie_get (dom_lt_key vertex) parents) as [parent|] eqn:Hparent.
   - pose proof (Hparents (dom_lt_key vertex) parent Hparent) as Hparent_width.
     change (N.size_nat parent <= width) in Hparent_width.
@@ -6933,9 +6990,10 @@ Proof.
     change (PTrieCode.T_set (dom_lt_key parent) (vertex :: dom_order_row rows parent) rows <=
       PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key parent) + 1))%N in Hset.
     time_simpl. rewrite !Nat2N.inj_add in *.
-    clear -Hvertex Hkey Hkey_width Hparent_width Hparent_key Hparent_key_width Hrow Hset. nia.
+    clear -Hvertex Hkey Hkey_width Hparent_width Hparent_key Hparent_key_width Hrow Hset.
+    PTrieT.trie_get_le. nia.
   - time_simpl. rewrite !Nat2N.inj_add in *.
-    clear -Hvertex Hkey Hkey_width. nia.
+    clear -Hvertex Hkey Hkey_width. PTrieT.trie_get_le. nia.
 Qed.
 
 (** Building child rows pays a bounded update once for each supplied input vertex. *)
@@ -7678,7 +7736,7 @@ Proof.
     pose proof (dom_lt_key_width vertex) as Hkey_width.
     unfold T_dom_order_number_step, dom_order_number_work.
     time_simpl. cbn [order_tasks order_pre order_post order_clock].
-    rewrite PTrieT.trie_get_clock.
+    PTrieT.trie_get_le.
     destruct (trie_get (dom_lt_key vertex) pre) as [stored|] eqn:Hget.
     + time_simpl. rewrite !Nat2N.inj_add in *. nia.
     + pose proof (dom_order_row_clock rows vertex) as Hrow.
@@ -7696,7 +7754,7 @@ Proof.
       eapply N.le_trans with
         (64 * (PTrieT.c_trie + 1) * (N.of_nat width + 1) +
           4 * N.of_nat (length (dom_order_row rows vertex)))%N.
-      * clear -Hvertex Hclock Hkey Hkey_width Hrow Hmap Happend Hset Hsucc. nia.
+      * clear -Hvertex Hclock Hkey Hkey_width Hrow Hmap Happend Hset Hsucc. PTrieT.trie_get_le. nia.
       * replace (128 * (PTrieT.c_trie + 1) * (N.of_nat width + 1) *
           (N.of_nat (length (dom_order_row rows vertex)) + 1))%N with
           (2 * (64 * (PTrieT.c_trie + 1) * (N.of_nat width + 1)) *
@@ -7712,7 +7770,8 @@ Proof.
     pose proof (N.T_pred_le clock) as Hpred.
     unfold T_dom_order_number_step, dom_order_number_work.
     time_simpl. cbn [order_tasks order_pre order_post order_clock].
-    rewrite !Nat2N.inj_add in *. clear -Hvertex Hclock Hkey Hkey_width Hset Hpred. nia.
+    rewrite !Nat2N.inj_add in *. clear -Hvertex Hclock Hkey Hkey_width Hset Hpred.
+    PTrieT.trie_get_le. nia.
 Qed.
 
 
@@ -8072,7 +8131,7 @@ Proof.
   - time_simpl. rewrite !Nat2N.inj_add in *.
     change (N.of_nat 1) with 1%N in *. clearbody budget.
     clear -Hparent Hcompare Hwidth_budget. lia.
-  - rewrite !PTrieT.trie_get_clock.
+  - PTrieT.trie_get_le.
     destruct (trie_get (dom_lt_key parent) indexes) as [index|] eqn:Hindex.
     + destruct (trie_get (dom_lt_key source) (order_pre walk)) as [position|] eqn:Hposition.
       * pose proof (Hpositions (dom_lt_key source) position Hposition) as Hposition_width.
@@ -8097,20 +8156,21 @@ Proof.
              time_simpl; rewrite !Nat2N.inj_add in *;
              change (N.of_nat 1) with 1%N in *; clearbody budget;
              clear -Hparent Hsource Hparent_key Hsource_key Hparent_bits Hsource_bits Hcompare
-               Hposition_width Hsearch_bound Hchild_width Hnumber Hwithin Hwidth_budget; lia.
+               Hposition_width Hsearch_bound Hchild_width Hnumber Hwithin Hwidth_budget;
+             PTrieT.trie_get_le; lia.
         -- time_simpl. rewrite !Nat2N.inj_add in *.
            change (N.of_nat 1) with 1%N in *. clearbody budget.
            clear -Hparent Hsource Hparent_key Hsource_key Hparent_bits Hsource_bits Hcompare
-             Hsearch_bound Hwidth_budget. lia.
+             Hsearch_bound Hwidth_budget. PTrieT.trie_get_le. lia.
       * time_simpl. rewrite !Nat2N.inj_add in *.
         change (N.of_nat 1) with 1%N in *. clearbody budget.
         clear -Hparent Hsource Hparent_key Hsource_key Hparent_bits Hsource_bits Hcompare
-          Hwidth_budget. lia.
+          Hwidth_budget. PTrieT.trie_get_le. lia.
     + destruct (trie_get (dom_lt_key source) (order_pre walk)); time_simpl;
         rewrite !Nat2N.inj_add in *;
         change (N.of_nat 1) with 1%N in *; clearbody budget;
         clear -Hparent Hsource Hparent_key Hsource_key Hparent_bits Hsource_bits Hcompare
-          Hwidth_budget; lia.
+          Hwidth_budget; PTrieT.trie_get_le; lia.
 Qed.
 
 Local Transparent dom_order_index_search T_dom_order_index_search.
@@ -8558,13 +8618,13 @@ Proof.
       pose proof (PTrieT.T_set_le bool (dom_lt_key vertex) true seen) as Hset.
       change (PTrieCode.T_set (dom_lt_key vertex) true seen <=
         PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1))%N in Hset.
-      rewrite PTrieT.trie_get_clock.
+      PTrieT.trie_get_le.
       destruct (trie_get (dom_lt_key vertex) vertices); time_simpl;
         rewrite !Nat2N.inj_add in *; change (N.of_nat 1) with 1%N in *.
       all: eapply N.le_trans with
         (64 * (PTrieT.c_trie + 1) * (N.of_nat width + 1) +
           4 * N.of_nat (length (dom_order_row rows vertex)))%N;
-        [clear -Hvertex Hactive Hkey Hkey_width Hrow Happend Hset; nia|].
+        [clear -Hvertex Hactive Hkey Hkey_width Hrow Happend Hset; PTrieT.trie_get_le; nia|].
       all: replace (128 * (PTrieT.c_trie + 1) * (N.of_nat width + 1) *
           (N.of_nat (length (dom_order_row rows vertex)) + 1))%N with
           (2 * (64 * (PTrieT.c_trie + 1) * (N.of_nat width + 1)) *
@@ -9196,7 +9256,7 @@ Lemma dom_order_removal_keep_clock width parents vertex :
 Proof.
   intro Hwidth. pose proof (dom_lt_time_key vertex) as Hkey.
   pose proof (dom_lt_key_width vertex) as Hbits.
-  unfold T_dom_order_removal_keep. time_simpl. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_order_removal_keep. time_simpl. PTrieT.trie_get_le.
   destruct (trie_get (dom_lt_key vertex) parents); time_simpl;
     rewrite !Nat2N.inj_add in *; lia.
 Qed.
@@ -9289,7 +9349,7 @@ Proof.
   intros Hvertex Hrelative Hsemi Hparents Hsearch.
   pose proof (dom_lt_time_key vertex) as Hkey.
   pose proof (dom_lt_key_width vertex) as Hkey_width.
-  unfold T_dom_order_colour. time_simpl. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_order_colour. time_simpl. PTrieT.trie_get_le.
   destruct (trie_get (dom_lt_key vertex) parents) as [parent|] eqn:Hparent.
   - pose proof (Hparents (dom_lt_key vertex) parent Hparent) as Hparent_width.
     change (N.size_nat parent <= width) in Hparent_width.
@@ -9351,7 +9411,7 @@ Proof.
       by (eapply N.le_trans; [exact Hcolour_set|exact Hwrite_budget]).
     clear Hblue_set Hred_set Hcolour_set.
     rename Hblue_width into Hblue_set, Hred_width into Hred_set, Hcolour_width into Hcolour_set.
-    rewrite PTrieT.trie_get_clock. fold is_blue direct.
+    PTrieT.trie_get_le. fold is_blue direct.
     unfold blue_value, red_value in Hblue_set, Hred_set.
     destruct direct, is_blue;
       destruct (trie_get (dom_lt_key (dom_lt_identity relative vertex)) (source_colour st))
@@ -9370,10 +9430,11 @@ Proof.
       clearbody write_budget scan_budget;
       clear -Hvertex Hrelative Hsemi Hkey Hkey_width Hparent_width Hfirst Hsecond
         Hrelative_read Hsemi_read Hparent_read Hminimizer_read Hrelative_key Hrelative_bits
-        Hcompare Hrow Hscan Hblue_set Hred_set Hcolour_set.
+        Hcompare Hrow Hscan Hblue_set Hred_set Hcolour_set;
+      PTrieT.trie_get_le.
     all: lia.
   - time_simpl. rewrite !Nat2N.inj_add in *.
-    clear -Hvertex Hkey Hkey_width. nia.
+    clear -Hvertex Hkey Hkey_width. PTrieT.trie_get_le. nia.
 Qed.
 
 
@@ -10956,15 +11017,15 @@ Proof.
   replace (256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N with
     (256 * dom_order_removal_unit width)%N by (unfold dom_order_removal_unit; ring).
   set (unit := dom_order_removal_unit width) in *.
-  unfold T_dom_source_initial_step. time_simpl. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_source_initial_step. time_simpl. PTrieT.trie_get_le.
   destruct (trie_get (dom_lt_key vertex) parents) as [parent|].
   - pose proof (dom_source_add_bounded_clock count width tree vertex
       (dom_lt_identity sources vertex) parent Hwidth Htree Hvertex Hsource) as Hadd.
     rewrite <- N.mul_assoc in Hadd. fold (dom_order_removal_unit width) in Hadd.
     fold unit in Hadd. time_simpl. clearbody unit.
-    clear -Hvertex_width Hkey Hkey_width Hidentity Hadd Hunit.
+    clear -Hvertex_width Hkey Hkey_width Hidentity Hadd Hunit. PTrieT.trie_get_le.
     rewrite !Nat2N.inj_add in *. lia.
-  - time_simpl. clearbody unit. clear -Hvertex_width Hkey Hkey_width Hunit.
+  - time_simpl. clearbody unit. clear -Hvertex_width Hkey Hkey_width Hunit. PTrieT.trie_get_le.
     rewrite !Nat2N.inj_add in *. lia.
 Qed.
 

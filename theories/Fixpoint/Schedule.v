@@ -833,7 +833,7 @@ Lemma schedule_T_vertex v st :
     N.of_nat (Pos.size_nat v + 1))%N.
 Proof.
   destruct st as [vs seen adjacency].
-  pose proof (PTrieT.trie_get_clock bool v seen) as Hget.
+  pose proof (PTrieT.T_trie_get_le bool v seen) as Hget.
   pose proof (PTrieT.T_set_le bool v true seen) as Hset.
   unfold T_schedule_vertex; time_cbn.
   destruct (trie_get v seen); time_cbn; nia.
@@ -845,7 +845,7 @@ Lemma schedule_T_edge u v st :
     N.of_nat (Pos.size_nat u + 1))%N.
 Proof.
   destruct st as [vs seen adjacency].
-  pose proof (PTrieT.trie_get_clock (list positive) u adjacency) as Hget.
+  pose proof (PTrieT.T_trie_get_le (list positive) u adjacency) as Hget.
   pose proof (PTrieT.T_set_le (list positive) u
     (v :: match trie_get u adjacency with Some xs => xs | None => nil end) adjacency) as Hset.
   unfold T_schedule_edge; time_cbn; nia.
@@ -881,7 +881,7 @@ Qed.
 Lemma schedule_T_priority {A} (pol : policy A) v :
   (T_schedule_priority pol v <= 4 * N.of_nat (Pos.size_nat v + 1))%N.
 Proof.
-  pose proof (PTrieT.trie_get_clock positive v (prio pol)) as Hget.
+  pose proof (PTrieT.T_trie_get_le positive v (prio pol)) as Hget.
   unfold T_schedule_priority, T_prio; time_cbn; lia.
 Qed.
 
@@ -892,7 +892,7 @@ Lemma schedule_T_write_cut {A} (pol : policy A) rank v :
 Proof.
   pose proof (schedule_T_priority pol v) as Hprio.
   pose proof (schedule_T_ltb rank (schedule_priority pol v)) as Hcompare.
-  pose proof (PTrieT.trie_get_clock head_cfg v (heads pol)) as Hget.
+  pose proof (PTrieT.T_trie_get_le head_cfg v (heads pol)) as Hget.
   unfold T_schedule_write_cut, T_heads; time_cbn.
   destruct (Pos.ltb rank (schedule_priority pol v)); time_cbn; lia.
 Qed.

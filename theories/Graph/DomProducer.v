@@ -558,7 +558,7 @@ Lemma dom_time_succs g v :
   (T_succs g v <= 2 * N.of_nat (Pos.size_nat v) + 1)%N.
 Proof.
   destruct g as [vs adjacency]. unfold T_succs. time_simpl.
-  rewrite PTrieT.trie_get_clock. lia.
+  PTrieT.trie_get_le. lia.
 Qed.
 
 (** Uniform callback costs need only hold on the list being folded. *)
@@ -2131,22 +2131,24 @@ Proof.
       pose proof (scc_search_time g [r] Hroots) as Hsearch.
       pose proof (scc_graph_time g) as Hfilter.
       cbn [length] in Hsearch.
-      rewrite PTrieT.trie_get_clock. time_simpl.
+      time_simpl.
       rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
-      apply dom_lt_trace_budget.
+      eapply N.le_trans; [shelve|apply dom_lt_trace_budget].
       * exact Hlisted.
       * eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
       * exact Hguard.
       * exact Hroot_bits.
       * now rewrite <- N.mul_assoc in Hfilter.
       * eapply N.le_trans; [apply N.le_add_l|exact Hsearch].
-    + rewrite PTrieT.trie_get_clock. time_simpl. rewrite ?N.add_0_r.
+      Unshelve. PTrieT.trie_get_le. lia.
+    + time_simpl. rewrite ?N.add_0_r.
       rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
-      apply dom_lt_trace_missing_budget.
+      eapply N.le_trans; [shelve|apply dom_lt_trace_missing_budget].
       * exact Hlisted.
       * eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
       * exact Hguard.
       * exact Hroot_bits.
+      Unshelve. PTrieT.trie_get_le. lia.
   - time_simpl. rewrite ?N.add_0_r.
     rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
     apply dom_lt_trace_rejected_budget.

@@ -447,7 +447,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Proof.
     intros p x. pose proof (D.T_tables_le p) as Htables.
     pose proof (V.T_encode_le x) as Hencode.
-    unfold c_ssa. time_unfold T_def. rewrite PTrieT.trie_get_clock.
+    unfold c_ssa. time_unfold T_def. PTrieT.trie_get_le.
     time_simpl; time_cbn; unfold V.bits in *; nia.
   Qed.
 
@@ -456,7 +456,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Proof.
     intros p x. pose proof (D.T_tables_le p) as Htables.
     pose proof (V.T_encode_le x) as Hencode.
-    unfold c_ssa. time_unfold T_home. rewrite PTrieT.trie_get_clock.
+    unfold c_ssa. time_unfold T_home. PTrieT.trie_get_le.
     destruct (trie_get (V.encode x) (ssa_homes (D.tables p)));
       time_simpl; time_cbn; unfold V.bits in *; nia.
   Qed.
@@ -467,7 +467,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Proof.
     intros p n. pose proof (D.T_tables_le p) as Htables.
     pose proof (N.T_encode_le n) as Hencode.
-    unfold c_ssa. time_unfold T_params. rewrite PTrieT.trie_get_clock.
+    unfold c_ssa. time_unfold T_params. PTrieT.trie_get_le.
     time_simpl; time_cbn; unfold N.bits in *; nia.
   Qed.
 
@@ -477,7 +477,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Proof.
     intros p e. pose proof (D.T_tables_le p) as Htables.
     pose proof (E.T_encode_le e) as Hencode.
-    unfold c_ssa. time_unfold T_args. rewrite PTrieT.trie_get_clock.
+    unfold c_ssa. time_unfold T_args. PTrieT.trie_get_le.
     time_simpl; time_cbn; unfold E.bits in *; nia.
   Qed.
 
@@ -487,7 +487,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Proof.
     intros p e. pose proof (D.T_tables_le p) as Htables.
     pose proof (E.T_encode_le e) as Hencode.
-    unfold c_ssa. time_unfold T_guards. rewrite PTrieT.trie_get_clock.
+    unfold c_ssa. time_unfold T_guards. PTrieT.trie_get_le.
     time_simpl; time_cbn; unfold E.bits in *; nia.
   Qed.
 End SsaT.
@@ -701,7 +701,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Proof.
     intros p b. pose proof (D.T_tables_le p) as Htables.
     pose proof (B.T_encode_le b) as Hencode.
-    unfold c_points. time_unfold T_points_in_block. rewrite PTrieT.trie_get_clock.
+    unfold c_points. time_unfold T_points_in_block. PTrieT.trie_get_le.
     time_simpl; time_cbn; unfold B.bits in *; nia.
   Qed.
 
@@ -712,7 +712,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Proof.
     intros p b. pose proof (D.T_tables_le p) as Htables.
     pose proof (B.T_encode_le b) as Hencode.
-    unfold c_points. time_unfold T_instruction_edges. rewrite PTrieT.trie_get_clock.
+    unfold c_points. time_unfold T_instruction_edges. PTrieT.trie_get_le.
     time_simpl; time_cbn; unfold B.bits in *; nia.
   Qed.
 
@@ -722,7 +722,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Proof.
     intros p b. pose proof (D.T_tables_le p) as Htables.
     pose proof (B.T_encode_le b) as Hencode.
-    unfold c_points. time_unfold T_parameter_edge. rewrite PTrieT.trie_get_clock.
+    unfold c_points. time_unfold T_parameter_edge. PTrieT.trie_get_le.
     destruct (trie_get (B.encode b) (parameter_edges (D.tables p)));
       time_simpl; time_cbn; unfold B.bits in *; nia.
   Qed.
@@ -733,7 +733,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Proof.
     intros p n. pose proof (D.T_tables_le p) as Htables.
     pose proof (N.T_encode_le n) as Hencode.
-    unfold c_points. time_unfold T_block_of_point. rewrite PTrieT.trie_get_clock.
+    unfold c_points. time_unfold T_block_of_point. PTrieT.trie_get_le.
     destruct (trie_get (N.encode n) (point_blocks (D.tables p)));
       time_simpl; time_cbn; unfold N.bits in *; nia.
   Qed.
@@ -744,7 +744,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Proof.
     intros p e. pose proof (D.T_tables_le p) as Htables.
     pose proof (E.T_encode_le e) as Hencode.
-    unfold c_points. time_unfold T_block_edge_of. rewrite PTrieT.trie_get_clock.
+    unfold c_points. time_unfold T_block_edge_of. PTrieT.trie_get_le.
     time_simpl; time_cbn; unfold E.bits in *; nia.
   Qed.
 
@@ -755,7 +755,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Proof.
     intros p b. pose proof (D.T_tables_le p) as Htables.
     pose proof (B.T_encode_le b) as Hencode.
-    unfold c_points. time_unfold T_block_params. rewrite PTrieT.trie_get_clock.
+    unfold c_points. time_unfold T_block_params. PTrieT.trie_get_le.
     time_simpl; time_cbn; unfold B.bits in *; nia.
   Qed.
 
@@ -766,7 +766,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Proof.
     intros p be. pose proof (D.T_tables_le p) as Htables.
     pose proof (BE.T_encode_le be) as Hencode.
-    unfold c_points. time_unfold T_block_edge_args. rewrite PTrieT.trie_get_clock.
+    unfold c_points. time_unfold T_block_edge_args. PTrieT.trie_get_le.
     time_simpl; time_cbn; unfold BE.bits in *; nia.
   Qed.
 
@@ -776,7 +776,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Proof.
     intros p x. pose proof (D.T_tables_le p) as Htables.
     pose proof (V.T_encode_le x) as Hencode.
-    unfold c_points. time_unfold T_point_definition. rewrite PTrieT.trie_get_clock.
+    unfold c_points. time_unfold T_point_definition. PTrieT.trie_get_le.
     time_simpl; time_cbn; unfold V.bits in *; nia.
   Qed.
 End SsaPointsT.

@@ -1794,7 +1794,7 @@ Proof.
   pose proof (PTrieT.T_set_le unit x tt seen) as Hset.
   unfold frontier_step_cost, frontier_unit_cost.
   time_unfold T_df_step. time_unfold T_pre. time_unfold T_idom.
-  rewrite !PTrieT.trie_get_clock.
+  PTrieT.trie_get_le.
   rewrite !Nat2N.inj_add in Hset |- *.
   destruct (trie_get x (pre t)) as [a|]; [|nia].
   destruct (trie_get x seen) as [[]|]; [nia|].
@@ -1815,7 +1815,7 @@ Lemma frontier_preds_time : forall g y,
   (T_preds g y <= 2 * N.of_nat (Pos.size_nat y) + 1)%N.
 Proof.
   intros [graph predecessors vertices_count edges_count] y.
-  unfold T_preds. time_simpl. rewrite PTrieT.trie_get_clock. lia.
+  unfold T_preds. time_simpl. PTrieT.trie_get_le. lia.
 Qed.
 
 Lemma frontier_nv_width : forall g,
@@ -2034,7 +2034,7 @@ Proof.
   change (PTrieCode.T_set x (PTrieCode.set y tt marked) marks <=
     PTrieT.c_trie * N.of_nat (Pos.size_nat x + 1))%N in Hmarks.
   time_unfold T_df_insert. time_unfold T_frontier_row.
-  fold marked. repeat rewrite PTrieT.trie_get_clock.
+  fold marked. repeat PTrieT.trie_get_le.
   unfold frontier_unit_cost. rewrite !Nat2N.inj_add in Hrows, Hpair, Hmarks |- *.
   destruct (trie_get y marked); nia.
 Qed.
@@ -2368,7 +2368,7 @@ Proof.
   all: fold budget; clearbody budget; clear Hexpand Hdiscover Hwidth.
   all: time_unfold T_idf_step; time_unfold T_frontier_row;
     unfold frontier_idf_expansion; cbn [idf_pending idf_expanded];
-    repeat rewrite PTrieT.trie_get_clock.
+    repeat PTrieT.trie_get_le.
   all: destruct (trie_get v discovered) as [mark|] eqn:Hdiscovered;
     destruct (trie_get v expanded) as [done|] eqn:Hexpanded;
     cbn beta iota zeta;

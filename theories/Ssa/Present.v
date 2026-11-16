@@ -1248,18 +1248,18 @@ Module BlockCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
   Proof.
     intros p n. unfold c_cfg_adj. time_unfold T_out.
     time_unfold @T_lang_out. time_unfold @T_index_row.
-    time_unfold PosKeyT.T_encode. rewrite PTrieT.trie_get_clock.
+    time_unfold PosKeyT.T_encode.
     rewrite !Nat2N.inj_add. time_cbn.
-    unfold PosKeyT.bits, PosKeyT.encode, PosKeyCode.encode; nia.
+    unfold PosKeyT.bits, PosKeyT.encode, PosKeyCode.encode; PTrieT.trie_get_le; nia.
   Qed.
   Lemma T_inc_le : forall p n,
     (T_inc p n <= c_cfg_adj * N.of_nat (PosKeyT.bits n + length (inc p n) + 1))%N.
   Proof.
     intros p n. unfold c_cfg_adj. time_unfold T_inc.
     time_unfold @T_lang_inc. time_unfold @T_index_row.
-    time_unfold PosKeyT.T_encode. rewrite PTrieT.trie_get_clock.
+    time_unfold PosKeyT.T_encode.
     rewrite !Nat2N.inj_add. time_cbn.
-    unfold PosKeyT.bits, PosKeyT.encode, PosKeyCode.encode; nia.
+    unfold PosKeyT.bits, PosKeyT.encode, PosKeyCode.encode; PTrieT.trie_get_le; nia.
   Qed.
 End BlockCfgT.
 
@@ -1374,11 +1374,7 @@ Module PointCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     intros p n. pose proof (PointKey.T_encode_le n) as Hkey.
     unfold c_cfg_adj. time_unfold T_out.
     time_unfold @T_lang_point_out. time_unfold @T_index_row.
-    rewrite PTrieT.trie_get_clock.
-    change (1 + (1 + PointKey.T_encode n +
-      (1 + 2 * N.of_nat (PointKey.bits n))) <=
-      8 * (PointKey.c_key + 1) *
-      N.of_nat (PointKey.bits n + length (out p n) + 1))%N.
+    PTrieT.trie_get_le. change (Pos.size_nat (PointKey.encode n)) with (PointKey.bits n) in *.
     rewrite !Nat2N.inj_add in *; nia.
   Qed.
   Lemma T_inc_le : forall p n,
@@ -1387,11 +1383,7 @@ Module PointCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     intros p n. pose proof (PointKey.T_encode_le n) as Hkey.
     unfold c_cfg_adj. time_unfold T_inc.
     time_unfold @T_lang_point_inc. time_unfold @T_index_row.
-    rewrite PTrieT.trie_get_clock.
-    change (1 + (1 + PointKey.T_encode n +
-      (1 + 2 * N.of_nat (PointKey.bits n))) <=
-      8 * (PointKey.c_key + 1) *
-      N.of_nat (PointKey.bits n + length (inc p n) + 1))%N.
+    PTrieT.trie_get_le. change (Pos.size_nat (PointKey.encode n)) with (PointKey.bits n) in *.
     rewrite !Nat2N.inj_add in *; nia.
   Qed.
 End PointCfgT.
@@ -2495,7 +2487,7 @@ Proof.
       ltac:(intros [seen kept] [b body] Hin;
         pose proof (Hwidth b body Hin) as Hb;
         pose proof (PTrieT.T_set_le unit b tt seen) as Hset;
-        time_cbn; rewrite PTrieT.trie_get_clock;
+        time_cbn; PTrieT.trie_get_le;
         destruct (trie_get b seen); time_simpl; time_cbn; nia) (Empty, [])) as Hfold
   end.
   lazymatch goal with
@@ -2654,7 +2646,7 @@ Qed.
 Lemma prep_get_clock {K G A} (p : func positive K G) key (table : ptrie A) :
   prep_key_bounded p key -> (T_trie_get key table <= prep_atom p)%N.
 Proof.
-  intro Hkey. rewrite PTrieT.trie_get_clock.
+  intro Hkey. eapply N.le_trans; [apply PTrieT.T_trie_get_le|].
   apply prep_product; [pose proof prep_scale_positive; lia|].
   pose proof (prep_key_units p key Hkey). lia.
 Qed.

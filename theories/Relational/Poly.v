@@ -1648,13 +1648,13 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     induction p as [p IH|p IH|]; intro tr; cbn [PTrieCode.replace].
     - rewrite normalization_mass_node, IH, (normalization_mass_view v tr).
       unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
-      cbn [trie_get]. ring.
+      rewrite trie_get_xI. ring.
     - rewrite normalization_mass_node, IH, (normalization_mass_view v tr).
       unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
-      cbn [trie_get]. ring.
+      rewrite trie_get_xO. ring.
     - rewrite normalization_mass_node, (normalization_mass_view v tr).
       unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
-      cbn [trie_get normalization_value]. ring.
+      rewrite trie_get_xH. cbn [normalization_value]. ring.
   Qed.
 
   (** A fold whose step adds one contribution accumulates the nonempty trie mass. *)

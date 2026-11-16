@@ -666,7 +666,7 @@ Proof.
   - time_step.
   - assert (Hx : Pos.size_nat x <= w) by (apply Hwidth; now left).
     specialize (IH rho w ltac:(intros y Hin; apply Hwidth; now right)).
-    time_unfold T_build_values; rewrite PTrieT.trie_get_clock.
+    time_unfold T_build_values; PTrieT.trie_get_le.
     destruct (trie_get x rho), (build_values rho rest); time_cbn; nia.
 Qed.
 
@@ -697,7 +697,7 @@ Proof.
       ltac:(intros y Hin; apply Hwidth; now right)).
     pose proof (val_mem_time phis x w Hx) as Hmem.
     pose proof (build_phi_time b x w Hb) as Hphi.
-    time_unfold T_build_project; rewrite !PTrieT.trie_get_clock.
+    time_unfold T_build_project; PTrieT.trie_get_le.
     destruct (val_mem phis x), (trie_get x rho), (trie_get x inputs),
       (build_project b phis rest rho inputs); time_cbn; nia.
 Qed.
@@ -713,7 +713,7 @@ Proof.
   - time_step.
   - assert (Hb : Pos.size_nat b <= w) by (apply (Hwidth b body); now left).
     specialize (IH bodies w ltac:(intros key value Hin; apply (Hwidth key value); now right)).
-    time_unfold @T_build_materialize; rewrite PTrieT.trie_get_clock.
+    time_unfold @T_build_materialize; PTrieT.trie_get_le.
     destruct (trie_get b bodies), (build_materialize rest bodies); time_cbn; nia.
 Qed.
 
@@ -814,7 +814,7 @@ Lemma build_children_time t b w : Pos.size_nat b <= w ->
   (T_children t b <= 4 * N.of_nat (w + 1))%N.
 Proof.
   destruct t as [parents rows before after]; intro Hwidth.
-  time_unfold T_children; rewrite PTrieT.trie_get_clock.
+  time_unfold T_children; PTrieT.trie_get_le.
   destruct (trie_get b rows); time_cbn; nia.
 Qed.
 
@@ -865,7 +865,7 @@ Qed.
 Lemma build_lookup_time {A} (rho : ptrie A) x w : Pos.size_nat x <= w ->
   (T_trie_get x rho <= 3 * N.of_nat (w + 1))%N.
 Proof.
-  intro Hwidth; rewrite PTrieT.trie_get_clock; time_cbn; nia.
+  intro Hwidth; PTrieT.trie_get_le; time_cbn; nia.
 Qed.
 
 (** One inventory member contributes no more than the complete nonnegative sum. *)
@@ -3413,7 +3413,7 @@ Module BuildT (O : OPS)
         ltac:(intros b Hin;
           change (In b (phi_sites p x)) in Hin;
           pose proof (place_phi_width p x b Hcheck Hin) as Hb;
-          time_simpl; rewrite PTrieT.trie_get_clock;
+          time_simpl; PTrieT.trie_get_le;
           destruct (trie_get b (live_sets (L.live_in p))) as [values|];
           [pose proof (val_mem_time values x (function_width p) Hxwidth)|];
           unfold width; nia)) as Hfilter
@@ -4277,7 +4277,7 @@ Module BuildT (O : OPS)
       4 * N.of_nat (function_width p + 1))%N.
   Proof.
     intros Htasks Hbody; pose proof (proj1 (Htasks b inherited (or_introl eq_refl))) as Hb.
-    time_unfold T_rename_step_indexed; rewrite Hbody, PTrieT.trie_get_clock.
+    time_unfold T_rename_step_indexed; rewrite Hbody. PTrieT.trie_get_le.
     build_projection_clocks; nia.
   Qed.
 

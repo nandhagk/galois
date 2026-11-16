@@ -2966,11 +2966,11 @@ Module DestroyT (O : OPS)
     induction xs as [|x rest IH]; intros Hwidth seen.
     - time_unfold T_distinct_vars. cbn [length]. rewrite Nat2N.inj_add. nia.
     - pose proof (Hwidth x (or_introl eq_refl)) as Hx.
-      pose proof (PTrieT.trie_get_clock unit x seen) as Hget.
+      pose proof (PTrieT.T_trie_get_le unit x seen) as Hget.
       pose proof (PTrieT.T_set_le unit x tt seen) as Hset.
       specialize (IH (fun y Hy => Hwidth y (or_intror Hy)) (PTrieCode.set x tt seen)).
       apply time_of_nat_le in Hx.
-      time_unfold T_distinct_vars. rewrite Hget.
+      time_unfold T_distinct_vars.
       destruct (trie_get x seen); cbn [length];
         rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
   Qed.
@@ -3087,8 +3087,8 @@ Module DestroyT (O : OPS)
   Lemma empty_params_clock table target w : Pos.size_nat target <= w ->
     (T_empty_params table target <= 4 * N.of_nat (w + 1))%N.
   Proof.
-    intro Hwidth. pose proof (PTrieT.trie_get_clock (list positive) target table) as Hget.
-    time_unfold T_empty_params. rewrite Hget.
+    intro Hwidth. pose proof (PTrieT.T_trie_get_le (list positive) target table) as Hget.
+    time_unfold T_empty_params.
     apply time_of_nat_le in Hwidth. rewrite Nat2N.inj_add. nia.
   Qed.
 
@@ -3167,8 +3167,8 @@ Module DestroyT (O : OPS)
     destruct ending as [target actuals|guard operands yes ys no ns|values];
       cbn [term code exit_targets exit_uses exit_arg_count] in *.
     - pose proof (Htargets target (or_introl eq_refl)) as Htarget.
-      pose proof (PTrieT.trie_get_clock (list positive) target table) as Hget.
-      unfold T_copy_block, T_term, T_code. cbn [term code]. rewrite Hget.
+      pose proof (PTrieT.T_trie_get_le (list positive) target table) as Hget.
+      unfold T_copy_block, T_term, T_code. cbn [term code].
       destruct (trie_get target table) as [formals|] eqn:Hrow.
       + pose proof (pair_moves_clock formals actuals) as Hpairtime.
         destruct (pair_moves formals actuals) as [[|first par]|] eqn:Hpair.
@@ -3203,7 +3203,7 @@ Module DestroyT (O : OPS)
           pose proof (copy_move_cost_bound _ _ _ _ (N.of_nat (length actuals))
             (N.of_nat (length instructions)) (N.of_nat w)
             Hinsert Hchecked' Hpairtime Htarget) as Hcost.
-          clear -Hcost.
+          clear - Hcost Hget.
           unfold Datatypes.T_andb. destruct (andb (moves_ok (first :: par) tmp)
             (PM.check_moves (first :: par) tmp (PM.seq (first :: par) tmp))); lia.
         * apply time_of_nat_le in Htarget. rewrite !Nat2N.inj_add in *. nia.
@@ -3376,7 +3376,8 @@ Module DestroyT (O : OPS)
     (forall x, In x (function_ids s) -> Pos.size_nat x <= w) ->
     (T_trie_get (entry _ _ _ s) table <= 2 * copy_budget s w)%N.
   Proof.
-    intro Hids. rewrite (PTrieT.trie_get_clock (list positive) (entry _ _ _ s) table).
+    intro Hids.
+    eapply N.le_trans; [apply (PTrieT.T_trie_get_le _ (entry _ _ _ s) table)|].
     replace (2 * N.of_nat (Pos.size_nat (entry _ _ _ s)))%N with
       (2 * (1 * N.of_nat 1 * N.of_nat (Pos.size_nat (entry _ _ _ s))))%N
       by (cbn [N.of_nat]; ring).

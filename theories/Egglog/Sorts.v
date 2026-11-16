@@ -629,7 +629,7 @@ Proof.
     (T_has_b g t s <= 8 * N.of_nat (term_bits t))%N).
   {
     intros g [x|v] s; time_step;
-      unfold T_sort_eqb; time_cbn; rewrite ?PTrieT.trie_get_clock; time_cases; nia.
+      unfold T_sort_eqb; time_cbn; PTrieT.trie_get_le; time_cases; nia.
   }
   assert (Hhas_list : forall (ts : list (term V)) ss g,
     (T_has_list_b g ts ss <= 16 * N.of_nat (terms_bits ts + 1))%N).
@@ -655,7 +655,7 @@ Proof.
     (T_bind_b g t s <= 16 * N.of_nat (term_bits t))%N).
   {
     intros g [x|v] s; time_step;
-      unfold T_sort_eqb; time_cbn; rewrite ?PTrieT.trie_get_clock;
+      unfold T_sort_eqb; time_cbn; PTrieT.trie_get_le;
       try pose proof (Hset sort x s g); time_cases; nia.
   }
   assert (Hbind_list : forall (ts : list (term V)) ss g,
@@ -689,7 +689,7 @@ Proof.
     induction q as [|a q IH]; intros tb g.
     - time_step.
     - destruct a as [f args res | op args res].
-      + time_step. rewrite PTrieT.trie_get_clock.
+      + time_step. PTrieT.trie_get_le.
         destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
         destruct (reads_b ss out); time_cbn; [|nia].
         pose proof (Hbind_list args ss g).
@@ -706,12 +706,12 @@ Proof.
     induction acts as [|a acts IH]; intros tb g.
     - time_step.
     - destruct a as [x f args | f args res | t u | x op args].
-      + time_step. rewrite PTrieT.trie_get_clock.
+      + time_step. PTrieT.trie_get_le.
         destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
         destruct out; time_cbn; try nia.
         pose proof (Hhas_list args ss g). pose proof (Hset sort x SId g).
         pose proof (IH tb (PTrieCode.set x SId g)). nia.
-      + time_step. rewrite PTrieT.trie_get_clock.
+      + time_step. PTrieT.trie_get_le.
         destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
         pose proof (Hhas_list args ss g). pose proof (Hhas_result g out res).
         pose proof (IH tb g). nia.

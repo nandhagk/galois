@@ -1765,7 +1765,7 @@ Local Lemma scc_filter_time w (listed : ptrie bool) vertices :
 Proof.
   intros Hwidth. induction Hwidth as [|v vertices Hv Hwidth IH].
   - time_unfold @List.T_filter. cbn [length]. lia.
-  - time_unfold @List.T_filter. cbn beta. rewrite PTrieT.trie_get_clock.
+  - time_unfold @List.T_filter. cbn beta. PTrieT.trie_get_le.
     destruct (trie_get v listed); time_cbn; cbn [length];
       rewrite !Nat2N.inj_add, ?time_of_nat_succ in *; nia.
 Qed.
@@ -4899,7 +4899,7 @@ Module SccT <: SCC_ALL.
     (TarjanVisitor.T_lower v n s <= 4096 * N.of_nat (w + 1))%N.
   Proof.
     intros Hv Hvalues. time_unfold @TarjanVisitor.T_lower. time_simpl.
-    rewrite PTrieT.trie_get_clock.
+    PTrieT.trie_get_le.
     destruct (trie_get v (tarjan_low s)) as [old|] eqn:Hlookup; [|lia].
     pose proof (Hvalues v old Hlookup) as Hold.
     pose proof (PTrieT.T_set_le positive v (Pos.min old n) (tarjan_low s)) as Hset.
@@ -4937,9 +4937,9 @@ Module SccT <: SCC_ALL.
     intros [_ [_ [_ [_ [_ Hvalues]]]]] Hu Hv.
     time_unfold @TarjanVisitor.T_edge. time_simpl.
     destruct kind; [lia| |].
-    all: rewrite PTrieT.trie_get_clock;
+    all: PTrieT.trie_get_le;
       destruct (trie_get v (tarjan_active s)) as [[|]|]; try lia.
-    all: rewrite PTrieT.trie_get_clock;
+    all: PTrieT.trie_get_le;
       destruct (trie_get v (tarjan_disc s)) as [n|]; try lia.
     all: pose proof (lower_clock w u n s Hu Hvalues); lia.
   Qed.
@@ -4950,11 +4950,11 @@ Module SccT <: SCC_ALL.
   Proof.
     intros [Hpending [Hframes [Hclock [Hnext [Hdisc Hlow]]]]] Hv.
     time_unfold @TarjanVisitor.T_leave. time_simpl. unfold TarjanVisitor.leave.
-    rewrite PTrieT.trie_get_clock.
+    PTrieT.trie_get_le.
     destruct (trie_get v (tarjan_low s)) as [low|] eqn:Hlookup.
     2: { unfold potential. cbn [tarjan_pending tarjan_emitted]. lia. }
     pose proof (Hlow v low Hlookup) as Hlow_width.
-    rewrite PTrieT.trie_get_clock.
+    PTrieT.trie_get_le.
     destruct (trie_get v (tarjan_disc s)) as [disc|] eqn:Hdiscovery.
     2: { unfold potential. cbn [tarjan_pending tarjan_emitted]. lia. }
     pose proof (Std.Pos.T_eqb_le low disc) as Hequal.

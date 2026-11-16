@@ -311,11 +311,11 @@ Proof.
   intros owners entries [|v rest] width Hwidth Howners.
   - time_step.
   - inversion Hwidth as [|? ? Hvertex Hrest]; subst.
-    pose proof (PTrieT.trie_get_clock positive v owners) as Hget.
+    pose proof (PTrieT.T_trie_get_le positive v owners) as Hget.
     time_unfold @T_wto_preferred. cbn beta iota zeta.
     destruct (trie_get v owners) as [i|] eqn:Howner.
     + pose proof (Howners v i Howner) as Hidentifier.
-      pose proof (PTrieT.trie_get_clock positive i entries) as Hentry.
+      pose proof (PTrieT.T_trie_get_le positive i entries) as Hentry.
       time_simpl. rewrite !Nat2N.inj_add in *. nia.
     + time_simpl. rewrite !Nat2N.inj_add in *. nia.
 Qed.
@@ -2164,8 +2164,8 @@ Proof.
     + pose proof (wto_key_fits_clock (graph_width (base g)) v) as Hfit.
       destruct (wto_key_fits (graph_width (base g)) v) eqn:Hfits.
       * pose proof (wto_key_fits_width _ _ Hfits) as Hv.
-        pose proof (PTrieT.trie_get_clock bool v (listed_of g)) as Hlisted.
-        pose proof (PTrieT.trie_get_clock N v ranks) as Hranks.
+        pose proof (PTrieT.T_trie_get_le bool v (listed_of g)) as Hlisted.
+        pose proof (PTrieT.T_trie_get_le N v ranks) as Hranks.
         pose proof (PTrieT.T_set_le N v next ranks) as Hset.
         pose proof (N.T_succ_le next) as Hsucc.
         time_unfold @T_wto_check_step. rewrite Hfits. time_cbn.
@@ -2176,8 +2176,8 @@ Proof.
     + pose proof (wto_key_fits_clock (graph_width (base g)) h) as Hfit.
       destruct (wto_key_fits (graph_width (base g)) h) eqn:Hfits.
       * pose proof (wto_key_fits_width _ _ Hfits) as Hh.
-        pose proof (PTrieT.trie_get_clock bool h (listed_of g)) as Hlisted.
-        pose proof (PTrieT.trie_get_clock N h ranks) as Hranks.
+        pose proof (PTrieT.T_trie_get_le bool h (listed_of g)) as Hlisted.
+        pose proof (PTrieT.T_trie_get_le N h ranks) as Hranks.
         pose proof (PTrieT.T_set_le N h next ranks) as Hset.
         pose proof (N.T_succ_le next) as Hsucc.
         time_unfold @T_wto_check_step. rewrite Hfits. time_cbn.
@@ -2186,12 +2186,12 @@ Proof.
       * time_unfold @T_wto_check_step. rewrite Hfits. time_cbn.
         rewrite !Nat2N.inj_add in *. nia.
   - pose proof (wto_index_close_width g whole _ h Hinv (or_introl eq_refl)) as Hh.
-    pose proof (PTrieT.trie_get_clock N h ranks) as Hget.
+    pose proof (PTrieT.T_trie_get_le N h ranks) as Hget.
     destruct (trie_get h ranks) as [lo|] eqn:Hlo.
     + pose proof (PTrieT.T_set_le (N * N) h (lo, next) intervals) as Hset.
-      time_unfold @T_wto_check_step. rewrite Hlo. time_cbn. rewrite Hget.
+      time_unfold @T_wto_check_step. rewrite Hlo. time_cbn.
       rewrite !Nat2N.inj_add in *. nia.
-    + time_unfold @T_wto_check_step. rewrite Hlo. time_cbn. rewrite Hget.
+    + time_unfold @T_wto_check_step. rewrite Hlo. time_cbn.
       rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
@@ -2317,9 +2317,9 @@ Lemma wto_interval_edge_clock width ranks intervals u v :
   (T_wto_interval_edge ranks intervals u v <= 64 * N.of_nat (width + 1))%N.
 Proof.
   intros Hu Hv Hrank.
-  pose proof (PTrieT.trie_get_clock N u ranks) as Hgetu.
-  pose proof (PTrieT.trie_get_clock N v ranks) as Hgetv.
-  pose proof (PTrieT.trie_get_clock (N * N) v intervals) as Hgetinterval.
+  pose proof (PTrieT.T_trie_get_le N u ranks) as Hgetu.
+  pose proof (PTrieT.T_trie_get_le N v ranks) as Hgetv.
+  pose proof (PTrieT.T_trie_get_le (N * N) v intervals) as Hgetinterval.
   destruct (trie_get u ranks) as [ru|] eqn:Hru.
   - destruct (trie_get v ranks) as [rv|] eqn:Hrv.
     + pose proof (Hrank ru eq_refl) as Hrwidth.
@@ -2572,7 +2572,7 @@ Proof.
       4 * N.of_nat (width + 1))%N) vs).
   { eapply Forall_impl; [|exact Hwidth]. intros v Hv.
     cbn beta in Hv.
-    rewrite (PTrieT.trie_get_clock A v table), Nat2N.inj_add. nia. }
+    rewrite Nat2N.inj_add. PTrieT.trie_get_le. nia. }
   pose proof (wto_forallb_clock
     (fun v => match trie_get v table with Some _ => true | None => false end)
     (fun v => 1 + T_trie_get v table)%N vs (4 * N.of_nat (width + 1))%N Hcallback) as Hscan.
@@ -4293,7 +4293,7 @@ Module WtoT <: WTO_ALL.
     assert (Hcost : forall v, In v row ->
       (1 + T_trie_get v listed <= 4 * N.of_nat (width + 1))%N).
     { intros v Hin. rewrite Forall_forall in Hwidth. specialize (Hwidth v Hin).
-      rewrite (PTrieT.trie_get_clock bool v listed). rewrite Nat2N.inj_add. nia. }
+      PTrieT.trie_get_le. rewrite Nat2N.inj_add. nia. }
     pose proof (scope_filter_members_time
       (fun v => match trie_get v listed with Some _ => true | None => false end)
       (fun v => (1 + T_trie_get v listed)%N) row (4 * N.of_nat (width + 1))%N Hcost) as Hfilter.
@@ -4639,7 +4639,7 @@ Module WtoT <: WTO_ALL.
     (T_wto_offer i v entries <= 8 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
   Proof.
     intro Hwidth. pose proof (PTrieT.T_set_le positive i v entries) as Hset.
-    time_unfold @T_wto_offer. rewrite (PTrieT.trie_get_clock positive i entries).
+    time_unfold @T_wto_offer. PTrieT.trie_get_le.
     destruct (trie_get i entries); rewrite !Nat2N.inj_add in *; nia.
   Qed.
 
@@ -4651,7 +4651,7 @@ Module WtoT <: WTO_ALL.
       16 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
   Proof.
     intros Hv Howners. time_unfold @T_wto_root_entry.
-    rewrite (PTrieT.trie_get_clock positive v owners).
+    PTrieT.trie_get_le.
     destruct (trie_get v owners) as [i|] eqn:Hlookup.
     - pose proof (scope_offer_time i v entries width (Howners v i Hlookup)) as Hoffer.
       rewrite !Nat2N.inj_add in *. nia.
@@ -4667,7 +4667,7 @@ Module WtoT <: WTO_ALL.
   Proof.
     intros Hv Howners. time_unfold @T_wto_edge_entry.
     destruct (trie_get u owners) as [i|] eqn:Hsource.
-    - rewrite (PTrieT.trie_get_clock positive v owners).
+    - PTrieT.trie_get_le.
       destruct (trie_get v owners) as [j|] eqn:Htarget.
       + pose proof (Howners u i Hsource) as Hi.
         pose proof (scope_offer_time j v entries width (Howners v j Htarget)) as Hoffer.
@@ -4713,8 +4713,8 @@ Module WtoT <: WTO_ALL.
     rewrite Forall_forall in Hwidth. destruct (Hwidth u Hin) as [Hu Hrow].
     pose proof (scope_edge_fold_time owners u (succs (base g) u) acc width Hrow Howners) as Hfold.
     pose proof (search_succs_clock (base g) u) as Hread.
-    rewrite (PTrieT.trie_get_clock positive u owners). unfold T_base.
-    rewrite !Nat2N.inj_add in *. clear - Hu Hfold Hread. nia.
+    unfold T_base.
+    rewrite !Nat2N.inj_add in *. clear - Hu Hfold Hread. PTrieT.trie_get_le. nia.
   Qed.
 
   Local Lemma scope_mass_app g first last :
@@ -4830,7 +4830,7 @@ Module WtoT <: WTO_ALL.
       (1 + ((T_base (scc_graph g) + T_succ (base (scc_graph g))) +
         T_trie_get v (succ (base (scc_graph g)))) <= 8 * N.of_nat (width + 1))%N).
     { intros v Hin. rewrite Forall_forall in Hwidth. specialize (Hwidth v Hin).
-      rewrite PTrieT.trie_get_clock. unfold T_base, T_succ.
+      PTrieT.trie_get_le. unfold T_base, T_succ.
       rewrite Nat2N.inj_add. nia. }
     pose proof (scope_filter_members_time
       (fun v => match trie_get v (succ (base (scc_graph g))) with

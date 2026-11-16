@@ -5488,13 +5488,13 @@ Proof.
   induction p as [p IH|p IH|]; intro tr; cbn [PTrieCode.replace].
   - rewrite karr_zmass_node, IH, (karr_zmass_view A f tr).
     unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
-    cbn [trie_get]. ring.
+    rewrite trie_get_xI. ring.
   - rewrite karr_zmass_node, IH, (karr_zmass_view A f tr).
     unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
-    cbn [trie_get]. ring.
+    rewrite trie_get_xO. ring.
   - rewrite karr_zmass_node, (karr_zmass_view A f tr).
     unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
-    cbn [trie_get karr_zoption]. ring.
+    rewrite trie_get_xH. cbn [karr_zoption]. ring.
 Qed.
 
 Definition karr_qsum {A} (f : A -> Q) (xs : list A) : Q :=
@@ -5548,7 +5548,9 @@ Lemma karr_qmass_set : forall A (f : A -> Q) p a tr,
 Proof.
   intros A f p a. unfold PTrieCode.set.
   induction p as [p IH|p IH|]; intro tr; cbn [PTrieCode.replace].
-  - setoid_rewrite karr_qmass_node. setoid_rewrite IH.
+  - replace (PTrieCode.get (xI p) tr) with (PTrieCode.get p (PTrieCode.right tr))
+      by exact (eq_sym (trie_get_xI p tr)).
+    setoid_rewrite karr_qmass_node. setoid_rewrite IH.
     setoid_rewrite (karr_qmass_view A f tr).
     change (karr_qmass f (PTrieCode.left tr) + karr_qoption f (PTrieCode.value tr) +
       (karr_qmass f (PTrieCode.right tr) + f a -
@@ -5556,7 +5558,9 @@ Proof.
       karr_qmass f (PTrieCode.left tr) + karr_qoption f (PTrieCode.value tr) +
       karr_qmass f (PTrieCode.right tr) + f a -
        karr_qoption f (PTrieCode.get p (PTrieCode.right tr)))%Q. ring.
-  - setoid_rewrite karr_qmass_node. setoid_rewrite IH.
+  - replace (PTrieCode.get (xO p) tr) with (PTrieCode.get p (PTrieCode.left tr))
+      by exact (eq_sym (trie_get_xO p tr)).
+    setoid_rewrite karr_qmass_node. setoid_rewrite IH.
     setoid_rewrite (karr_qmass_view A f tr).
     change (karr_qmass f (PTrieCode.left tr) + f a -
       karr_qoption f (PTrieCode.get p (PTrieCode.left tr)) +
@@ -5564,7 +5568,9 @@ Proof.
       karr_qmass f (PTrieCode.left tr) + karr_qoption f (PTrieCode.value tr) +
       karr_qmass f (PTrieCode.right tr) + f a -
        karr_qoption f (PTrieCode.get p (PTrieCode.left tr)))%Q. ring.
-  - setoid_rewrite karr_qmass_node. setoid_rewrite (karr_qmass_view A f tr).
+  - replace (PTrieCode.get xH tr) with (PTrieCode.value tr)
+      by exact (eq_sym (trie_get_xH tr)).
+    setoid_rewrite karr_qmass_node. setoid_rewrite (karr_qmass_view A f tr).
     change (karr_qmass f (PTrieCode.left tr) + f a + karr_qmass f (PTrieCode.right tr) ==
       karr_qmass f (PTrieCode.left tr) + karr_qoption f (PTrieCode.value tr) +
       karr_qmass f (PTrieCode.right tr) + f a - karr_qoption f (PTrieCode.value tr))%Q.

@@ -1987,8 +1987,8 @@ Lemma search_succs_clock g v :
   (T_succs g v <= 4 * N.of_nat (Pos.size_nat v + 1))%N.
 Proof.
   destruct g as [vertices adjacency].
-  pose proof (PTrieT.trie_get_clock (list positive) v adjacency) as Hlookup.
-  time_unfold @T_succs. time_cbn. rewrite Hlookup. lia.
+  pose proof (PTrieT.T_trie_get_le (list positive) v adjacency) as Hlookup.
+  time_unfold @T_succs. time_cbn. lia.
 Qed.
 
 (** Every continuing step pays one key-width bound, including its loop allowance. *)
@@ -2002,19 +2002,19 @@ Proof.
   destruct tasks as [|task tasks]; [discriminate Hstep|].
   inversion Hvalid as [|task0 tasks0 Htask Htail]; subst task0 tasks0.
   destruct task as [v|u row|v]; cbn [search_step] in Hstep.
-  - pose proof (PTrieT.trie_get_clock bool v colours) as Hget.
+  - pose proof (PTrieT.T_trie_get_le bool v colours) as Hget.
     pose proof (PTrieT.T_set_le bool v true colours) as Hset.
     pose proof (search_succs_clock g v) as Hrow.
     cbn [search_task_valid] in Htask.
     destruct (trie_get v colours) eqn:Hcolour;
-      time_unfold @T_search_step; rewrite ?Hcolour; time_cbn; rewrite Hget;
+      time_unfold @T_search_step; rewrite ?Hcolour; time_cbn;
       rewrite !Nat2N.inj_add in *; nia.
   - destruct row as [|v row].
     + time_unfold @T_search_step. time_cbn. nia.
     + destruct Htask as [Hu Hrow]. inversion Hrow as [|v0 row0 Hv Hrest]; subst v0 row0.
-      pose proof (PTrieT.trie_get_clock bool v colours) as Hget.
+      pose proof (PTrieT.T_trie_get_le bool v colours) as Hget.
       destruct (trie_get v colours) as [active|] eqn:Hcolour;
-        time_unfold @T_search_step; rewrite ?Hcolour; time_cbn; rewrite Hget;
+        time_unfold @T_search_step; rewrite ?Hcolour; time_cbn;
         rewrite !Nat2N.inj_add in *; nia.
   - cbn [search_task_valid] in Htask.
     pose proof (PTrieT.T_set_le bool v false colours) as Hset.

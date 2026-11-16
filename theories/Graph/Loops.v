@@ -1286,7 +1286,7 @@ Local Lemma loop_preds_clock : forall g v,
   (T_preds g v <= 2 * N.of_nat (Pos.size_nat v) + 1)%N.
 Proof.
   intros [graph predecessors vertex_count edge_count] v.
-  unfold T_preds. time_simpl. rewrite PTrieT.trie_get_clock. lia.
+  unfold T_preds. time_simpl. PTrieT.trie_get_le. lia.
 Qed.
 
 (** Retiring an already marked or unreachable task only reads its two key cells. *)
@@ -1298,7 +1298,7 @@ Local Lemma loop_body_skip_clock : forall g t h v rest seen answer width,
 Proof.
   intros g t h v rest seen answer width Hv Hskip.
   apply time_of_nat_le in Hv. unfold loop_body_step_cost, loop_body_unit_cost.
-  unfold T_body_step, T_pre. time_simpl. rewrite !PTrieT.trie_get_clock.
+  unfold T_body_step, T_pre. time_simpl. PTrieT.trie_get_le.
   rewrite Nat2N.inj_add. destruct Hskip as [Hseen|Hpre].
   - rewrite Hseen. destruct (trie_get v (pre t)); nia.
   - rewrite Hpre. destruct (trie_get v seen); nia.
@@ -1319,7 +1319,7 @@ Proof.
     | Some _ => true | None => false end) (preds g v)) as Hlength.
   apply time_of_nat_le in Hv.
   unfold T_body_step, T_pre. time_simpl. rewrite Hseen, Hpre.
-  rewrite !PTrieT.trie_get_clock.
+  PTrieT.trie_get_le.
   match goal with
   | |- context [List.T_filter ?test ?clock (preds g v)] =>
       assert (Hfilter : (List.T_filter test clock (preds g v) <=
@@ -1327,7 +1327,7 @@ Proof.
   end.
   { apply loop_filter_clock_bound. intros u Hin.
     pose proof (Hwidth u Hin) as Hu. apply time_of_nat_le in Hu.
-    cbn beta. rewrite PTrieT.trie_get_clock. rewrite Nat2N.inj_add. nia. }
+    cbn beta. PTrieT.trie_get_le. rewrite Nat2N.inj_add. nia. }
   match goal with
   | |- context [Datatypes.T_app ?xs rest] =>
       pose proof (Datatypes.T_app_le xs rest) as Happ
@@ -1971,7 +1971,7 @@ Proof.
   apply time_of_nat_le in Hheader.
   unfold T_install, T_loop_header_map, T_loop_parent_map, T_loop_body_map. time_simpl.
   cbn [loop_header_map loop_parent_map loop_body_map].
-  rewrite PTrieT.trie_get_clock.
+  PTrieT.trie_get_le.
   match goal with
   | |- context [List.T_fold_left ?f ?clock vertices owners] =>
       assert (Hfold : (List.T_fold_left f clock vertices owners <=
@@ -2650,8 +2650,8 @@ Proof.
     destruct kind; cbn beta iota zeta; try lia.
     destruct (Hwidth u v Hin) as [Hu Hv].
     apply time_of_nat_le in Hu. apply time_of_nat_le in Hv.
-    rewrite PTrieT.trie_get_clock.
-    destruct (trie_get u rows) as [row|]; [rewrite PTrieT.trie_get_clock|];
+    PTrieT.trie_get_le.
+    destruct (trie_get u rows) as [row|]; [PTrieT.trie_get_le|];
       rewrite Nat2N.inj_add; lia. }
   repeat rewrite Nat2N.inj_add in Htest |- *. nia.
 Qed.
@@ -3788,14 +3788,7 @@ Local Definition loop_result_work result :=
   match result with inl st => loop_tree_order_work st | inr scan => loop_scan_work scan end.
 Local Definition loop_classify_callback_clock g t := fun st => T_tree_step g t st.
 
-Local Lemma loop_children_clock_lower : forall t v,
-  (N.of_nat (Pos.size_nat v) <= T_children t v)%N.
-Proof.
-  intros [parents rows preorder postorder] v. unfold T_children. time_simpl.
-  rewrite PTrieT.trie_get_clock. lia.
-Qed.
-
-(** Entering pays for its recorded key through the child-row lookup, including raw trees. *)
+(** Entering pays for its recorded key through the write of its active mark. *)
 Local Lemma loop_tree_order_growth : forall g t st,
   (loop_result_work (tree_step g t st) <=
     loop_tree_order_work st + T_tree_step g t st)%N.
@@ -3810,7 +3803,8 @@ Proof.
     + cbn [tree_step]. destruct (trie_get v (pre t)), (trie_get v (idom t));
         cbn [loop_result_work loop_tree_order_work loop_tree_output loop_order];
         lia.
-    + pose proof (loop_children_clock_lower t v) as Hchildren.
+    + pose proof (PTrieT.T_set_lower unit v tt active) as Hactive.
+      change (N.of_nat (Pos.size_nat v) <= PTrieCode.T_set v tt active)%N in Hactive.
       cbn [tree_step loop_result_work loop_tree_order_work loop_tree_output loop_order].
       unfold T_tree_step. time_simpl. unfold loop_order_work. cbn [fold_right].
       rewrite Nat2N.inj_add. lia.
@@ -3905,7 +3899,7 @@ Local Lemma loop_latches_clock : forall scan h,
   (T_loop_latches_at scan h <= 4 * N.of_nat (Pos.size_nat h + 1))%N.
 Proof.
   intros [order latches backs] h. unfold T_loop_latches_at, T_loop_latches. time_simpl.
-  rewrite PTrieT.trie_get_clock, Nat2N.inj_add. lia.
+  rewrite Nat2N.inj_add. PTrieT.trie_get_le. lia.
 Qed.
 
 Local Lemma loop_headers_work : forall scan,
@@ -4027,14 +4021,14 @@ Local Lemma loop_successor_clock : forall graph v,
   (T_succs graph v <= 2 * N.of_nat (Pos.size_nat v) + 1)%N.
 Proof.
   intros [vertices adjacency] v. unfold T_succs. time_simpl.
-  rewrite PTrieT.trie_get_clock. lia.
+  PTrieT.trie_get_le. lia.
 Qed.
 
 Local Lemma loop_children_clock : forall t v,
   (T_children t v <= 2 * N.of_nat (Pos.size_nat v) + 1)%N.
 Proof.
   intros [parents rows preorder postorder] v. unfold T_children. time_simpl.
-  rewrite PTrieT.trie_get_clock. lia.
+  PTrieT.trie_get_le. lia.
 Qed.
 
 Local Lemma loop_tail_clock : forall (vertices : list positive), (T_loop_tail vertices <= 1)%N.
@@ -4053,7 +4047,7 @@ Proof.
     subst task' rest'. clear Hkeys Hrest.
   destruct task as [v|v|vertices|u vertices|v]; cbn [loop_task_width] in Hkey.
   - apply time_of_nat_le in Hkey.
-    unfold T_tree_step, T_pre, T_idom. time_simpl. rewrite !PTrieT.trie_get_clock.
+    unfold T_tree_step, T_pre, T_idom. time_simpl. PTrieT.trie_get_le.
     unfold loop_tree_step_cost. repeat rewrite Nat2N.inj_add.
     destruct (trie_get v (pre t)), (trie_get v (idom t)); nia.
   - pose proof (loop_successor_clock (base g) v) as Hsuccessors.
@@ -4069,7 +4063,7 @@ Proof.
       rewrite Nat2N.inj_add. nia.
     + pose proof (Hvertices v (or_introl eq_refl)) as Hv.
       apply time_of_nat_le in Hu. apply time_of_nat_le in Hv.
-      unfold T_tree_step. time_simpl. rewrite !PTrieT.trie_get_clock.
+      unfold T_tree_step. time_simpl. PTrieT.trie_get_le.
       destruct (trie_get v active) as [present|].
       * set (sources := match trie_get v latches with Some xs => xs | None => [] end).
         set (row := match trie_get u backs with Some xs => xs | None => Empty end).

@@ -158,8 +158,8 @@ Local Lemma digraph_succs_time g u w : Pos.size_nat u <= w ->
   (T_succs g u <= 4 * N.of_nat (w + 1))%N.
 Proof.
   intro Hwidth. destruct g as [vs rows].
-  pose proof (PTrieT.trie_get_clock (list positive) u rows) as Hget.
-  time_unfold @T_succs. time_cbn. rewrite Hget. rewrite Nat2N.inj_add. nia.
+  pose proof (PTrieT.T_trie_get_le (list positive) u rows) as Hget.
+  time_unfold @T_succs. time_cbn. rewrite Nat2N.inj_add. nia.
 Qed.
 
 (** Counting edges adds each row length once, so repeated rows are charged explicitly. *)
@@ -219,10 +219,10 @@ Module DigraphT <: DIGRAPH_T.
   Local Lemma add_pred_time u v p :
     (T_add_pred u v p <= 8 * (PTrieT.c_trie + 1) * N.of_nat (Pos.size_nat v + 1))%N.
   Proof.
-    pose proof (PTrieT.trie_get_clock (list positive) v p) as Hget.
+    pose proof (PTrieT.T_trie_get_le (list positive) v p) as Hget.
     pose proof (PTrieT.T_set_le (list positive) v
       (u :: match trie_get v p with Some vs => vs | None => nil end) p) as Hset.
-    time_unfold @T_add_pred. rewrite Hget. rewrite !Nat2N.inj_add in *. nia.
+    time_unfold @T_add_pred. rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
   (** Each successor occurrence pays one insertion, independently of its accumulator. *)

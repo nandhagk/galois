@@ -156,7 +156,7 @@ Proof.
   pose proof (dom_time_counter_succ next) as Hsucc.
   unfold T_dom_read_step. cbn beta iota zeta.
   time_unfold N.T_eqb. cbn [N.eqb]. rewrite Hfits, Hlisted, Hfresh.
-  rewrite !PTrieT.trie_get_clock. time_simpl.
+  PTrieT.trie_get_le. time_simpl.
   unfold dom_read_credit. cbn [read_budget read_next].
   fold (N.pred (N.pos budget)).
   rewrite !Nat2N.inj_add in *.
@@ -189,7 +189,7 @@ Proof.
         destruct (trie_get v listed) as [flag|] eqn:Hlisted;
           destruct (trie_get v pos) as [old|] eqn:Hfresh;
           try discriminate Hstep;
-          rewrite !PTrieT.trie_get_clock; time_simpl;
+          PTrieT.trie_get_le; time_simpl;
           rewrite !Nat2N.inj_add in *; nia.
       * time_simpl. rewrite !Nat2N.inj_add in *. nia.
 Qed.
@@ -2751,7 +2751,7 @@ Lemma dom_order_anchor_size_clock width sizes v :
 Proof.
   intro Hv. pose proof (dom_lt_time_key v) as Hkey.
   pose proof (dom_lt_key_width v) as Hwidth.
-  unfold T_dom_anchor_size. time_simpl. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_anchor_size. time_simpl. PTrieT.trie_get_le.
   rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
@@ -2762,7 +2762,7 @@ Lemma dom_order_anchor_number_clock width table v :
 Proof.
   intro Hv. pose proof (dom_lt_time_key v) as Hkey.
   pose proof (dom_lt_key_width v) as Hwidth.
-  unfold T_dom_order_number. time_simpl. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_order_number. time_simpl. PTrieT.trie_get_le.
   rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
@@ -2860,7 +2860,8 @@ Proof.
   pose proof (dom_lt_time_key p) as Hpkey.
   pose proof (dom_lt_key_width p) as Hpwidth.
   assert (Hsize_width : N.size_nat size <= width) by (apply Hwidth; lia).
-  unfold T_dom_anchor_at_parent. time_simpl. rewrite PTrieT.trie_get_clock.
+  unfold T_dom_anchor_at_parent. time_simpl.
+  pose proof (PTrieT.T_trie_get_le _ (dom_lt_key p) (anchor_free st)) as Hfree_get.
   destruct (trie_get (dom_lt_key p) (anchor_free st)) as [[lo hi]|] eqn:Hget.
   - destruct (proj2 Hstate _ _ Hget) as [Hlo Hhi]. cbn [fst snd] in Hlo, Hhi.
     assert (Hlo_width : N.size_nat lo <= width) by (apply Hwidth; lia).
@@ -2889,7 +2890,8 @@ Proof.
     set (trie_coefficient := PTrieT.c_trie) in *.
     clearbody v_bits p_bits key_bits size_bits lo_bits sum_bits key_v_work key_p_work
       add_work pred_work set_v_work set_p_work trie_coefficient.
-    clear -Hv Hp Hsize_width Hlo_width Hsum_width Hvkey Hpkey Hpwidth Hadd Hpred Hsetv Hsetp.
+    clear -Hv Hp Hsize_width Hlo_width Hsum_width Hvkey Hpkey Hpwidth Hadd Hpred Hsetv Hsetp
+      Hfree_get.
     change (N.of_nat 1) with 1%N in *.
     set (write_budget := (trie_coefficient * (N.of_nat width + 1))%N).
     replace (2 * trie_coefficient * (N.of_nat width + 1))%N with
@@ -2933,7 +2935,7 @@ Proof.
     clearbody v_bits p_bits key_bits size_bits number_bits key_v_work key_p_work
       number_work capacity_pred_work add_work pred_work set_v_work set_p_work trie_coefficient.
     clear -Hv Hp Hsize_width Hnumber_width Hvkey Hpkey Hpwidth Hnumber
-      Hcapacity_pred Hadd Hpred Hsetv Hsetp.
+      Hcapacity_pred Hadd Hpred Hsetv Hsetp Hfree_get.
     change (N.of_nat 1) with 1%N in *.
     set (write_budget := (trie_coefficient * (N.of_nat width + 1))%N).
     replace (2 * trie_coefficient * (N.of_nat width + 1))%N with
@@ -2983,9 +2985,10 @@ Proof.
       by (unfold write_budget; ring).
     clearbody write_budget. lia.
   - destruct (trie_get (dom_lt_key anchor) (anchor_intervals st)) as [[lo hi]|] eqn:Hget.
-    2: { time_simpl. rewrite PTrieT.trie_get_clock. fold p size.
+    2: { time_simpl. fold p size.
          rewrite !Nat2N.inj_add in *. clearbody p size.
          clear -Hv Hanchor Hparent Hsize_clock Hcompare Hatparent Hakey Hawidth.
+         PTrieT.trie_get_le.
          change (N.of_nat 1) with 1%N in *.
          set (write_budget := (PTrieT.c_trie * (N.of_nat width + 1))%N).
          replace (512 * (PTrieT.c_trie + 1) * (N.of_nat width + 1))%N with
@@ -3015,10 +3018,11 @@ Proof.
         (anchor_intervals st) Hanchor) as Hseta.
       pose proof (dom_order_anchor_set_clock width v (lo, N.pred (lo + size))
         (PTrieCode.set (dom_lt_key anchor) (lo + size, hi)%N (anchor_intervals st)) Hv) as Hsetv.
-      time_simpl. rewrite PTrieT.trie_get_clock. fold p size.
+      time_simpl. fold p size.
       rewrite !Nat2N.inj_add in *. clearbody p size.
       clear -Hv Hanchor Hparent Hsize_clock Hcompare Hakey Hawidth Hstart Hltb Hvkey
         Hstart_width Hlo_width Hsize_width Hsum_width Hadd Hpred Hseta Hsetv.
+      PTrieT.trie_get_le.
       change (N.of_nat 1) with 1%N in *.
       set (write_budget := (PTrieT.c_trie * (N.of_nat width + 1))%N).
       replace (2 * PTrieT.c_trie * (N.of_nat width + 1))%N with
@@ -3034,10 +3038,11 @@ Proof.
         (anchor_intervals st) Hanchor) as Hseta.
       pose proof (dom_order_anchor_set_clock width v (N.succ hi - size, hi)%N
         (PTrieCode.set (dom_lt_key anchor) (lo, hi - size)%N (anchor_intervals st)) Hv) as Hsetv.
-      time_simpl. rewrite PTrieT.trie_get_clock. fold p size.
+      time_simpl. fold p size.
       rewrite !Nat2N.inj_add in *. clearbody p size.
       clear -Hv Hanchor Hparent Hsize_clock Hcompare Hakey Hawidth Hstart Hltb Hvkey
         Hstart_width Hhi_width Hsize_width Hsucc_width Hsucc Hsubown Hsubrest Hseta Hsetv.
+      PTrieT.trie_get_le.
       change (N.of_nat 1) with 1%N in *.
       set (write_budget := (PTrieT.c_trie * (N.of_nat width + 1))%N).
       replace (2 * PTrieT.c_trie * (N.of_nat width + 1))%N with
@@ -3618,11 +3623,11 @@ Local Transparent dom_order_source_maps T_dom_order_source_maps
   dom_order_removal T_dom_order_removal dom_anchor_order T_dom_anchor_order
   dom_order_sorted_rows T_dom_order_sorted_rows dom_order_emit T_dom_order_emit.
 
-(** A size observation traverses one key and adds its default-value branch. *)
+(** A size observation traverses at most one key and adds its default-value branch. *)
 Local Lemma dom_time_size_get sizes v :
-  T_dom_size_get sizes v = (1 + 2 * N.of_nat (Pos.size_nat v))%N.
+  (T_dom_size_get sizes v <= 1 + 2 * N.of_nat (Pos.size_nat v))%N.
 Proof.
-  unfold T_dom_size_get. rewrite PTrieT.trie_get_clock. reflexivity.
+  unfold T_dom_size_get. PTrieT.trie_get_le. lia.
 Qed.
 
 (** A size transfer charges two bounded keys and the bits of two bounded values. *)
@@ -3638,10 +3643,13 @@ Proof.
   change (PTrieCode.T_set v (dom_size_get sizes v) sizes <=
     PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
   unfold T_dom_add_size. time_simpl.
-  rewrite dom_time_size_get, PTrieT.trie_get_clock.
+  pose proof (dom_time_size_get sizes v) as Hsize_own.
+  pose proof (PTrieT.T_trie_get_le _ v m) as Hparent_get.
   destruct (trie_get v m) as [p|] eqn:Hparent.
   - specialize (Hparents p eq_refl).
-    rewrite dom_time_size_get, dom_size_set_own.
+    pose proof (dom_time_size_get (PTrieCode.set v (dom_size_get sizes v) sizes) p)
+      as Hsize_parent.
+    rewrite dom_size_set_own.
     pose proof (PTrieT.T_set_le N p
       (dom_size_get sizes p + dom_size_get sizes v)%N
       (PTrieCode.set v (dom_size_get sizes v) sizes)) as Hsetp.
@@ -3650,8 +3658,15 @@ Proof.
       PTrieT.c_trie * N.of_nat (Pos.size_nat p + 1))%N in Hsetp.
     pose proof (N.T_add_le (dom_size_get sizes p) (dom_size_get sizes v)) as Hadd.
     pose proof (Hvalues p) as Hp. pose proof (Hvalues v) as Hown.
-    rewrite !Nat2N.inj_add in *. clear -Hv Hparents Hp Hown Hset Hsetp Hadd. nia.
-  - rewrite !Nat2N.inj_add in *. clear -Hv Hset. nia.
+    assert (Hv_trie : (PTrieT.c_trie * N.of_nat (Pos.size_nat v) <=
+      PTrieT.c_trie * N.of_nat width)%N) by (apply N.mul_le_mono_l; lia).
+    assert (Hp_trie : (PTrieT.c_trie * N.of_nat (Pos.size_nat p) <=
+      PTrieT.c_trie * N.of_nat width)%N) by (apply N.mul_le_mono_l; lia).
+    rewrite !Nat2N.inj_add in *.
+    clear -Hv Hparents Hp Hown Hset Hsetp Hadd Hsize_own Hsize_parent Hparent_get
+      Hv_trie Hp_trie.
+    lia.
+  - rewrite !Nat2N.inj_add in *. clear -Hv Hset Hsize_own Hparent_get. nia.
 Qed.
 
 (** Distinct reverse processing keeps intermediate values within the original size budget. *)
@@ -3761,13 +3776,13 @@ Proof.
   2: { unfold T_dom_rebuild. time_simpl. rewrite Nat2N.inj_add. nia. }
   pose proof (Pos.T_eqb_le v r) as Hroot.
   unfold T_dom_rebuild. destruct (Pos.eqb v r) eqn:Eroot.
-  - destruct (trie_get v m); rewrite !PTrieT.trie_get_clock;
+  - destruct (trie_get v m); PTrieT.trie_get_le;
       time_simpl; rewrite !Nat2N.inj_add; nia.
   - destruct (trie_get v m) as [p|] eqn:Hparent.
-    2: { rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia. }
+    2: { PTrieT.trie_get_le. time_simpl. rewrite Nat2N.inj_add. nia. }
     pose proof (dom_time_key_fits width p) as Hfits_time.
     destruct (dom_key_fits width p) eqn:Hfits.
-    2: { rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia. }
+    2: { PTrieT.trie_get_le. time_simpl. rewrite Nat2N.inj_add. nia. }
     pose proof (dom_key_fits_width width p Hfits) as Hparent_width.
     destruct (trie_get p pos) as [pp|] eqn:Hpp;
       destruct (trie_get v pos) as [pv|] eqn:Hpv.
@@ -3776,11 +3791,11 @@ Proof.
       pose proof (PTrieT.T_set_le positive v p before) as Hset.
       change (PTrieCode.T_set v p before <=
         PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
-      destruct (N.ltb pp pv); rewrite !PTrieT.trie_get_clock; time_simpl;
+      destruct (N.ltb pp pv); PTrieT.trie_get_le; time_simpl;
         rewrite !Nat2N.inj_add in *; nia.
-    + rewrite !PTrieT.trie_get_clock. time_simpl. rewrite !Nat2N.inj_add in *. nia.
-    + rewrite !PTrieT.trie_get_clock. time_simpl. rewrite !Nat2N.inj_add in *. nia.
-    + rewrite !PTrieT.trie_get_clock. time_simpl. rewrite !Nat2N.inj_add in *. nia.
+    + PTrieT.trie_get_le. time_simpl. rewrite !Nat2N.inj_add in *. nia.
+    + PTrieT.trie_get_le. time_simpl. rewrite !Nat2N.inj_add in *. nia.
+    + PTrieT.trie_get_le. time_simpl. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
 (** Distinct accepted keys also bound every reconstructed numeric position. *)
@@ -3815,11 +3830,11 @@ Proof.
     pose proof (dom_add_width pv (dom_size_get sizes v)) as Hsum.
     pose proof (N.T_leb_le (N.add pv (dom_size_get sizes v))
       (N.add pu (dom_size_get sizes u))) as Hends.
-    unfold T_dom_size_get. rewrite !PTrieT.trie_get_clock.
+    unfold T_dom_size_get. PTrieT.trie_get_le.
     time_simpl. rewrite !Nat2N.inj_add in *. nia.
-  - rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia.
-  - rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia.
-  - rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia.
+  - PTrieT.trie_get_le. time_simpl. rewrite Nat2N.inj_add. nia.
+  - PTrieT.trie_get_le. time_simpl. rewrite Nat2N.inj_add. nia.
+  - PTrieT.trie_get_le. time_simpl. rewrite Nat2N.inj_add. nia.
 Qed.
 
 (** Containment checks spend one bounded parent lookup and interval test per entry. *)
@@ -3843,8 +3858,8 @@ Proof.
     destruct (trie_get v m) as [p|] eqn:Hparent.
     - pose proof (dom_time_interval pos sizes p v width
         (Hparents v p Hv Hparent) Hwidth Hpositions Hsizes) as Hinterval.
-      rewrite PTrieT.trie_get_clock. rewrite Nat2N.inj_add in *. nia.
-    - rewrite PTrieT.trie_get_clock. rewrite Nat2N.inj_add. nia. }
+      PTrieT.trie_get_le. rewrite Nat2N.inj_add in *. nia.
+    - PTrieT.trie_get_le. rewrite Nat2N.inj_add. nia. }
   lazymatch goal with
   | |- context [List.T_forallb ?f ?T_f o] =>
     pose proof (@dom_time_forallb positive f T_f
@@ -3892,7 +3907,8 @@ Local Lemma dom_child_weight_set p vs t :
     dom_child_weight t + Pos.size_nat p + length vs.
 Proof.
   revert t. induction p as [p IH|p IH|]; intro t;
-    cbn [PTrieCode.set PTrieCode.replace Pos.size_nat trie_get].
+    cbn [PTrieCode.set PTrieCode.replace Pos.size_nat];
+    rewrite ?trie_get_xO, ?trie_get_xI, ?trie_get_xH.
   all: eapply Nat.le_trans;
     [apply Nat.add_le_mono_r; apply dom_child_weight_node|].
   all: pose proof (dom_child_weight_parts t) as Hparts.
@@ -4026,8 +4042,8 @@ Proof.
     change (PTrieCode.T_set p
       (v :: match trie_get p rows with None => [] | Some vs => vs end) rows <=
       PTrieT.c_trie * N.of_nat (Pos.size_nat p + 1))%N in Hset.
-    rewrite !PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
-  - rewrite PTrieT.trie_get_clock. rewrite Nat2N.inj_add. nia.
+    PTrieT.trie_get_le. rewrite !Nat2N.inj_add in *. nia.
+  - PTrieT.trie_get_le. rewrite Nat2N.inj_add. nia.
 Qed.
 
 Local Lemma dom_time_end_push pos sizes ends v width :
@@ -4046,9 +4062,9 @@ Proof.
     pose proof (PTrieT.T_set_le N v (N.pred (pv + dom_size_get sizes v)) ends) as Hset.
     change (PTrieCode.T_set v (N.pred (pv + dom_size_get sizes v)) ends <=
       PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
-    rewrite PTrieT.trie_get_clock, dom_time_size_get.
+    pose proof (dom_time_size_get sizes v) as Hsize_get. PTrieT.trie_get_le.
     rewrite !Nat2N.inj_add in *. nia.
-  - rewrite PTrieT.trie_get_clock. rewrite Nat2N.inj_add. nia.
+  - PTrieT.trie_get_le. rewrite Nat2N.inj_add. nia.
 Qed.
 
 (** Minima retain the width bound of their two possible results. *)
@@ -4144,21 +4160,23 @@ Proof.
   unfold T_dom_edge_update. destruct acc as [flags|].
   2: { time_simpl. rewrite Nat2N.inj_add. nia. }
   destruct (trie_get u pos) as [pu|] eqn:Hpu.
-  2: { destruct (trie_get v pos); rewrite !PTrieT.trie_get_clock;
+  2: { destruct (trie_get v pos); PTrieT.trie_get_le;
       time_simpl; rewrite Nat2N.inj_add; nia. }
   destruct (trie_get v pos) as [pv|] eqn:Hpv.
-  2: { rewrite !PTrieT.trie_get_clock; time_simpl; rewrite Nat2N.inj_add; nia. }
+  2: { PTrieT.trie_get_le; time_simpl; rewrite Nat2N.inj_add; nia. }
   pose proof (Pos.T_eqb_le v r) as Hroot.
   destruct (Pos.eqb v r).
-  - rewrite !PTrieT.trie_get_clock; time_simpl; rewrite Nat2N.inj_add; nia.
+  - PTrieT.trie_get_le; time_simpl; rewrite Nat2N.inj_add; nia.
   - destruct (trie_get v m) as [p|] eqn:Hparent.
-    2: { rewrite !PTrieT.trie_get_clock; time_simpl; rewrite Nat2N.inj_add; nia. }
+    2: { PTrieT.trie_get_le; time_simpl; rewrite Nat2N.inj_add; nia. }
     pose proof (Hparents v p pv Hpv Hparent) as Hp.
     pose proof (dom_time_interval pos sizes p u width Hp Hu Hpositions Hsizes) as Hinterval.
     destruct (dom_interval pos sizes p u).
-    2: { rewrite !PTrieT.trie_get_clock; time_simpl; rewrite Nat2N.inj_add in *; nia. }
+    2: { PTrieT.trie_get_le; time_simpl; rewrite Nat2N.inj_add in *; nia. }
     pose proof (Pos.T_eqb_le u p) as Hdirect.
     pose proof (Hpositions u pu Hpu) as Hpu_width.
+    assert (Hset_width : (PTrieT.c_trie * N.of_nat (Pos.size_nat v) <=
+      PTrieT.c_trie * N.of_nat width)%N) by (apply N.mul_le_mono_l; lia).
     destruct (trie_get v flags) as [[[direct lo] hi]|] eqn:Hrecord.
     + destruct (Hflags v direct lo hi Hrecord) as [Hlo Hhi].
       pose proof (dom_time_min lo pu) as Hmin.
@@ -4168,7 +4186,7 @@ Proof.
       change (PTrieCode.T_set v
         (direct || Pos.eqb u p, N.min lo pu, N.max hi pu) flags <=
         PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
-      rewrite !PTrieT.trie_get_clock. time_simpl. rewrite !Nat2N.inj_add in *. nia.
+      PTrieT.trie_get_le. time_simpl. rewrite !Nat2N.inj_add in *. lia.
     + pose proof (dom_time_min pu pu) as Hmin.
       pose proof (dom_time_max pu pu) as Hmax.
       pose proof (PTrieT.T_set_le (bool * N * N) v
@@ -4176,7 +4194,7 @@ Proof.
       change (PTrieCode.T_set v
         (false || Pos.eqb u p, N.min pu pu, N.max pu pu) flags <=
         PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
-      rewrite !PTrieT.trie_get_clock. time_simpl. rewrite !Nat2N.inj_add in *. nia.
+      PTrieT.trie_get_le. time_simpl. rewrite !Nat2N.inj_add in *. lia.
 Qed.
 
 (** Low-high final checks compare only stored extrema and bounded interval endpoints. *)
@@ -4200,11 +4218,11 @@ Proof.
       pose proof (N.T_add_le pv (dom_size_get sizes v)) as Hadd.
       pose proof (dom_add_width pv (dom_size_get sizes v)) as Hsum_width.
       pose proof (N.T_leb_le (N.add pv (dom_size_get sizes v)) hi) as Hhigh.
-      unfold T_dom_size_get. rewrite !PTrieT.trie_get_clock.
+      unfold T_dom_size_get. PTrieT.trie_get_le.
       time_simpl. rewrite !Nat2N.inj_add in *. nia.
-    + rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia.
-    + rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia.
-    + rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia.
+    + PTrieT.trie_get_le. time_simpl. rewrite Nat2N.inj_add. nia.
+    + PTrieT.trie_get_le. time_simpl. rewrite Nat2N.inj_add. nia.
+    + PTrieT.trie_get_le. time_simpl. rewrite Nat2N.inj_add. nia.
 Qed.
 
 (** A successor row preserves bounded flags and charges its length and source lookup. *)
@@ -4986,7 +5004,7 @@ Module DomT <: DOM_ALL.
     intros [parents rows positions ends] u v.
     unfold T_dominates_b, query_width. time_simpl.
     change graph_max with Nat.max.
-    cbn [pre post]. rewrite !PTrieT.trie_get_clock.
+    cbn [pre post]. PTrieT.trie_get_le.
     destruct (trie_get u positions) as [a|] eqn:Ha;
       destruct (trie_get u ends) as [b|] eqn:Hb;
       destruct (trie_get v positions) as [c|] eqn:Hc;

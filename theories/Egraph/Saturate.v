@@ -939,7 +939,7 @@ Lemma front_has_clock : forall V g (t : term V) s,
   (T_has_b g t s <= 8 * N.of_nat (term_bits t))%N.
 Proof.
   intros V g [x|v] s; time_step;
-    unfold T_sort_eqb; time_cbn; rewrite ?PTrieT.trie_get_clock; time_cases; nia.
+    unfold T_sort_eqb; time_cbn; PTrieT.trie_get_le; time_cases; nia.
 Qed.
 
 (** Binding a term's sort pays for its key lookup and possible insertion. *)
@@ -947,7 +947,7 @@ Lemma front_bind_clock : forall V g (t : term V) s,
   (T_bind_b g t s <= 16 * N.of_nat (term_bits t))%N.
 Proof.
   intros V g [x|v] s; time_step;
-    unfold T_sort_eqb; time_cbn; rewrite ?PTrieT.trie_get_clock;
+    unfold T_sort_eqb; time_cbn; PTrieT.trie_get_le;
     try pose proof (front_set_clock sort x s g); time_cases; nia.
 Qed.
 
@@ -1019,7 +1019,7 @@ Proof.
   intros V q. induction q as [|a q IH]; intros tb g.
   - time_step.
   - destruct a as [f args res | op args res].
-    + time_step. rewrite PTrieT.trie_get_clock.
+    + time_step. PTrieT.trie_get_le.
       destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
       destruct (reads_b ss out); time_cbn; [|nia].
       pose proof (front_bind_list_clock V args ss g).
@@ -1040,13 +1040,13 @@ Proof.
   intros V acts. induction acts as [|a acts IH]; intros tb g.
   - time_step.
   - destruct a as [x f args | f args res | t u | x op args].
-    + time_step. rewrite PTrieT.trie_get_clock.
+    + time_step. PTrieT.trie_get_le.
       destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
       destruct out; time_cbn; try nia.
       pose proof (front_has_list_clock V args ss g).
       pose proof (front_set_clock sort x SId g).
       pose proof (IH tb (PTrieCode.set x SId g)). nia.
-    + time_step. rewrite PTrieT.trie_get_clock.
+    + time_step. PTrieT.trie_get_le.
       destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
       pose proof (front_has_list_clock V args ss g).
       pose proof (front_has_result_clock V g out res). pose proof (IH tb g). nia.
@@ -1112,7 +1112,7 @@ Proof.
   - time_step.
   - destruct n as [h|f ch|v].
     + time_step.
-    + time_step. rewrite PTrieT.trie_get_clock.
+    + time_step. PTrieT.trie_get_le.
       destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
       destruct out; time_cbn; try nia.
       pose proof (front_require_children_clock i ch ss sh).
@@ -1206,7 +1206,7 @@ Qed.
 Lemma front_analysis_action_clock : forall V tb (a : action V),
   (T_front_analysis_action tb a <= 8 * N.of_nat (action_bits a))%N.
 Proof.
-  intros V tb a. destruct a; time_step; rewrite ?PTrieT.trie_get_clock; nia.
+  intros V tb a. destruct a; time_step; PTrieT.trie_get_le; nia.
 Qed.
 
 (** The analysis restriction pass visits each action once. *)
@@ -1256,7 +1256,7 @@ Proof.
   - time_step.
   - destruct n as [f ch|v].
     + time_unfold @T_front_expr_nodes; time_simpl; cbn [fold_right enode_size].
-      rewrite PTrieT.trie_get_clock.
+      PTrieT.trie_get_le.
       destruct (trie_get f tb) as [[ss out]|]; time_simpl; [|nia].
       destruct out; time_simpl; try nia.
       pose proof (front_expr_children_clock V ns i ch ss).
