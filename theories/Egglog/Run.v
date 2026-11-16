@@ -17664,18 +17664,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     rewrite Hpost, Hrule, Hwidth, Hprim. cbn [fold_right].
     intro Hbound. nia.
   Qed.
-  (** The filter pays for finding its rule, for looking up the names of its join variables,
-      for its atoms at the widest program word or binding cell, and for the primitive work of
-      the query. *)
-  Lemma T7_keep_le : forall p c b,
-    (T_keep p c (bind_trie c b) <= k_driver * N.of_nat (post_work p c + 1) *
-      N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
-      k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
-      k_driver * N.of_nat (rule_work p c) +
-      k_driver * N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
-        (var_of V.t c) + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: arbitrary post lists repeat primitive work charged only once. *)
-
   (** * Round scheduling costs *)
 
   (** A program literal is one of the encoded words used by its width measure. *)
@@ -19594,15 +19582,14 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
 
 
   (** Checked plans satisfy the intended filter bound without repeating primitive charges. *)
-  Lemma run_checked_keep_le : forall p cp c b,
-    plans_ok p cp -> In c (all_plans cp) ->
+  Lemma T7_keep_le_checked : forall p cp c b,
+    plans_ok p cp -> In c (naive V.t cp ++ seminaive V.t cp) ->
     (T_keep p c (bind_trie c b) <= k_driver * N.of_nat (post_work p c + 1) *
-      N.of_nat (wbits p + fold_right
-        (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
+      N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
       k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
       k_driver * N.of_nat (rule_work p c) +
-      k_driver * N.of_nat (fold_right
-        (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat (var_of V.t c) + 1))%N.
+      k_driver * N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
+        (var_of V.t c) + 1))%N.
   Proof.
     intros p cp c b Hplans Hin.
     pose proof (run_filter_checked_post p cp c Hplans Hin) as Hposts.
@@ -19630,6 +19617,18 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     clear -Hfilter Hwrapper Hlookup Hfactor.
     nia.
   Qed.
+
+  (** The filter pays for finding its rule, for looking up the names of its join variables,
+      for its atoms at the widest program word or binding cell, and for the primitive work of
+      the query. *)
+  Lemma T7_keep_le : forall p c b,
+    (T_keep p c (bind_trie c b) <= k_driver * N.of_nat (post_work p c + 1) *
+      N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
+      k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
+      k_driver * N.of_nat (rule_work p c) +
+      k_driver * N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
+        (var_of V.t c) + 1))%N.
+  Proof. Admitted. (* PLAN-DEFECT: arbitrary post lists repeat primitive work charged only once. *)
 
 
   (** * Action and job cost aggregation *)
@@ -20203,7 +20202,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Proof.
     intros B U p cp db c b Hplans Hwf Hloaded Hplan Hbinding HU HUpos.
     pose proof (T6_bind_trie_le c b) as Hbind.
-    pose proof (run_checked_keep_le p cp c b Hplans Hplan) as Hkeep.
+    pose proof (T7_keep_le_checked p cp c b Hplans Hplan) as Hkeep.
     pose proof (run_cost_binding_cells p cp db c b Hplans Hwf Hloaded Hplan Hbinding)
       as Hcells.
     change (fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0 b <=
