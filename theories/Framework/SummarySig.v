@@ -5,6 +5,7 @@
     Builds on: Program.CallsSig and Fixpoint.SystemSig. *)
 
 From Stdlib Require Import List NArith.
+From Argent Require Import BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig.
@@ -103,6 +104,23 @@ Module Type SUMMARY_TIME (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
     (B.body_work p s + N.of_nat (fold_right Nat.max 0%nat
       (map (fun sg => Site.bits (fst sg)) (CL.calls p))))%N
     with Definition kw := CL.function_width.
+  (** Listing the rows is linear in their number. *)
+  Parameter rows_bigO : bigO (X := prog) (fun p => wf p)
+    (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
+  (** Starting a row is linear in the row budget at the empty value. *)
+  Parameter start_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
+  (** Listing the dependencies of a row is linear in their number times the key width. *)
+  Parameter deps_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
+    (fun '(p, r) => T_deps p r).
+  (** The target of a listed row fits the row budget at the empty value. *)
+  Parameter target_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
+  (** Listing the sides of a row is linear in their number times the key width. *)
+  Parameter sides_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
+    (fun '(p, r) => T_sides p r).
 End SUMMARY_TIME.
 
 Module Type SUMMARY_T (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)

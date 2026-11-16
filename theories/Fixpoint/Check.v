@@ -5,7 +5,7 @@
     Builds on: Fixpoint.Query, Fixpoint.SystemSig and Base.MapSig. *)
 
 From Stdlib Require Import List NArith Lia.
-From Argent Require Import Time Tactics Std Loop.
+From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
@@ -343,4 +343,28 @@ Module CheckT (L : LATTICE_T) (S : SYSTEM_T L) <: CHECK_T L S.
     rewrite !Nat2N.inj_add in *.
     nia.
   Qed.
+
+  (** A lookup is linear in the key bits. *)
+  Lemma look_bigO : bigO (X := kmap S.key L.t * S.key) (fun _ => True)
+    (fun mx => N.of_nat (S.key_bits (snd mx))) (fun mx => T_look (fst mx) (snd mx)).
+  Proof. Admitted. (* STUB *)
+
+  (** Row checking is linear in the declared occurrences times the row budget. *)
+  Lemma check_rows_bigO : bigO (X := S.prog * list S.row * kmap S.key L.t * nat)
+    (fun '(p, rs, m, B) => S.wf p /\ (forall r, In r rs -> In r (S.rows p)) /\
+       forall x, L.size (look m x) <= B)
+    (fun '(p, rs, _, B) => (N.of_nat ((fold_right Nat.add 0
+        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) rs) + 1)%nat) *
+      (S.row_work p B + N.of_nat (S.kw p + B) + 1))%N)
+    (fun '(p, rs, m, _) => T_check_rows p rs m).
+  Proof. Admitted. (* STUB *)
+
+  (** Whole-program checking is linear in the declared occurrences times the row budget. *)
+  Lemma check_bigO : bigO (X := S.prog * kmap S.key L.t * nat)
+    (fun '(p, m, B) => S.wf p /\ forall x, L.size (look m x) <= B)
+    (fun '(p, _, B) => (N.of_nat ((fold_right Nat.add 0
+        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)) + 1)%nat) *
+      (S.row_work p B + N.of_nat (S.kw p + B) + 1))%N)
+    (fun '(p, m, _) => T_check p m).
+  Proof. Admitted. (* STUB *)
 End CheckT.

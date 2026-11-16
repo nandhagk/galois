@@ -5,7 +5,7 @@
     Builds on: Fixpoint.SystemSig and Base.Trie. *)
 
 From Stdlib Require Import List PArith Arith NArith.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -84,6 +84,14 @@ Module Type INDEXED_TIME (L : LATTICE_T) (S : SYSTEM_T L) (Import I : INDEXED L 
             (S.rows p)) + 1)%nat) *
       N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1) +
       N.of_nat (length (S.rows p)) * (S.row_work p 0 + 1)))%N.
+  (** Preparation is linear in rows and occurrences times the key width. *)
+  Parameter prepare_bigO : bigO (X := S.prog) (fun p => S.wf p)
+    (fun p => (N.of_nat ((length (S.rows p) +
+        fold_right Nat.add 0 (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+          (S.rows p)) + 1)%nat) *
+      N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1) +
+      N.of_nat (length (S.rows p)) * (S.row_work p 0 + 1))%N)
+    (fun p => T_prepare p).
 End INDEXED_TIME.
 
 Module Type INDEXED_T (L : LATTICE_T) (S : SYSTEM_T L) :=

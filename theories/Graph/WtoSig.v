@@ -155,6 +155,14 @@ Module Type WTO_TIME (Import W : WTO).
   Parameter T_ranks_le : forall w,
     (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
       N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
+  (** Head projection is linear in the order length. *)
+  Parameter heads_bigO : bigO (fun _ : wto => True)
+    (fun w => N.of_nat (length (wto_order w))) T_heads.
+  (** Ranking is linear in the order length and the key and counter widths. *)
+  Parameter ranks_bigO : bigO (fun _ : wto => True)
+    (fun w => N.of_nat ((length (wto_order w) + 1) *
+      (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1)))
+    T_ranks.
   (** Checking is linear in graph size and identifier width. *)
   Parameter check_bigO : bigO (fun _ : prepared * list positive * wto => True)
     (fun '(g, roots, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *

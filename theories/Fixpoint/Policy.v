@@ -5,7 +5,7 @@
     Builds on: Fixpoint.PolicySig. *)
 
 From Stdlib Require Import List PArith Arith NArith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import PolicySig.
@@ -236,4 +236,12 @@ Module PolicyT (L : WLATTICE_T) <: POLICY_T L.
         * clear -Hleb Hwiden Hget Hsucc Htest; time_cbn_all; nia.
       + clear -Hleb Hjoin Hget; time_cbn_all; nia.
   Qed.
+
+  (** An update is linear in the key, both values, the counter and the widening cost. *)
+  Lemma update_bigO : bigO (X := policy L.wparam * positive * N * L.t * L.t)
+    (fun _ => True)
+    (fun '(pol, x, cnt, a, b) => N.of_nat (Pos.size_nat x + L.size a + L.size b +
+        N.size_nat cnt + (L.wunits a + L.wunits b + 1) * L.wsize (wp pol)))
+    (fun '(pol, x, cnt, a, b) => T_update pol x cnt a b).
+  Proof. Admitted. (* STUB *)
 End PolicyT.

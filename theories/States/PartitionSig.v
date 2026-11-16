@@ -6,7 +6,7 @@
     Builds on: LatticeSig, StateSig and the state disjunction interfaces. *)
 
 From Stdlib Require Import List NArith Arith Bool.
-From Argent Require Import Time.
+From Argent Require Import Time BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -206,6 +206,48 @@ Module Type PARTITION_TIME (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   (** A merge has size bounded by the token and the partition. *)
   Parameter merge_size : forall k a,
     (N.of_nat (size (merge k a)) <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
+  (** Inclusion is linear in both sizes for the fixed cap. *)
+  Parameter leb_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_leb (fst ab) (snd ab)).
+  (** Join is linear in both sizes for the fixed cap. *)
+  Parameter join_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_join (fst ab) (snd ab)).
+  (** Widening is linear in the sizes and in the units times the parameter size. *)
+  Parameter widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
+    (fun '(p, a, b) => T_widen p a b).
+  (** Merging all parts under one token is linear in the token and the partition. *)
+  Parameter merge_bigO : bigO (X := Tk.t * t) (fun _ => True)
+    (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
+    (fun ka => T_merge (fst ka) (snd ka)).
+  (** The bottom test is linear in the size for the fixed cap. *)
+  Parameter is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  (** Narrowing is linear in both sizes for the fixed cap. *)
+  Parameter narrow_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_narrow (fst ab) (snd ab)).
+  (** Assignment is linear in its work measure. *)
+  Parameter assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+    (fun '(x, e, a) => N.of_nat (assign_work x e a)) (fun '(x, e, a) => T_assign x e a).
+  (** Havoc is linear in its work measure. *)
+  Parameter havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+    (fun '(x, a) => N.of_nat (havoc_work x a)) (fun '(x, a) => T_havoc x a).
+  (** Assumption is linear in its work measure. *)
+  Parameter assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+    (fun '(gd, es, a) => N.of_nat (assume_work gd es a)) (fun '(gd, es, a) => T_assume gd es a).
+  (** Evaluation is linear in its work measure. *)
+  Parameter eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+    (fun '(e, a) => N.of_nat (eval_work e a)) (fun '(e, a) => T_eval e a).
+  (** Injection is linear in the token and the state. *)
+  Parameter inject_bigO : bigO (X := Tk.t * S.t) (fun _ => True)
+    (fun ks => N.of_nat (Tk.bits (fst ks) + S.size (snd ks)))
+    (fun ks => T_inject (fst ks) (snd ks)).
+  (** Retagging is linear in the token and the partition. *)
+  Parameter retag_bigO : bigO (X := Tk.t * t) (fun _ => True)
+    (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
+    (fun ka => T_retag (fst ka) (snd ka)).
 End PARTITION_TIME.
 
 Module Type PARTITION_T (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)

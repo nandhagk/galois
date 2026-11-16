@@ -513,6 +513,32 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
       + lia.
   Qed.
 
+  Lemma calls_bigO : bigO (fun _ : P.t => True)
+    (fun p => N.of_nat (length (calls p))) T_calls.
+  Proof. Admitted. (* STUB *)
+
+  Lemma sites_of_bigO : bigO (X := P.t * F.t) (fun _ => True)
+    (fun '(p, f) => N.of_nat (F.bits f + length (sites_of p f)))
+    (fun '(p, f) => T_sites_of p f).
+  Proof. Admitted. (* STUB *)
+
+  Lemma caller_of_bigO : bigO (X := P.t * S.t) (fun _ => True)
+    (fun '(_, site) => N.of_nat (S.bits site)) (fun '(p, site) => T_caller_of p site).
+  Proof. Admitted. (* STUB *)
+
+  Lemma resolve_bigO : bigO (X := P.t * S.t) (fun _ => True)
+    (fun '(p, site) => N.of_nat (S.bits site + length (resolve p site)))
+    (fun '(p, site) => T_resolve p site).
+  Proof. Admitted. (* STUB *)
+
+  Lemma functions_bigO : bigO (fun _ : P.t => True)
+    (fun p => N.of_nat (length (functions p))) T_functions.
+  Proof. Admitted. (* STUB *)
+
+  Lemma roots_bigO : bigO (fun _ : P.t => True)
+    (fun p => N.of_nat (length (roots p))) T_roots.
+  Proof. Admitted. (* STUB *)
+
   (** Each resolver read includes at least one charged operation. *)
   Local Lemma resolve_time_positive : forall p site, (1 <= T_resolve p site)%N.
   Proof.

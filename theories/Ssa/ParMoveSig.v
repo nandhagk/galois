@@ -5,7 +5,7 @@
     Builds on: Stdlib lists and binary identifiers, and Argent. *)
 
 From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std BigO.
 From Galois.Base Require Import Trie.
 
 Import List.ListNotations.
@@ -68,6 +68,14 @@ Module Type PARMOVE_TIME (Import P : PARMOVE).
   Parameter T_check_moves_le : forall par tmp sq,
     (T_check_moves par tmp sq <= c_pm * N.of_nat (length par + length sq + 1) *
       N.of_nat (bits_of (par ++ sq) + 1))%N.
+  (** Sequentialisation is linear in the moves times the identifier width. *)
+  Parameter seq_bigO : bigO (X := moves * positive) (fun _ => True)
+    (fun '(par, _) => N.of_nat ((length par + 1) * (bits_of par + 1)))
+    (fun '(par, tmp) => T_seq par tmp).
+  (** Checking is linear in both sequences times the identifier width. *)
+  Parameter check_moves_bigO : bigO (X := moves * positive * moves) (fun _ => True)
+    (fun '(par, _, sq) => N.of_nat ((length par + length sq + 1) * (bits_of (par ++ sq) + 1)))
+    (fun '(par, tmp, sq) => T_check_moves par tmp sq).
 End PARMOVE_TIME.
 
 Module Type PARMOVE_T := PARMOVE <+ PARMOVE_TIME.

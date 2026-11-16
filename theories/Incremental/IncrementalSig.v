@@ -5,7 +5,7 @@
     Builds on: SystemSig, SolverSig, CheckSig, PolicySig and RestrictSig. *)
 
 From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time.
+From Argent Require Import Time BigO.
 From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig SolverSig CheckSig PolicySig.
@@ -224,6 +224,29 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
         fold_right Nat.add 0%nat (map (fun r => length (S.writes p r) + length (S.writes p' r) +
           length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
       N.of_nat (width p st + width p' st + kwidth st + 1))%N.
+  (** Reading a value is linear in the key bits. *)
+  Parameter value_bigO : bigO (X := state * S.key) (fun _ => True)
+    (fun x => N.of_nat (S.key_bits (snd x))) (fun x => T_value (fst x) (snd x)).
+  (** Demand is linear in the region occurrences times the width, the root bits, the fuel
+      bits and the restricted solve. *)
+  Parameter demand_bigO : bigO (X := S.prog * policy L.wparam * list S.key * N * state)
+    (fun '(p, _, _, _, st) => S.wf p /\ inv p st)
+    (fun '(p, pol, roots, fuel, st) =>
+      (N.of_nat ((fold_right Nat.add 0%nat
+          (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st)) +
+        length roots + 1)%nat) * N.of_nat (width p st + 1) +
+       N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)) +
+       N.of_nat (N.size_nat fuel) + demand_solver_work p pol roots fuel st)%N)
+    (fun '(p, pol, roots, fuel, st) => T_demand p pol roots fuel st).
+  (** An edit is linear in the influence mass, the changed rows and the widths. *)
+  Parameter edit_bigO : bigO (X := S.prog * S.prog * list S.row * state)
+    (fun '(p, p', ch, st) => S.wf p /\ S.wf p' /\ state_ok st /\
+       forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p'))
+    (fun '(p, p', ch, st) => (N.of_nat ((infl_mass st +
+        fold_right Nat.add 0%nat (map (fun r => length (S.writes p r) + length (S.writes p' r) +
+          length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
+      N.of_nat (width p st + width p' st + kwidth st + 1))%N)
+    (fun '(p, p', ch, st) => T_edit p p' ch st).
   (** Frozen pairs are stored checked values. *)
   Parameter frozen_spec : forall p roots st x v,
     In (x, v) (frozen p roots st) -> value st x = Some v.

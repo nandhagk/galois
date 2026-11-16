@@ -188,6 +188,12 @@ Module Type LOOPS_TIME (Import L : LOOPS).
     (fun '(g, t, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
     (fun '(g, t, _) => T_reducible_b g t).
+  (** Reducibility checking classifies once and scans one search, with no nesting factor. *)
+  Parameter reducible_b_linear_bigO : bigO (fun '(g, t, r) =>
+      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
+    (fun '(g, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1)))
+    (fun '(g, t, _) => T_reducible_b g t).
 End LOOPS_TIME.
 
 Module Type LOOPS_T := LOOPS <+ LOOPS_TIME.

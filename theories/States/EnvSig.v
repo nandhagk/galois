@@ -5,6 +5,7 @@
     Builds on: MapSig, StateSig and ValueSig. *)
 
 From Stdlib Require Import List NArith.
+From Argent Require Import BigO.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -104,6 +105,40 @@ Module Type ENV_TIME (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
   (** Join charges the weighted sizes of both environments. *)
   Parameter T_join_env_le : forall a b, env_wf a -> env_wf b ->
     (T_join a b <= c_env * N.of_nat ((esize a + esize b + 1)%nat))%N.
+  (** Inclusion is linear in both environment sizes. *)
+  Parameter leb_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_leb (fst ab) (snd ab)).
+  (** Join is linear in both environment sizes. *)
+  Parameter join_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_join (fst ab) (snd ab)).
+  (** Widening is linear in the sizes and in the widening units times the parameter size. *)
+  Parameter widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
+    (fun '(p, a, b) => T_widen p a b).
+  (** Assignment is linear in its work measure. *)
+  Parameter assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+    (fun '(x, e, s) => N.of_nat (assign_work x e s))
+    (fun '(x, e, s) => T_assign x e s).
+  (** Havoc is linear in its work measure. *)
+  Parameter havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+    (fun '(x, s) => N.of_nat (havoc_work x s))
+    (fun '(x, s) => T_havoc x s).
+  (** Assumption is linear in its work measure. *)
+  Parameter assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+    (fun '(gd, es, s) => N.of_nat (assume_work gd es s))
+    (fun '(gd, es, s) => T_assume gd es s).
+  (** Evaluation is linear in its work measure. *)
+  Parameter eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+    (fun '(e, s) => N.of_nat (eval_work e s))
+    (fun '(e, s) => T_eval e s).
+  (** The bottom test is linear in the environment size. *)
+  Parameter is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  (** Narrowing is linear in both environment sizes. *)
+  Parameter narrow_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_narrow (fst ab) (snd ab)).
 End ENV_TIME.
 
 Module Type ENV_T (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L) :=

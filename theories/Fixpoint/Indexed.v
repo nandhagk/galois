@@ -5,7 +5,7 @@
     Builds on: Fixpoint.IndexedSig and Base.Trie. *)
 
 From Stdlib Require Import List PArith Arith NArith Bool Lia Sorting.Permutation.
-From Argent Require Import Time Tactics Std Loop.
+From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig IndexedSig.
@@ -800,6 +800,16 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
     - rewrite !N.mul_add_distr_r in *; lia.
     - apply N.mul_le_mono_r; unfold c_idx, k_prepare_row; lia.
   Qed.
+
+  (** Preparation is linear in rows and occurrences times the key width. *)
+  Lemma prepare_bigO : bigO (X := S.prog) (fun p => S.wf p)
+    (fun p => (N.of_nat ((length (S.rows p) +
+        fold_right Nat.add 0 (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+          (S.rows p)) + 1)%nat) *
+      N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1) +
+      N.of_nat (length (S.rows p)) * (S.row_work p 0 + 1))%N)
+    (fun p => T_prepare p).
+  Proof. Admitted. (* STUB *)
 End IndexedT.
 
 (** ** Finite inventory accounting shared by demand and edit *)

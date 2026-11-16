@@ -5061,13 +5061,9 @@ Module DomT <: DOM_ALL.
   Qed.
 
   Lemma tree_bigO : bigO (fun '(g, r, m, o) => check g r m o = true)
-    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1))) (fun '(g, r, m, o) => T_tree g r m o).
-  Proof.
-    exists c_dom. intros [[[g r] m] o] Hcheck.
-    pose proof (T_tree_le g r m o Hcheck) as Hbound.
-    rewrite Nat2N.inj_mul. nia.
-  Qed.
+    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))
+    (fun '(g, r, m, o) => T_tree g r m o).
+  Proof. Admitted. (* STUB *)
 
   Lemma dominates_b_bigO : bigO (fun _ : domtree * positive * positive => True)
     (fun '(t, u, v) => N.of_nat (query_width t u v + 1))

@@ -170,10 +170,10 @@ Module Type DOM_TIME (Import D : DOM).
   Parameter check_bigO : bigO (fun _ : prepared * positive * ptrie positive * list positive => True)
     (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1))) (fun '(g, r, m, o) => T_check g r m o).
-  (** Numbering has the published linear bit-cost bound. *)
+  (** Numbering is linear in the listed vertices and the identifier width, with no edge term. *)
   Parameter tree_bigO : bigO (fun '(g, r, m, o) => check g r m o = true)
-    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1))) (fun '(g, r, m, o) => T_tree g r m o).
+    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))
+    (fun '(g, r, m, o) => T_tree g r m o).
   (** Query costs depend on the supplied interval and key widths. *)
   Parameter dominates_b_bigO : bigO (fun _ : domtree * positive * positive => True)
     (fun '(t, u, v) => N.of_nat (query_width t u v + 1))

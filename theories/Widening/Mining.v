@@ -5,7 +5,7 @@
     Builds on: MiningSig and ThresholdsSig. *)
 
 From Stdlib Require Import List NArith ZArith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ThresholdsSig.
 From Galois.Widening Require Import MiningSig.
@@ -188,6 +188,20 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
     pose proof (neighbors_time (seeds es extra)) as Hneighbors.
     unfold c_mining, expanded, seeds in *. rewrite Nat2N.inj_add. nia.
   Qed.
+
+  (** Literal collection is linear in the term size. *)
+  Lemma lits_bigO : bigO (X := term L.op X.t) (fun _ => True)
+    (fun e => N.of_nat (tsize e)) (fun e => T_lits e).
+  Proof. Admitted. (* STUB *)
+
+  (** Mining is linear in the terms and seeds plus the cost of building the thresholds. *)
+  Lemma mine_bigO : bigO (X := list (term L.op X.t) * list Z) (fun _ => True)
+    (fun '(es, extra) => N.of_nat (fold_right Nat.add 0 (map tsize es) +
+        fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)) +
+        ((length (expanded es extra) * (Nat.log2 (length (expanded es extra)) + 1) + 1) *
+          (T.zb (expanded es extra) + 1))))
+    (fun '(es, extra) => T_mine es extra).
+  Proof. Admitted. (* STUB *)
 
   (** A syntax node pays for literal recognition and the surrounding fold. *)
   Definition k_mining : N := (L.c_lang + 4)%N.

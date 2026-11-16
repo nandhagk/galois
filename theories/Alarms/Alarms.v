@@ -5,7 +5,7 @@
     Builds on: AlarmsSig. *)
 
 From Stdlib Require Import List NArith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
@@ -166,6 +166,19 @@ Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
         (N.of_nat ((fold_right Nat.add 0 (map (check_work inv) ks))%nat) + 1))%N.
     assert (Hk : (1 <= k_alarm)%N) by (unfold k_alarm; lia). nia.
   Qed.
+
+  Lemma inv_at_bigO : bigO (X := MN.t S.t * N.t) (fun _ => True)
+    (fun x => N.of_nat (N.bits (snd x))) (fun x => T_inv_at (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma alarm_bigO : bigO (X := MN.t S.t * check N.t L.op X.t C.kd) (fun _ => True)
+    (fun x => N.of_nat (check_work (fst x) (snd x))) (fun x => T_alarm (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma alarms_bigO : bigO (X := MN.t S.t * list (check N.t L.op X.t C.kd)) (fun _ => True)
+    (fun x => N.of_nat (fold_right Nat.add 0 (map (check_work (fst x)) (snd x))))
+    (fun x => T_alarms (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
 End AlarmsT.
 
 Module AlarmsPoint (N X : KEY) (MN : MAP N) (L : LANG)

@@ -5,6 +5,7 @@
     Builds on: Program.CfgSig and Program.SemanticsSig. *)
 
 From Stdlib Require Import List NArith.
+From Argent Require Import BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Program Require Import CfgSig SemanticsSig.
 
@@ -48,6 +49,9 @@ Module Type ICFG_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
   Parameter c_icfg : N.
   (** Edge classification pays for the edge key. *)
   Parameter T_kind_le : forall p e, (T_kind p e <= c_icfg * N.of_nat (E.bits e + 1))%N.
+  (** Edge classification is linear in the edge key. *)
+  Parameter kind_bigO : bigO (X := P.t * E.t) (fun _ => True)
+    (fun '(_, e) => N.of_nat (E.bits e)) (fun '(p, e) => T_kind p e).
 End ICFG_TIME.
 
 Module Type ICFG_T (P : TYPE) (N : KEY_T) (E : KEY_T)

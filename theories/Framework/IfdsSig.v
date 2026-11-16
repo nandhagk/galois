@@ -5,7 +5,7 @@
     Builds on: Program.IcfgSig, Base.Code and Fixpoint.SystemSig. *)
 
 From Stdlib Require Import List Bool NArith.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std BigO.
 From Galois.Base Require Import KeySig Code.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig.
@@ -228,6 +228,23 @@ Module Type IFDS_TIME (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     with Definition row_work := fun p s =>
       N.of_nat (length (rows p) + s + L.size true + 1)
     with Definition kw := path_kw.
+  (** Listing the rows is linear in their number. *)
+  Parameter rows_bigO : bigO (X := prog) (fun p => wf p)
+    (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
+  (** Starting a row is linear in the row budget at the empty value. *)
+  Parameter start_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
+  (** Listing the dependencies of a row is linear in their number times the key width. *)
+  Parameter deps_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
+    (fun '(p, r) => T_deps p r).
+  (** The target of a listed row fits the row budget at the empty value. *)
+  Parameter target_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
+  (** Listing the sides of a row is linear in their number times the key width. *)
+  Parameter sides_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
+    (fun '(p, r) => T_sides p r).
 End IFDS_TIME.
 
 Module Type IFDS_T (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)

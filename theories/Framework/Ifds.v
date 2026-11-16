@@ -5,7 +5,7 @@
     Builds on: Framework.IfdsSig and Fixpoint.Query. *)
 
 From Stdlib Require Import List Bool NArith PArith Arith Lia.
-From Argent Require Import Time Tactics Std Loop.
+From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import KeySig Code.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -587,6 +587,23 @@ Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
       + pose proof (Hlook (d0, (C.src p call, x))) as Hsize.
         rewrite Hcaller in Hsize; unfold row_work; lia.
   Qed.
+  Lemma rows_bigO : bigO (X := prog) (fun p => wf p)
+    (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
+  Proof. Admitted. (* STUB *)
+  Lemma start_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
+  Proof. Admitted. (* STUB *)
+  Lemma deps_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
+    (fun '(p, r) => T_deps p r).
+  Proof. Admitted. (* STUB *)
+  Lemma target_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
+  Proof. Admitted. (* STUB *)
+  Lemma sides_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
+    (fun '(p, r) => T_sides p r).
+  Proof. Admitted. (* STUB *)
 End IfdsT.
 
 Module IfdsSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)

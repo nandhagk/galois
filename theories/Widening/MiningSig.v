@@ -5,7 +5,7 @@
     Builds on: LangSig and ThresholdsSig. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import Std.
+From Argent Require Import Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ThresholdsSig.
 
@@ -47,6 +47,16 @@ Module Type MINING_TIME (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
     (N.of_nat ((fold_right Nat.add 0 (map tsize es) +
      fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)))%nat) +
      T.T_make (expanded es extra) + 1))%N.
+  (** Literal collection is linear in the term size. *)
+  Parameter lits_bigO : bigO (X := term L.op X.t) (fun _ => True)
+    (fun e => N.of_nat (tsize e)) (fun e => T_lits e).
+  (** Mining is linear in the terms and seeds plus the cost of building the thresholds. *)
+  Parameter mine_bigO : bigO (X := list (term L.op X.t) * list Z) (fun _ => True)
+    (fun '(es, extra) => N.of_nat (fold_right Nat.add 0 (map tsize es) +
+        fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)) +
+        ((length (expanded es extra) * (Nat.log2 (length (expanded es extra)) + 1) + 1) *
+          (T.zb (expanded es extra) + 1))))
+    (fun '(es, extra) => T_mine es extra).
 End MINING_TIME.
 
 Module Type MINING_T (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T) :=

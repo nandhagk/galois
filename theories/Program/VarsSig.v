@@ -58,6 +58,15 @@ Module Type VARS_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
   (** Exit observations pay for the node key and the returned variables. *)
   Parameter T_exits_le : forall p n,
     (T_exits p n <= c_vars * N.of_nat (N.bits n + length (exits p n) + 1))%N.
+  (** Edge uses are linear in the edge key and the returned variables. *)
+  Parameter uses_bigO : bigO (X := P.t * E.t) (fun _ => True)
+    (fun '(p, e) => N.of_nat (E.bits e + length (uses p e))) (fun '(p, e) => T_uses p e).
+  (** Edge definitions are linear in the edge key and the returned variables. *)
+  Parameter defs_bigO : bigO (X := P.t * E.t) (fun _ => True)
+    (fun '(p, e) => N.of_nat (E.bits e + length (defs p e))) (fun '(p, e) => T_defs p e).
+  (** Exit observations are linear in the node key and the returned variables. *)
+  Parameter exits_bigO : bigO (X := P.t * N.t) (fun _ => True)
+    (fun '(p, n) => N.of_nat (N.bits n + length (exits p n))) (fun '(p, n) => T_exits p n).
   Definition universe_work p :=
     (C.T_edges p + C.T_nodes p +
       fold_right N.add 0%N (map (fun e => T_uses p e + T_defs p e)%N (C.edges p)) +

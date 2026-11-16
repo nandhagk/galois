@@ -5,7 +5,7 @@
     Builds on: Program.IcfgSig and Base.Trie. *)
 
 From Stdlib Require Import NArith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Program Require Import CfgSig IcfgSig.
 
@@ -54,4 +54,8 @@ Module IcfgT (P : TYPE) (N : KEY_T) (E : KEY_T)
     unfold c_icfg; time_step.
     unfold E.bits in *; time_cbn_all; nia.
   Qed.
+
+  Lemma kind_bigO : bigO (X := P.t * E.t) (fun _ => True)
+    (fun '(_, e) => N.of_nat (E.bits e)) (fun '(p, e) => T_kind p e).
+  Proof. Admitted. (* STUB *)
 End IcfgT.

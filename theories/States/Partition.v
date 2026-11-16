@@ -5,7 +5,7 @@
     Builds on: PartitionSig, StateSig and LatticeSig. *)
 
 From Stdlib Require Import List NArith Arith Bool Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -2573,4 +2573,57 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     repeat rewrite Nat2N.inj_add in *; nia.
   Qed.
 
+  Lemma leb_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_leb (fst ab) (snd ab)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma join_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_join (fst ab) (snd ab)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
+    (fun '(p, a, b) => T_widen p a b).
+  Proof. Admitted. (* STUB *)
+
+  Lemma merge_bigO : bigO (X := Tk.t * t) (fun _ => True)
+    (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
+    (fun ka => T_merge (fst ka) (snd ka)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Proof. Admitted. (* STUB *)
+
+  Lemma narrow_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_narrow (fst ab) (snd ab)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+    (fun '(x, e, a) => N.of_nat (assign_work x e a)) (fun '(x, e, a) => T_assign x e a).
+  Proof. Admitted. (* STUB *)
+
+  Lemma havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+    (fun '(x, a) => N.of_nat (havoc_work x a)) (fun '(x, a) => T_havoc x a).
+  Proof. Admitted. (* STUB *)
+
+  Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+    (fun '(gd, es, a) => N.of_nat (assume_work gd es a)) (fun '(gd, es, a) => T_assume gd es a).
+  Proof. Admitted. (* STUB *)
+
+  Lemma eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+    (fun '(e, a) => N.of_nat (eval_work e a)) (fun '(e, a) => T_eval e a).
+  Proof. Admitted. (* STUB *)
+
+  Lemma inject_bigO : bigO (X := Tk.t * S.t) (fun _ => True)
+    (fun ks => N.of_nat (Tk.bits (fst ks) + S.size (snd ks)))
+    (fun ks => T_inject (fst ks) (snd ks)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma retag_bigO : bigO (X := Tk.t * t) (fun _ => True)
+    (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
+    (fun ka => T_retag (fst ka) (snd ka)).
+  Proof. Admitted. (* STUB *)
 End PartitionT.

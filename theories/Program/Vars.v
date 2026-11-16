@@ -256,6 +256,21 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
     unfold c_vars, N.bits in *; rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
   Qed.
 
+  (** Edge uses are linear in the edge key and the returned variables. *)
+  Lemma uses_bigO : bigO (X := P.t * E.t) (fun _ => True)
+    (fun '(p, e) => N.of_nat (E.bits e + length (uses p e))) (fun '(p, e) => T_uses p e).
+  Proof. Admitted. (* STUB *)
+
+  (** Edge definitions are linear in the edge key and the returned variables. *)
+  Lemma defs_bigO : bigO (X := P.t * E.t) (fun _ => True)
+    (fun '(p, e) => N.of_nat (E.bits e + length (defs p e))) (fun '(p, e) => T_defs p e).
+  Proof. Admitted. (* STUB *)
+
+  (** Exit observations are linear in the node key and the returned variables. *)
+  Lemma exits_bigO : bigO (X := P.t * N.t) (fun _ => True)
+    (fun '(p, n) => N.of_nat (N.bits n + length (exits p n))) (fun '(p, n) => T_exits p n).
+  Proof. Admitted. (* STUB *)
+
   (** The named preparation table is the executable occurrence scan. *)
   Lemma F3_seen : forall p,
     seen p = fold_left (fun s x => PTrieCode.set (X.encode x) x s) (occurrences p)

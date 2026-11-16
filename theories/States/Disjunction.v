@@ -5,7 +5,7 @@
     Builds on: DisjunctionSig, StateSig and the lattice interfaces. *)
 
 From Stdlib Require Import List NArith Arith Bool Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -1340,6 +1340,29 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
+  Lemma widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
+    (fun '(p, a, b) => T_widen p a b).
+  Proof. Admitted. (* STUB *)
+  Lemma narrow_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_narrow (fst ab) (snd ab)).
+  Proof. Admitted. (* STUB *)
+  Lemma assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+    (fun '(x, e, d) => N.of_nat (assign_work x e d)) (fun '(x, e, d) => T_assign x e d).
+  Proof. Admitted. (* STUB *)
+  Lemma havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+    (fun '(x, d) => N.of_nat (havoc_work x d)) (fun '(x, d) => T_havoc x d).
+  Proof. Admitted. (* STUB *)
+  Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+    (fun '(gd, es, d) => N.of_nat (assume_work gd es d)) (fun '(gd, es, d) => T_assume gd es d).
+  Proof. Admitted. (* STUB *)
+  Lemma eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+    (fun '(e, d) => N.of_nat (eval_work e d)) (fun '(e, d) => T_eval e d).
+  Proof. Admitted. (* STUB *)
+  Lemma collapse_bigO : bigO (fun xs : list S.t => length xs <= C.k + 1)
+    (fun xs => N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs)) T_collapse.
+  Proof. Admitted. (* STUB *)
   Lemma wsize_component : forall p, wsize p = S.wsize p.
   Proof.
     reflexivity.

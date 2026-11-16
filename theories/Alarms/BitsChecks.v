@@ -5,7 +5,7 @@
     Builds on: BitsChecksSig, ChecksSig, BitsLang and ValueSig. *)
 
 From Stdlib Require Import ZArith Zpow_facts NArith List Bool Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import LangSig ValueSig BitsLang.
 From Galois.Alarms Require Import ChecksSig BitsChecksSig.
@@ -877,6 +877,11 @@ Module BitsChecksT (V : VALUE_DOMAIN_T BitsLangT)
       change (T_may_fail DivZero [a] <= c_checks * N.of_nat ((V.size a + 2) ^ 2 + 1))%N.
       apply zero_size_time.
   Qed.
+
+  (** A check is linear in its operand work. *)
+  Lemma may_fail_bigO : bigO (X := kd * list V.t) (fun _ => True)
+    (fun kx => N.of_nat (work (fst kx) (snd kx))) (fun kx => T_may_fail (fst kx) (snd kx)).
+  Proof. Admitted. (* STUB *)
 
   (** A zero alarm charges its range query and the returned endpoint bits. *)
   Lemma T_divzero_le : forall d,

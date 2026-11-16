@@ -5,7 +5,7 @@
     Builds on: Fixpoint.CertifiedSig. *)
 
 From Stdlib Require Import NArith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig PolicySig SolverSig CheckSig NarrowSig CertifiedSig.
@@ -69,4 +69,9 @@ Module CertifiedT (L : WLATTICE_T) (S : SYSTEM_T L) (V : SOLVER_T L S)
     unfold c_cert, candidate_work.
     time_step.
   Qed.
+
+  Lemma analyze_bigO : bigO (X := S.prog * policy L.wparam * N) (fun _ => True)
+    (fun '(p, pol, fuel) => (V.T_run p pol fuel + candidate_work p pol fuel)%N)
+    (fun '(p, pol, fuel) => T_analyze p pol fuel).
+  Proof. Admitted. (* STUB *)
 End CertifiedT.

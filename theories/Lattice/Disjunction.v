@@ -5,7 +5,7 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool Arith NArith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Lattice Require Import LatticeSig DisjunctionSig Bounded.
 Import List.ListNotations.
 
@@ -612,4 +612,21 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
     repeat rewrite N.mul_add_distr_l in Hclip |- *.
     lia.
   Qed.
+
+  Lemma leb_bigO : bigO (X := t * t) (fun _ => True)
+    (fun xy => N.of_nat (size (fst xy) + size (snd xy)))
+    (fun xy => T_leb (fst xy) (snd xy)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma join_bigO : bigO (X := t * t) (fun _ => True)
+    (fun xy => N.of_nat (size (fst xy) + size (snd xy)))
+    (fun xy => T_join (fst xy) (snd xy)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Proof. Admitted. (* STUB *)
+
+  Lemma clip_bigO : bigO (fun xs : list L.t => length xs <= 2 * C.k)
+    (fun xs => N.of_nat (length xs + fold_right (fun a n => L.size a + n) 0 xs)) T_clip.
+  Proof. Admitted. (* STUB *)
 End DisjunctionT.

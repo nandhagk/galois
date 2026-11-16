@@ -5,7 +5,7 @@
     Builds on: IncrementalSig. *)
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation.
-From Argent Require Import Time Tactics Std Loop.
+From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import Code MapSig Trie Loop.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig SolverSig CheckSig PolicySig Indexed.
@@ -11387,4 +11387,32 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     exact Hbad.
   Qed.
 
+  (** Reading a value is linear in the key bits. *)
+  Lemma value_bigO : bigO (X := state * S.key) (fun _ => True)
+    (fun x => N.of_nat (S.key_bits (snd x))) (fun x => T_value (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** Demand is linear in the region occurrences times the width, the root bits, the fuel
+      bits and the restricted solve. *)
+  Lemma demand_bigO : bigO (X := S.prog * policy L.wparam * list S.key * N * state)
+    (fun '(p, _, _, _, st) => S.wf p /\ inv p st)
+    (fun '(p, pol, roots, fuel, st) =>
+      (N.of_nat ((fold_right Nat.add 0%nat
+          (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st)) +
+        length roots + 1)%nat) * N.of_nat (width p st + 1) +
+       N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)) +
+       N.of_nat (N.size_nat fuel) + demand_solver_work p pol roots fuel st)%N)
+    (fun '(p, pol, roots, fuel, st) => T_demand p pol roots fuel st).
+  Proof. Admitted. (* STUB *)
+
+  (** An edit is linear in the influence mass, the changed rows and the widths. *)
+  Lemma edit_bigO : bigO (X := S.prog * S.prog * list S.row * state)
+    (fun '(p, p', ch, st) => S.wf p /\ S.wf p' /\ state_ok st /\
+       forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p'))
+    (fun '(p, p', ch, st) => (N.of_nat ((infl_mass st +
+        fold_right Nat.add 0%nat (map (fun r => length (S.writes p r) + length (S.writes p' r) +
+          length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
+      N.of_nat (width p st + width p' st + kwidth st + 1))%N)
+    (fun '(p, p', ch, st) => T_edit p p' ch st).
+  Proof. Admitted. (* STUB *)
 End IncrementalT.

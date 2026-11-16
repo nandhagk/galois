@@ -5,7 +5,7 @@
     Builds on: EnvSig and the keyed map operations. *)
 
 From Stdlib Require Import List Bool NArith Arith Lia Permutation.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
@@ -1689,6 +1689,49 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     eapply N.le_trans; [apply T_join_le|]. apply N.mul_le_mono_r.
     unfold c_env, c_state. lia.
   Qed.
+
+  Lemma leb_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_leb (fst ab) (snd ab)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma join_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_join (fst ab) (snd ab)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
+    (fun '(p, a, b) => T_widen p a b).
+  Proof. Admitted. (* STUB *)
+
+  Lemma assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+    (fun '(x, e, s) => N.of_nat (assign_work x e s))
+    (fun '(x, e, s) => T_assign x e s).
+  Proof. Admitted. (* STUB *)
+
+  Lemma havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+    (fun '(x, s) => N.of_nat (havoc_work x s))
+    (fun '(x, s) => T_havoc x s).
+  Proof. Admitted. (* STUB *)
+
+  Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+    (fun '(gd, es, s) => N.of_nat (assume_work gd es s))
+    (fun '(gd, es, s) => T_assume gd es s).
+  Proof. Admitted. (* STUB *)
+
+  Lemma eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+    (fun '(e, s) => N.of_nat (eval_work e s))
+    (fun '(e, s) => T_eval e s).
+  Proof. Admitted. (* STUB *)
+
+  Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Proof. Admitted. (* STUB *)
+
+  Lemma narrow_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_narrow (fst ab) (snd ab)).
+  Proof. Admitted. (* STUB *)
 
   Lemma F_wunits_unreached : wunits Unreached = 0.
   Proof.

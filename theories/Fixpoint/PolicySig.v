@@ -5,7 +5,7 @@
     Builds on: Base.Trie and Lattice.LatticeSig. *)
 
 From Stdlib Require Import PArith List Arith NArith.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 
@@ -115,6 +115,12 @@ Module Type POLICY_TIME (L : WLATTICE_T) (Import P : POLICY L).
               N.of_nat ((L.wunits a + L.wunits b + 1) * L.wsize (wp pol))
           | None => 0
           end) + 1))%N.
+  (** An update is linear in the key, both values, the counter and the widening cost. *)
+  Parameter update_bigO : bigO (X := policy L.wparam * positive * N * L.t * L.t)
+    (fun _ => True)
+    (fun '(pol, x, cnt, a, b) => N.of_nat (Pos.size_nat x + L.size a + L.size b +
+        N.size_nat cnt + (L.wunits a + L.wunits b + 1) * L.wsize (wp pol)))
+    (fun '(pol, x, cnt, a, b) => T_update pol x cnt a b).
 End POLICY_TIME.
 
 Module Type POLICY_T (L : WLATTICE_T) := POLICY L <+ POLICY_TIME L.

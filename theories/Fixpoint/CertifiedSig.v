@@ -5,6 +5,7 @@
     Builds on: Fixpoint.SolverSig, Fixpoint.CheckSig and Fixpoint.NarrowSig. *)
 
 From Stdlib Require Import NArith.
+From Argent Require Import BigO.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig PolicySig SolverSig CheckSig NarrowSig.
@@ -52,6 +53,10 @@ Module Type CERTIFIED_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
   Parameter T_analyze_le : forall p pol fuel,
     (T_analyze p pol fuel <= c_cert *
       (V.T_run p pol fuel + candidate_work p pol fuel + 1))%N.
+  (** Certification is linear in the solver clock and the work of a solved candidate. *)
+  Parameter analyze_bigO : bigO (X := S.prog * policy L.wparam * N) (fun _ => True)
+    (fun '(p, pol, fuel) => (V.T_run p pol fuel + candidate_work p pol fuel)%N)
+    (fun '(p, pol, fuel) => T_analyze p pol fuel).
 End CERTIFIED_TIME.
 
 Module Type CERTIFIED_T (L : WLATTICE_T) (S : SYSTEM_T L)

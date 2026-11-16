@@ -4,7 +4,7 @@
     For example, parallel edges remain separate entries in each adjacency list.
     Builds on: Program.CfgSig and Graph.Data. *)
 From Stdlib Require Import List PArith NArith Arith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig Trie Code.
 From Galois.Graph Require Import Data.
 From Galois.Program Require Import CfgSig.
@@ -534,6 +534,14 @@ Module CfgT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_BASE_T P N E).
     pose proof (C.T_edges_le p) as Hedges.
     unfold T_prepare, c_cfg_prep. fold w. nia.
   Qed.
+
+  (** Preparation is linear in the entries and edges times the widest endpoint key. *)
+  Lemma prepare_bigO : bigO (X := P.t) (fun _ => True)
+    (fun p => N.of_nat ((length (C.entries p) + length (C.edges p) + 1) *
+      (fold_right Nat.max 0%nat (List.map N.bits (C.entries p ++
+        flat_map (fun e => C.src p e :: C.dst p e :: nil) (C.edges p))) + 1)))
+    T_prepare.
+  Proof. Admitted. (* STUB *)
   End Timed.
   Include Timed.
 End CfgT.

@@ -122,6 +122,29 @@ Module Type DISJUNCTION_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   (** Widening visits the units of every alternative. *)
   Parameter wunits_alternatives : forall d,
     wunits d = fold_right Nat.add 0%nat (map S.wunits (proj1_sig d)).
+  (** Widening is linear in the sizes and in the units times the parameter size. *)
+  Parameter widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
+    (fun '(p, a, b) => T_widen p a b).
+  (** Narrowing is linear in both sizes for the fixed cap. *)
+  Parameter narrow_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_narrow (fst ab) (snd ab)).
+  (** Assignment is linear in its work measure. *)
+  Parameter assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+    (fun '(x, e, d) => N.of_nat (assign_work x e d)) (fun '(x, e, d) => T_assign x e d).
+  (** Havoc is linear in its work measure. *)
+  Parameter havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+    (fun '(x, d) => N.of_nat (havoc_work x d)) (fun '(x, d) => T_havoc x d).
+  (** Assumption is linear in its work measure. *)
+  Parameter assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+    (fun '(gd, es, d) => N.of_nat (assume_work gd es d)) (fun '(gd, es, d) => T_assume gd es d).
+  (** Evaluation is linear in its work measure. *)
+  Parameter eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+    (fun '(e, d) => N.of_nat (eval_work e d)) (fun '(e, d) => T_eval e d).
+  (** Collapsing at most the cap plus one alternatives is linear in their sizes. *)
+  Parameter collapse_bigO : bigO (fun xs : list S.t => length xs <= C.k + 1)
+    (fun xs => N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs)) T_collapse.
   (** The widening parameter is the component's parameter. *)
   Parameter wsize_component : forall p, wsize p = S.wsize p.
   (** Collapsing at most the cap plus one alternatives charges their sizes. *)

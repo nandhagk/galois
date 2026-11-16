@@ -5,7 +5,7 @@
     Builds on: Framework.DenseSig, Fixpoint.SystemSig and Program.SemanticsSig. *)
 
 From Stdlib Require Import List Relation_Operators Bool PeanoNat NArith Lia.
-From Argent Require Import Loop Time Tactics Std.
+From Argent Require Import Loop Time Tactics Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -303,4 +303,21 @@ Module DenseT (P : TYPE) (N : KEY_T) (E : TYPE)
       eapply N.le_trans; [apply T.transfer_size_le|].
       apply T.flow_work_mono; apply Hsize.
   Qed.
+  Lemma rows_bigO : bigO (X := prog) (fun p => wf p)
+    (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
+  Proof. Admitted. (* STUB *)
+  Lemma start_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
+  Proof. Admitted. (* STUB *)
+  Lemma deps_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
+    (fun '(p, r) => T_deps p r).
+  Proof. Admitted. (* STUB *)
+  Lemma target_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
+  Proof. Admitted. (* STUB *)
+  Lemma sides_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
+    (fun '(p, r) => T_sides p r).
+  Proof. Admitted. (* STUB *)
 End DenseT.

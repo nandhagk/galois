@@ -133,6 +133,9 @@ Module Type BUILD_TIME (O : OPS)
       c_build * N.of_nat (Va.op_bits p + 1))%N.
   Parameter build_bigO : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (build_work p * (function_width p + 1) + Va.op_bits p + 1)) T_build.
+  (** Producing a candidate is linear in the construction work times the width. *)
+  Parameter produce_bigO : bigO (fun _ : P.t => True)
+    (fun p => N.of_nat (build_work p * (function_width p + 1))) T_produce.
 End BUILD_TIME.
 
 Module Type BUILD_T (O : OPS)

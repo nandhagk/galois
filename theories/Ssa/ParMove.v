@@ -6,7 +6,7 @@
     Builds on: ParMoveSig and the canonical binary trie. *)
 
 From Stdlib Require Import List PArith NArith Bool Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Ssa Require Import ParMoveSig.
 
@@ -922,6 +922,18 @@ Module ParMoveT <: PARMOVE_ALL.
   Proof.
     exact full_checker_clock_bound.
   Qed.
+
+  (** Sequentialisation is linear in the moves times the identifier width. *)
+  Lemma seq_bigO : bigO (X := moves * positive) (fun _ => True)
+    (fun '(par, _) => N.of_nat ((length par + 1) * (bits_of par + 1)))
+    (fun '(par, tmp) => T_seq par tmp).
+  Proof. Admitted. (* STUB *)
+
+  (** Checking is linear in both sequences times the identifier width. *)
+  Lemma check_moves_bigO : bigO (X := moves * positive * moves) (fun _ => True)
+    (fun '(par, _, sq) => N.of_nat ((length par + length sq + 1) * (bits_of (par ++ sq) + 1)))
+    (fun '(par, tmp, sq) => T_check_moves par tmp sq).
+  Proof. Admitted. (* STUB *)
 
   (** Cycle discovery uses the same bounded indexed search as move emission. *)
   Lemma T0_cycle_search : forall par,

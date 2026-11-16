@@ -5,6 +5,7 @@
     Builds on: Fixpoint.CheckSig and Fixpoint.SystemSig. *)
 
 From Stdlib Require Import List NArith PArith.
+From Argent Require Import BigO.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
@@ -90,6 +91,15 @@ Module Type NARROW_TIME (L : WLATTICE_T) (S : SYSTEM_T L) (C : CHECK_T L S)
   Parameter T_refine_le : forall p k m, S.wf p ->
     (forall x, B.inv p (C.look m x)) ->
     (T_refine p k m <= c_nar * N.of_nat (k + 1) * pass_work p)%N.
+  (** One pass is linear in the sweep measure of the program. *)
+  Parameter narrow_pass_bigO : bigO (X := S.prog * kmap S.key L.t)
+    (fun pm => S.wf (fst pm) /\ forall x, B.inv (fst pm) (C.look (snd pm) x))
+    (fun pm => pass_work (fst pm)) (fun pm => T_narrow_pass (fst pm) (snd pm)).
+  (** Refinement is linear in the pass count times the sweep measure. *)
+  Parameter refine_bigO : bigO (X := S.prog * nat * kmap S.key L.t)
+    (fun '(p, _, m) => S.wf p /\ forall x, B.inv p (C.look m x))
+    (fun '(p, k, _) => (N.of_nat (k + 1) * pass_work p)%N)
+    (fun '(p, k, m) => T_refine p k m).
 End NARROW_TIME.
 
 Module Type NARROW_T (L : WLATTICE_T) (S : SYSTEM_T L) (C : CHECK_T L S) (B : BUDGET L S) :=

@@ -5,6 +5,7 @@
     Builds on: Domains.LangSig, Domains.ValueSig, States.StateSig and Framework.DenseSig. *)
 
 From Stdlib Require Import List NArith.
+From Argent Require Import BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
@@ -173,6 +174,23 @@ Module Type INTERP_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
     (B : INTERP_ENVELOPE P E X L V A D) (Import S : INTERP P N E C X L V A D).
   Include INTERP_COST_SPEC P N E C X L V A D B.
   Include SYSTEM_TIME D S with Definition row_work := interp_work with Definition kw := interp_kw.
+  (** Listing the rows is linear in their number. *)
+  Parameter rows_bigO : bigO (X := prog) (fun p => wf p)
+    (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
+  (** Starting a row is linear in the row budget at the empty value. *)
+  Parameter start_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
+  (** Listing the dependencies of a row is linear in their number times the key width. *)
+  Parameter deps_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
+    (fun '(p, r) => T_deps p r).
+  (** The target of a listed row fits the row budget at the empty value. *)
+  Parameter target_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
+  (** Listing the sides of a row is linear in their number times the key width. *)
+  Parameter sides_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+    (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
+    (fun '(p, r) => T_sides p r).
 End INTERP_TIME.
 
 Module Type INTERP_T (P : TYPE) (N : KEY_T) (E : TYPE)

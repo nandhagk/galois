@@ -5171,6 +5171,11 @@ Module BuildT (O : OPS)
     intro p; unfold k_graph; exact (budget_producer_clock p).
   Qed.
 
+  (** Producing a candidate is linear in the construction work times the width. *)
+  Lemma produce_bigO : bigO (fun _ : P.t => True)
+    (fun p => N.of_nat (build_work p * (function_width p + 1))) T_produce.
+  Proof. Admitted. (* STUB *)
+
   Definition c_build : N :=
     (budget_producer_coefficient + 1024 * Va.c_val + 16)%N.
 

@@ -110,6 +110,26 @@ Module Type CALLS_TIME (P : TYPE) (F S : KEY_T) (Import C : CALLS P F S).
   (** Resolution pays for the site key and the returned targets. *)
   Parameter T_resolve_le : forall p site,
     (T_resolve p site <= c_calls * N.of_nat (S.bits site + length (resolve p site) + 1))%N.
+  (** Call enumeration is linear in its output. *)
+  Parameter calls_bigO : bigO (fun _ : P.t => True)
+    (fun p => N.of_nat (length (calls p))) T_calls.
+  (** Site lookup is linear in the function key and the returned sites. *)
+  Parameter sites_of_bigO : bigO (X := P.t * F.t) (fun _ => True)
+    (fun '(p, f) => N.of_nat (F.bits f + length (sites_of p f)))
+    (fun '(p, f) => T_sites_of p f).
+  (** Caller lookup is linear in the site key. *)
+  Parameter caller_of_bigO : bigO (X := P.t * S.t) (fun _ => True)
+    (fun '(_, site) => N.of_nat (S.bits site)) (fun '(p, site) => T_caller_of p site).
+  (** Resolution is linear in the site key and the returned targets. *)
+  Parameter resolve_bigO : bigO (X := P.t * S.t) (fun _ => True)
+    (fun '(p, site) => N.of_nat (S.bits site + length (resolve p site)))
+    (fun '(p, site) => T_resolve p site).
+  (** The function inventory is linear in its output. *)
+  Parameter functions_bigO : bigO (fun _ : P.t => True)
+    (fun p => N.of_nat (length (functions p))) T_functions.
+  (** The root inventory is linear in its output. *)
+  Parameter roots_bigO : bigO (fun _ : P.t => True)
+    (fun p => N.of_nat (length (roots p))) T_roots.
   Definition call_graph_work p :=
     (T_functions p +
       fold_right N.add 0%N (map (fun f => T_sites_of p f + F.T_encode f)%N (functions p)) +

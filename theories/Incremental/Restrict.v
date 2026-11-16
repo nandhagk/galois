@@ -6,7 +6,7 @@
     Builds on: RestrictSig, SystemSig, CheckSig, MapSig and Trie. *)
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation.
-From Argent Require Import Time Tactics Std Loop.
+From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
@@ -517,6 +517,11 @@ Module RestrictT (L : LATTICE_T) (S : LOCAL_SYSTEM_T L).
     Proof.
       intros p fz rs; unfold c_res; time_step.
     Qed.
+
+    (** Building a restriction is constant time. *)
+    Lemma mk_bigO : bigO (X := S.prog * list (S.key * L.t) * list S.row) (fun _ => True)
+      (fun _ => 0%N) (fun '(p, fz, rs) => T_mk p fz rs).
+    Proof. Admitted. (* STUB *)
 
     (** Restricted post-solutions accept every primary and side write of a selected row. *)
     Lemma restrict_writes : forall p fz rs s r, RS.post_solution (mk p fz rs) s ->
