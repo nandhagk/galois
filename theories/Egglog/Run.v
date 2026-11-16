@@ -10,7 +10,7 @@
 
 From Stdlib Require Import List PArith NArith Arith Bool Lia Relations.Relation_Operators
   Sorting.Sorted Sorting.Permutation PeanoNat.
-From Argent Require Import Time Tactics Std Loop.
+From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import Code Loop Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts RunSig.
 
@@ -10407,7 +10407,8 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Qed.
 
 
-  Lemma F21_driver_step : forall p cp lim nv db,
+  (** The driver passes on the advanced result of its round. *)
+  Lemma run_driver_step_advanced : forall p cp lim nv db,
     driver p cp lim (nv, db) =
       let next := round p cp nv db in
       if N.ltb (max_ids lim) (D.ids next) then inr (IdLimit, next)
@@ -10416,6 +10417,16 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Proof.
     reflexivity.
   Qed.
+
+  (** The round advances the database before it applies, so its result carries the rows that
+      the round changed as new rows. The driver passes that result on without advancing. *)
+  Lemma F21_driver_step : forall p cp lim nv db,
+    driver p cp lim (nv, db) =
+      let next := round p cp nv db in
+      if N.ltb (max_ids lim) (D.ids next) then inr (IdLimit, next)
+      else if andb nv (negb (D.changed next)) then inr (Saturated, next)
+      else inl (negb (D.changed next), next).
+  Proof. Admitted. (* STUB *)
 
   (** The trie of a binding gives the plan's binding environment. *)
   Lemma F30_bind_trie : forall c b x, trie_get x (bind_trie c b) = env_of c b x.
@@ -10442,12 +10453,19 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       unfold job_rule. rewrite rule_at_nth. reflexivity.
   Qed.
 
-  (** A round applies its jobs in order and rebuilds the resulting database once. *)
-  Lemma F32_round_jobs : forall p cp nv db,
+  (** A round applies its jobs to its starting database in order and rebuilds the resulting
+      database once. *)
+  Lemma run_round_jobs_start : forall p cp nv db,
     round p cp nv db = D.rebuild (apply_jobs p (jobs p cp nv db) db).
   Proof.
     intros p cp nv db. unfold round. rewrite apply_all_jobs. reflexivity.
   Qed.
+
+  (** A round reads its jobs from the starting database, applies them to its advanced copy
+      in order and rebuilds once. *)
+  Lemma F32_round_jobs : forall p cp nv db,
+    round p cp nv db = D.rebuild (apply_jobs p (jobs p cp nv db) (D.advance db)).
+  Proof. Admitted. (* STUB *)
 
   (** Two views agree when they have the same rows, identifier equalities and kinds. *)
   Definition run_view_agrees (before after : view (V := V.t)) : Prop :=
@@ -10917,7 +10935,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Proof.
     intros p cp db Hchecked Hwf Hloaded Hcanonical Hquiet Hroundquiet.
     assert (Hjobsquiet : D.changed (apply_jobs p (jobs p cp true db) db) = false).
-    { rewrite F32_round_jobs in Hroundquiet.
+    { rewrite run_round_jobs_start in Hroundquiet.
       destruct (D.changed (apply_jobs p (jobs p cp true db) db)) eqn:Hchanged;
         [|reflexivity].
       pose proof (D.changed_rebuild _ Hchanged) as Hraised. congruence. }
@@ -11001,7 +11019,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf
       Hloaded (N.le_refl _)) as [Hnext [Hloadnext Hids]].
     destruct (run_rebuild_state p cp _ Hnext Hloadnext) as [Hfinal [Hloadfinal Hfinalids]].
-    rewrite F32_round_jobs. split; [exact Hfinal|]. split; [exact Hloadfinal|lia].
+    rewrite run_round_jobs_start. split; [exact Hfinal|]. split; [exact Hloadfinal|lia].
   Qed.
 
   (** Canonicalizing a key preserves each cell up to the database's identifier equality. *)
@@ -11058,7 +11076,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     pose proof (run_jobs_facts p cp nv db Hchecked Hwf Hloaded) as Hjobs.
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf
       Hloaded (N.le_refl _)) as [Hnext Hstate].
-    rewrite F32_round_jobs. apply F6a_rebuild_grows; [exact Hnext|].
+    rewrite run_round_jobs_start. apply F6a_rebuild_grows; [exact Hnext|].
     eapply run_apply_jobs_grows; eassumption || apply N.le_refl.
   Qed.
 
@@ -11161,7 +11179,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       as [final_nu [Hext Hsatfinal]].
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf Hloaded
       (N.le_refl _)) as [Hnext Hstate].
-    exists final_nu. split; [exact Hext|]. rewrite F32_round_jobs.
+    exists final_nu. split; [exact Hext|]. rewrite run_round_jobs_start.
     apply D.rebuild_sat; assumption.
   Qed.
 
@@ -11192,7 +11210,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked
       (run_jobs_facts p cp nv db Hchecked Hwf Hloaded) Hwf Hloaded (N.le_refl _))
       as [Hnext Hstate].
-    rewrite F32_round_jobs. apply D.rebuild_canonical. exact Hnext.
+    rewrite run_round_jobs_start. apply D.rebuild_canonical. exact Hnext.
   Qed.
 
   (** Advancing changes neither the rows nor their representatives. *)
@@ -11672,8 +11690,10 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     cbn [apply_jobs]. eapply IH; try eassumption. eapply N.le_trans; eassumption.
   Qed.
 
-  Lemma F9_round_progress : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    relational_fragment p = true -> no_ids db -> D.changed db = false ->
+  (** A changed relational round from a database with a down flag adds a row absent from its
+      starting view. *)
+  Lemma run_round_progress_quiet : forall p cp nv db, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> relational_fragment p = true -> no_ids db -> D.changed db = false ->
     D.changed (round p cp nv db) = true ->
     exists f k, row (D.view (round p cp nv db)) f k None /\ ~ row (D.view db) f k None.
   Proof.
@@ -11685,8 +11705,15 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       Hloaded (N.le_refl _)) as [Hnext Hstate].
     pose proof (run_progress_rebuild db (apply_jobs p (jobs p cp nv db) db) Hnext Hprogress)
       as [_ [_ Hraised]].
-    rewrite F32_round_jobs in Hchanged |- *. now apply Hraised.
+    rewrite run_round_jobs_start in Hchanged |- *. now apply Hraised.
   Qed.
+
+  (** A changed relational round adds a row absent from its starting view. *)
+  Lemma F9_round_progress : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    relational_fragment p = true -> no_ids db ->
+    D.changed (round p cp nv db) = true ->
+    exists f k, row (D.view (round p cp nv db)) f k None /\ ~ row (D.view db) f k None.
+  Proof. Admitted. (* STUB *)
 
   (** A finite driver trace always starts with its supplied state. *)
   Lemma run_driver_trace_head : forall A B (step : A -> A + B) fuel start,
@@ -12100,14 +12127,14 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       Hquiet Hroundquiet) as Hclosed.
     pose proof (run_jobs_facts p cp true db Hchecked Hwf Hloaded) as Hjobs.
     assert (Hjobsquiet : D.changed (apply_jobs p (jobs p cp true db) db) = false).
-    { rewrite F32_round_jobs in Hroundquiet.
+    { rewrite run_round_jobs_start in Hroundquiet.
       destruct (D.changed (apply_jobs p (jobs p cp true db) db)) eqn:Hchanged;
         [|reflexivity]. pose proof (D.changed_rebuild _ Hchanged) as Hraised. congruence. }
     destruct (run_apply_jobs_state p cp db (jobs p cp true db) db Hchecked Hjobs
       Hwf Hloaded (N.le_refl _)) as [Hnext Hrest].
     destruct (run_apply_jobs_quiet p cp (jobs p cp true db) db Hchecked Hwf Hloaded
       (run_canonical_unique db Hwf Hcanonical) Hquiet Hjobsquiet Hjobs) as [Hview Hpresent].
-    rewrite F32_round_jobs.
+    rewrite run_round_jobs_start.
     exact (run_quiet_rebuild_closed p cp db (apply_jobs p (jobs p cp true db) db)
       Hchecked Hwf Hnext Hcanonical Hview Hclosed).
   Qed.
@@ -12346,7 +12373,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       as [Hnoidsnext Hderivednext].
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf
       Hloaded (N.le_refl _)) as [Hnext Hrest].
-    rewrite F32_round_jobs. now apply run_rebuild_derives.
+    rewrite run_round_jobs_start. now apply run_rebuild_derives.
   Qed.
 
   (** A checked relational round does not allocate identifiers. *)
@@ -12830,7 +12857,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       as Hdomain'.
     destruct (run_apply_jobs_state p cp current (jobs p cp nv current) current Hchecked Hjobs
       Hcurrent Hloaded (N.le_refl _)) as [Hnext Hrest].
-    rewrite F32_round_jobs. now apply run_domain_rebuild.
+    rewrite run_round_jobs_start. now apply run_domain_rebuild.
   Qed.
 
   (** Inclusion of active values gives inclusion of the corresponding finite universes. *)
@@ -13030,7 +13057,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Proof.
     intros p cp initial nv current seen Hchecked Hinitial Hfragment Hfree
       [Hcurrent [Hloaded [Hdomain [Hinitial_rows [Hnodup [Hinside Hseen]]]]]] Hquiet Hchanged.
-    destruct (F9_round_progress p cp nv current Hchecked Hcurrent Hloaded Hfragment
+    destruct (run_round_progress_quiet p cp nv current Hchecked Hcurrent Hloaded Hfragment
       (proj1 Hdomain) Hquiet Hchanged) as [f [k [Hrow Hfresh]]].
     destruct (run_round_state p cp nv current Hchecked Hcurrent Hloaded)
       as [Hround [Hloadround Hids]].
@@ -13084,7 +13111,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     { apply N.ltb_ge. rewrite (proj1 Hnoids). lia. }
     destruct (run_termination_advance p cp initial nv current seen Hchecked Hinitial
       Hfragment Hfree Hstate) as [Hnext Hquiet].
-    rewrite F21_driver_step. cbn zeta. rewrite Hlimit.
+    rewrite run_driver_step_advanced. cbn zeta. rewrite Hlimit.
     destruct (D.changed (round p cp nv current)) eqn:Hchanged; cbn [negb andb].
     - rewrite andb_false_r. cbn beta iota.
       destruct (D.changed current) eqn:Hprevious.
@@ -15115,7 +15142,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       Hloaded (N.le_refl _)) as Hunit.
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf
       Hloaded (N.le_refl _)) as [Happlied Hstate].
-    rewrite F32_round_jobs. eapply Nat.le_trans; [exact Hunit|].
+    rewrite run_round_jobs_start. eapply Nat.le_trans; [exact Hunit|].
     apply D.unit_mono_rebuild. exact Happlied.
   Qed.
 
@@ -18058,8 +18085,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     unfold k_driver. nia.
   Qed.
 
-  (** A round's time is bounded by its joins, job applications, rebuild and driver overhead. *)
-  Lemma T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
+  (** A round's time is bounded by its joins, job applications to its starting database,
+      rebuild and driver overhead. *)
+  Lemma run_round_split_start : forall p cp nv db, plans_ok p cp -> D.wf db ->
     loaded p cp db ->
     (T_round p cp nv db <=
       fold_right N.add 0 (map (fun c =>
@@ -18094,6 +18122,24 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         + lia. }
     time_unfold T_round. rewrite apply_all_jobs. lia.
   Qed.
+
+  (** A round pays for its joins, its advance, its applications, its rebuild and its
+      per-binding work. *)
+  Lemma T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
+    loaded p cp db ->
+    (T_round p cp nv db <=
+      fold_right N.add 0 (map (fun c =>
+        J.T_run (join V.t c) (map (source_index db) (sources V.t c)))
+        (if nv then naive V.t cp else seminaive V.t cp)) +
+      fold_right N.add 0 (map (fun c =>
+        fold_right N.add 0 (map (fun b => T_bind_trie c b + T_keep p c (bind_trie c b))
+          (bindings cp c db)))
+        (if nv then naive V.t cp else seminaive V.t cp)) +
+      T_apply_jobs p (jobs p cp nv db) (D.advance db) +
+      D.T_rebuild (apply_jobs p (jobs p cp nv db) (D.advance db)) +
+      D.T_advance db +
+      k_driver * N.of_nat (round_work p cp nv db + 1) * N.of_nat (wbits p + 1))%N.
+  Proof. Admitted. (* STUB *)
 
   (** The driver constant covers the stored fields and binary comparison. *)
   Lemma driver_constant_fields : (32 * (D.c_db + 1) <= k_driver)%N.
@@ -20385,7 +20431,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     assert (Hstartunit : D.unit db <= U) by lia.
     pose proof (run_jobs_facts p cp nv db Hplans Hwf Hloaded) as Hfacts.
     set (applied := apply_jobs p (jobs p cp nv db) db).
-    assert (Hround : round p cp nv db = D.rebuild applied) by apply F32_round_jobs.
+    assert (Hround : round p cp nv db = D.rebuild applied) by apply run_round_jobs_start.
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db
       Hplans Hfacts Hwf Hloaded (N.le_refl _)) as [Hapwf [Haploaded Hapids]].
     change (D.wf applied) in Hapwf. change (loaded p cp applied) in Haploaded.
@@ -20428,7 +20474,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       as Hjoins.
     pose proof (run_round_filters_cost B U p cp nv db Hplans Hwf Hloaded Hstartunit HUpos)
       as Hfilters.
-    pose proof (T1a_round_split p cp nv db Hplans Hwf Hloaded) as Hsplit.
+    pose proof (run_round_split_start p cp nv db Hplans Hwf Hloaded) as Hsplit.
     assert (Hshell : (k_driver * N.of_nat (round_work p cp nv db + 1) *
       N.of_nat (wbits p + 1) <= k_driver * run_cost_scale B U p *
       (N.of_nat (round_work p cp nv db) + 1))%N).
@@ -20594,7 +20640,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     driver p cp lim (nv, db) = inl (next_nv, next) ->
     next = D.advance (round p cp nv db).
   Proof.
-    intros p cp lim nv db next_nv next Hstep. rewrite F21_driver_step in Hstep.
+    intros p cp lim nv db next_nv next Hstep. rewrite run_driver_step_advanced in Hstep.
     cbn zeta in Hstep.
     destruct (max_ids lim <? D.ids (round p cp nv db))%N; [discriminate|].
     destruct (nv && negb (D.changed (round p cp nv db))); [discriminate|].
@@ -20605,7 +20651,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Lemma run_timing_driver_stop : forall p cp lim nv db status next,
     driver p cp lim (nv, db) = inr (status, next) -> next = round p cp nv db.
   Proof.
-    intros p cp lim nv db status next Hstep. rewrite F21_driver_step in Hstep.
+    intros p cp lim nv db status next Hstep. rewrite run_driver_step_advanced in Hstep.
     cbn zeta in Hstep.
     destruct (max_ids lim <? D.ids (round p cp nv db))%N.
     - now injection Hstep as <- <-.
@@ -20796,4 +20842,70 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Proof.
     apply run_run_from_round. exact run_round_cost_sharp.
   Qed.
+
+  (** Loading costs the initialisation of its declarations and slots. The measure is the right
+      side of [D.T_init_le] without its constant. *)
+  Definition load_cost (p : program V.t) (cp : compiled V.t) : N :=
+    N.of_nat ((length (decls V.t p) + length (Syntax.slots V.t cp) +
+        layout_work (Syntax.slots V.t cp) + 1) *
+      (fold_right (fun s n => length (snd s) + n) 0 (Syntax.slots V.t cp) + 1) +
+      (fold_right (fun d n => Pos.size_nat (name d) + n) 0 (decls V.t p) +
+       fold_right (fun s n => Pos.size_nat (fst s) + n) 0 (Syntax.slots V.t cp)) + 1).
+  (** The work of a run is the sum of the round work of its trace and the pending repairs. *)
+  Definition run_work (p : program V.t) (cp : compiled V.t) (lim : limits) (db : D.t) : nat :=
+    fold_right Nat.add 0 (map (fun st => round_work p cp (fst st) (snd st) + 1)
+      (trace p cp lim db)) + D.pending db + 1.
+  (** The cost of a run at identifier bound [B] and unit bound [U]. *)
+  Definition run_cost (B : N) (U : nat) (p : program V.t) (cp : compiled V.t) (lim : limits)
+      (db : D.t) : N :=
+    (N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        N.of_nat (run_work p cp lim db) +
+      N.of_nat (N.size_nat (max_iter lim) + 1) + N.of_nat U * D.potential B db)%N.
+  (** The cost of one round at identifier bound [B] and unit bound [U]. *)
+  Definition round_cost (B : N) (U : nat) (p : program V.t) (cp : compiled V.t) (nv : bool)
+      (db : D.t) : N :=
+    (N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        N.of_nat (round_work p cp nv db + D.pending db + 1) +
+      N.of_nat U * D.potential B db)%N.
+
+  (** Planning is cubic in the program text, because sorting the positions of an atom
+      compares unary join indices. *)
+  Lemma plan_bigO : bigO (fun _ => True)
+    (fun p => N.of_nat ((size_program p + 1) * (size_program p + 1) * (size_program p + 1)))
+    T_plan.
+  Proof. Admitted. (* STUB *)
+
+  (** Loading is linear in its declarations and slots, with the layout work of sorting. *)
+  Lemma load_bigO : bigO (fun _ => True)
+    (fun x : program V.t * compiled V.t => load_cost (fst x) (snd x))
+    (fun x => T_load (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** Plan checking is linear in the program and plan syntax at their identifier width. *)
+  Lemma check_plan_bigO : bigO (fun _ => True)
+    (fun x : program V.t * compiled V.t =>
+      N.of_nat ((size_program (fst x) + size_compiled (snd x) + 1) * (wbits (fst x) + 1)))
+    (fun x => T_check_plan (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** A run costs its trace work at the identifier width, its fuel counter and its scaled
+      initial credit. *)
+  Lemma run_bigO : bigO
+    (fun x : N * nat * program V.t * compiled V.t * limits * D.t =>
+      let '(B, U, p, cp, lim, db) := x in
+      plans_ok p cp /\ D.wf db /\ loaded p cp db /\
+      (D.ids (snd (run p cp lim db)) <= B)%N /\ D.unit (snd (run p cp lim db)) <= U)
+    (fun x => let '(B, U, p, cp, lim, db) := x in run_cost B U p cp lim db)
+    (fun x => let '(_, _, p, cp, lim, db) := x in T_run p cp lim db).
+  Proof. Admitted. (* STUB *)
+
+  (** A round costs its round work at the identifier width and its scaled initial credit. *)
+  Lemma round_bigO : bigO
+    (fun x : N * nat * program V.t * compiled V.t * bool * D.t =>
+      let '(B, U, p, cp, nv, db) := x in
+      plans_ok p cp /\ D.wf db /\ loaded p cp db /\
+      (D.ids (round p cp nv db) <= B)%N /\ D.unit (round p cp nv db) <= U)
+    (fun x => let '(B, U, p, cp, nv, db) := x in round_cost B U p cp nv db)
+    (fun x => let '(_, _, p, cp, nv, db) := x in T_round p cp nv db).
+  Proof. Admitted. (* STUB *)
 End RunT.

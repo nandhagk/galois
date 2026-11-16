@@ -5,7 +5,7 @@
     Builds on: KeySig, TrieSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool NArith PeanoNat Lia Sorting.Sorted.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig TrieSig MapSig.
 From Galois.Base Require Import Trie.
 
@@ -722,5 +722,34 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
     unfold c_map, nodes, PTrieT.bindings in *.
     nia.
   Qed.
+
+  Lemma get_bigO : forall A, bigO (X := K.t * t A) (fun _ => True)
+    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_get (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma set_bigO : forall A, bigO (X := K.t * A * t A) (fun _ => True)
+    (fun x => N.of_nat (K.bits (fst (fst x))))
+    (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma remove_bigO : forall A, bigO (X := K.t * t A) (fun _ => True)
+    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_remove (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma merge_bigO : forall A B C,
+    bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
+      t A * t B)
+      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
+      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      (fun '(f, T_f, _, m1, m2) => T_merge f T_f m1 m2).
+  Proof. Admitted. (* STUB *)
+
+  Lemma forall2b_bigO : forall A B,
+    bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
+      t A * t B)
+      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
+      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      (fun '(f, T_f, _, m1, m2) => T_forall2b f T_f m1 m2).
+  Proof. Admitted. (* STUB *)
 
 End TrieMapT.

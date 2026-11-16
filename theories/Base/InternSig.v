@@ -5,7 +5,7 @@
     Builds on: KeySig, Stdlib binary arithmetic, and Argent time interfaces. *)
 
 From Stdlib Require Import PArith NArith.
-From Argent Require Import Time.
+From Argent Require Import Time BigO.
 From Galois.Base Require Import KeySig.
 
 Module Type INTERN_OPS (K : KEY_OPS).
@@ -84,6 +84,18 @@ Module Type INTERN_TIME (K : KEY_T) (Import I : INTERN K).
   (** Reading size charges the allocation frontier width. *)
   Parameter T_size_le : forall s,
     (T_size s <= c_intern * N.of_nat (N.size_nat (size s) + 1))%N.
+  (** Interning is linear in the key bits and the allocation frontier's width. *)
+  Parameter intern_bigO : bigO (X := K.t * t) (fun xs => wf (snd xs))
+    (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
+    (fun xs => T_intern (fst xs) (snd xs)).
+  (** Forward lookup is linear in the key bits and the allocation frontier's width. *)
+  Parameter find_bigO : bigO (X := K.t * t) (fun _ => True)
+    (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
+    (fun xs => T_find (fst xs) (snd xs)).
+  (** Inverse lookup is linear in the identifier bits and the allocation frontier's width. *)
+  Parameter name_bigO : bigO (X := positive * t) (fun _ => True)
+    (fun xs => N.of_nat (Pos.size_nat (fst xs) + N.size_nat (size (snd xs))))
+    (fun xs => T_name (fst xs) (snd xs)).
 
 End INTERN_TIME.
 

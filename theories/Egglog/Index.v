@@ -5,7 +5,7 @@
     Builds on: IndexSig and positive-key tries. *)
 
 From Stdlib Require Import List PArith NArith PeanoNat Lia Sorting.Permutation.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig.
 
@@ -3426,6 +3426,38 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
       set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost.
       time_unfold @T_node_degree. time_cbn. lia.
   Qed.
+
+  Lemma insert_bigO : bigO
+    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
+    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
+      (width (snd x) (snd (fst x)) + 1)))
+    (fun x => T_insert (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma remove_bigO : bigO
+    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
+    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
+      (width (snd x) (snd (fst x)) + 1)))
+    (fun x => T_remove (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma child_bigO : bigO (fun _ => True)
+    (fun x : t * positive * cell V.t =>
+      N.of_nat (width (fst (fst x)) [snd x] + 1))
+    (fun x => T_child (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma children_bigO : bigO
+    (fun x : nat * t * positive => wf (fst (fst x)) (snd (fst x)))
+    (fun x => N.of_nat ((N.to_nat (degree (snd (fst x)) (snd x)) + 1) *
+      (width (snd (fst x)) [] + 1)))
+    (fun x => T_children (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma degree_bigO : bigO (fun _ => True)
+    (fun x : t * positive => N.of_nat (width (fst x) [] + 1))
+    (fun x => T_degree (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
 
   (** Increasing a positive bound never decreases its binary width. *)
   Lemma positive_bits_mono : forall p q, (p <= q)%positive ->

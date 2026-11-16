@@ -2,9 +2,11 @@
 
     Compilation names intermediate pattern nodes and joins them through engine atoms.
     For example, a binary application introduces an atom for its two child classes.
-    Builds on: Egraph syntax and Egglog models and value signatures. *)
+    Builds on: Egraph syntax, Egglog models and value signatures, and Argent asymptotic
+    bounds. *)
 
 From Stdlib Require Import List PArith NArith.
+From Argent Require Import BigO.
 From Galois.Egglog Require Import ValueSig DatabaseSig Syntax Model Sorts.
 From Galois.Egraph Require Import Syntax.
 
@@ -97,6 +99,12 @@ Module Type COMPILE_TIME (V : VALUE_T) (Import C : COMPILE V).
   Parameter compile_rule_bits : forall rw,
     (N.of_nat (rule_bits (compile_rule rw)) <=
       c_compile * N.of_nat (rewrite_size rw + 1) * N.of_nat (rewrite_size rw + 1))%N.
+  (** Compilation is linear in the rewrites and the analysis rules. *)
+  Parameter compile_bigO : bigO (fun _ => True)
+    (fun x : list decl * list (rewrite V.t) * list (rule V.t) =>
+      let '(_, rws, ans) := x in
+      N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0 rws + length ans + 1))
+    (fun x => let '(ds, rws, ans) := x in T_compile ds rws ans).
 End COMPILE_TIME.
 
 Module Type COMPILE_T (V : VALUE_T) := COMPILE V <+ COMPILE_TIME V.
@@ -124,6 +132,9 @@ Module Type COMPILE_PLAN (V : VALUE_T) (Import C : COMPILE_T V).
   (** Compiling one rewrite is linear in its size. *)
   Parameter T2_compile_rule_le : forall rw,
     (T_compile_rule rw <= k_compile * N.of_nat (rewrite_size rw + 1))%N.
+  (** Compiling one rewrite is in the linear class of its size. *)
+  Parameter compile_rule_bigO : bigO (fun _ => True)
+    (fun rw => N.of_nat (rewrite_size rw + 1)) T_compile_rule.
 End COMPILE_PLAN.
 
 Module Type COMPILE_ALL (V : VALUE_T) := COMPILE_T V <+ COMPILE_PLAN V.

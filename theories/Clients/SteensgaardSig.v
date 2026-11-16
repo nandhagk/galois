@@ -5,7 +5,7 @@
     Builds on: the uniform-cell source semantics and the engine's identifier congruence. *)
 
 From Stdlib Require Import List PArith NArith Bool.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model ValueSig IndexSig JoinSig DatabaseSig RunSig.
 From Galois.Clients Require Import AndersenSig.
@@ -150,6 +150,30 @@ Module Type STEENSGAARD_TIME (V : VALUE_T with Definition t := positive)
   Parameter T_solve_le : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + c_steensgaard)%N.
+  (** Seeding is linear in the constraints and initial pointers at the database unit. *)
+  Parameter seed_bigO : bigO (fun _ => True)
+    (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
+      D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
+    T_seed.
+  (** Compilation emits a fixed program, so its cost is a constant. *)
+  Parameter compile_bigO : bigO (fun _ => True) (fun _ => 0%N) T_compile.
+  (** A points-to query is linear in the database unit and the bits of its two cells. *)
+  Parameter points_bigO : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
+    (fun z => let '(db, x, a) := z in
+      N.of_nat (8 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
+    (fun z => let '(db, x, a) := z in T_points db x a).
+  (** A solve costs its seed, the cube of the fixed program for planning, and the run. *)
+  Parameter solve_bigO : bigO
+    (fun x : N * nat * pointer_input * limits =>
+      let '(B, U, q, lim) := x in
+      (D.ids (snd (solve q lim)) <= B)%N /\ D.unit (snd (solve q lim)) <= U)
+    (fun x => let '(B, U, q, lim) := x in
+      (N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
+        D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)) +
+      N.of_nat ((R.size_program (compile q) + 1) * (R.size_program (compile q) + 1) *
+        (R.size_program (compile q) + 1)) +
+      R.run_cost B U (compile q) (R.plan (compile q)) lim (seed q))%N)
+    (fun x => let '(_, _, q, lim) := x in T_solve q lim).
 End STEENSGAARD_TIME.
 
 Module Type STEENSGAARD_T (V : VALUE_T with Definition t := positive)

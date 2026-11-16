@@ -5,7 +5,7 @@
     Builds on: ValueSig, IndexSig, DatabaseSig and Model. *)
 
 From Stdlib Require Import List PArith NArith Relations.Relation_Operators.
-From Argent Require Import Time Std Loop.
+From Argent Require Import Time Std Loop BigO.
 From Galois.Egglog Require Import ValueSig IndexSig DatabaseSig Syntax Model Sorts.
 
 Import List.ListNotations.
@@ -232,6 +232,36 @@ Module Type EXTRACT_TIME (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
   Parameter T_extract_le : forall cs db c, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_extract cs db c <= T_best cs db + c_ex * N.of_nat (R db + 1) *
       N.of_nat (a db + 1) * N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
+  (** Building the inventory costs the layout bits times the logarithm of the slot count. *)
+  Parameter inventory_bigO : bigO (fun _ => True)
+    (fun x : list decl * list (positive * list nat) =>
+      N.of_nat ((layout_bits (fst x) (snd x) + 1) * (Nat.log2 (length (snd x)) + 1)))
+    (fun x => T_inventory (fst x) (snd x)).
+  (** Best rows cost the inventory, the incidences and the heap, at the database unit. *)
+  Parameter best_bigO : bigO
+    (fun x : list (positive * (N * nat)) * D.t =>
+      D.wf (snd x) /\ D.canonical (snd x) /\ ctor_inventory (fst x) (snd x))
+    (fun x => N.of_nat ((inventory_bits (fst x) + (R (snd x) + 1) * (a (snd x) + 1) +
+      (R (snd x) + 1) * (Nat.log2 (R (snd x)) + 1)) * (D.unit (snd x) + 1) *
+      (cost_width (snd x) + 1)))
+    (fun x => T_best (fst x) (snd x)).
+  (** Checking costs the certificate syntax at the database unit and the accepted root cost
+      width. *)
+  Parameter check_dag_bigO : bigO
+    (fun x : D.t * positive * extraction_dag V.t => D.wf (fst (fst x)))
+    (fun x => let '(db, c, g) := x in
+      N.of_nat ((cert_size V.encode g + Pos.size_nat c + 1) * (D.unit db + 1) *
+        (match check_dag db c g with Some n => N.size_nat n | None => 0 end + 1)))
+    (fun x => let '(db, c, g) := x in T_check_dag db c g).
+  (** Extraction costs its best rows and the traversal of their witness at the database
+      unit. *)
+  Parameter extract_bigO : bigO
+    (fun x : list (positive * (N * nat)) * D.t * positive =>
+      let '(cs, db, _) := x in D.wf db /\ D.canonical db /\ ctor_inventory cs db)
+    (fun x => let '(cs, db, _) := x in
+      N.of_nat ((inventory_bits cs + 2 * ((R db + 1) * (a db + 1)) +
+        (R db + 1) * (Nat.log2 (R db) + 1)) * (D.unit db + 1) * (cost_width db + 1)))
+    (fun x => let '(cs, db, c) := x in T_extract cs db c).
 End EXTRACT_TIME.
 
 Module Type EXTRACT_T (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)

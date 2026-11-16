@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List PArith NArith PeanoNat Bool Lia Relations.Relation_Operators
   Sorting.Permutation Sorting.Sorted.
-From Argent Require Import Time Tactics Std Loop.
+From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import Code Loop UnionFind Trie Key Map.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig ModelFacts.
 
@@ -24643,6 +24643,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
   Definition slots_of (db : t) (f : positive) : nat :=
     length (filter (fun s => Pos.eqb (fst s) f) (slots db)).
+  Definition amortized (T : N) (u : nat) (after before : N) : N :=
+    (T + N.of_nat u * after - N.of_nat u * before)%N.
   (** Closed coefficients reserve primitive clocks and retained repair credit. *)
   Definition k_locate : N := (256 * (PTrieT.c_trie + V.c_key + 1))%N.
   Definition k_repair : N :=
@@ -33046,5 +33048,117 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     pose proof (T8_rebuild_loop B db Hwf Hids) as Hloop.
     pose proof (T9_rebuild_driver db) as Hdriver. lia.
   Qed.
+
+  (** Published big-O classes, raw and amortized. *)
+
+  (** Find is linear in the bit steps of one identifier operation. *)
+  Lemma find_bigO : bigO
+    (fun x : positive * t => wf (snd x) /\ allocated (snd x) (fst x))
+    (fun x => N.of_nat (unit (snd x)))
+    (fun x => T_find (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** Lookup is linear in the key length and the key's encoded cells. *)
+  Lemma lookup_bigO : bigO
+    (fun x : positive * list (cell V.t) * t => wf (snd x))
+    (fun x => N.of_nat ((length (snd (fst x)) + 1) * unit (snd x) +
+      fold_right (fun c n => cell_bits V.encode c + n) 0 (snd (fst x))))
+    (fun x => T_lookup (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** Initialization is linear in the declarations and the permutation sizes, with the
+      layout work of insertion sorting. *)
+  Lemma init_bigO : bigO (fun _ => True)
+    (fun x : list decl * list (positive * list nat) =>
+      N.of_nat ((length (fst x) + length (snd x) + layout_work (snd x) + 1) *
+        (fold_right (fun s n => length (snd s) + n) 0 (snd x) + 1) +
+        (fold_right (fun d n => Pos.size_nat (name d) + n) 0 (fst x) +
+         fold_right (fun s n => Pos.size_nat (fst s) + n) 0 (snd x))))
+    (fun x => T_init (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** Insertion, without its share of the deferred rebuild, is linear in the arity and the
+      number of slots of its function. *)
+  Lemma put_bigO : bigO
+    (fun x : positive * list (cell V.t) * option (cell V.t) * t =>
+      let '(f, k, o, db) := x in wf db /\ slots_fit db f (length (k ++ option_list o)))
+    (fun x => let '(f, k, o, db) := x in
+      N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (put f k o db)))
+    (fun x => let '(f, k, o, db) := x in T_put f k o db).
+  Proof. Admitted. (* STUB *)
+
+  (** Constructor allocation, without its share of the deferred rebuild, has the same class. *)
+  Lemma make_bigO : bigO
+    (fun x : positive * list (cell V.t) * t =>
+      let '(f, k, db) := x in wf db /\ slots_fit db f (S (length k)))
+    (fun x => let '(f, k, db) := x in
+      N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (snd (make f k db))))
+    (fun x => let '(f, k, db) := x in T_make f k db).
+  Proof. Admitted. (* STUB *)
+
+  (** Union, without queued work, is linear in the bit steps of one identifier operation. *)
+  Lemma union_bigO : bigO
+    (fun x : positive * positive * t =>
+      let '(i, j, db) := x in wf db /\ allocated db i /\ allocated db j)
+    (fun x => let '(i, j, db) := x in N.of_nat (unit db))
+    (fun x => let '(i, j, db) := x in T_union i j db).
+  Proof. Admitted. (* STUB *)
+
+  (** Insertion pays its own clock and the rebuild credit of its new use entries. *)
+  Lemma put_amort_bigO : bigO
+    (fun x : N * positive * list (cell V.t) * option (cell V.t) * t =>
+      let '(B, f, k, o, db) := x in
+      wf db /\ slots_fit db f (length (k ++ option_list o)) /\ (ids (put f k o db) <= B)%N)
+    (fun x => let '(B, f, k, o, db) := x in
+      N.of_nat (unit (put f k o db) * ((length k + 1) * (length k + 1)) *
+        (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1)))
+    (fun x => let '(B, f, k, o, db) := x in
+      amortized (T_put f k o db) (unit (put f k o db))
+        (potential B (put f k o db)) (potential B db)).
+  Proof. Admitted. (* STUB *)
+
+  (** Constructor allocation has the same amortized class as insertion. *)
+  Lemma make_amort_bigO : bigO
+    (fun x : N * positive * list (cell V.t) * t =>
+      let '(B, f, k, db) := x in
+      wf db /\ slots_fit db f (S (length k)) /\ (ids (snd (make f k db)) <= B)%N)
+    (fun x => let '(B, f, k, db) := x in
+      N.of_nat (unit (snd (make f k db)) * ((length k + 1) * (length k + 1)) *
+        (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1)))
+    (fun x => let '(B, f, k, db) := x in
+      amortized (T_make f k db) (unit (snd (make f k db)))
+        (potential B (snd (make f k db))) (potential B db)).
+  Proof. Admitted. (* STUB *)
+
+  (** Union is constant at the spending unit, because it only queues rebuild work. *)
+  Lemma union_amort_bigO : bigO
+    (fun x : N * positive * positive * t =>
+      let '(B, i, j, db) := x in
+      wf db /\ allocated db i /\ allocated db j /\ (ids db <= B)%N)
+    (fun x => let '(B, i, j, db) := x in N.of_nat (unit (union i j db)))
+    (fun x => let '(B, i, j, db) := x in
+      amortized (T_union i j db) (unit (union i j db))
+        (potential B (union i j db)) (potential B db)).
+  Proof. Admitted. (* STUB *)
+
+  (** Rebuilding is linear in the pending equalities at the spending unit. *)
+  Lemma rebuild_amort_bigO : bigO
+    (fun x : N * t => let '(B, db) := x in wf db /\ (ids (rebuild db) <= B)%N)
+    (fun x => let '(B, db) := x in
+      N.of_nat (unit (rebuild db) * (pending db + 1)))
+    (fun x => let '(B, db) := x in
+      amortized (T_rebuild db) (unit (rebuild db))
+        (potential B (rebuild db)) (potential B db)).
+  Proof. Admitted. (* STUB *)
+
+  (** Slot lookup is logarithmic in the slot number. *)
+  Lemma index_bigO : bigO (fun _ => True)
+    (fun x : N * bool * t => N.of_nat (N.to_nat (N.log2 (fst (fst x))) + 1))
+    (fun x => T_index (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** Advancing is constant, because it empties the new-row indexes with one store. *)
+  Lemma advance_bigO : bigO (fun _ => True) (fun _ : t => 0%N) T_advance.
+  Proof. Admitted. (* STUB *)
 
 End DatabaseT.

@@ -5,7 +5,7 @@
     Builds on: SteensgaardSig, Andersen and the database and run interfaces. *)
 
 From Stdlib Require Import List PArith NArith Bool Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import
   Syntax Model ModelFacts Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
@@ -852,6 +852,34 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Proof.
     intros q lim; time_unfold T_solve; time_simpl; unfold c_steensgaard, k_wrap; lia.
   Qed.
+
+  Lemma seed_bigO : bigO (fun _ => True)
+    (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
+      D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
+    T_seed.
+  Proof. Admitted. (* STUB *)
+
+  Lemma compile_bigO : bigO (fun _ => True) (fun _ => 0%N) T_compile.
+  Proof. Admitted. (* STUB *)
+
+  Lemma points_bigO : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
+    (fun z => let '(db, x, a) := z in
+      N.of_nat (8 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
+    (fun z => let '(db, x, a) := z in T_points db x a).
+  Proof. Admitted. (* STUB *)
+
+  Lemma solve_bigO : bigO
+    (fun x : N * nat * pointer_input * limits =>
+      let '(B, U, q, lim) := x in
+      (D.ids (snd (solve q lim)) <= B)%N /\ D.unit (snd (solve q lim)) <= U)
+    (fun x => let '(B, U, q, lim) := x in
+      (N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
+        D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)) +
+      N.of_nat ((R.size_program (compile q) + 1) * (R.size_program (compile q) + 1) *
+        (R.size_program (compile q) + 1)) +
+      R.run_cost B U (compile q) (R.plan (compile q)) lim (seed q))%N)
+    (fun x => let '(_, _, q, lim) := x in T_solve q lim).
+  Proof. Admitted. (* STUB *)
 
   Lemma F1_source_closed : forall q,
     pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).

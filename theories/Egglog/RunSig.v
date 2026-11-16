@@ -5,7 +5,7 @@
     Builds on: ValueSig, IndexSig, JoinSig, DatabaseSig and Model. *)
 
 From Stdlib Require Import List PArith NArith Bool Relations.Relation_Operators.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std BigO.
 From Galois.Base Require Import Loop Code Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts.
 
@@ -295,8 +295,7 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
       (forall f, kind w f = program_kind p f) -> view_sorted (program_sorts p) w ->
       includes (D.view db') w.
   (** A relational run reaches saturation within its finite Herbrand budget. The budget has
-      one round more than twice the universe, because the seed may start with its change flag
-      raised. *)
+      one round of slack, because each round advances its database before it applies. *)
   Parameter run_terminates : forall p cp lim db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
     N.to_nat (max_iter lim) >= 2 * herbrand p db + 3 ->
@@ -372,6 +371,47 @@ Module Type RUN_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
   Parameter T_check_plan_le : forall p cp,
     (T_check_plan p cp <= c_run * N.of_nat (size_program p + size_compiled cp + 1) *
       N.of_nat (wbits p + 1))%N.
+  (** Loading costs the initialisation of its declarations and slots. The measure is the right
+      side of [D.T_init_le] without its constant. *)
+  Definition load_cost (p : program V.t) (cp : compiled V.t) : N :=
+    N.of_nat ((length (decls V.t p) + length (Syntax.slots V.t cp) +
+        layout_work (Syntax.slots V.t cp) + 1) *
+      (fold_right (fun s n => length (snd s) + n) 0 (Syntax.slots V.t cp) + 1) +
+      (fold_right (fun d n => Pos.size_nat (name d) + n) 0 (decls V.t p) +
+       fold_right (fun s n => Pos.size_nat (fst s) + n) 0 (Syntax.slots V.t cp)) + 1).
+  (** The work of a run is the sum of the round work of its trace and the pending repairs. *)
+  Definition run_work (p : program V.t) (cp : compiled V.t) (lim : limits) (db : D.t) : nat :=
+    fold_right Nat.add 0 (map (fun st => round_work p cp (fst st) (snd st) + 1)
+      (trace p cp lim db)) + D.pending db + 1.
+  (** The cost of a run at identifier bound [B] and unit bound [U]. *)
+  Definition run_cost (B : N) (U : nat) (p : program V.t) (cp : compiled V.t) (lim : limits)
+      (db : D.t) : N :=
+    (N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        N.of_nat (run_work p cp lim db) +
+      N.of_nat (N.size_nat (max_iter lim) + 1) + N.of_nat U * D.potential B db)%N.
+  (** Planning is cubic in the program text, because sorting the positions of an atom
+      compares unary join indices. *)
+  Parameter plan_bigO : bigO (fun _ => True)
+    (fun p => N.of_nat ((size_program p + 1) * (size_program p + 1) * (size_program p + 1)))
+    T_plan.
+  (** Loading is linear in its declarations and slots, with the layout work of sorting. *)
+  Parameter load_bigO : bigO (fun _ => True)
+    (fun x : program V.t * compiled V.t => load_cost (fst x) (snd x))
+    (fun x => T_load (fst x) (snd x)).
+  (** Plan checking is linear in the program and plan syntax at their identifier width. *)
+  Parameter check_plan_bigO : bigO (fun _ => True)
+    (fun x : program V.t * compiled V.t =>
+      N.of_nat ((size_program (fst x) + size_compiled (snd x) + 1) * (wbits (fst x) + 1)))
+    (fun x => T_check_plan (fst x) (snd x)).
+  (** A run costs its trace work at the identifier width, its fuel counter and its scaled
+      initial credit. *)
+  Parameter run_bigO : bigO
+    (fun x : N * nat * program V.t * compiled V.t * limits * D.t =>
+      let '(B, U, p, cp, lim, db) := x in
+      plans_ok p cp /\ D.wf db /\ loaded p cp db /\
+      (D.ids (snd (run p cp lim db)) <= B)%N /\ D.unit (snd (run p cp lim db)) <= U)
+    (fun x => let '(B, U, p, cp, lim, db) := x in run_cost B U p cp lim db)
+    (fun x => let '(_, _, p, cp, lim, db) := x in T_run p cp lim db).
 End RUN_TIME.
 
 Module Type RUN_T (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
@@ -522,7 +562,7 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     closed V.prim V.merge p (D.view db).
   (** A changed relational round adds a row absent from its starting view. *)
   Parameter F9_round_progress : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    relational_fragment p = true -> no_ids db -> D.changed db = false ->
+    relational_fragment p = true -> no_ids db ->
     D.changed (round p cp nv db) = true ->
     exists f k, row (D.view (round p cp nv db)) f k None /\ ~ row (D.view db) f k None.
   (** A final rebuild establishes canonicality even when the caller supplies zero fuel. *)
@@ -660,9 +700,10 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     loaded p cp db -> In r (rules V.t p) ->
     rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
     D.pending (apply (actions V.t r) s db) <= D.pending db + length (actions V.t r).
-  (** A round applies its jobs in order and rebuilds once. *)
+  (** A round reads its jobs from the starting database, applies them to its advanced copy
+      in order and rebuilds once. *)
   Parameter F32_round_jobs : forall p cp nv db,
-    round p cp nv db = D.rebuild (apply_jobs p (jobs p cp nv db) db).
+    round p cp nv db = D.rebuild (apply_jobs p (jobs p cp nv db) (D.advance db)).
 
   Parameter check_shape : program V.t -> compiled V.t -> bool.
   Parameter T_check_shape : program V.t -> compiled V.t -> N.
@@ -689,15 +730,17 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     (T_check_shape p cp <= k_check * N.of_nat (size_program p + size_compiled cp + 1) *
       N.of_nat (wbits p + 1))%N.
 
-  (** The driver reads the rebuilt flag before advancing to the next round. *)
+  (** The round advances the database before it applies, so its result carries the rows that
+      the round changed as new rows. The driver passes that result on without advancing. *)
   Parameter F21_driver_step : forall p cp lim nv db,
     driver p cp lim (nv, db) =
       let next := round p cp nv db in
       if N.ltb (max_ids lim) (D.ids next) then inr (IdLimit, next)
       else if andb nv (negb (D.changed next)) then inr (Saturated, next)
-      else inl (negb (D.changed next), D.advance next).
+      else inl (negb (D.changed next), next).
 
-  (** A round pays for its joins, applications, rebuild and per-binding work. *)
+  (** A round pays for its joins, its advance, its applications, its rebuild and its
+      per-binding work. *)
   Parameter T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
     loaded p cp db ->
     (T_round p cp nv db <=
@@ -708,8 +751,9 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
         fold_right N.add 0 (map (fun b => T_bind_trie c b + T_keep p c (bind_trie c b))
           (bindings cp c db)))
         (if nv then naive V.t cp else seminaive V.t cp)) +
-      T_apply_jobs p (jobs p cp nv db) db +
-      D.T_rebuild (apply_jobs p (jobs p cp nv db) db) +
+      T_apply_jobs p (jobs p cp nv db) (D.advance db) +
+      D.T_rebuild (apply_jobs p (jobs p cp nv db) (D.advance db)) +
+      D.T_advance db +
       k_driver * N.of_nat (round_work p cp nv db + 1) * N.of_nat (wbits p + 1))%N.
 
   (** Each round pays its action work and transfers the database potential. *)
@@ -719,6 +763,20 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
       c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
         N.of_nat (round_work p cp nv db + D.pending db + 1) +
       N.of_nat U * D.potential B db)%N.
+  (** The cost of one round at identifier bound [B] and unit bound [U]. *)
+  Definition round_cost (B : N) (U : nat) (p : program V.t) (cp : compiled V.t) (nv : bool)
+      (db : D.t) : N :=
+    (N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        N.of_nat (round_work p cp nv db + D.pending db + 1) +
+      N.of_nat U * D.potential B db)%N.
+  (** A round costs its round work at the identifier width and its scaled initial credit. *)
+  Parameter round_bigO : bigO
+    (fun x : N * nat * program V.t * compiled V.t * bool * D.t =>
+      let '(B, U, p, cp, nv, db) := x in
+      plans_ok p cp /\ D.wf db /\ loaded p cp db /\
+      (D.ids (round p cp nv db) <= B)%N /\ D.unit (round p cp nv db) <= U)
+    (fun x => let '(B, U, p, cp, nv, db) := x in round_cost B U p cp nv db)
+    (fun x => let '(_, _, p, cp, nv, db) := x in T_round p cp nv db).
 
   (** A driver call pays for its round, the limit test, the flag test and advancing. *)
   Parameter T2a_driver_le : forall p cp lim nv db, plans_ok p cp -> D.wf db ->

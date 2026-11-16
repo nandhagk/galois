@@ -5,7 +5,7 @@
     Builds on: SetSig and MapSig. *)
 
 From Stdlib Require Import List Bool NArith PeanoNat Lia Sorting.Sorted.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig TrieSig MapSig SetSig.
 From Galois.Base Require Import Trie.
 
@@ -421,4 +421,31 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
     - apply N.add_le_mono_l. apply PTrieT.T9_fold_values with (c := c). exact Hf.
     - unfold c_set, nodes. nia.
   Qed.
+
+  Lemma mem_bigO : bigO (X := K.t * t) (fun _ => True)
+    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_mem (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma add_bigO : bigO (X := K.t * t) (fun _ => True)
+    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_add (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma union_bigO : bigO (X := t * t) (fun _ => True)
+    (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
+    (fun x => T_union (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma inter_bigO : bigO (X := t * t) (fun _ => True)
+    (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
+    (fun x => T_inter (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma diff_bigO : bigO (X := t * t) (fun _ => True)
+    (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
+    (fun x => T_diff (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma subset_bigO : bigO (X := t * t) (fun _ => True)
+    (fun x => N.of_nat (nodes (fst x))) (fun x => T_subset (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
 End TrieSetT.

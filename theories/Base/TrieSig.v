@@ -5,7 +5,7 @@
     Builds on: Stdlib lists and binary arithmetic, and Argent time interfaces. *)
 
 From Stdlib Require Import NArith PArith List Bool Sorting.Sorted.
-From Argent Require Import Time.
+From Argent Require Import Time BigO.
 
 Fixpoint trie_lt (p q : positive) : Prop :=
   match p, q with
@@ -161,6 +161,39 @@ Module Type TRIE_TIME (Import T : TRIE).
       snd (fold_left (fun bw ka =>
         (f (fst bw) (fst ka) (snd ka), snd bw + T_f (fst bw) (fst ka) (snd ka)))
         (elements m) (b, 0))))%N.
+  (** Lookup is linear in the key bit length. *)
+  Parameter get_bigO : forall A, bigO (X := positive * t A) (fun _ => True)
+    (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_get (fst x) (snd x)).
+  (** Setting is linear in the key bit length. *)
+  Parameter set_bigO : forall A, bigO (X := positive * A * t A) (fun _ => True)
+    (fun x => N.of_nat (Pos.size_nat (fst (fst x))))
+    (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
+  (** Removal is linear in the key bit length. *)
+  Parameter remove_bigO : forall A, bigO (X := positive * t A) (fun _ => True)
+    (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_remove (fst x) (snd x)).
+  (** Merging is linear in both skeletons for bounded callbacks. *)
+  Parameter merge_bigO : forall A B C,
+    bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
+      t A * t B)
+      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
+      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      (fun '(f, T_f, _, m1, m2) => T_merge f T_f m1 m2).
+  (** Relational checking is linear in both skeletons for bounded callbacks. *)
+  Parameter forall2b_bigO : forall A B,
+    bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
+      t A * t B)
+      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
+      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      (fun '(f, T_f, _, m1, m2) => T_forall2b f T_f m1 m2).
+  (** Folding is linear in the skeleton and the key mass for bounded callbacks. *)
+  Parameter fold_bigO : forall A B,
+    bigO (X := (B -> positive -> A -> B) * (B -> positive -> A -> N) * N * t A * B)
+      (fun '(_, T_f, k, _, _) => forall acc p a, (T_f acc p a <= k)%N)
+      (fun '(_, _, k, m, _) => ((k + 1) * N.of_nat (nodes m + 1) + N.of_nat (weight m))%N)
+      (fun '(f, T_f, _, m, b) => T_fold f T_f m b).
+  (** Enumeration is linear in the binding weight. *)
+  Parameter elements_bigO : forall A, bigO (X := t A) (fun _ => True)
+    (fun m => N.of_nat (weight m)) (fun m => T_elements m).
 End TRIE_TIME.
 
 Module Type TRIE_T := TRIE <+ TRIE_TIME.

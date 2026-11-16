@@ -5,7 +5,7 @@
     Builds on: Stdlib lists and binary arithmetic, and Argent time interfaces. *)
 
 From Stdlib Require Import List PArith NArith Arith.
-From Argent Require Import Time.
+From Argent Require Import Time BigO.
 From Galois.Base Require Import Loop.
 
 Module Type PQ_OPS.
@@ -89,6 +89,18 @@ Module Type PQ_TIME (Import Q : PQ).
   Parameter phi_empty : forall P w, (phi P w empty = 0)%N.
   (** Reading cached live size takes constant time. *)
   Parameter T_size_le : forall q, (T_size q <= c_pq)%N.
+  (** Push has the worst-case logarithmic comparison cost of bounded width. *)
+  Parameter push_bigO : bigO (X := nat * nat * N * positive * t)
+    (fun '(P, w, p, x, q) => wf q /\ fits w q /\ (pending q < P)%nat /\
+      (Pos.size_nat x + N.size_nat p <= w)%nat)
+    (fun '(P, w, _, _, _) => N.of_nat (unit_pq P w))
+    (fun '(_, _, p, x, q) => T_push p x q).
+  (** Pop pays one unit budget plus one for each stale entry it discards. *)
+  Parameter pop_bigO : bigO (X := nat * nat * t)
+    (fun '(P, w, q) => wf q /\ fits w q /\ (pending q <= P)%nat)
+    (fun '(P, w, q) =>
+      N.of_nat (unit_pq P w * (pending q - N.to_nat (size q) + 1)))
+    (fun '(_, _, q) => T_pop q).
 End PQ_TIME.
 
 Module Type PQ_T := PQ <+ PQ_TIME.

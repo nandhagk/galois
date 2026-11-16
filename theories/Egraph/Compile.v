@@ -5,7 +5,7 @@
     Builds on: CompileSig. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Egglog Require Import ValueSig DatabaseSig Syntax Model Sorts.
 From Galois.Egraph Require Import Syntax CompileSig.
 
@@ -3642,4 +3642,15 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
       128 * N.of_nat (rewrite_size rw + 1) * N.of_nat (rewrite_size rw + 1))%N in Hconvert.
     nia.
   Qed.
+
+  Lemma compile_bigO : bigO (fun _ => True)
+    (fun x : list decl * list (rewrite V.t) * list (rule V.t) =>
+      let '(_, rws, ans) := x in
+      N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0 rws + length ans + 1))
+    (fun x => let '(ds, rws, ans) := x in T_compile ds rws ans).
+  Proof. Admitted. (* STUB *)
+
+  Lemma compile_rule_bigO : bigO (fun _ => True)
+    (fun rw => N.of_nat (rewrite_size rw + 1)) T_compile_rule.
+  Proof. Admitted. (* STUB *)
 End CompileT.

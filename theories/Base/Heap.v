@@ -5,7 +5,7 @@
     Builds on: HeapSig, MapSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool NArith PArith PeanoNat Lia Sorting.Permutation.
-From Argent Require Import Time Tactics Std Loop.
+From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import HeapSig KeySig MapSig Trie Loop.
 Import List.ListNotations.
 
@@ -1743,6 +1743,13 @@ Module HeapT <: PQ_ALL.
       time_simpl; time_cbn_all; unfold k_insert, k_step in *; lia.
   Qed.
 
+  Lemma push_bigO : bigO (X := nat * nat * N * positive * t)
+    (fun '(P, w, p, x, q) => wf q /\ fits w q /\ (pending q < P)%nat /\
+      (Pos.size_nat x + N.size_nat p <= w)%nat)
+    (fun '(P, w, _, _, _) => N.of_nat (unit_pq P w))
+    (fun '(_, _, p, x, q) => T_push p x q).
+  Proof. Admitted. (* STUB *)
+
   Lemma T6_push_bounded : forall P w p x q,
     (wf q -> bounded w q -> (pending q < P)%nat ->
     (N.size_nat p + Pos.size_nat x <= w)%nat ->
@@ -1793,4 +1800,11 @@ Module HeapT <: PQ_ALL.
     exact (pop_amort_output P w (T_pop q) (phi P w q) (pop q)
       (T5_pop_bounded P w q Hwf Hfits Hpending)).
   Qed.
+
+  Lemma pop_bigO : bigO (X := nat * nat * t)
+    (fun '(P, w, q) => wf q /\ fits w q /\ (pending q <= P)%nat)
+    (fun '(P, w, q) =>
+      N.of_nat (unit_pq P w * (pending q - N.to_nat (size q) + 1)))
+    (fun '(_, _, q) => T_pop q).
+  Proof. Admitted. (* STUB *)
 End HeapT.

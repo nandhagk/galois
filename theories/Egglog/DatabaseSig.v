@@ -5,7 +5,7 @@
     Builds on: ValueSig, IndexSig, Syntax and Model. *)
 
 From Stdlib Require Import List PArith NArith Relations.Relation_Operators.
-From Argent Require Import Time Std Loop.
+From Argent Require Import Time Std Loop BigO.
 From Galois.Base Require Import Loop UnionFind.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax Model.
 
@@ -328,6 +328,10 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
     (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
   Definition slots_of (db : t) (f : positive) : nat :=
     length (filter (fun s => Pos.eqb (fst s) f) (slots db)).
+  (** The clock of an operation plus the potential it leaves, less the potential it found,
+      with potentials priced at the spending unit [u] of the result. *)
+  Definition amortized (T : N) (u : nat) (after before : N) : N :=
+    (T + N.of_nat u * after - N.of_nat u * before)%N.
   Parameter potential : N -> t -> N.
   Definition num_slots (db : t) : nat := length (slots db).
   Parameter T_init : list decl -> list (positive * list nat) -> N.
@@ -415,6 +419,92 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
   Parameter T_changed_le : forall db, (T_changed db <= c_db)%N.
   (** The allocation counter is stored. *)
   Parameter T_ids_le : forall db, (T_ids db <= c_db)%N.
+  (** Find is linear in the bit steps of one identifier operation. *)
+  Parameter find_bigO : bigO
+    (fun x : positive * t => wf (snd x) /\ allocated (snd x) (fst x))
+    (fun x => N.of_nat (unit (snd x)))
+    (fun x => T_find (fst x) (snd x)).
+  (** Lookup is linear in the key length and the key's encoded cells. *)
+  Parameter lookup_bigO : bigO
+    (fun x : positive * list (cell V.t) * t => wf (snd x))
+    (fun x => N.of_nat ((length (snd (fst x)) + 1) * unit (snd x) +
+      fold_right (fun c n => cell_bits V.encode c + n) 0 (snd (fst x))))
+    (fun x => T_lookup (fst (fst x)) (snd (fst x)) (snd x)).
+  (** Initialization is linear in the declarations and the permutation sizes, with the
+      layout work of insertion sorting. *)
+  Parameter init_bigO : bigO (fun _ => True)
+    (fun x : list decl * list (positive * list nat) =>
+      N.of_nat ((length (fst x) + length (snd x) + layout_work (snd x) + 1) *
+        (fold_right (fun s n => length (snd s) + n) 0 (snd x) + 1) +
+        (fold_right (fun d n => Pos.size_nat (name d) + n) 0 (fst x) +
+         fold_right (fun s n => Pos.size_nat (fst s) + n) 0 (snd x))))
+    (fun x => T_init (fst x) (snd x)).
+  (** Insertion, without its share of the deferred rebuild, is linear in the arity and the
+      number of slots of its function. *)
+  Parameter put_bigO : bigO
+    (fun x : positive * list (cell V.t) * option (cell V.t) * t =>
+      let '(f, k, o, db) := x in wf db /\ slots_fit db f (length (k ++ option_list o)))
+    (fun x => let '(f, k, o, db) := x in
+      N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (put f k o db)))
+    (fun x => let '(f, k, o, db) := x in T_put f k o db).
+  (** Constructor allocation, without its share of the deferred rebuild, has the same class. *)
+  Parameter make_bigO : bigO
+    (fun x : positive * list (cell V.t) * t =>
+      let '(f, k, db) := x in wf db /\ slots_fit db f (S (length k)))
+    (fun x => let '(f, k, db) := x in
+      N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (snd (make f k db))))
+    (fun x => let '(f, k, db) := x in T_make f k db).
+  (** Union, without queued work, is linear in the bit steps of one identifier operation. *)
+  Parameter union_bigO : bigO
+    (fun x : positive * positive * t =>
+      let '(i, j, db) := x in wf db /\ allocated db i /\ allocated db j)
+    (fun x => let '(i, j, db) := x in N.of_nat (unit db))
+    (fun x => let '(i, j, db) := x in T_union i j db).
+  (** Insertion pays its own clock and the rebuild credit of its new use entries. *)
+  Parameter put_amort_bigO : bigO
+    (fun x : N * positive * list (cell V.t) * option (cell V.t) * t =>
+      let '(B, f, k, o, db) := x in
+      wf db /\ slots_fit db f (length (k ++ option_list o)) /\ (ids (put f k o db) <= B)%N)
+    (fun x => let '(B, f, k, o, db) := x in
+      N.of_nat (unit (put f k o db) * ((length k + 1) * (length k + 1)) *
+        (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1)))
+    (fun x => let '(B, f, k, o, db) := x in
+      amortized (T_put f k o db) (unit (put f k o db))
+        (potential B (put f k o db)) (potential B db)).
+  (** Constructor allocation has the same amortized class as insertion. *)
+  Parameter make_amort_bigO : bigO
+    (fun x : N * positive * list (cell V.t) * t =>
+      let '(B, f, k, db) := x in
+      wf db /\ slots_fit db f (S (length k)) /\ (ids (snd (make f k db)) <= B)%N)
+    (fun x => let '(B, f, k, db) := x in
+      N.of_nat (unit (snd (make f k db)) * ((length k + 1) * (length k + 1)) *
+        (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1)))
+    (fun x => let '(B, f, k, db) := x in
+      amortized (T_make f k db) (unit (snd (make f k db)))
+        (potential B (snd (make f k db))) (potential B db)).
+  (** Union is constant at the spending unit, because it only queues rebuild work. *)
+  Parameter union_amort_bigO : bigO
+    (fun x : N * positive * positive * t =>
+      let '(B, i, j, db) := x in
+      wf db /\ allocated db i /\ allocated db j /\ (ids db <= B)%N)
+    (fun x => let '(B, i, j, db) := x in N.of_nat (unit (union i j db)))
+    (fun x => let '(B, i, j, db) := x in
+      amortized (T_union i j db) (unit (union i j db))
+        (potential B (union i j db)) (potential B db)).
+  (** Rebuilding is linear in the pending equalities at the spending unit. *)
+  Parameter rebuild_amort_bigO : bigO
+    (fun x : N * t => let '(B, db) := x in wf db /\ (ids (rebuild db) <= B)%N)
+    (fun x => let '(B, db) := x in
+      N.of_nat (unit (rebuild db) * (pending db + 1)))
+    (fun x => let '(B, db) := x in
+      amortized (T_rebuild db) (unit (rebuild db))
+        (potential B (rebuild db)) (potential B db)).
+  (** Slot lookup is logarithmic in the slot number. *)
+  Parameter index_bigO : bigO (fun _ => True)
+    (fun x : N * bool * t => N.of_nat (N.to_nat (N.log2 (fst (fst x))) + 1))
+    (fun x => T_index (fst (fst x)) (snd (fst x)) (snd x)).
+  (** Advancing is constant, because it empties the new-row indexes with one store. *)
+  Parameter advance_bigO : bigO (fun _ => True) (fun _ : t => 0%N) T_advance.
 
 End DATABASE_TIME.
 

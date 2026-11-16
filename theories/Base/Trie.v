@@ -5,7 +5,7 @@
     Builds on: TrieSig and Argent time derivation. *)
 
 From Stdlib Require Import NArith PArith Arith List Bool Lia Sorting.Sorted.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import TrieSig.
 
 Inductive trie_ne (A : Type) : Type :=
@@ -1953,6 +1953,46 @@ Module PTrieT <: TRIE_ALL.
     rewrite F3_weight. unfold c_trie, k_fold in *.
     rewrite !Nat2N.inj_add in *. nia.
   Qed.
+
+  Lemma get_bigO : forall A, bigO (X := positive * t A) (fun _ => True)
+    (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_get (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma set_bigO : forall A, bigO (X := positive * A * t A) (fun _ => True)
+    (fun x => N.of_nat (Pos.size_nat (fst (fst x))))
+    (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma remove_bigO : forall A, bigO (X := positive * t A) (fun _ => True)
+    (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_remove (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma merge_bigO : forall A B C,
+    bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
+      t A * t B)
+      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
+      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      (fun '(f, T_f, _, m1, m2) => T_merge f T_f m1 m2).
+  Proof. Admitted. (* STUB *)
+
+  Lemma forall2b_bigO : forall A B,
+    bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
+      t A * t B)
+      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
+      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      (fun '(f, T_f, _, m1, m2) => T_forall2b f T_f m1 m2).
+  Proof. Admitted. (* STUB *)
+
+  Lemma fold_bigO : forall A B,
+    bigO (X := (B -> positive -> A -> B) * (B -> positive -> A -> N) * N * t A * B)
+      (fun '(_, T_f, k, _, _) => forall acc p a, (T_f acc p a <= k)%N)
+      (fun '(_, _, k, m, _) => ((k + 1) * N.of_nat (nodes m + 1) + N.of_nat (weight m))%N)
+      (fun '(f, T_f, _, m, b) => T_fold f T_f m b).
+  Proof. Admitted. (* STUB *)
+
+  Lemma elements_bigO : forall A, bigO (X := t A) (fun _ => True)
+    (fun m => N.of_nat (weight m)) (fun m => T_elements m).
+  Proof. Admitted. (* STUB *)
 
   (** Value folding charges callbacks in enumeration order without constructing keys. *)
   Local Ltac folding_pose_values_child IH child :=

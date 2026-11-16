@@ -5,7 +5,7 @@
     Builds on: JoinSig and the index operations. *)
 
 From Stdlib Require Import List PArith NArith Arith Sorting.Sorted Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax JoinSig Index.
 
 Import List.ListNotations.
@@ -1716,6 +1716,13 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
     rewrite ?Nat2N.inj_add in *. nia.
   Qed.
 
+  Lemma run_bigO : bigO (fun x : jplan * list I.t => wf_plan (fst x) (snd x))
+    (fun x => N.of_nat ((work (fst x) (snd x) + length (snd x) + 2) *
+      (wmax (fst x) (snd x) + 1) * ((nvars (fst x) + 1) * (nvars (fst x) + 1))))
+    (fun x => T_run (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  (** Recursive probe work is a lower bound on running time. *)
   Lemma T_run_ge : forall p ixs, wf_plan p ixs ->
     (N.of_nat (work p ixs) <= T_run p ixs)%N.
   Proof.

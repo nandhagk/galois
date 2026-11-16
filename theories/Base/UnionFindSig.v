@@ -114,6 +114,16 @@ Module Type UNION_FIND_TIME (Import U : UNION_FIND).
     (fun xu => N.of_nat ((Nat.log2 (card (snd xu)) + 1) *
       (Nat.max (width (snd xu)) (Pos.size_nat (fst xu)) + 1)))
     (fun xu => T_find (fst xu) (snd xu)).
+  (** Adding is linear in the key and the counter width. *)
+  Parameter add_bigO : bigO (fun xu : positive * t => wf (snd xu))
+    (fun xu => N.of_nat (Pos.size_nat (fst xu) + Nat.log2 (card (snd xu)) + 1))
+    (fun xu => T_add (fst xu) (snd xu)).
+  (** Union has logarithmic path length and per-bit lookup cost. *)
+  Parameter union_bigO : bigO (fun xyu : positive * positive * t => wf (snd xyu))
+    (fun xyu => N.of_nat ((Nat.log2 (card (snd xyu) + 2) + 1) *
+      (Nat.max (width (snd xyu))
+        (Nat.max (Pos.size_nat (fst (fst xyu))) (Pos.size_nat (snd (fst xyu)))) + 1)))
+    (fun xyu => T_union (fst (fst xyu)) (snd (fst xyu)) (snd xyu)).
 End UNION_FIND_TIME.
 
 Module Type UNION_FIND_T := UNION_FIND <+ UNION_FIND_TIME.

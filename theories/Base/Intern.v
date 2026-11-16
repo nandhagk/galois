@@ -5,7 +5,7 @@
     Builds on: InternSig, MapSig and KeySig. *)
 
 From Stdlib Require Import List Bool NArith PArith Lia Sorting.Sorted.
-From Argent Require Import Time Std Tactics.
+From Argent Require Import Time Std Tactics BigO.
 From Galois.Base Require Import InternSig KeySig MapSig.
 From Galois.Base Require Import Trie.
 
@@ -237,6 +237,21 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
     unfold c_intern, PTrieT.c_trie.
     repeat rewrite Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
   Qed.
+
+  Lemma intern_bigO : bigO (X := K.t * t) (fun xs => wf (snd xs))
+    (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
+    (fun xs => T_intern (fst xs) (snd xs)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma find_bigO : bigO (X := K.t * t) (fun _ => True)
+    (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
+    (fun xs => T_find (fst xs) (snd xs)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma name_bigO : bigO (X := positive * t) (fun _ => True)
+    (fun xs => N.of_nat (Pos.size_nat (fst xs) + N.size_nat (size (snd xs))))
+    (fun xs => T_name (fst xs) (snd xs)).
+  Proof. Admitted. (* STUB *)
 End InternT.
 
 (** A bucket lookup returns the values associated with the encoded key. *)

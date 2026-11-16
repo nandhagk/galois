@@ -5,7 +5,7 @@
     Builds on: ValueSig and Syntax. *)
 
 From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax.
 
@@ -135,6 +135,33 @@ Module Type INDEX_TIME (V : VALUE_T) (Import X : INDEX V).
   (** Degree lookup pays for the encoded node. *)
   Parameter T_degree_le : forall ix n,
     (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
+  (** Insertion is linear in the tuple length and the stored bit width. *)
+  Parameter insert_bigO : bigO
+    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
+    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
+      (width (snd x) (snd (fst x)) + 1)))
+    (fun x => T_insert (snd (fst x)) (snd x)).
+  (** Removal is linear in the tuple length and the stored bit width. *)
+  Parameter remove_bigO : bigO
+    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
+    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
+      (width (snd x) (snd (fst x)) + 1)))
+    (fun x => T_remove (snd (fst x)) (snd x)).
+  (** Child lookup is linear in the bit width of one edge. *)
+  Parameter child_bigO : bigO (fun _ => True)
+    (fun x : t * positive * cell V.t =>
+      N.of_nat (width (fst (fst x)) [snd x] + 1))
+    (fun x => T_child (fst (fst x)) (snd (fst x)) (snd x)).
+  (** Child enumeration is linear in the degree and the bit width of a node. *)
+  Parameter children_bigO : bigO
+    (fun x : nat * t * positive => wf (fst (fst x)) (snd (fst x)))
+    (fun x => N.of_nat ((N.to_nat (degree (snd (fst x)) (snd x)) + 1) *
+      (width (snd (fst x)) [] + 1)))
+    (fun x => T_children (snd (fst x)) (snd x)).
+  (** Degree lookup is linear in the bit width of a node. *)
+  Parameter degree_bigO : bigO (fun _ => True)
+    (fun x : t * positive => N.of_nat (width (fst x) [] + 1))
+    (fun x => T_degree (fst x) (snd x)).
 End INDEX_TIME.
 
 Module Type INDEX_T (V : VALUE_T) := INDEX V <+ INDEX_TIME V.

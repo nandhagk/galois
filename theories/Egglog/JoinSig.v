@@ -5,7 +5,7 @@
     Builds on: ValueSig, IndexSig and Syntax. *)
 
 From Stdlib Require Import List PArith NArith Arith Sorting.Sorted.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std BigO.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax.
 
 Import List.ListNotations.
@@ -62,9 +62,12 @@ Module Type JOIN_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN V I).
   Parameter T_run_le : forall p ixs, wf_plan p ixs ->
     (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 2) * N.of_nat (wmax p ixs + 1) *
       N.of_nat ((nvars p + 1) * (nvars p + 1)))%N.
-  (** Recursive probe work is a lower bound on running time. *)
-  Parameter T_run_ge : forall p ixs, wf_plan p ixs ->
-    (N.of_nat (work p ixs) <= T_run p ixs)%N.
+  (** A join costs its recursive probe work at the maximum index width. The factor of the
+      variable count comes from unary level tests inside each probe. *)
+  Parameter run_bigO : bigO (fun x : jplan * list I.t => wf_plan (fst x) (snd x))
+    (fun x => N.of_nat ((work (fst x) (snd x) + length (snd x) + 2) *
+      (wmax (fst x) (snd x) + 1) * ((nvars (fst x) + 1) * (nvars (fst x) + 1))))
+    (fun x => T_run (fst x) (snd x)).
 End JOIN_TIME.
 
 Module Type JOIN_T (V : VALUE_T) (I : INDEX_T V) := JOIN V I <+ JOIN_TIME V I.

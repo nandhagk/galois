@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List PArith NArith Arith Bool Lia Relations.Relation_Operators
   Sorting.Permutation.
-From Argent Require Import Time Tactics Std Loop.
+From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import Trie HeapSig Heap.
 From Galois.Egglog Require Import ValueSig IndexSig DatabaseSig Syntax Model Sorts ExtractSig.
 
@@ -8544,5 +8544,37 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     - intros s next Hreach Hstep.
       exact (extraction_step_amort cs db s next Hwf Hcanonical Hinventory Hreach Hstep).
   Qed.
+
+  Lemma inventory_bigO : bigO (fun _ => True)
+    (fun x : list decl * list (positive * list nat) =>
+      N.of_nat ((layout_bits (fst x) (snd x) + 1) * (Nat.log2 (length (snd x)) + 1)))
+    (fun x => T_inventory (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma best_bigO : bigO
+    (fun x : list (positive * (N * nat)) * D.t =>
+      D.wf (snd x) /\ D.canonical (snd x) /\ ctor_inventory (fst x) (snd x))
+    (fun x => N.of_nat ((inventory_bits (fst x) + (R (snd x) + 1) * (a (snd x) + 1) +
+      (R (snd x) + 1) * (Nat.log2 (R (snd x)) + 1)) * (D.unit (snd x) + 1) *
+      (cost_width (snd x) + 1)))
+    (fun x => T_best (fst x) (snd x)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma check_dag_bigO : bigO
+    (fun x : D.t * positive * extraction_dag V.t => D.wf (fst (fst x)))
+    (fun x => let '(db, c, g) := x in
+      N.of_nat ((cert_size V.encode g + Pos.size_nat c + 1) * (D.unit db + 1) *
+        (match check_dag db c g with Some n => N.size_nat n | None => 0 end + 1)))
+    (fun x => let '(db, c, g) := x in T_check_dag db c g).
+  Proof. Admitted. (* STUB *)
+
+  Lemma extract_bigO : bigO
+    (fun x : list (positive * (N * nat)) * D.t * positive =>
+      let '(cs, db, _) := x in D.wf db /\ D.canonical db /\ ctor_inventory cs db)
+    (fun x => let '(cs, db, _) := x in
+      N.of_nat ((inventory_bits cs + 2 * ((R db + 1) * (a db + 1)) +
+        (R db + 1) * (Nat.log2 (R db) + 1)) * (D.unit db + 1) * (cost_width db + 1)))
+    (fun x => let '(cs, db, c) := x in T_extract cs db c).
+  Proof. Admitted. (* STUB *)
 
 End ExtractT.
