@@ -19618,17 +19618,20 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     nia.
   Qed.
 
-  (** The filter pays for finding its rule, for looking up the names of its join variables,
-      for its atoms at the widest program word or binding cell, and for the primitive work of
-      the query. *)
-  Lemma T7_keep_le : forall p c b,
+  (** The filter of a checked plan pays for finding its rule, for looking up the names of its
+      join variables, for its atoms at the widest program word or binding cell, and for the
+      primitive work of the query. A checked plan lists each atom at most once. *)
+  Lemma T7_keep_le : forall p cp c b,
+    plans_ok p cp -> In c (naive V.t cp ++ seminaive V.t cp) ->
     (T_keep p c (bind_trie c b) <= k_driver * N.of_nat (post_work p c + 1) *
       N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
       k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
       k_driver * N.of_nat (rule_work p c) +
       k_driver * N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
         (var_of V.t c) + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: arbitrary post lists repeat primitive work charged only once. *)
+  Proof.
+    exact T7_keep_le_checked.
+  Qed.
 
 
   (** * Action and job cost aggregation *)
