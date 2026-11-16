@@ -17489,6 +17489,390 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         (var_of V.t c) + 1))%N.
   Proof. Admitted. (* PLAN-DEFECT: arbitrary post lists repeat primitive work charged only once. *)
 
+  (** * Round scheduling costs *)
+
+  (** A program literal is one of the encoded words used by its width measure. *)
+  Lemma run_split_literal_word : forall p v, In (Lit v) (program_terms p) ->
+    In (V.encode v) (program_words V.encode p).
+  Proof.
+    intros p v Hin. unfold program_terms in Hin.
+    apply in_flat_map in Hin as [[q acts] [Hrule Hin]].
+    unfold program_words. apply in_or_app. right. apply in_flat_map.
+    exists (Rule V.t q acts). split; [exact Hrule|].
+    apply in_app_or in Hin as [Hin|Hin].
+    - apply in_or_app. left. apply in_flat_map in Hin as [a [Ha Hliteral]].
+      apply in_flat_map. exists a. split; [exact Ha|].
+      destruct a as [f args res|f args res]; cbn [atom_terms atom_words] in *;
+        right; apply in_flat_map; exists (Lit v); split; try exact Hliteral; now left.
+    - apply in_or_app. right. apply in_flat_map in Hin as [a [Ha Hliteral]].
+      apply in_flat_map. exists a. split; [exact Ha|].
+      destruct a as [x f args|f args res|a b|x f args];
+        cbn [action_terms action_words] in *.
+      + right. right. apply in_flat_map. exists (Lit v).
+        split; [exact Hliteral|now left].
+      + right. apply in_flat_map. exists (Lit v).
+        split; [exact Hliteral|now left].
+      + destruct Hliteral as [Hliteral|[Hliteral|[]]].
+        * subst a. apply in_or_app. left. now left.
+        * subst b. apply in_or_app. right. now left.
+      + right. right. apply in_flat_map. exists (Lit v).
+        split; [exact Hliteral|now left].
+  Qed.
+
+  (** The cell tag adds one bit to a literal's program word. *)
+  Lemma run_split_literal_width : forall p v, In (Lit v) (program_terms p) ->
+    cell_bits V.encode (Val v) <= wbits p + 1.
+  Proof.
+    intros p v Hin.
+    pose proof (run_word_width p (V.encode v) (run_split_literal_word p v Hin)) as Hword.
+    cbn [cell_bits Pos.size_nat]. lia.
+  Qed.
+
+  (** Binary and unary bit counts agree for positive words. *)
+  Lemma run_split_size_value : forall x,
+    Pos.to_nat (Pos.size x) = Pos.size_nat x.
+  Proof.
+    induction x as [x IH|x IH|]; cbn [Pos.size Pos.size_nat];
+      rewrite ?Pos2Nat.inj_succ; lia.
+  Qed.
+
+  (** The logarithm used by index lookup is at most the stored slot width. *)
+  Lemma run_split_log2_size : forall n, N.to_nat (N.log2 n) <= N.size_nat n.
+  Proof.
+    intros [|[x|x|]]; cbn [N.log2 N.to_nat N.size_nat Pos.size_nat];
+      rewrite ?run_split_size_value; lia.
+  Qed.
+
+  (** Rule lookup walks no more than the rule list at the original counter width. *)
+  Lemma run_split_rule_clock : forall n (rs : list (rule V.t)),
+    (T_rule_at n rs <= 8 * N.of_nat ((length rs + 1) * (N.size_nat n + 1)))%N.
+  Proof.
+    intros n rs. revert n. induction rs as [|r rs IH]; intro n.
+    - time_unfold @T_rule_at. cbn [length]. rewrite !Nat2N.inj_mul, !Nat2N.inj_add. nia.
+    - destruct n as [|x].
+      + time_unfold @T_rule_at. cbn [length N.size_nat].
+        rewrite !Nat2N.inj_mul, !Nat2N.inj_add, !Nat2N.inj_succ. nia.
+      + pose proof (IH (N.pred (Npos x))) as Htail.
+        pose proof (N.T_pred_le (Npos x)) as Hpred.
+        pose proof (N.size_nat_pred_N x) as Hwidth.
+        change (N.size_nat (N.pred (Npos x)) <= N.size_nat (Npos x)) in Hwidth.
+        time_unfold @T_rule_at. cbn [length].
+        rewrite !Nat2N.inj_mul, !Nat2N.inj_add, !Nat2N.inj_succ in *.
+        nia.
+  Qed.
+
+  (** A source's syntactic charge counts the slot width or one literal entry. *)
+  Definition run_split_source_weight (src : source V.t) : nat :=
+    match src with
+    | All _ slot | New _ slot => N.size_nat slot + 1
+    | Const _ _ => 1
+    end.
+
+  Lemma run_split_source_positive : forall src, 1 <= run_split_source_weight src.
+  Proof.
+    intros [slot|slot|value]; cbn [run_split_source_weight]; lia.
+  Qed.
+
+  (** Reading a source pays for its slot number or for its program literal. *)
+  Lemma run_split_source_clock : forall p db src,
+    (match src with Const _ c => exists v, c = Val v /\ In (Lit v) (program_terms p)
+    | _ => True end) ->
+    (T_source_ix db src <= 16 * (D.c_db + I.c_ix + 1) *
+      N.of_nat (run_split_source_weight src) * N.of_nat (wbits p + 1))%N.
+  Proof.
+    intros p db [slot|slot|value] Hsafe.
+    - pose proof (D.T_index_le slot false db) as Hindex.
+      pose proof (run_split_log2_size slot) as Hwidth.
+      time_unfold T_source_ix. cbn [run_split_source_weight].
+      assert (Hone : (1 <= N.of_nat (wbits p + 1))%N) by lia.
+      rewrite !Nat2N.inj_add in *. nia.
+    - pose proof (D.T_index_le slot true db) as Hindex.
+      pose proof (run_split_log2_size slot) as Hwidth.
+      time_unfold T_source_ix. cbn [run_split_source_weight].
+      assert (Hone : (1 <= N.of_nat (wbits p + 1))%N) by lia.
+      rewrite !Nat2N.inj_add in *. nia.
+    - destruct Hsafe as [v [-> Hliteral]].
+      pose proof (run_split_literal_width p v Hliteral) as Hliteralwidth.
+      pose proof (I.width_le I.empty [Val v]) as Hwidth.
+      rewrite I.next_empty, I.max_cell_bits_empty in Hwidth.
+      cbn [length Pos.of_nat Pos.add Pos.size_nat fold_right] in Hwidth.
+      rewrite Nat.max_0_r, Nat.add_0_r in Hwidth.
+      pose proof (I.T_insert_le 1 [Val v] I.empty (I.wf_empty 1)) as Hinsert.
+      pose proof I.T_empty_le as Hempty.
+      time_unfold T_source_ix. cbn [run_split_source_weight length] in *.
+      rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Reading the source list adds one map step to each charged source. *)
+  Lemma run_split_sources_clock : forall p db srcs,
+    Forall (fun src => match src with
+      | Const _ c => exists v, c = Val v /\ In (Lit v) (program_terms p)
+      | _ => True end) srcs ->
+    (ListDef.T_map (source_ix db) (T_source_ix db) srcs <=
+      32 * (D.c_db + I.c_ix + 1) *
+      N.of_nat (fold_right (fun src n => (run_split_source_weight src + n)%nat) 0%nat srcs + 1) *
+      N.of_nat (wbits p + 1))%N.
+  Proof.
+    intros p db srcs Hsafe. induction Hsafe as [|src srcs Hhead Hrest IH].
+    - time_unfold @ListDef.T_map. cbn [fold_right].
+      assert (Hone : (1 <= N.of_nat (wbits p + 1))%N) by lia. nia.
+    - pose proof (run_split_source_clock p db src Hhead) as Hsource.
+      pose proof (run_split_source_positive src) as Hpositive.
+      time_unfold @ListDef.T_map. cbn [fold_right].
+      assert (Hone : (1 <= N.of_nat (wbits p + 1))%N) by lia.
+      rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma run_split_sources_weight : forall c,
+    fold_right (fun src n => run_split_source_weight src + n) 0 (sources V.t c) =
+      source_bits c.
+  Proof.
+    intro c. unfold source_bits. generalize (sources V.t c) as srcs. intro srcs.
+    induction srcs as [|src srcs IH]; [reflexivity|].
+    destruct src; cbn [fold_right run_split_source_weight]; now rewrite IH.
+  Qed.
+
+  Lemma run_split_sum_app : forall (A : Type) (f : A -> N) xs ys,
+    fold_right N.add 0%N (map f (xs ++ ys)) =
+      (fold_right N.add 0%N (map f xs) + fold_right N.add 0%N (map f ys))%N.
+  Proof.
+    intros A f xs ys. induction xs as [|x xs IH]; cbn [app map fold_right];
+      rewrite ?IH; lia.
+  Qed.
+
+  Lemma run_split_sum_const : forall (A : Type) (xs : list A) k,
+    fold_right N.add 0%N (map (fun _ => k) xs) = (N.of_nat (length xs) * k)%N.
+  Proof.
+    intros A xs k. induction xs as [|x xs IH]; cbn [map fold_right length];
+      rewrite ?IH, ?Nat2N.inj_succ; nia.
+  Qed.
+
+  Lemma run_split_filter_length : forall (A : Type) (f : A -> bool) xs,
+    length (filter f xs) <= length xs.
+  Proof.
+    intros A f xs. induction xs as [|x xs IH]; cbn [filter length]; [lia|].
+    destruct (f x); cbn [length]; lia.
+  Qed.
+
+  (** Job scheduling reads the variable names and the rule index once. *)
+  Definition run_split_job_weight (p : program V.t) (c : cplan V.t) : nat :=
+    fold_right (fun x n => Pos.size_nat x + 1 + n) 0 (var_of V.t c) +
+      rule_work p c + 1.
+
+  (** The shell pays for source construction and for every candidate binding. *)
+  Definition run_split_plan_weight (p : program V.t) (cp : compiled V.t) (db : D.t)
+      (c : cplan V.t) : nat :=
+    source_bits c + 2 + length (bindings cp c db) * run_split_job_weight p c.
+
+  (** The public plan budget includes the smaller source-and-scheduling shell. *)
+  Lemma run_split_budget_arithmetic : forall jw ls sb nv lb vb pw rw aw primitive,
+    sb + 2 + lb * (vb + rw + 1) <=
+      (jw + ls + sb + 2) * (nv + 1) * (nv + 1) +
+      lb * (vb + pw + rw + 1 + aw) + primitive.
+  Proof.
+    intros jw ls sb nv lb vb pw rw aw primitive.
+    assert (Hsource : sb + 2 <= (jw + ls + sb + 2) * (nv + 1) * (nv + 1)).
+    { assert (Hfirst : jw + ls + sb + 2 <= (jw + ls + sb + 2) * (nv + 1)) by nia.
+      assert (Hsecond : (jw + ls + sb + 2) * (nv + 1) <=
+        (jw + ls + sb + 2) * (nv + 1) * (nv + 1)).
+      { set (base := (jw + ls + sb + 2) * (nv + 1)). nia. }
+      lia. }
+    assert (Hbindings : lb * (vb + rw + 1) <= lb * (vb + pw + rw + 1 + aw)).
+    { apply Nat.mul_le_mono_l. lia. }
+    lia.
+  Qed.
+
+  Lemma run_split_work_bound : forall p cp (nv : bool) db,
+    fold_right Nat.add 0%nat (map (run_split_plan_weight p cp db)
+      (if nv then naive V.t cp else seminaive V.t cp)) <= round_work p cp nv db.
+  Proof.
+    intros p cp nv db. unfold round_work.
+    eapply Nat.le_trans; [|apply Nat.le_add_l].
+    generalize (if nv then naive V.t cp else seminaive V.t cp) as cs. intro cs.
+    induction cs as [|c cs IH]; cbn [map fold_right]; [lia|].
+    apply Nat.add_le_mono; [|exact IH].
+    unfold run_split_plan_weight, run_split_job_weight. apply run_split_budget_arithmetic.
+  Qed.
+
+  (** A binding enumeration pays its join clock and its source-list construction. *)
+  Lemma run_split_bindings_clock : forall p cp db c,
+    plans_ok p cp -> In c (all_plans cp) ->
+    (T_plan_bindings cp c db <=
+      J.T_run (join V.t c) (map (source_index db) (sources V.t c)) +
+      64 * (D.c_db + I.c_ix + 1) * N.of_nat (source_bits c + 2) *
+        N.of_nat (wbits p + 1))%N.
+  Proof.
+    intros p cp db c Hplans Hc.
+    pose proof (run_split_sources_clock p db (sources V.t c)
+      (run_plan_constants p cp c Hplans Hc)) as Hsources.
+    rewrite run_split_sources_weight in Hsources.
+    time_unfold T_plan_bindings. time_simpl. time_cbn.
+    change (plan_sources c) with (sources V.t c) in *.
+    change (plan_join c) with (join V.t c) in *.
+    change (source_index db) with (source_ix db) in *.
+    change (fun src : source V.t => T_source_ix db src) with (T_source_ix db) in *.
+    assert (Hone : (1 <= N.of_nat (wbits p + 1))%N) by lia.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Job application pays the action clocks plus binding and rule-lookup overhead. *)
+  Lemma run_split_apply_clock : forall p js db,
+    (T_apply_all p js db <= T_apply_jobs p js db + 64 *
+      fold_right N.add 0%N (map (fun job =>
+        N.of_nat (run_split_job_weight p (fst job))) js) + 1)%N.
+  Proof.
+    intros p js. induction js as [|[c b] js IH]; intro db.
+    - time_unfold T_apply_all. cbn [T_apply_jobs map fold_right]. lia.
+    - pose proof (IH (apply (actions V.t (job_rule p c))
+        (fun x => trie_get x (bind_trie c b)) db)) as Htail.
+      pose proof (bind_trie_clock_le c b) as Hbind.
+      pose proof (run_split_rule_clock (rule_ix V.t c) (rules V.t p)) as Hrule.
+      change (T_rule_at (rule_ix V.t c) (rules V.t p) <=
+        8 * N.of_nat (rule_work p c))%N in Hrule.
+      time_unfold T_apply_all. time_simpl. time_cbn.
+      rewrite rule_at_nth. cbn [T_apply_jobs map fold_right fst].
+      change (plan_rule_ix c) with (rule_ix V.t c) in *.
+      change (nth (N.to_nat (rule_ix V.t c)) (rules V.t p) (Rule V.t [] []))
+        with (job_rule p c) in *.
+      unfold run_split_job_weight in *. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
+
+  (** Removing failed bindings cannot raise the scheduling weight. *)
+  Lemma run_split_jobs_weight : forall p cp nv db,
+    (fold_right N.add 0%N (map (fun job => N.of_nat (run_split_job_weight p (fst job)))
+      (jobs p cp nv db)) <= N.of_nat (fold_right Nat.add 0%nat
+        (map (run_split_plan_weight p cp db)
+          (if nv then naive V.t cp else seminaive V.t cp))))%N.
+  Proof.
+    intros p cp nv db. rewrite F31_jobs.
+    generalize (if nv then naive V.t cp else seminaive V.t cp) as cs. intro cs.
+    induction cs as [|c cs IH]; cbn [flat_map map fold_right]; [reflexivity|].
+    rewrite run_split_sum_app, map_map. cbn [fst].
+    rewrite run_split_sum_const, Nat2N.inj_add.
+    apply N.add_le_mono; [|exact IH].
+    pose proof (run_split_filter_length (list (cell V.t))
+      (fun b => keep p c (bind_trie c b)) (bindings cp c db)) as Hlength.
+    unfold run_split_plan_weight. rewrite !Nat2N.inj_add, !Nat2N.inj_mul. nia.
+  Qed.
+
+  (** Filtering candidates preserves their exact trie-building and filter clocks. *)
+  Lemma run_split_filter_bindings_clock : forall p c bs,
+    (List.T_filter (fun b => keep p c (bind_trie c b))
+      (fun b => 1 + (T_bind_trie c b + T_keep p c (bind_trie c b))) bs <=
+      fold_right N.add 0%N (map (fun b => T_bind_trie c b +
+        T_keep p c (bind_trie c b)) bs) + 2 * N.of_nat (length bs) + 1)%N.
+  Proof.
+    intros p c bs. induction bs as [|b bs IH].
+    - time_unfold @List.T_filter. cbn [map fold_right length]. lia.
+    - time_unfold @List.T_filter. cbn [map fold_right length].
+      destruct (keep p c (bind_trie c b)); rewrite Nat2N.inj_succ; lia.
+  Qed.
+
+  (** A plan's callback pays each join and filter exactly, with a linear scheduling shell. *)
+  Lemma run_split_plan_jobs_clock : forall p cp db c,
+    plans_ok p cp -> In c (all_plans cp) ->
+    (1 + (T_plan_bindings cp c db +
+      List.T_filter (fun b => keep p c (bind_trie c b))
+        (fun b => 1 + (T_bind_trie c b + T_keep p c (bind_trie c b)))
+        (plan_bindings cp c db) +
+      ListDef.T_map (fun b => (c, b)) (fun _ => 1)
+        (filter (fun b => keep p c (bind_trie c b)) (plan_bindings cp c db))) +
+      N.of_nat (length (map (fun b => (c, b))
+        (filter (fun b => keep p c (bind_trie c b)) (plan_bindings cp c db))) + 2) <=
+      J.T_run (join V.t c) (map (source_index db) (sources V.t c)) +
+      fold_right N.add 0%N (map (fun b => T_bind_trie c b + T_keep p c (bind_trie c b))
+        (bindings cp c db)) +
+      128 * (D.c_db + I.c_ix + 1) * N.of_nat (run_split_plan_weight p cp db c) *
+        N.of_nat (wbits p + 1))%N.
+  Proof.
+    intros p cp db c Hplans Hc.
+    pose proof (run_split_bindings_clock p cp db c Hplans Hc) as Hbindings.
+    pose proof (run_split_filter_bindings_clock p c (bindings cp c db)) as Hfilter.
+    pose proof (run_split_filter_length (list (cell V.t))
+      (fun b => keep p c (bind_trie c b)) (bindings cp c db)) as Hlength.
+    pose proof (ListDef.T_map_le (fun b : list (cell V.t) => (c, b)) (fun _ => 1%N)
+      1%N (filter (fun b => keep p c (bind_trie c b)) (bindings cp c db))
+      (fun _ => N.le_refl 1%N)) as Hmap.
+    change (plan_bindings cp c db) with (bindings cp c db).
+    rewrite length_map.
+    assert (Hweight : 1 <= run_split_job_weight p c).
+    { unfold run_split_job_weight. lia. }
+    assert (Hone : (1 <= N.of_nat (wbits p + 1))%N) by lia.
+    unfold run_split_plan_weight. rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *.
+    nia.
+  Qed.
+
+  (** Flattening plan callbacks sums their exact clocks and scheduling shells. *)
+  Lemma run_split_jobs_list_clock : forall p cp db cs,
+    plans_ok p cp -> (forall c, In c cs -> In c (all_plans cp)) ->
+    (Code.List.T_flat_map
+      (fun c => map (fun b => (c, b))
+        (filter (fun b => keep p c (bind_trie c b)) (plan_bindings cp c db)))
+      (fun c => 1 + (T_plan_bindings cp c db +
+        List.T_filter (fun b => keep p c (bind_trie c b))
+          (fun b => 1 + (T_bind_trie c b + T_keep p c (bind_trie c b)))
+          (plan_bindings cp c db) +
+        ListDef.T_map (fun b => (c, b)) (fun _ => 1)
+          (filter (fun b => keep p c (bind_trie c b)) (plan_bindings cp c db)))) cs <=
+      fold_right N.add 0%N (map (fun c =>
+        J.T_run (join V.t c) (map (source_index db) (sources V.t c))) cs) +
+      fold_right N.add 0%N (map (fun c => fold_right N.add 0
+        (map (fun b => T_bind_trie c b + T_keep p c (bind_trie c b))
+          (bindings cp c db))) cs) +
+      128 * (D.c_db + I.c_ix + 1) *
+        N.of_nat (fold_right Nat.add 0%nat (map (run_split_plan_weight p cp db) cs)) *
+        N.of_nat (wbits p + 1) + 1)%N.
+  Proof.
+    intros p cp db cs. induction cs as [|c cs IH]; intros Hplans Hmembers.
+    - time_unfold @Code.List.T_flat_map. cbn [map fold_right]. nia.
+    - pose proof (run_split_plan_jobs_clock p cp db c Hplans
+        (Hmembers c (or_introl eq_refl))) as Hhead.
+      specialize (IH Hplans (fun x Hx => Hmembers x (or_intror Hx))).
+      pose proof (Datatypes.T_app_le
+        (map (fun b => (c, b))
+          (filter (fun b => keep p c (bind_trie c b)) (plan_bindings cp c db)))
+        (flat_map (fun c => map (fun b => (c, b))
+          (filter (fun b => keep p c (bind_trie c b)) (plan_bindings cp c db))) cs))
+        as Happend.
+      time_unfold @Code.List.T_flat_map. cbn [map fold_right].
+      rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Constructing the job list preserves exact join and filter charges. *)
+  Lemma run_split_jobs_clock : forall p cp nv db, plans_ok p cp ->
+    (T_jobs p cp nv db <=
+      fold_right N.add 0%N (map (fun c =>
+        J.T_run (join V.t c) (map (source_index db) (sources V.t c)))
+        (if nv then naive V.t cp else seminaive V.t cp)) +
+      fold_right N.add 0%N (map (fun c => fold_right N.add 0
+        (map (fun b => T_bind_trie c b + T_keep p c (bind_trie c b))
+          (bindings cp c db))) (if nv then naive V.t cp else seminaive V.t cp)) +
+      256 * (D.c_db + I.c_ix + 1) *
+        N.of_nat (fold_right Nat.add 0%nat (map (run_split_plan_weight p cp db)
+          (if nv then naive V.t cp else seminaive V.t cp)) + 1) *
+        N.of_nat (wbits p + 1))%N.
+  Proof.
+    intros p cp nv db Hplans.
+    assert (Hmembers : forall c, In c (if nv then naive V.t cp else seminaive V.t cp) ->
+      In c (all_plans cp)).
+    { intros c Hc. unfold all_plans. apply in_or_app.
+      destruct nv; [left|right]; exact Hc. }
+    pose proof (run_split_jobs_list_clock p cp db
+      (if nv then naive V.t cp else seminaive V.t cp) Hplans Hmembers) as Hlist.
+    assert (Hone : (1 <= N.of_nat (wbits p + 1))%N) by lia.
+    time_unfold T_jobs. time_simpl. time_cbn.
+    change (compiled_naive cp) with (naive V.t cp).
+    change (compiled_semi cp) with (seminaive V.t cp).
+    destruct nv; cbn [compiled_naive compiled_semi] in Hlist |- *;
+      rewrite !Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** The published scheduling constant covers the smaller source-and-list constant. *)
+  Lemma run_split_constant : (512 * (D.c_db + I.c_ix + 1) <= k_driver)%N.
+  Proof.
+    unfold k_driver. nia.
+  Qed.
+
   (** A round's time is bounded by its joins, job applications, rebuild and driver overhead. *)
   Lemma T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
     loaded p cp db ->
@@ -17503,7 +17887,28 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       T_apply_jobs p (jobs p cp nv db) db +
       D.T_rebuild (apply_jobs p (jobs p cp nv db) db) +
       k_driver * N.of_nat (round_work p cp nv db + 1) * N.of_nat (wbits p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp nv db Hplans Hwf Hloaded.
+    pose proof (run_split_jobs_clock p cp nv db Hplans) as Hjobs.
+    pose proof (run_split_apply_clock p (jobs p cp nv db) db) as Happly.
+    pose proof (run_split_jobs_weight p cp nv db) as Hweight.
+    pose proof (run_split_work_bound p cp nv db) as Hwork.
+    set (shell := fold_right Nat.add 0%nat (map (run_split_plan_weight p cp db)
+      (if nv then naive V.t cp else seminaive V.t cp))) in *.
+    assert (Hone : (1 <= N.of_nat (wbits p + 1))%N) by lia.
+    assert (Hoverhead :
+      (256 * (D.c_db + I.c_ix + 1) * N.of_nat (shell + 1) * N.of_nat (wbits p + 1) +
+        64 * N.of_nat shell + 2 <=
+        k_driver * N.of_nat (round_work p cp nv db + 1) * N.of_nat (wbits p + 1))%N).
+    { eapply N.le_trans with
+        (m := (512 * (D.c_db + I.c_ix + 1) * N.of_nat (shell + 1) *
+          N.of_nat (wbits p + 1))%N).
+      - clear -Hone. rewrite Nat2N.inj_add. nia.
+      - apply N.mul_le_mono_r. apply N.mul_le_mono.
+        + exact run_split_constant.
+        + lia. }
+    time_unfold T_round. rewrite apply_all_jobs. lia.
+  Qed.
 
   Lemma T1_round_le : forall B U p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     (D.ids (round p cp nv db) <= B)%N -> D.unit (round p cp nv db) <= U ->
