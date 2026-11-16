@@ -17453,7 +17453,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     - exists (xO z). cbn [Pos.size_nat]. now rewrite Hz.
   Qed.
 
-  (** No fixed constant can bound the filter by the measures charged in [T7_keep_le]. *)
+  (** The old filter bound, which omitted copied-variable name widths, has no fixed constant. *)
   Lemma keep_width_unbounded : forall k : N, exists z,
     (10 * k < T_keep keep_width_program (keep_width_plan z)
       (bind_trie (keep_width_plan z) []))%N.
@@ -17487,7 +17487,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       k_driver * N.of_nat (rule_work p c) +
       k_driver * N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
         (var_of V.t c) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: arbitrary post lists repeat primitive work charged only once. *)
 
   (** A round's time is bounded by its joins, job applications, rebuild and driver overhead. *)
   Lemma T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->

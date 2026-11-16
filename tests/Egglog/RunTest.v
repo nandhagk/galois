@@ -11,9 +11,13 @@
     to 4 saturates with the six paths of the chain.
     Builds on: Syntax, Model, Sorts, the code towers of Index, Join and Database, and Run. *)
 
-From Stdlib Require Import List PArith NArith.
-From Galois.Egglog Require Import ValueSig Syntax Model Sorts Index Join Database Run.
+From Stdlib Require Import List PArith NArith Arith Bool Lia.
+From Argent Require Import Time Tactics Std.
+From Galois.Base Require Import Trie.
+From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts
+  RunSig Index Join Database Run.
 
+Import Lia.
 Import List.ListNotations.
 
 Definition leastness_program {V : Type} : program V :=
@@ -686,3 +690,247 @@ Module InitialFlagTerminationCounterexample (V : VALUE) (I : IndexSig.INDEX V)
     - rewrite two_rounds_equation. discriminate.
   Qed.
 End InitialFlagTerminationCounterexample.
+
+(** * Repeated primitive filters
+
+    An arbitrary post list may repeat one expensive primitive without charging its work
+    again. The following certificate refutes the unrestricted filter bound for every
+    fixed coefficient; checked plans retain their canonical post list. *)
+Fixpoint duplicate_delay (n : nat) : option unit :=
+  match n with
+  | O => Some tt
+  | S rest => duplicate_delay rest
+  end.
+TimeFun duplicate_delay.
+
+Lemma duplicate_delay_result : forall n, duplicate_delay n = Some tt.
+Proof.
+  induction n as [|n IH]; cbn [duplicate_delay]; auto.
+Qed.
+
+Lemma duplicate_delay_clock : forall n, (N.of_nat n <= T_duplicate_delay n)%N.
+Proof.
+  induction n as [|n IH].
+  - time_unfold T_duplicate_delay. lia.
+  - time_unfold T_duplicate_delay. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+Lemma duplicate_overhead : forall a b c : N, (a + b <= 1 + (c + (b + a)))%N.
+Proof.
+  intros a b c. lia.
+Qed.
+
+Module DuplicatePrimitiveValue <: VALUE_T.
+  Definition t := unit.
+  Definition encode (_ : t) := 1%positive.
+  Definition eqb (_ _ : t) := true.
+  Definition prim (p : positive) (_ : list t) : option t :=
+    duplicate_delay (Pos.size_nat p * Pos.size_nat p).
+  Definition merge (_ : positive) (_ _ : t) := tt.
+  Definition bits (value : t) := Pos.size_nat (encode value).
+  TimeFun encode.
+  TimeFun eqb.
+  TimeFun prim.
+  TimeFun merge.
+  Definition c_key := 1%N.
+  Definition c_val := 1%N.
+  Definition prim_work := T_prim.
+
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof.
+    intros [] []. reflexivity.
+  Qed.
+
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof.
+    intros [] []. constructor. reflexivity.
+  Qed.
+
+  Lemma merge_comm : forall m a b, merge m a b = merge m b a.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma merge_assoc : forall m a b c, merge m a (merge m b c) = merge m (merge m a b) c.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma merge_idem : forall m a, merge m a a = a.
+  Proof.
+    intros m []. reflexivity.
+  Qed.
+
+  Lemma T_encode_le : forall value,
+    (T_encode value <= c_key * N.of_nat (bits value + 1))%N.
+  Proof.
+    intros []. time_unfold T_encode. change (1 <= 2)%N. lia.
+  Qed.
+
+  Lemma T_eqb_le : forall a b,
+    (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
+  Proof.
+    intros [] []. time_unfold T_eqb. change (1 <= 2)%N. lia.
+  Qed.
+
+  Lemma T_prim_le : forall p xs, (T_prim p xs <= c_val * (prim_work p xs + 1))%N.
+  Proof.
+    intros p xs. unfold c_val, prim_work. lia.
+  Qed.
+
+  Lemma T_merge_le : forall m a b,
+    (T_merge m a b <= c_val * N.of_nat (bits a + bits b + 1))%N.
+  Proof.
+    intros m [] []. time_unfold T_merge. change (1 <= 3)%N. lia.
+  Qed.
+
+  Lemma prim_result : forall p xs, prim p xs = Some tt.
+  Proof.
+    intros p xs. apply duplicate_delay_result.
+  Qed.
+
+  Lemma prim_clock : forall p xs,
+    (N.of_nat (Pos.size_nat p) * N.of_nat (Pos.size_nat p) <= T_prim p xs)%N.
+  Proof.
+    intros p xs. pose proof (duplicate_delay_clock (Pos.size_nat p * Pos.size_nat p)) as Hdelay.
+    time_unfold T_prim. rewrite Nat2N.inj_mul in Hdelay. lia.
+  Qed.
+End DuplicatePrimitiveValue.
+
+Lemma duplicate_growth : forall coefficient width primitive actual : N,
+  width = (16 * (coefficient + 1) + 1)%N ->
+  (width * width <= primitive)%N ->
+  ((2 * coefficient + 1) * primitive <= actual)%N ->
+  ~ (actual <= coefficient * (2 * (2 * coefficient + 1) + 1) * (width + 1) +
+    coefficient * primitive + coefficient * 2 + coefficient * 1)%N.
+Proof.
+  intros coefficient width primitive actual Hwidth Hprimitive Hactual Hbound.
+  assert (Hscaled : ((coefficient + 1) * (width * width) <=
+    (coefficient + 1) * primitive)%N).
+  { apply N.mul_le_mono_l. exact Hprimitive. }
+  subst width. nia.
+Qed.
+
+Module DuplicatePrimitiveCounterexample (I : INDEX_T DuplicatePrimitiveValue)
+    (J : JOIN_T DuplicatePrimitiveValue I) (D : DATABASE_T DuplicatePrimitiveValue I).
+  Module R := RunT DuplicatePrimitiveValue I J D.
+
+  Definition duplicate_program (op : positive) : program unit :=
+    Program unit [] [Rule unit [Prim unit op [] (Lit tt)] []].
+
+  Definition duplicate_plan (count : nat) : cplan unit :=
+    CPlan unit 0%N (JPlan 0 []) [] [] (repeat 0%nat count).
+
+  Lemma duplicate_prim_holds : forall op t,
+    prim_holds DuplicatePrimitiveValue.prim DuplicatePrimitiveValue.eqb t op [] (Lit tt) = true.
+  Proof.
+    intros op t. unfold prim_holds. cbn [trie_terms].
+    rewrite DuplicatePrimitiveValue.prim_result. reflexivity.
+  Qed.
+
+  Lemma duplicate_prim_holds_clock : forall op t,
+    (DuplicatePrimitiveValue.T_prim op [] <=
+      T_prim_holds DuplicatePrimitiveValue.prim DuplicatePrimitiveValue.T_prim
+        DuplicatePrimitiveValue.eqb DuplicatePrimitiveValue.T_eqb t op [] (Lit tt))%N.
+  Proof.
+    intros op t. time_unfold @T_prim_holds. time_simpl. time_cbn.
+    rewrite DuplicatePrimitiveValue.prim_result. time_simpl. time_cbn. lia.
+  Qed.
+
+  Lemma duplicate_post_clock : forall count op t copies,
+    (N.of_nat count * DuplicatePrimitiveValue.T_prim op [] <=
+      T_keep_post DuplicatePrimitiveValue.prim DuplicatePrimitiveValue.T_prim
+        DuplicatePrimitiveValue.eqb DuplicatePrimitiveValue.T_eqb
+        [Prim unit op [] (Lit tt)] t (repeat 0%nat count) copies)%N.
+  Proof.
+    intro count. induction count as [|count IH]; intros op t copies.
+    - time_unfold @T_keep_post. cbn [repeat]. lia.
+    - pose proof (IH op t copies) as Htail.
+      pose proof (duplicate_prim_holds_clock op t) as Hprim.
+      time_unfold @T_keep_post. cbn [repeat nth_error].
+      rewrite duplicate_prim_holds. rewrite Nat2N.inj_succ, N.mul_succ_l.
+      eapply N.le_trans; [apply N.add_le_mono; [exact Htail | exact Hprim] | ].
+      apply duplicate_overhead.
+  Qed.
+
+  Lemma duplicate_keep_clock : forall op count,
+    (N.of_nat count * DuplicatePrimitiveValue.T_prim op [] <=
+      R.T_keep (duplicate_program op) (duplicate_plan count)
+        (R.bind_trie (duplicate_plan count) []))%N.
+  Proof.
+    intros op count. pose proof (duplicate_post_clock count op Empty []) as Hpost.
+    unfold R.T_keep, duplicate_program, duplicate_plan, R.bind_trie.
+    cbn [plan_rule_ix rules rule_at plan_post plan_vars bind_cells].
+    time_unfold @T_rule_at. time_simpl. time_cbn.
+    change (N.of_nat count * DuplicatePrimitiveValue.T_prim op [] <=
+      1 + (1 + 1 + (1 + 0) + (1 + 1 +
+        T_keep_post DuplicatePrimitiveValue.prim DuplicatePrimitiveValue.T_prim
+        DuplicatePrimitiveValue.eqb DuplicatePrimitiveValue.T_eqb
+        [Prim unit op [] (Lit tt)] Empty (repeat 0%nat count) [])))%N.
+    lia.
+  Qed.
+
+  Lemma duplicate_post_work : forall op count,
+    R.post_work (duplicate_program op) (duplicate_plan count) = (2 * count)%nat.
+  Proof.
+    intros op count. unfold R.post_work, duplicate_program, duplicate_plan, R.job_rule.
+    cbn [rule_ix rules nth query post N.to_nat].
+    induction count as [|count IH]; cbn [repeat fold_right nth_error atom_terms length app]; lia.
+  Qed.
+
+  Lemma duplicate_program_width : forall op,
+    R.wbits (duplicate_program op) = Pos.size_nat op.
+  Proof.
+    intro op. unfold R.wbits, duplicate_program, program_words.
+    cbn [decls rules flat_map app atom_words term_words fold_right DuplicatePrimitiveValue.encode].
+    change (Nat.max (Pos.size_nat op) 1 = Pos.size_nat op).
+    apply Nat.max_l. destruct op; cbn [Pos.size_nat]; lia.
+  Qed.
+
+  Lemma duplicate_rule_work : forall op count,
+    R.rule_work (duplicate_program op) (duplicate_plan count) = 2%nat.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma duplicate_query_work : forall op count,
+    query_prim_work DuplicatePrimitiveValue.prim_work
+      (query unit (R.job_rule (duplicate_program op) (duplicate_plan count)))
+      (R.env_of (duplicate_plan count) []) = DuplicatePrimitiveValue.T_prim op [].
+  Proof.
+    intros op count. cbn [query_prim_work R.job_rule duplicate_program duplicate_plan
+      rule_ix rules nth query fold_right value_terms DuplicatePrimitiveValue.prim_work].
+    apply N.add_0_r.
+  Qed.
+
+  (** Repeating one successful primitive refutes the bound for every coefficient. *)
+  Lemma duplicate_filter_bound_refuted : forall coefficient : N, exists p c b,
+    ~ (R.T_keep p c (R.bind_trie c b) <= coefficient * N.of_nat (R.post_work p c + 1) *
+      N.of_nat (R.wbits p + fold_right
+        (fun x n => Nat.max (cell_bits DuplicatePrimitiveValue.encode x) n) 0%nat b + 1) +
+      coefficient * query_prim_work DuplicatePrimitiveValue.prim_work
+        (query unit (R.job_rule p c)) (R.env_of c b) +
+      coefficient * N.of_nat (R.rule_work p c) +
+      coefficient * N.of_nat (fold_right
+        (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat (var_of unit c) + 1))%N.
+  Proof.
+    intro coefficient.
+    destruct (R.keep_width_key_exists (N.to_nat (16 * (coefficient + 1))%N)) as [op Hwidth].
+    exists (duplicate_program op), (duplicate_plan (N.to_nat (2 * coefficient + 1)%N)), [].
+    rewrite duplicate_post_work, duplicate_program_width, duplicate_rule_work, duplicate_query_work.
+    cbn [duplicate_plan var_of fold_right].
+    rewrite !Nat.add_0_r, !Nat2N.inj_add, !Nat2N.inj_mul, !N2Nat.id.
+    pose proof (duplicate_keep_clock op (N.to_nat (2 * coefficient + 1)%N)) as Hkeep.
+    rewrite N2Nat.id in Hkeep.
+    pose proof (DuplicatePrimitiveValue.prim_clock op []) as Hprim.
+    apply (f_equal N.of_nat) in Hwidth.
+    rewrite Nat2N.inj_succ, N2Nat.id in Hwidth.
+    eapply duplicate_growth; [lia | exact Hprim | exact Hkeep].
+  Qed.
+End DuplicatePrimitiveCounterexample.
+
+Module DuplicatePrimitiveIndex := IndexT DuplicatePrimitiveValue.
+Module DuplicatePrimitiveJoin := JoinT DuplicatePrimitiveValue DuplicatePrimitiveIndex.
+Module DuplicatePrimitiveDatabase := DatabaseT DuplicatePrimitiveValue DuplicatePrimitiveIndex.
+Module ClosedDuplicatePrimitive := DuplicatePrimitiveCounterexample DuplicatePrimitiveIndex
+  DuplicatePrimitiveJoin DuplicatePrimitiveDatabase.
