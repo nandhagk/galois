@@ -12946,11 +12946,209 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     eapply run_loaded_active_row_universe; eassumption.
   Qed.
 
+  (** * Finite relational saturation *)
+
+  (** Identifier-free relational rounds preserve each existing row exactly. *)
+  Lemma run_round_relational_rows : forall p cp nv current,
+    plans_ok p cp -> D.wf current -> loaded p cp current ->
+    relational_fragment p = true -> no_ids current ->
+    forall f k, row (D.view current) f k None ->
+      row (D.view (round p cp nv current)) f k None.
+  Proof.
+    intros p cp nv current Hchecked Hcurrent Hloaded Hfragment Hnoids f k Hrow.
+    destruct ((proj2 (run_round_grows p cp nv current Hchecked Hcurrent Hloaded))
+      f k None Hrow) as [output [Hnext Houtput]].
+    destruct ((proj2 Hnoids) f k None Hrow) as [_ Hvalues].
+    rewrite (run_value_key_canon (round p cp nv current) k Hvalues) in Hnext.
+    pose proof (run_round_no_ids p cp nv current Hchecked Hcurrent Hloaded
+      Hfragment Hnoids) as Hnext_noids.
+    destruct ((proj2 Hnext_noids) f k output Hnext) as [-> _]. exact Hnext.
+  Qed.
+
+  (** The termination witnesses are distinct universe rows already stored in the current state. *)
+  Definition run_termination_state (p : program V.t) (cp : compiled V.t)
+      (initial current : D.t) (seen : list (positive * list (cell V.t))) : Prop :=
+    D.wf current /\ loaded p cp current /\ run_domain p initial current /\
+    (forall f k, row (D.view initial) f k None -> row (D.view current) f k None) /\
+    NoDup seen /\ incl seen (universe p initial) /\
+    Forall (fun fk => row (D.view current) (fst fk) (snd fk) None) seen.
+
+  (** Distinct witnessed rows cannot outnumber the initial universe. *)
+  Lemma run_termination_count : forall p cp initial current seen,
+    run_termination_state p cp initial current seen -> length seen <= herbrand p initial.
+  Proof.
+    intros p cp initial current seen [_ [_ [_ [_ [Hnodup [Hinside Hrows]]]]]].
+    rewrite herbrand_spec. apply NoDup_incl_length; assumption.
+  Qed.
+
+  (** The initial database starts with no witnessed fresh rows. *)
+  Lemma run_termination_initial : forall p cp initial,
+    D.wf initial -> loaded p cp initial -> no_ids initial ->
+    run_termination_state p cp initial initial [].
+  Proof.
+    intros p cp initial Hwf Hloaded Hnoids.
+    split; [exact Hwf|]. split; [exact Hloaded|].
+    split; [now apply run_domain_initial|]. split; [auto|].
+    split; [constructor|]. split; [intros fk Hnone; contradiction|constructor].
+  Qed.
+
+  (** A round followed by advance preserves the witnesses and clears its change flag. *)
+  Lemma run_termination_advance : forall p cp initial nv current seen,
+    plans_ok p cp -> D.wf initial -> relational_fragment p = true -> prim_free p = true ->
+    run_termination_state p cp initial current seen ->
+    run_termination_state p cp initial (D.advance (round p cp nv current)) seen /\
+    D.changed (D.advance (round p cp nv current)) = false.
+  Proof.
+    intros p cp initial nv current seen Hchecked Hinitial Hfragment Hfree
+      [Hcurrent [Hloaded [Hdomain [Hinitial_rows [Hnodup [Hinside Hseen]]]]]].
+    destruct (run_round_state p cp nv current Hchecked Hcurrent Hloaded)
+      as [Hround [Hloadround Hids]].
+    destruct (run_advance_state p cp (round p cp nv current) Hround Hloadround)
+      as [Hnext [Hloadnext Hidsnext]].
+    pose proof (run_round_domain p cp initial nv current Hchecked Hinitial Hcurrent
+      Hloaded Hfragment Hfree Hdomain) as Hround_domain.
+    destruct (D.wf_advance (round p cp nv current) Hround) as [_ [Hview Hquiet]].
+    assert (Hkeeps : forall f k, row (D.view current) f k None ->
+      row (D.view (D.advance (round p cp nv current))) f k None).
+    { intros f k Hrow. rewrite Hview. eapply run_round_relational_rows;
+        [exact Hchecked|exact Hcurrent|exact Hloaded|exact Hfragment|
+         exact (proj1 Hdomain)|exact Hrow]. }
+    split; [|exact Hquiet]. split; [exact Hnext|]. split; [exact Hloadnext|].
+    split; [now apply run_domain_advance|]. split.
+    - intros f k Hrow. apply Hkeeps. now apply Hinitial_rows.
+    - split; [exact Hnodup|]. split; [exact Hinside|].
+      eapply Forall_impl; [|exact Hseen]. intros [f k] Hrow. now apply Hkeeps.
+  Qed.
+
+  (** A productive round from a quiet state supplies a new universe witness. *)
+  Lemma run_termination_fresh : forall p cp initial nv current seen,
+    plans_ok p cp -> D.wf initial -> relational_fragment p = true -> prim_free p = true ->
+    run_termination_state p cp initial current seen -> D.changed current = false ->
+    D.changed (round p cp nv current) = true ->
+    exists fk, ~ In fk seen /\ In fk (universe p initial) /\
+      row (D.view (D.advance (round p cp nv current))) (fst fk) (snd fk) None.
+  Proof.
+    intros p cp initial nv current seen Hchecked Hinitial Hfragment Hfree
+      [Hcurrent [Hloaded [Hdomain [Hinitial_rows [Hnodup [Hinside Hseen]]]]]] Hquiet Hchanged.
+    destruct (F9_round_progress p cp nv current Hchecked Hcurrent Hloaded Hfragment
+      (proj1 Hdomain) Hquiet Hchanged) as [f [k [Hrow Hfresh]]].
+    destruct (run_round_state p cp nv current Hchecked Hcurrent Hloaded)
+      as [Hround [Hloadround Hids]].
+    pose proof (run_round_domain p cp initial nv current Hchecked Hinitial Hcurrent
+      Hloaded Hfragment Hfree Hdomain) as Hround_domain.
+    exists (f, k). split.
+    - intro Hin. apply Hfresh.
+      apply Forall_forall with (x := (f, k)) in Hseen; [exact Hseen|exact Hin].
+    - split.
+      + destruct ((proj2 (proj2 Hround_domain)) f k None Hrow) as [Hold|Hactive].
+        * exfalso. apply Hfresh. now apply Hinitial_rows.
+        * eapply run_loaded_active_row_universe; eassumption.
+      + cbn [fst snd]. rewrite (proj1 (proj2 (D.wf_advance _ Hround))). exact Hrow.
+  Qed.
+
+  (** Adding a previously absent stored universe row preserves the termination invariant. *)
+  Lemma run_termination_extend : forall p cp initial current seen fk,
+    run_termination_state p cp initial current seen -> ~ In fk seen ->
+    In fk (universe p initial) -> row (D.view current) (fst fk) (snd fk) None ->
+    run_termination_state p cp initial current (fk :: seen).
+  Proof.
+    intros p cp initial current seen fk
+      [Hcurrent [Hloaded [Hdomain [Hinitial_rows [Hnodup [Hinside Hseen]]]]]]
+      Hfresh Hmember Hrow.
+    split; [exact Hcurrent|]. split; [exact Hloaded|]. split; [exact Hdomain|].
+    split; [exact Hinitial_rows|]. split; [now constructor|]. split.
+    - intros entry [->|Hin]; [exact Hmember|now apply Hinside].
+    - now constructor.
+  Qed.
+
+  (** Each continuing driver step spends a credit or records one new finite-universe row. *)
+  Lemma run_termination_step : forall p cp initial lim (nv : bool) current seen fuel,
+    plans_ok p cp -> D.wf initial -> relational_fragment p = true -> prim_free p = true ->
+    run_termination_state p cp initial current seen ->
+    2 * length seen + S fuel >= 2 * herbrand p initial +
+      (if D.changed current then 3 else if nv then 1 else 2) ->
+    match driver p cp lim (nv, current) with
+    | inl (next_nv, next) => exists seen', run_termination_state p cp initial next seen' /\
+        2 * length seen' + fuel >= 2 * herbrand p initial +
+          (if D.changed next then 3 else if next_nv then 1 else 2)
+    | inr (status, _) => status = Saturated
+    end.
+  Proof.
+    intros p cp initial lim nv current seen fuel Hchecked Hinitial Hfragment Hfree
+      Hstate Hfuel.
+    pose proof Hstate as Hstate_parts.
+    destruct Hstate_parts as [Hcurrent [Hloaded [Hdomain Hrest]]].
+    pose proof (run_round_no_ids p cp nv current Hchecked Hcurrent Hloaded Hfragment
+      (proj1 Hdomain)) as Hnoids.
+    assert (Hlimit : (max_ids lim <? D.ids (round p cp nv current))%N = false).
+    { apply N.ltb_ge. rewrite (proj1 Hnoids). lia. }
+    destruct (run_termination_advance p cp initial nv current seen Hchecked Hinitial
+      Hfragment Hfree Hstate) as [Hnext Hquiet].
+    rewrite F21_driver_step. cbn zeta. rewrite Hlimit.
+    destruct (D.changed (round p cp nv current)) eqn:Hchanged; cbn [negb andb].
+    - rewrite andb_false_r. cbn beta iota.
+      destruct (D.changed current) eqn:Hprevious.
+      + exists seen. split; [exact Hnext|]. rewrite Hquiet. lia.
+      + destruct (run_termination_fresh p cp initial nv current seen Hchecked Hinitial
+          Hfragment Hfree Hstate Hprevious Hchanged)
+          as [fk [Hfresh [Hmember Hrow]]].
+        exists (fk :: seen). split.
+        * eapply run_termination_extend; eassumption.
+        * rewrite Hquiet. cbn [length]. destruct nv; lia.
+    - destruct nv; [reflexivity|]. exists seen. split; [exact Hnext|].
+      rewrite Hquiet. destruct (D.changed current); lia.
+  Qed.
+
+  (** Enough finite-universe credit makes the binary driver return saturation. *)
+  Lemma run_termination_loop : forall p cp initial lim fuel (nv : bool) current seen,
+    plans_ok p cp -> D.wf initial -> relational_fragment p = true -> prim_free p = true ->
+    run_termination_state p cp initial current seen ->
+    2 * length seen + N.to_nat fuel >= 2 * herbrand p initial +
+      (if D.changed current then 3 else if nv then 1 else 2) ->
+    exists final, loopN (driver p cp lim) fuel (nv, current) = inr (Saturated, final).
+  Proof.
+    intros p cp initial lim fuel nv current seen Hchecked Hinitial Hfragment Hfree.
+    assert (Hacc : forall (fs : N * (bool * D.t)) (H : Acc loopN_lt fs) witnesses,
+      run_termination_state p cp initial (snd (snd fs)) witnesses ->
+      2 * length witnesses + N.to_nat (fst fs) >= 2 * herbrand p initial +
+        (if D.changed (snd (snd fs)) then 3 else if fst (snd fs) then 1 else 2) ->
+      exists final, loop loopN_lt (loopN_step (driver p cp lim)) fs H =
+        inr (Saturated, final)).
+    { intros fs H. induction H as [[n [mode db]] Hsmaller IH] using Acc_ind_dep.
+      cbn [fst snd]. intros witnesses Hstate Hfuel. destruct n as [|n].
+      - pose proof (run_termination_count p cp initial db witnesses Hstate) as Hcount.
+        cbn [N.to_nat] in Hfuel. destruct (D.changed db); destruct mode; lia.
+      - assert (Hpos : 0 < N.to_nat (N.pos n)) by apply Pos2Nat.is_pos.
+        assert (Hpred : N.to_nat (N.pos n) = S (N.to_nat (N.pred (N.pos n)))).
+        { rewrite N2Nat.inj_pred. lia. }
+        rewrite Hpred in Hfuel.
+        pose proof (run_termination_step p cp initial lim mode db witnesses
+          (N.to_nat (N.pred (N.pos n))) Hchecked Hinitial Hfragment Hfree Hstate Hfuel)
+          as Hstep.
+        cbn [loop loopN_step Acc_inv].
+        destruct (driver p cp lim (mode, db)) as [[next_mode next]|[status final]] eqn:Hdriver.
+        + destruct Hstep as [seen' [Hnext Hcredit]]. eapply IH; eassumption.
+        + subst status. exists final. reflexivity. }
+    intros Hstate Hfuel. unfold loopN. eapply Hacc; eassumption.
+  Qed.
+
+  (** The startup flag and two confirmation modes fit the repaired public round budget. *)
   Lemma run_terminates : forall p cp lim db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
     N.to_nat (max_iter lim) >= 2 * herbrand p db + 3 ->
     fst (run p cp lim db) = Saturated.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db Hchecked Hwf Hloaded Hfragment Hfree Hnoids Hfuel.
+    assert (Hcredit : 2 * length ([] : list (positive * list (cell V.t))) +
+      N.to_nat (max_iter lim) >= 2 * herbrand p db +
+      (if D.changed db then 3 else if false then 1 else 2)).
+    { cbn [length]. destruct (D.changed db); lia. }
+    destruct (run_termination_loop p cp db lim (max_iter lim) false db []
+      Hchecked Hwf Hfragment Hfree (run_termination_initial p cp db Hwf Hloaded Hnoids)
+      Hcredit) as [final Hloop].
+    pose proof (F10_run_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
+    rewrite Hloop in Hrun. rewrite Hrun. reflexivity.
+  Qed.
 
   (** An identifier-limit stop is produced only by a round above the requested bound. *)
   Lemma run_loop_id_limit : forall p cp lim fuel nv db result,

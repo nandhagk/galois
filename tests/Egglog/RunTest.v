@@ -676,7 +676,7 @@ Module InitialFlagTerminationCounterexample (V : VALUE) (I : IndexSig.INDEX V)
     vm_compute. reflexivity.
   Qed.
 
-  (** Every stated premise of run_terminates holds, but its conclusion does not. *)
+  (** Every premise of the old 2H+2 termination bound holds, but its conclusion does not. *)
   Lemma run_terminates_counterexample :
     R.plans_ok program compiled /\ D.wf initial /\ R.loaded program compiled initial /\
     relational_fragment program = true /\ RunSig.prim_free program = true /\ R.no_ids initial /\
