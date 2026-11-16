@@ -32,8 +32,8 @@ TimeFun tnum_wnot.
 (** Masking an integer agrees with reduction modulo the word modulus. *)
 Lemma tnum_wrap_agrees : forall w z, tnum_wrap w z = wrap w z.
 Proof.
-  intros w z. unfold tnum_wrap, wrap, modulus.
-  apply Z.land_ones. lia.
+  intros w z. symmetry. rewrite wrap_mod. unfold tnum_wrap, modulus.
+  symmetry. apply Z.land_ones. lia.
 Qed.
 
 (** Masked conjunction agrees with the concrete word operation. *)
@@ -1356,7 +1356,7 @@ Proof.
   rewrite (wrap_id w k) by (apply count_is_word; exact Hk).
   destruct (Zpos w <=? k); [reflexivity|].
   rewrite tnum_wrap_agrees, Z.shiftl_mul_pow2 by lia.
-  unfold wrap. now rewrite Z.mul_mod_idemp_l by apply modulus_nonzero.
+  rewrite !wrap_mod. now rewrite Z.mul_mod_idemp_l by apply modulus_nonzero.
 Qed.
 
 (** A bounded masked logical right shift agrees with the concrete word operation. *)
@@ -1394,7 +1394,9 @@ Proof.
   rewrite <- Hnormal. apply Z.bits_inj'. intros i Hi.
   rewrite testbit_washr by
     (try apply wrap_is_word; try (apply count_is_word; exact Hk); exact Hi).
-  unfold tnum_ashr_value. rewrite !tnum_wrap_agrees.
+  unfold tnum_ashr_value. cbv zeta.
+  rewrite (tnum_wrap_agrees w x),
+    (tnum_wrap_agrees w (Z.lnot (Z.ones (Zpos w - Z.min k (Zpos w - 1))))).
   set (k' := Z.min k (Zpos w - 1)).
   assert (Hk' : 0 <= k' <= Zpos w - 1) by (unfold k'; lia).
   assert (Hindex : Z.min (i + k') (Zpos w - 1) =
@@ -2469,7 +2471,9 @@ Proof.
       forall c, Z.land c 0 = c ->
         tnum_leb w (tnum_scalar o w c r) target = true).
     assert (Hnorm : tnum_equiv w (tnum_normalise w r) r).
-    { unfold tnum_equiv, tnum_normalise. cbn [zeros ones]. now rewrite !tnum_wrap_agrees, !wrap_wrap. }
+    { unfold tnum_equiv, tnum_normalise. cbn [zeros ones].
+      rewrite (tnum_wrap_agrees w (zeros r)), (tnum_wrap_agrees w (ones r)).
+      split; apply wrap_wrap. }
     rewrite (tnum_equiv_leb w _ _ target Hnorm). split.
     + intros Hr c Hc. rewrite Z.land_0_r in Hc. subst c.
       apply (tnum_equiv_leb w _ _ target (tnum_scalar_zero o w r)). exact Hr.

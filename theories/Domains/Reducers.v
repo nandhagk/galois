@@ -15,8 +15,8 @@ Local Open Scope Z_scope.
 (** The reducer mask is the usual unsigned word normalization. *)
 Lemma reducer_tnum_wrap : forall w z, tnum_wrap w z = Word.wrap w z.
 Proof.
-  intros w z; unfold tnum_wrap, Word.wrap, Word.modulus.
-  apply Z.land_ones; lia.
+  intros w z. symmetry. rewrite Word.wrap_mod. unfold tnum_wrap, Word.modulus.
+  symmetry. apply Z.land_ones. lia.
 Qed.
 
 (** Complementing a normalized zero mask leaves an unsigned upper endpoint. *)
@@ -163,14 +163,14 @@ Lemma reducer_arc_bounds : forall w lo hi z,
   (z - lo) mod Word.modulus w <= (hi - lo) mod Word.modulus w ->
   tnum_wrap w lo <= z <= tnum_wrap w hi.
 Proof.
-  intros w lo hi z Hword Horder Harc; rewrite !reducer_tnum_wrap in *.
+  intros w lo hi z Hword Horder Harc.
+  rewrite (reducer_tnum_wrap w lo), (reducer_tnum_wrap w hi) in *.
   pose proof (Word.wrap_is_word w lo) as Hlo.
   pose proof (Word.wrap_is_word w hi) as Hhi.
   pose proof (Word.modulus_pos w) as Hpositive.
   rewrite (Zminus_mod z lo (Word.modulus w)),
     (Zminus_mod hi lo (Word.modulus w)) in Harc.
-  change ((Word.wrap w z - Word.wrap w lo) mod Word.modulus w <=
-    (Word.wrap w hi - Word.wrap w lo) mod Word.modulus w) in Harc.
+  rewrite <- (Word.wrap_mod w z), <- (Word.wrap_mod w lo), <- (Word.wrap_mod w hi) in Harc.
   rewrite (Word.wrap_id w z Hword) in Harc.
   assert (Hend : (Word.wrap w hi - Word.wrap w lo) mod Word.modulus w =
     Word.wrap w hi - Word.wrap w lo) by (apply Z.mod_small; unfold Word.is_word in *; lia).

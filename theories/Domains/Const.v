@@ -17,8 +17,8 @@ Module ConstWordFast.
   (** The mask implements the specified modular word reduction. *)
   Lemma wrap_fast_agrees : forall w z, wrap_fast w z = Word.wrap w z.
   Proof.
-    intros w z. unfold wrap_fast, Word.wrap, modulus.
-    apply Z.land_ones. lia.
+    intros w z. symmetry. rewrite Word.wrap_mod. unfold wrap_fast, modulus.
+    symmetry. apply Z.land_ones. lia.
   Qed.
 
   (** The width mask is itself a normalized word. *)

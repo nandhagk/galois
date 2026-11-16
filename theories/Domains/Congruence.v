@@ -1274,7 +1274,7 @@ Proof.
   destruct (Zpos w <=? y) eqn:Hlarge; [| reflexivity].
   apply Z.leb_le in Hlarge.
   replace y with (Zpos w + (y - Zpos w)) by lia.
-  rewrite Z.pow_add_r by lia. unfold wrap.
+  rewrite Z.pow_add_r by lia. rewrite wrap_mod.
   replace (x * (2 ^ Zpos w * 2 ^ (y - Zpos w))) with
     ((x * 2 ^ (y - Zpos w)) * modulus w) by (unfold modulus; ring).
   apply Z.mod_mul. apply modulus_nonzero.

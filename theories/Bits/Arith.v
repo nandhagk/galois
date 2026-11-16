@@ -87,7 +87,7 @@ Proof.
   - unfold signed. rewrite wrap_id by (unfold is_word; lia).
     now rewrite (proj2 (Z.ltb_lt _ _) (proj2 Hz)).
   - assert (Hwrap : wrap w z = z + modulus w).
-    { unfold wrap. symmetry. apply Z.mod_unique with (q := -1).
+    { rewrite !wrap_mod. symmetry. apply Z.mod_unique with (q := -1).
       - left. lia.
       - ring. }
     unfold signed. rewrite Hwrap.
@@ -260,13 +260,13 @@ Qed.
 (** Wrapping the right summand does not change the wrapped sum. *)
 Theorem wrap_add_right : forall w a b, wrap w (a + b) = wrap w (a + wrap w b).
 Proof.
-  intros w a b. unfold wrap. symmetry. apply Z.add_mod_idemp_r. apply modulus_nonzero.
+  intros w a b. rewrite !wrap_mod. symmetry. apply Z.add_mod_idemp_r. apply modulus_nonzero.
 Qed.
 
 (** Wrapping the left summand does not change the wrapped sum. *)
 Theorem wrap_add_left : forall w a b, wrap w (a + b) = wrap w (wrap w a + b).
 Proof.
-  intros w a b. unfold wrap. symmetry. apply Z.add_mod_idemp_l. apply modulus_nonzero.
+  intros w a b. rewrite !wrap_mod. symmetry. apply Z.add_mod_idemp_l. apply modulus_nonzero.
 Qed.
 
 (** Zero has signed value zero at every width. *)

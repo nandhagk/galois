@@ -100,9 +100,7 @@ Module WordTime.
   Lemma integer_size_bound z n :
     (0 <= z < 2 ^ Z.of_nat n)%Z -> (Z.size_nat z <= n)%nat.
   Proof.
-    destruct z as [|p|p]; intros Hrange; cbn [Z.size_nat]; try lia.
-    apply Pos.size_nat_least. apply Nat2Z.inj_lt.
-    rewrite positive_nat_Z, Nat2Z.inj_pow. exact (proj2 Hrange).
+    exact (integer_size_le z n).
   Qed.
 
   (** Every normalized word fits its declared bit width. *)
@@ -121,9 +119,7 @@ Module WordTime.
   (** The modulus needs one bit beyond the word width. *)
   Lemma word_modulus_size_bound w : (Z.size_nat (modulus w) <= Pos.to_nat w + 1)%nat.
   Proof.
-    apply integer_size_bound. split; [pose proof (modulus_pos w); lia|].
-    unfold modulus. rewrite Nat2Z.inj_add, positive_nat_Z.
-    apply Z.pow_lt_mono_r; lia.
+    exact (modulus_size_le w).
   Qed.
 
   (** Half the modulus fits within the declared word width. *)
@@ -167,22 +163,14 @@ Module WordTime.
   Lemma word_pow_two_time_bound n : (0 <= n)%Z ->
     (Word.Z.T_pow 2 n <= 5 * N.of_nat (Z.to_nat n) + 2)%N.
   Proof.
-    intros Hnonnegative. destruct n as [|p|p]; [time_step| |lia].
-    pose proof (Pos.T_iter_le (Z.mul 2) (fun x => Z.T_mul 2 x)
-      (fun _ => True) 3 1 p (fun _ _ => I)
-      (fun x _ => Z.T_mul_two_le x) I) as Hiter.
-    time_unfold Word.Z.T_pow. time_unfold Word.Z.T_pow_pos.
-    change (Z.to_nat (Zpos p)) with (Pos.to_nat p).
-    rewrite positive_nat_N. time_cbn_all. lia.
+    exact (pow_two_time_le n).
   Qed.
 
   (** Constructing the word modulus takes linear time in the width. *)
   Lemma word_modulus_time_bound w :
     (T_modulus w <= 8 * N.of_nat (Pos.to_nat w + 1))%N.
   Proof.
-    pose proof (word_pow_two_time_bound (Zpos w) ltac:(lia)) as Hpow.
-    time_unfold T_modulus. change (Z.to_nat (Zpos w)) with (Pos.to_nat w) in Hpow.
-    rewrite Nat2N.inj_add. time_cbn_all. lia.
+    exact (modulus_time_le w).
   Qed.
 
   (** The half modulus charges subtraction of the width and a power-of-two construction. *)
@@ -201,17 +189,11 @@ Module WordTime.
     rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
   Qed.
 
-  (** Modular wrapping charges the width and the raw integer's bit length quadratically. *)
+  (** Wrapping fits the quadratic bound in the width and the raw integer's bit length. *)
   Lemma word_wrap_time_bound w z :
     (T_wrap w z <= 64 * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
   Proof.
-    pose proof (word_modulus_time_bound w) as Hmodulus.
-    pose proof (Z.T_modulo_le z (modulus w)) as Hremainder.
-    assert (Hsize : (N.of_nat (Z.size_nat (modulus w)) <=
-      N.of_nat (Pos.to_nat w + 1))%N).
-    { apply time_of_nat_le. apply word_modulus_size_bound. }
-    time_unfold T_wrap. rewrite !Nat2N.inj_add, !Nat2N.inj_pow in *.
-    time_cbn_all. nia.
+    exact (wrap_time_quad_le w z).
   Qed.
 
   (** Signed interpretation adds only linear work to modular wrapping. *)

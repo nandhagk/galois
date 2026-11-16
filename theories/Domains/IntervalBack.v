@@ -988,11 +988,8 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     (Word.T_wrap w z <= k_payload_clip *
       N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
   Proof.
-    intros w z. pose proof (payload_modulus_time w).
-    pose proof (payload_modulus_bits w). pose proof (Pos2Nat.is_pos w).
-    pose proof (Std.Z.T_modulo_le z (Word.modulus w)).
-    unfold Word.T_wrap, k_payload_clip.
-    rewrite Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+    intros w z. eapply N.le_trans; [apply Word.wrap_time_quad_le|].
+    apply N.mul_le_mono_r. unfold k_payload_clip. lia.
   Qed.
 
   (** Clipping pays for the word bound and the raw endpoint bits. *)

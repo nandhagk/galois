@@ -673,12 +673,12 @@ Proof.
       by lia.
     rewrite <- (signed_id w (- half w + (z + half w) mod modulus w)%Z Hrange).
     assert (Hwrap : wrap w (- half w + (z + half w) mod modulus w)%Z = wrap w z).
-    { unfold wrap. rewrite Z.add_mod_idemp_r by apply modulus_nonzero.
+    { rewrite !wrap_mod. rewrite Z.add_mod_idemp_r by apply modulus_nonzero.
       replace (- half w + (z + half w))%Z with z by ring. reflexivity. }
     unfold signed. now rewrite Hwrap.
   - change ((0 + (z - 0) mod (modulus w - 1 - 0 + 1))%Z = wrap w z).
     replace (modulus w - 1 - 0 + 1)%Z with (modulus w) by ring.
-    replace (z - 0)%Z with z by ring. reflexivity.
+    replace (z - 0)%Z with z by ring. rewrite wrap_mod. reflexivity.
 Qed.
 
 (** Equal residues have equal unsigned and signed numeric interpretations. *)

@@ -13,7 +13,7 @@ Open Scope Z_scope.
 Theorem testbit_wrap : forall w x i, 0 <= i ->
   Z.testbit (wrap w x) i = (i <? Zpos w) && Z.testbit x i.
 Proof.
-  intros w x i Hi. unfold wrap, modulus.
+  intros w x i Hi. rewrite !wrap_mod. unfold modulus.
   destruct (i <? Zpos w) eqn:Hlt.
   - apply Z.ltb_lt in Hlt. now rewrite Z.mod_pow2_bits_low.
   - apply Z.ltb_ge in Hlt. rewrite Z.mod_pow2_bits_high by lia. reflexivity.
@@ -94,9 +94,9 @@ Qed.
 (** Word complement is the wrapped integer complement. *)
 Theorem wnot_lnot : forall w x, wnot w x = wrap w (Z.lnot (wrap w x)).
 Proof.
-  intros w x. unfold wrap at 2. apply Z.mod_unique with (q := -1).
+  intros w x. rewrite !wrap_mod. apply Z.mod_unique with (q := -1).
   - left. apply wnot_is_word.
-  - rewrite lnot_value. unfold wnot, wrap. ring.
+  - rewrite lnot_value. unfold wnot. rewrite !wrap_mod. ring.
 Qed.
 
 (** Conjunction agrees with Boolean conjunction on each bit of words. *)
@@ -525,7 +525,7 @@ Qed.
 Theorem wadd_assoc : forall w x y z,
   wadd w x (wadd w y z) = wadd w (wadd w x y) z.
 Proof.
-  intros w x y z. unfold wadd, wrap.
+  intros w x y z. unfold wadd. rewrite !wrap_mod.
   rewrite Z.add_mod_idemp_l, Z.add_mod_idemp_r by apply modulus_nonzero.
   f_equal. ring.
 Qed.
@@ -547,7 +547,7 @@ Qed.
 (** A word and its modular negation add to zero. *)
 Theorem wadd_wneg : forall w x, wadd w x (wneg w x) = 0.
 Proof.
-  intros w x. unfold wadd, wneg, wrap.
+  intros w x. unfold wadd, wneg. rewrite !wrap_mod.
   rewrite Z.add_mod_idemp_r by apply modulus_nonzero.
   rewrite Z.add_opp_diag_r. apply Z.mod_0_l. apply modulus_nonzero.
 Qed.
@@ -555,7 +555,7 @@ Qed.
 (** Subtraction is addition of the modular negation. *)
 Theorem wsub_wneg : forall w x y, wsub w x y = wadd w x (wneg w y).
 Proof.
-  intros w x y. unfold wsub, wadd, wneg, wrap.
+  intros w x y. unfold wsub, wadd, wneg. rewrite !wrap_mod.
   now rewrite Z.add_mod_idemp_r by apply modulus_nonzero.
 Qed.
 
@@ -569,7 +569,7 @@ Qed.
 Theorem wmul_assoc : forall w x y z,
   wmul w x (wmul w y z) = wmul w (wmul w x y) z.
 Proof.
-  intros w x y z. unfold wmul, wrap.
+  intros w x y z. unfold wmul. rewrite !wrap_mod.
   rewrite Z.mul_mod_idemp_l, Z.mul_mod_idemp_r by apply modulus_nonzero.
   f_equal. ring.
 Qed.
@@ -584,7 +584,7 @@ Qed.
 Theorem wmul_wadd_distr : forall w x y z,
   wmul w x (wadd w y z) = wadd w (wmul w x y) (wmul w x z).
 Proof.
-  intros w x y z. unfold wmul, wadd, wrap.
+  intros w x y z. unfold wmul, wadd. rewrite !wrap_mod.
   rewrite Z.mul_mod_idemp_r, <- Z.add_mod by apply modulus_nonzero.
   f_equal. ring.
 Qed.

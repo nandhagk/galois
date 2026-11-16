@@ -836,7 +836,7 @@ Module WrappedTable (L : WORD_LANGUAGE) (W : WRAPPED L) <: WRAPPED_TABLE L W.
   Proof.
     rewrite W.gamma_arc. destruct a as [| |lo hi];
       cbn [W.arc_gamma wrapped_gamma]; try reflexivity.
-    unfold W.offset, wrapped_offset. rewrite !arc_wrap_agrees. reflexivity.
+    unfold W.offset, wrapped_offset. rewrite !arc_wrap_mod. reflexivity.
   Qed.
 
   (** Unfolding only local wrappers exposes the common circular transfer helpers. *)
@@ -2601,7 +2601,7 @@ Lemma wrapped_unsigned_range_sound w a z : wrapped_gamma w a z ->
 Proof.
   destruct a as [| |lo hi]; intro Ha; [exact (False_rect _ Ha)| |].
   - change (0 <= z <= modulus w - 1). destruct Ha. lia.
-  - cbn [wrapped_unsigned_range]. rewrite !arc_wrap_agrees.
+  - cbn [wrapped_unsigned_range]. rewrite (arc_wrap_agrees w lo), (arc_wrap_agrees w hi).
     destruct (wrap w lo <=? wrap w hi) eqn:Hends.
     + change (wrap w lo <= z <= wrap w hi).
       destruct Ha as [Hz Hoffset].
@@ -2644,7 +2644,7 @@ Module WrappedRange (L : WORD_LANGUAGE) (W : WRAPPED L)
     - destruct Hgamma as [Hwidth [Hword Hp]]. apply W.gamma_arc in Hp.
       apply wrapped_unsigned_range_sound.
       destruct p as [| |lo hi]; cbn [W.arc_gamma wrapped_gamma] in *; try exact Hp.
-      unfold W.offset in Hp. unfold wrapped_offset. rewrite !arc_wrap_agrees. exact Hp.
+      unfold W.offset in Hp. unfold wrapped_offset. rewrite !arc_wrap_mod. exact Hp.
     - split; constructor.
   Qed.
 End WrappedRange.

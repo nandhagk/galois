@@ -20,8 +20,14 @@ TimeFun arc_wrap.
 (** The mask agrees with modular word reduction. *)
 Lemma arc_wrap_agrees : forall w z, arc_wrap w z = wrap w z.
 Proof.
-  intros w z. unfold arc_wrap, wrap, modulus.
-  apply Z.land_ones. lia.
+  intros w z. symmetry. rewrite wrap_mod. unfold arc_wrap, modulus.
+  symmetry. apply Z.land_ones. lia.
+Qed.
+
+(** The mask is integer remainder modulo the word modulus. *)
+Lemma arc_wrap_mod : forall w z, arc_wrap w z = z mod modulus w.
+Proof.
+  intros w z. rewrite arc_wrap_agrees. apply wrap_mod.
 Qed.
 
 Definition wrapped_offset (w : width) (origin x : Z) : Z :=
@@ -352,7 +358,7 @@ Qed.
 
 Theorem wrapped_offset_self w c : wrapped_offset w c c = 0.
 Proof.
-  unfold wrapped_offset; rewrite !arc_wrap_agrees. rewrite Z.sub_diag.
+  unfold wrapped_offset; rewrite !arc_wrap_mod. rewrite Z.sub_diag.
   apply Z.mod_0_l. apply modulus_nonzero.
 Qed.
 
@@ -382,7 +388,7 @@ Theorem wrapped_offset_add w c a x :
   wrapped_offset w c x =
   (wrapped_offset w c a + wrapped_offset w a x) mod modulus w.
 Proof.
-  unfold wrapped_offset; rewrite !arc_wrap_agrees.
+  unfold wrapped_offset; rewrite !arc_wrap_mod.
   replace (x - c) with ((a - c) + (x - a)) by ring.
   apply Z.add_mod. apply modulus_nonzero.
 Qed.
@@ -391,7 +397,7 @@ Theorem wrapped_offset_sub w c a x :
   wrapped_offset w a x =
   (wrapped_offset w c x - wrapped_offset w c a) mod modulus w.
 Proof.
-  unfold wrapped_offset; rewrite !arc_wrap_agrees.
+  unfold wrapped_offset; rewrite !arc_wrap_mod.
   replace (x - a) with ((x - c) - (a - c)) by ring.
   apply Zminus_mod.
 Qed.
@@ -400,7 +406,7 @@ Theorem wrapped_offset_step w c k :
   0 <= k < modulus w -> wrapped_offset w c (wrap w (c + k)) = k.
 Proof.
   intro Hk. rewrite wrapped_offset_word.
-  unfold wrapped_offset; rewrite !arc_wrap_agrees. replace (c + k - c) with k by ring.
+  unfold wrapped_offset; rewrite !arc_wrap_mod. replace (c + k - c) with k by ring.
   apply Z.mod_small. exact Hk.
 Qed.
 
@@ -604,7 +610,7 @@ Local Lemma wrapped_expand_span w lo hi size :
   wrapped_offset w (lo - size) (hi + size) =
   (wrapped_offset w lo hi + 2 * size) mod modulus w.
 Proof.
-  unfold wrapped_offset; rewrite !arc_wrap_agrees.
+  unfold wrapped_offset; rewrite !arc_wrap_mod.
   replace (hi + size - (lo - size)) with ((hi - lo) + 2 * size) by ring.
   symmetry. apply Z.add_mod_idemp_l. apply modulus_nonzero.
 Qed.
@@ -632,7 +638,7 @@ Proof.
   pose proof (wrapped_offset_range w lo hi) as Hspan.
   assert (Hsize : size = wrapped_offset w lo hi + 1) by reflexivity.
   assert (Hstart : wrapped_offset w (lo - size) lo = size).
-  { unfold wrapped_offset; rewrite !arc_wrap_agrees. replace (lo - (lo - size)) with size by ring.
+  { unfold wrapped_offset; rewrite !arc_wrap_mod. replace (lo - (lo - size)) with size by ring.
     apply Z.mod_small. lia. }
   rewrite Hstart, Z.mod_small by lia. lia.
 Qed.
@@ -778,7 +784,7 @@ Theorem wrapped_offset_word_cases w c z :
   is_word w c -> is_word w z ->
   wrapped_offset w c z = if c <=? z then z - c else z - c + modulus w.
 Proof.
-  intros Hc Hz. unfold wrapped_offset; rewrite !arc_wrap_agrees.
+  intros Hc Hz. unfold wrapped_offset; rewrite !arc_wrap_mod.
   destruct (c <=? z) eqn:Hle.
   - apply Z.leb_le in Hle. apply Z.mod_small. destruct Hc, Hz. lia.
   - apply Z.leb_gt in Hle. symmetry. apply Z.mod_unique with (q := -1);
@@ -852,8 +858,8 @@ Proof.
     split.
     + intro Hz. left. split; [exact Hz|]. unfold is_word in Hz. lia.
     + tauto.
-  - rewrite wrapped_arc_normalize_gamma. cbn [wrapped_parts_raw].
-    rewrite !arc_wrap_agrees.
+  - cbn [wrapped_parts_raw]. rewrite (arc_wrap_agrees w lo), (arc_wrap_agrees w hi).
+    rewrite wrapped_arc_normalize_gamma.
     pose proof (wrap_is_word w lo) as Hlo.
     pose proof (wrap_is_word w hi) as Hhi.
     destruct (wrap w lo <=? wrap w hi) eqn:Hends;
@@ -974,7 +980,7 @@ Local Lemma wrapped_offset_sum w a b x y :
   wrapped_offset w (a + b) (x + y) =
   (wrapped_offset w a x + wrapped_offset w b y) mod modulus w.
 Proof.
-  unfold wrapped_offset; rewrite !arc_wrap_agrees.
+  unfold wrapped_offset; rewrite !arc_wrap_mod.
   replace (x + y - (a + b)) with ((x - a) + (y - b)) by ring.
   apply Z.add_mod. apply modulus_nonzero.
 Qed.
@@ -2847,14 +2853,14 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Lemma pgamma_wrapped : forall w a z, pgamma w a z <-> wrapped_gamma w a z.
   Proof.
     intros w [| |lo hi] z; cbn [pgamma arc_gamma wrapped_gamma]; try reflexivity.
-    unfold offset, wrapped_offset. rewrite !arc_wrap_agrees. reflexivity.
+    unfold offset, wrapped_offset. rewrite !arc_wrap_mod. reflexivity.
   Qed.
 
   (** Public cardinality is the size used by circular expansion. *)
   Lemma card_wrapped_size : forall w a, card w a = wrapped_size w a.
   Proof.
     intros w [| |lo hi]; cbn [card wrapped_size]; try reflexivity.
-    unfold offset, wrapped_offset. rewrite arc_wrap_agrees. reflexivity.
+    unfold offset, wrapped_offset. rewrite arc_wrap_mod. reflexivity.
   Qed.
 
   (** Natural widening credit is the nonnegative logarithmic size rank. *)

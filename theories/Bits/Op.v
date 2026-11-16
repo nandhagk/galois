@@ -327,7 +327,7 @@ Proof.
     repeat rewrite wrap_wrap;
     try rewrite <- wrap_add; try rewrite <- wrap_sub; try rewrite <- wrap_mul;
     repeat rewrite wrap_opp; try reflexivity.
-  unfold wadd, wrap. repeat rewrite Z.add_mod_idemp_r by apply modulus_nonzero.
+  unfold wadd. rewrite !wrap_mod. repeat rewrite Z.add_mod_idemp_r by apply modulus_nonzero.
   reflexivity.
 Qed.
 
