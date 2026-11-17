@@ -4,10 +4,10 @@
     For example, repeated row occurrences consume separate units of fuel.
 
     Groups:
-    - Priority: a priority policy changes the row order, and the fuel that it needs.
-    - Occurrences: the live entries, outputs and readers of the cycle's row occurrences.
-    - Chain: a chain of five rows, each reading its predecessor.
-    - Counter: a counter that widens to None, with and without a delayed head.
+    - [PriorityTests] A priority policy changes the row order, and the fuel that it needs.
+    - [OccurrenceTests] The live entries, outputs and readers of the cycle's row occurrences.
+    - [ChainTests] A chain of five rows, each reading its predecessor.
+    - [CounterTests] A counter that widens to None, with and without a delayed head.
 
     Builds on: Fixpoint.Worklist and Fixpoint.WorklistTest. *)
 
@@ -102,7 +102,7 @@ Module ChainTests.
   End Chain.
   Module CW := WorklistCode BoolOps Chain P HeapCode.
 
-  (** The chain has five rows, and its dependencies add up to four. *)
+  (** The chain has five rows. *)
   Example chain_has_five_rows :
     length (Chain.rows tt) = 5.
   Proof.
