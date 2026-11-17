@@ -10,26 +10,33 @@
       operand order.
     - [instruction_edges_complete] Every unprojected edge is an instruction edge of its source
       block.
-    - [values_complexity] The value inventory is linear in its output.
-    - [def_complexity] Definition lookup is linear in the value key and the returned operands.
-    - [params_complexity] Parameter lookup is linear in the node key and the returned values.
-    - [args_complexity] Incoming operands are linear in the edge key and the returned pairs.
-    - [entry_params_complexity] Entry-parameter enumeration is linear in its output.
-    - [arg_rows_complexity] Operand-row enumeration is linear in its output.
-    - [home_complexity] Home lookup is linear in the value key.
-    - [guards_complexity] Guard lookup is linear in the edge key and the returned guards.
-    - [points_in_block_complexity] Block point lists are linear in the block key and the
-      returned points.
-    - [block_of_point_complexity] The owner lookup is linear in the point key.
+    - [dominating_edges_projected_equation] Projecting occurrence identifiers retains the selected
+      edge order.
+    - [values_complexity] The value inventory is linear in its output, O(n) for n values.
+    - [def_complexity] Definition lookup is linear in the value key and the returned operands,
+      O(|x| + k) for k operands.
+    - [params_complexity] Parameter lookup is linear in the node key and the returned values,
+      O(|n| + k) for k values.
+    - [args_complexity] Incoming operands are linear in the edge key and the returned pairs,
+      O(|e| + k) for k pairs.
+    - [entry_params_complexity] Entry-parameter enumeration is linear in its output, O(n) for n
+      parameters.
+    - [arg_rows_complexity] Operand-row enumeration is linear in its output, O(n) for n rows.
+    - [home_complexity] Home lookup is linear in the value key, O(|x|).
+    - [guards_complexity] Guard lookup is linear in the edge key and the returned guards, O(|e| + k)
+      for k guards.
+    - [points_in_block_complexity] Block point lists are linear in the block key and the returned
+      points, O(|b| + k) for k points.
+    - [block_of_point_complexity] The owner lookup is linear in the point key, O(|n|).
     - [instruction_edges_complexity] Instruction edge lists are linear in the block key and the
-      returned edges.
-    - [parameter_edge_complexity] The parameter edge lookup is linear in the block key.
-    - [block_edge_of_complexity] The edge projection is linear in the edge key.
+      returned edges, O(|b| + k) for k edges.
+    - [parameter_edge_complexity] The parameter edge lookup is linear in the block key, O(|b|).
+    - [block_edge_of_complexity] The edge projection is linear in the edge key, O(|e|).
     - [block_params_complexity] Block parameters are linear in the block key and the returned
-      values.
-    - [block_edge_args_complexity] Phi operands are linear in the block-edge key and the
-      returned values.
-    - [point_definition_complexity] The definition point lookup is linear in the value key.
+      values, O(|b| + k) for k values.
+    - [block_edge_args_complexity] Phi operands are linear in the block-edge key and the returned
+      values, O(|be| + k) for k values.
+    - [point_definition_complexity] The definition point lookup is linear in the value key, O(|x|).
 
     Builds on: Program.SsaSig and Base.Trie. *)
 
