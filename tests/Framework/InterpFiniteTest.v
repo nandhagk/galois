@@ -4,10 +4,13 @@
     For example, havoc changes a bounded fact to Any.
 
     Groups:
-    - Terms: the term evaluator gives the operations' values, or None for an undefined operation.
-    - Actions: assignment keeps a fact, havoc forgets it, and the empty list keeps the state.
-    - Guards: an impossible guard is bottom under the precise state domain, and not under the coarse one.
-    - Candidates: the hand candidate for the two-edge CFG is accepted, and a smaller one is rejected.
+    - [TermTests] The term evaluator gives the operations' values, or None for an undefined
+      operation.
+    - [ActionTests] Assignment keeps a fact, havoc forgets it, and the empty list keeps the state.
+    - [GuardTests] An impossible guard is bottom under the precise state domain, and not under the
+      coarse one.
+    - [CandidateTests] The hand candidate for the two-edge CFG is accepted, and a smaller one is
+      rejected.
 
     Builds on: Framework.Interp and Domains.LangSig. *)
 
