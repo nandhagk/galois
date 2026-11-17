@@ -26,7 +26,8 @@ Open Scope positive_scope.
 (** * Fixtures *)
 
 (** The digraph on the given vertices, with the given edges. *)
-Definition fixture_graph (vertices : list positive) (edges : list (positive * positive)) : digraph :=
+Definition fixture_graph (vertices : list positive)
+  (edges : list (positive * positive)) : digraph :=
   Digraph vertices (fold_right (fun u tr =>
     PTrieCode.set u (map snd (filter (fun e => Pos.eqb (fst e) u) edges)) tr)
     Empty vertices).
