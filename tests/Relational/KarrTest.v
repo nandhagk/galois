@@ -2,19 +2,25 @@
 
     These examples exercise elimination, affine hulls and raw coefficient normalization.
     For example, the hull of (0, 0) and (1, 1) retains x = y.
-    The groups are:
-    - Divide, which divides a row exactly by a weight, and FusedDivide, which does so in one pass.
-    - Entail, which checks whether one system of equalities entails another.
-    - Bottom, which checks for an integer or rational contradiction.
-    - Certificate, which checks the residual of a target certificate.
-    - Hull, which computes the affine hull of two systems, with its fused variant.
-    - Havoc, Subst and Assign, which forget, substitute and assign a variable.
-    - Pivot, which eliminates coupled equalities.
-    - Bareiss, which records the minors of the elimination and the determinant.
-    - Range, which computes the bounds of an affine form.
-    - Widen, which keeps equivalent systems when widening.
-    - FusedBasis, which keeps fraction-free rows and projects them.
-    Builds on: Key, ZLang, Linearize, LinCert and Karr. *)
+    Builds on: Key, ZLang, Linearize, LinCert and Karr.
+
+    Groups:
+    - [DivideTests] Dividing a row exactly by a weight.
+    - [FusedDivideTests] Dividing a row exactly by a weight in one pass.
+    - [EntailTests] Whether one system of equalities entails another.
+    - [BottomTests] Integer and rational contradictions.
+    - [CertificateTests] The residual of a target certificate.
+    - [HullTests] The affine hull of two systems.
+    - [FusedHullTests] The affine hull computed in one pass.
+    - [HavocTests] Forgetting a variable.
+    - [SubstTests] Substituting an expression for a variable.
+    - [AssignTests] Assigning an expression to a variable.
+    - [PivotTests] Eliminating coupled equalities.
+    - [BareissTests] The minors of the elimination and the determinant.
+    - [RangeTests] The bounds of an affine form.
+    - [SharedBasisTests] Entailment checked against a shared basis.
+    - [WidenTests] Widening keeps equivalent systems.
+    - [FusedBasisTests] Fraction-free rows kept and projected in one pass. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key.
@@ -279,17 +285,26 @@ Module HullTests.
     vm_compute. reflexivity.
   Qed.
 
+  (** The origin of three variables, as three equalities. *)
+  Definition origin_rows : list (lcons positive) :=
+    [LCons _ [(1%positive, 1)] REq 0;
+     LCons _ [(2%positive, 1)] REq 0;
+     LCons _ [(3%positive, 1)] REq 0].
+
+  (** The point (2, 4, 6), as three equalities. *)
+  Definition point_246_rows : list (lcons positive) :=
+    [LCons _ [(1%positive, 1)] REq 2;
+     LCons _ [(2%positive, 1)] REq 4;
+     LCons _ [(3%positive, 1)] REq 6].
+
+  (** The hull of the two points, y = 2x and z = 3x, with unit leading coefficients. *)
+  Definition line_246_rows : list (lcons positive) :=
+    [LCons _ [(2%positive, 1); (1%positive, -2)] REq 0;
+     LCons _ [(1%positive, -3); (3%positive, 1)] REq 0].
+
   (** The three-dimensional point hull divides every output by its common coefficient factor. *)
   Example affine_hull_divides_common_factors :
-    Equalities.affine_hull
-      [LCons _ [(1%positive, 1)] REq 0;
-       LCons _ [(2%positive, 1)] REq 0;
-       LCons _ [(3%positive, 1)] REq 0]
-      [LCons _ [(1%positive, 1)] REq 2;
-       LCons _ [(2%positive, 1)] REq 4;
-       LCons _ [(3%positive, 1)] REq 6] =
-      [LCons _ [(2%positive, 1); (1%positive, -2)] REq 0;
-       LCons _ [(1%positive, -3); (3%positive, 1)] REq 0].
+    Equalities.affine_hull origin_rows point_246_rows = line_246_rows.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -768,12 +783,16 @@ Module FusedBasisTests.
      LCons _ [(2%positive, 2); (3%positive, 1)] REq 0;
      LCons _ [(3%positive, 2)] REq 0].
 
+  (** The fraction-free rows of the elimination, with their multiplier vectors and scales. *)
+  Definition fused_triangular_basis : list karr_row :=
+    [KRow [2; 1; 0] 0 [1; 0; 0] 0;
+     KRow [0; 4; 2] 0 [0; 2; 0] 0;
+     KRow [0; 0; 8] 0 [0; 0; 4] 0].
+
   (** The fused elimination keeps coefficients, multiplier vectors, scales and row order. *)
   Example basis_keeps_fraction_free_rows :
     Equalities.equality_basis [1; 2; 3]%positive fused_triangular_equalities =
-      [KRow [2; 1; 0] 0 [1; 0; 0] 0;
-       KRow [0; 4; 2] 0 [0; 2; 0] 0;
-       KRow [0; 0; 8] 0 [0; 0; 4] 0].
+      fused_triangular_basis.
   Proof.
     vm_compute. reflexivity.
   Qed.
