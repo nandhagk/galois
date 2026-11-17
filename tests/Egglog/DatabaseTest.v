@@ -669,3 +669,51 @@ Example make_reuse_preserves_recorded_state :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Lookup follows a two-edge identifier path and preserves the database it returns. *)
+Example lookup_stale_identifier_keeps_state :
+  let stored := FixtureDatabase.put 2%positive [Id 1%positive] None
+    successive_alias_source in
+  let queued := FixtureDatabase.union 1%positive 2%positive stored in
+  FixtureDatabase.lookup 2%positive [Id 3%positive] queued = (Some None, queued).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A stale input key inserts its canonical row without rewriting historical rows. *)
+Example put_stale_identifier_uses_root :
+  let queued := FixtureDatabase.union 1%positive 2%positive successive_alias_source in
+  let result := FixtureDatabase.put 2%positive [Id 3%positive] None queued in
+  (FixtureDatabase.row_get 2%positive [Id 1%positive] result,
+   FixtureDatabase.row_get 2%positive [Id 2%positive] result,
+   FixtureDatabase.row_get 2%positive [Id 3%positive] result) =
+    (Some None, None, Some None).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Reusing a constructor follows its stale output while preserving the stored state. *)
+Example make_stale_output_keeps_state :
+  let initial := FixtureDatabase.init [Decl 1%positive [SVal] OId] [] in
+  let stored := fold_left
+    (fun db value => snd (FixtureDatabase.make 1%positive [Val value] db))
+    [1%positive; 2%positive; 3%positive; 4%positive] initial in
+  let paired := FixtureDatabase.union 1%positive 2%positive
+    (FixtureDatabase.union 3%positive 4%positive stored) in
+  let queued := FixtureDatabase.union 1%positive 3%positive paired in
+  FixtureDatabase.make 1%positive [Val 4%positive] queued = (1%positive, queued).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Rebuilding consumes stale losers through a two-edge path and retains their relation. *)
+Example rebuild_stale_losers_preserves_row :
+  let queued := FixtureDatabase.union 1%positive 2%positive successive_alias_source in
+  let result := FixtureDatabase.rebuild queued in
+  (FixtureDatabase.row_get 2%positive [Id 1%positive] result,
+   FixtureDatabase.row_get 2%positive [Id 3%positive] result,
+   fst (FixtureDatabase.find 3%positive result), runtime_queue (db_runtime result),
+   db_npending result) = (Some None, None, 1%positive, [], 0%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.

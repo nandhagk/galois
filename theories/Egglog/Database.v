@@ -2595,7 +2595,7 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     | Id i =>
       match N.compare (runtime_allocated (db_runtime db)) (Npos i) with
       | Lt => Id i
-      | _ => Id (fst (UnionFindCode.find i (db_forest db)))
+      | _ => Id (UnionFindCode.root_of i (db_forest db))
       end
     | Val v => Val v
     end.
@@ -2817,7 +2817,7 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     let ck := normal_key db k in
     let previous := row_get f ck db in
     match previous with
-    | Some (Some (Id j)) => (fst (UnionFindCode.find j (db_forest db)), db)
+    | Some (Some (Id j)) => (UnionFindCode.root_of j (db_forest db), db)
     | _ =>
       let i := N.succ_pos (runtime_allocated (db_runtime db)) in
       let fresh := allocate_id i db in
@@ -2923,7 +2923,7 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     | [] => None
     | i :: rest =>
       let store := db_row_store db in
-      let root := fst (UnionFindCode.find i (db_forest db)) in
+      let root := UnionFindCode.root_of i (db_forest db) in
       let updated := {|
         row_history := row_history store;
         row_links := row_links store;
@@ -3672,10 +3672,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - exact Hallocated.
   Qed.
 
-  (** A pop moves only existing occurrences to the allocated root returned by find. *)
+  (** A pop moves only existing occurrences to the allocated root. *)
   Lemma database_uses_allocated_pop : forall db x db',
     (forall i, allocated db i ->
-      allocated db (fst (UnionFindCode.find i (db_forest db)))) ->
+      allocated db (UnionFindCode.root_of i (db_forest db))) ->
     database_uses_allocated db -> db_pop_loser db = Some (x, db') ->
     database_uses_allocated db'.
   Proof.
@@ -3685,7 +3685,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     injection Hpop as Hname Hstate. subst x db'.
     intros y e Hin.
     change (In e (DatabaseUses.bucket y
-      (DatabaseUses.transfer first (fst (UnionFindCode.find first (db_forest db)))
+      (DatabaseUses.transfer first (UnionFindCode.root_of first (db_forest db))
         (row_uses (db_row_store db))))) in Hin.
     change (allocated db y).
     apply DatabaseUsesFacts.bucket_transfer_member in Hin.
@@ -4978,13 +4978,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db [i | v] Hforest Hmembers; cbn [normal_cell canon repr].
     - destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)) eqn:Hallocated.
-      + f_equal. apply UnionFind.find_repr. exact Hforest.
+      + f_equal. apply UnionFind.root_of_repr. exact Hforest.
       + f_equal. symmetry. apply UnionFindCodeFacts.repr_absent.
         intro Hmember. apply (proj1 (Hmembers i)) in Hmember.
         apply N.compare_lt_iff in Hallocated.
         change (Npos i <= runtime_allocated (db_runtime db))%N in Hmember.
         apply (N.lt_irrefl (Npos i)). eapply N.le_lt_trans; eassumption.
-      + f_equal. apply UnionFind.find_repr. exact Hforest.
+      + f_equal. apply UnionFind.root_of_repr. exact Hforest.
     - reflexivity.
   Qed.
 
@@ -7177,7 +7177,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - destruct (constructor_old db f (map (canon db) k) before Hwf Hkind
         (eq_sym Hprevious)) as [j ->].
       left. exists j. split; [exact (eq_sym Hprevious) |]. split; [| reflexivity].
-      apply UnionFind.find_repr. exact (wf_forest db Hwf).
+      apply UnionFind.root_of_repr. exact (wf_forest db Hwf).
     - change (kind_get f db = Some OId) in Hkind. rewrite Hkind.
       right. split; [reflexivity |]. split.
       + apply row_replace_binding. right. split; reflexivity.
@@ -8140,7 +8140,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       try apply fresh_make_layout.
     cbn [fst snd]. split; [reflexivity |]. split; [reflexivity |].
     split; [lia |]. split; [| reflexivity].
-    rewrite (UnionFind.find_repr j (db_forest db) (wf_forest db Hwf)).
+    rewrite (UnionFind.root_of_repr j (db_forest db) (wf_forest db Hwf)).
     unfold allocated. eapply UnionFindCodeFacts.repr_allocated.
     - exact (wf_forest db Hwf).
     - intro i. exact (wf_forest_members db Hwf i).
@@ -9080,7 +9080,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db i Hforest. unfold repr. cbn [normal_cell].
     destruct (N.compare (runtime_allocated (db_runtime db))
       (Npos (UnionFind.repr (db_forest db) i))); try reflexivity;
-      f_equal; rewrite (UnionFind.find_repr _ _ Hforest);
+      f_equal; rewrite (UnionFind.root_of_repr _ _ Hforest);
       now apply UnionFind.repr_idem.
   Qed.
 
@@ -9092,10 +9092,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     remember (normal_cell db (Id i)) as normalized eqn:Hnormal.
     unfold normal_cell in Hnormal.
     destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)) eqn:Hbound.
-    - rewrite (UnionFind.find_repr i (db_forest db) Hforest) in Hnormal.
+    - rewrite (UnionFind.root_of_repr i (db_forest db) Hforest) in Hnormal.
       subst normalized. now apply normal_cell_root.
     - subst normalized. unfold normal_cell. now rewrite Hbound.
-    - rewrite (UnionFind.find_repr i (db_forest db) Hforest) in Hnormal.
+    - rewrite (UnionFind.root_of_repr i (db_forest db) Hforest) in Hnormal.
       subst normalized. now apply normal_cell_root.
   Qed.
 
@@ -9585,7 +9585,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros M nu db [Hforest Hmeaning] [i | v]; cbn [normal_cell den]; [| reflexivity].
     destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); try reflexivity;
-      rewrite (UnionFind.find_repr i (db_forest db) Hforest); cbn [den];
+      rewrite (UnionFind.root_of_repr i (db_forest db) Hforest); cbn [den];
       f_equal; exact (Hmeaning i).
   Qed.
 
@@ -9895,10 +9895,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db [i | v] Hagrees; [| constructor].
     destruct Hagrees as [Hforest Hsame]. cbn [normal_cell].
     destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); constructor.
-    - rewrite (UnionFind.find_repr i (db_forest db) Hforest).
+    - rewrite (UnionFind.root_of_repr i (db_forest db) Hforest).
       exact (forest_agrees_id db i (conj Hforest Hsame)).
     - apply equality_log_refl.
-    - rewrite (UnionFind.find_repr i (db_forest db) Hforest).
+    - rewrite (UnionFind.root_of_repr i (db_forest db) Hforest).
       exact (forest_agrees_id db i (conj Hforest Hsame)).
   Qed.
 
@@ -10359,7 +10359,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     assert (Hcell : forall c, In c (k ++ option_list o) -> normal_cell db c = c).
     { intros [i | v] Hin; [| reflexivity]. cbn [normal_cell].
       destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); try reflexivity;
-        rewrite (UnionFind.find_repr i (db_forest db) Hforest); f_equal; exact (Hfixed i Hin). }
+        rewrite (UnionFind.root_of_repr i (db_forest db) Hforest); f_equal; exact (Hfixed i Hin). }
     split.
     - unfold normal_key. rewrite <- (map_id k) at 2. apply map_ext_in.
       intros c Hin. apply Hcell. apply in_or_app. now left.
@@ -11331,7 +11331,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     db_pop_loser db = Some (x, db') ->
     forall y e, uses db' y e <->
       (uses db y e /\ y <> x) \/
-      (y = fst (UnionFindCode.find x (db_forest db)) /\ uses db x e).
+      (y = UnionFindCode.root_of x (db_forest db) /\ uses db x e).
   Proof.
     intros db x db' Hmap Hpop y e.
     unfold db_pop_loser in Hpop.
@@ -11358,7 +11358,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     rewrite uses_entries_facts by (apply DatabaseUsesFacts.wf_transfer; exact Hmap).
     change (N.to_nat (db_nuses db) =
       DatabaseUsesFacts.count (DatabaseUses.transfer i
-        (fst (UnionFindCode.find i (db_forest db))) (row_uses (db_row_store db)))).
+        (UnionFindCode.root_of i (db_forest db)) (row_uses (db_row_store db)))).
     rewrite DatabaseUsesFacts.count_transfer by exact Hmap.
     exact Hcount.
   Qed.
@@ -14833,7 +14833,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   Lemma database_owned_ok_pop : forall db x db',
     (forall i, allocated db i ->
-      allocated db (fst (UnionFindCode.find i (db_forest db)))) ->
+      allocated db (UnionFindCode.root_of i (db_forest db))) ->
     database_owned_ok db -> db_pop_loser db = Some (x, db') ->
     database_owned_ok db'.
   Proof.
@@ -14901,8 +14901,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       [Hlocated [Hmetadata [Hpending [Huf [Hcard [Hsame [Hwidth
       [Hstore [Hcounts [Hhistory [Hcore [Hrank [Hnonroot Howned]]]]]]]]]]]]].
     assert (Hfind : forall i, allocated db i ->
-      allocated db (fst (UnionFindCode.find i (db_forest db)))).
-    { intros i Hi. rewrite (UnionFind.find_repr i (db_forest db) Huf).
+      allocated db (UnionFindCode.root_of i (db_forest db))).
+    { intros i Hi. rewrite (UnionFind.root_of_repr i (db_forest db) Huf).
       unfold allocated. eapply UnionFindCodeFacts.repr_allocated.
       - exact Huf.
       - exact (proj1 Hcore).
@@ -19395,7 +19395,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         exact Huf.
       + apply (pop_loser_uses_transfer db x db' Hmap Hpop).
         right. split; [| exact Huse].
-        rewrite (UnionFind.find_repr x (db_forest db) Huf). reflexivity.
+        rewrite (UnionFind.root_of_repr x (db_forest db) Huf). reflexivity.
       + unfold located, locate in *. rewrite (pop_loser_locate db x db' f k0 Hpop).
         exact Hloc.
       + left. rewrite !Hrepr. exact Hroot.
@@ -19763,7 +19763,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [exact Hview |].
     split.
     - intros y e. rewrite (pop_loser_uses_transfer db x db' Hmap Hpop y e).
-      rewrite (UnionFind.find_repr x (db_forest db) Huf). reflexivity.
+      rewrite (UnionFind.root_of_repr x (db_forest db) Huf). reflexivity.
     - split; [exact Hcount |].
       pose proof Hinv as Hpublic.
       unfold inv, inv_on in Hinv.
@@ -19796,7 +19796,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + intros e Hmember. exists (repr db x).
         apply (pop_loser_uses_transfer db x db' Hmap Hpop).
         right. split.
-        * rewrite (UnionFind.find_repr x (db_forest db) Huf). reflexivity.
+        * rewrite (UnionFind.root_of_repr x (db_forest db) Huf). reflexivity.
         * exact (proj1 (bucket_member db x e) Hmember).
       + eapply forest_ok_pop; [exact Hforest_ok | exact Hpop].
       + intros f k o Hrow. apply (pop_loser_kind_ok db x db' f k o Hpop).
@@ -24211,7 +24211,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       apply (pop_loser_uses_transfer db x db' Hmap Hpop y entry) in Huse.
       destruct Huse as [[Hold Hother] | [Hy Hold]].
       + exists (y, entry). split; assumption.
-      + rewrite (UnionFind.find_repr x (db_forest db) Hwf) in Hy. subst y.
+      + rewrite (UnionFind.root_of_repr x (db_forest db) Hwf) in Hy. subst y.
         change (repr db (repr db x) = root) in Hroot.
         rewrite (inv_on_repr_idem db [] x Hinv) in Hroot.
         exists (x, entry). split; assumption.
@@ -24220,7 +24220,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + exists (repr db x, entry). split.
         * cbn [fst]. rewrite Hrepr, (inv_on_repr_idem db [] x Hinv). exact Hroot.
         * apply (pop_loser_uses_transfer db x db' Hmap Hpop).
-          right. rewrite (UnionFind.find_repr x (db_forest db) Hwf). now split.
+          right. rewrite (UnionFind.root_of_repr x (db_forest db) Hwf). now split.
       + exists (y, entry). split; [cbn [fst]; now rewrite Hrepr |].
         apply (pop_loser_uses_transfer db x db' Hmap Hpop).
         left. now split.
@@ -24237,10 +24237,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     injection Hpop as Hname Hstate. subst x db'.
     cbn [database_set_pending database_set_runtime database_set_row_store
       db_row_store row_uses].
-    change (DatabaseUses.transfer i (fst (UnionFind.find i (db_forest db)))
+    change (DatabaseUses.transfer i (UnionFind.root_of i (db_forest db))
       (row_uses (db_row_store db)) =
       DatabaseUses.transfer i (repr db i) (row_uses (db_row_store db))).
-    now rewrite (UnionFind.find_repr i (db_forest db) Hwf).
+    now rewrite (UnionFind.root_of_repr i (db_forest db) Hwf).
   Qed.
 
   (** Transferring a queued nonroot releases one stored unit per activated occurrence. *)
@@ -25134,6 +25134,28 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     nia.
   Qed.
 
+  (** Allocated root walks fit the logarithmic database unit. *)
+  Lemma T_root_of_unit_budget : forall i db, wf db -> allocated db i ->
+    (UnionFindT.T_root_of i (db_forest db) <=
+      2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
+  Proof.
+    intros i db Hwf Hi.
+    pose proof (UnionFindT.T_root_of_le i (db_forest db) (wf_forest db Hwf)) as Hfind.
+    rewrite (forest_card_ids db Hwf) in Hfind.
+    pose proof (nat_log2_N_width (ids db)) as Hlog.
+    pose proof (slot_width_log (ids db)) as Hlogwidth.
+    assert (Hwidth : Nat.max (UnionFind.width (db_forest db)) (Pos.size_nat i) <=
+      N.size_nat (wmark db)).
+    { apply Nat.max_lub.
+      - eapply Nat.le_trans; [exact (wf_forest_width db Hwf) |].
+        apply N_width_mono. apply wmark_ids.
+      - change (N.size_nat (Npos i) <= N.size_nat (wmark db)).
+        apply N_width_mono. eapply N.le_trans; [exact Hi | apply wmark_ids]. }
+    unfold unit. rewrite Nat2N.inj_mul.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
+    nia.
+  Qed.
+
   (** The input-cell width sum separates tuple payloads from list bookkeeping. *)
   Definition tuple_cell_bits (k : list (cell V.t)) : nat :=
     fold_right (fun c n => cell_bits V.encode c + n) 0 k.
@@ -25930,17 +25952,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       clear - Hscalar. unfold unit. rewrite Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
   Qed.
 
-  (** Identifier normalization first pays the stored allocation guard, then an optional find. *)
+  (** Identifier normalization pays the allocation guard and an optional root walk. *)
   Lemma T_normal_cell_id : forall db i,
     (T_normal_cell db (Id i) = N.T_compare (ids db) (Npos i) + 3 +
       match N.compare (ids db) (Npos i) with
       | Lt => 0
-      | _ => UnionFindT.T_find i (db_forest db) + 2
+      | _ => UnionFindT.T_root_of i (db_forest db) + 1
       end)%N.
   Proof.
     intros db i. time_unfold T_normal_cell. time_unfold @T_db_runtime.
     time_unfold @T_runtime_allocated. time_unfold @T_db_forest.
-    time_unfold @Datatypes.T_fst. fold (ids db).
+    fold (ids db).
     destruct (N.compare (ids db) (Npos i)); nia.
   Qed.
 
@@ -25956,12 +25978,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       destruct (N.compare (ids db) (Npos i)) eqn:Hcompare_result.
       + apply N.compare_eq_iff in Hcompare_result.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+        pose proof (T_root_of_unit_budget i db Hwf Hi) as Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + apply N.compare_gt_iff in Hcompare_result.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+        pose proof (T_root_of_unit_budget i db Hwf Hi) as Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
     - time_unfold T_normal_cell. pose proof (unit_positive db).
       set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
@@ -27646,8 +27668,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma T_pop_loser_counter_bound : forall db i rest,
     runtime_queue (db_runtime db) = i :: rest ->
     (T_pop_loser db <= 64 + N.of_nat (N.size_nat (db_npending db)) +
-      UnionFindCode.T_find i (db_forest db) +
-      DatabaseUses.T_transfer i (fst (UnionFindCode.find i (db_forest db)))
+      UnionFindCode.T_root_of i (db_forest db) +
+      DatabaseUses.T_transfer i (UnionFindCode.root_of i (db_forest db))
         (row_uses (db_row_store db)))%N.
   Proof.
     intros db i rest Hqueue.
@@ -27659,12 +27681,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     time_simpl. time_cbn. lia.
   Qed.
 
-  Lemma pop_find_unit_budget : forall db work i, inv_on db work -> allocated db i ->
-    (UnionFindCode.T_find i (db_forest db) <=
+  Lemma pop_root_unit_budget : forall db work i, inv_on db work -> allocated db i ->
+    (UnionFindCode.T_root_of i (db_forest db) <=
       2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
   Proof.
     intros db work i Hinv Hi.
-    pose proof (UnionFindT.T_find_le i (db_forest db)
+    pose proof (UnionFindT.T_root_of_le i (db_forest db)
       (inv_on_forest_wf db work Hinv)) as Hfind.
     rewrite (inv_on_forest_card db work Hinv) in Hfind.
     pose proof (nat_log2_N_width (ids db)) as Hlog.
@@ -27681,12 +27703,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   Lemma pop_root_width : forall db work i, inv_on db work -> allocated db i ->
-    Pos.size_nat (fst (UnionFindCode.find i (db_forest db))) <=
+    Pos.size_nat (UnionFindCode.root_of i (db_forest db)) <=
       N.size_nat (wmark db).
   Proof.
     intros db work i Hinv Hi.
     pose proof (inv_on_forest_wf db work Hinv) as Hwf.
-    rewrite (UnionFind.find_repr i (db_forest db) Hwf).
+    rewrite (UnionFind.root_of_repr i (db_forest db) Hwf).
     destruct (PTrieCode.get i (UnionFind.parents (db_forest db))) as [parent |]
       eqn:Hmember.
     - eapply Nat.le_trans.
@@ -27723,10 +27745,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     { unfold queue. rewrite Hqueue. now left. }
     assert (Hi : allocated db x).
     { unfold inv, inv_on in Hinv. change (In x (queue db)) in Hqueued. firstorder. }
-    pose proof (pop_find_unit_budget db [] x Hinv Hi) as Hfind.
+    pose proof (pop_root_unit_budget db [] x Hinv Hi) as Hfind.
     pose proof (pop_root_width db [] x Hinv Hi) as Hroot.
     pose proof (T_database_uses_transfer_le use_entry x
-      (fst (UnionFindCode.find x (db_forest db)))
+      (UnionFindCode.root_of x (db_forest db))
       (row_uses (db_row_store db))) as Htransfer.
     change (DatabaseUses.bucket x (row_uses (db_row_store db)))
       with (get_uses x db) in Htransfer.
@@ -27745,17 +27767,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     set (M := DatabaseUseMap.c_map) in *.
     set (F := UnionFindT.c_uf) in *.
     assert (Hsum : (N.of_nat (Pos.size_nat x +
-      Pos.size_nat (fst (UnionFindCode.find x (db_forest db))) + 2) <= 2 * U)%N)
+      Pos.size_nat (UnionFindCode.root_of x (db_forest db)) + 2) <= 2 * U)%N)
       by (unfold U; lia).
     assert (Hmaps : (8 * M * N.of_nat (Pos.size_nat x +
-      Pos.size_nat (fst (UnionFindCode.find x (db_forest db))) + 2) <=
+      Pos.size_nat (UnionFindCode.root_of x (db_forest db)) + 2) <=
       16 * M * U)%N).
     { replace (16 * M * U)%N with ((8 * M) * (2 * U))%N by ring.
       apply N.mul_le_mono_l. exact Hsum. }
     assert (Hlength : (N.of_nat (length (bucket db x) + 1) <= W + 1)%N).
     { unfold W. lia. }
     assert (Htransfer_small :
-      (DatabaseUses.T_transfer x (fst (UnionFindCode.find x (db_forest db)))
+      (DatabaseUses.T_transfer x (UnionFindCode.root_of x (db_forest db))
         (row_uses (db_row_store db)) <= 16 * M * U + W + 1)%N).
     { eapply N.le_trans; [exact Htransfer |].
       replace (16 * M * U + W + 1)%N with (16 * M * U + (W + 1))%N by ring.
@@ -27941,13 +27963,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     ring.
   Qed.
 
-  (** An allocated find has the same unit bound during active repair as at a public boundary. *)
-  Lemma T_find_active_unit : forall db work i, inv_on db work -> allocated db i ->
-    (UnionFindT.T_find i (db_forest db) <=
+  (** An allocated root walk has the same unit bound during active repair. *)
+  Lemma T_root_of_active_unit : forall db work i, inv_on db work -> allocated db i ->
+    (UnionFindT.T_root_of i (db_forest db) <=
       2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
   Proof.
     intros db work i Hinv Hi.
-    pose proof (UnionFindT.T_find_le i (db_forest db)
+    pose proof (UnionFindT.T_root_of_le i (db_forest db)
       (inv_on_forest_wf db work Hinv)) as Hfind.
     rewrite (inv_on_forest_card db work Hinv) in Hfind.
     pose proof (nat_log2_N_width (ids db)) as Hlog.
@@ -27975,14 +27997,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       destruct (N.compare (ids db) (Npos i)) eqn:Hbranch.
       + apply N.compare_eq_iff in Hbranch.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_active_unit db work i Hinv Hi) as Hfind.
+        pose proof (T_root_of_active_unit db work i Hinv Hi) as Hfind.
         clear -Hcompare Hwidth Hpositive Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + clear -Hcompare Hwidth Hpositive.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + apply N.compare_gt_iff in Hbranch.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_active_unit db work i Hinv Hi) as Hfind.
+        pose proof (T_root_of_active_unit db work i Hinv Hi) as Hfind.
         clear -Hcompare Hwidth Hpositive Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
     - time_unfold T_normal_cell. pose proof (unit_positive db) as Hpositive.
@@ -28004,17 +28026,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
   Qed.
 
-  (** The find clock uses only forest well-formedness, cardinality and identifier width. *)
-  Lemma T_find_state_unit : forall db i,
+  (** The root-walk clock uses forest well-formedness, cardinality and identifier width. *)
+  Lemma T_root_of_state_unit : forall db i,
     UnionFind.wf (db_forest db) ->
     UnionFind.card (db_forest db) = N.to_nat (ids db) ->
     UnionFind.width (db_forest db) <= N.size_nat (ids db) ->
     allocated db i ->
-    (UnionFindT.T_find i (db_forest db) <=
+    (UnionFindT.T_root_of i (db_forest db) <=
       2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
   Proof.
     intros db i Hforest Hcard Hwidth Hi.
-    pose proof (UnionFindT.T_find_le i (db_forest db) Hforest) as Hfind.
+    pose proof (UnionFindT.T_root_of_le i (db_forest db) Hforest) as Hfind.
     rewrite Hcard in Hfind.
     pose proof (nat_log2_N_width (ids db)) as Hlog.
     pose proof (slot_width_log (ids db)) as Hlogwidth.
@@ -28044,14 +28066,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       destruct (N.compare (ids db) (Npos i)) eqn:Hbranch.
       + apply N.compare_eq_iff in Hbranch.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_state_unit db i Hforest Hcard Hwidth Hi) as Hfind.
+        pose proof (T_root_of_state_unit db i Hforest Hcard Hwidth Hi) as Hfind.
         clear -Hcompare Hbits Hpositive Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + clear -Hcompare Hbits Hpositive.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + apply N.compare_gt_iff in Hbranch.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_state_unit db i Hforest Hcard Hwidth Hi) as Hfind.
+        pose proof (T_root_of_state_unit db i Hforest Hcard Hwidth Hi) as Hfind.
         clear -Hcompare Hbits Hpositive Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
     - time_unfold T_normal_cell. pose proof (unit_positive db) as Hpositive.
@@ -29556,7 +29578,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (T_make f k db <= 128 * N.of_nat (length k + 2) + T_normal_key db k +
       T_row_get f ck db +
       match previous with
-      | Some (Some (Id j)) => UnionFindT.T_find j (db_forest db)
+      | Some (Some (Id j)) => UnionFindT.T_root_of j (db_forest db)
       | _ =>
         let i := N.succ_pos (ids db) in
         let fresh := allocate_id i db in
@@ -29573,7 +29595,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     { intro next. apply T_database_record_inputs_le. }
     time_unfold T_make.
     time_unfold @T_db_forest. time_unfold @T_db_runtime.
-    time_unfold @T_runtime_allocated. time_unfold @Datatypes.T_fst.
+    time_unfold @T_runtime_allocated.
     fold (ids db).
     destruct (row_get f (normal_key db k) db) as [[[j | v] |] |]; [lia | | |].
     all: match goal with
@@ -30562,8 +30584,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         { apply (wf_row_ids db Hwf f ck (Some (Id j)) j).
           - symmetry. exact Hprevious.
           - apply in_or_app. right. cbn [option_list In]. now left. }
-        pose proof (T_find_unit_budget j db Hwf Hallocated) as Hfind.
-        assert (Hfind_budget : (UnionFindT.T_find j (db_forest db) <= 2 * budget)%N).
+        pose proof (T_root_of_unit_budget j db Hwf Hallocated) as Hfind.
+        assert (Hfind_budget : (UnionFindT.T_root_of j (db_forest db) <= 2 * budget)%N).
         { eapply N.le_trans; [exact Hfind |].
           replace (2 * UnionFindT.c_uf * N.of_nat (unit db))%N with
             ((2 * UnionFindT.c_uf) * 1 * 1 * N.of_nat (unit db))%N by ring.
