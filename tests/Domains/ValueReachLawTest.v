@@ -4,12 +4,20 @@
     For example, product forward soundness follows from the current product interface.
     Builds on: ValueOpenTest, Product and Translate. *)
 
+(* Groups:
+   - Interface: the extra parameters that the Boolean reachability domain needs.
+   - Certified: the reachability domain, packaged as a value domain.
+   - Clients: product and translated laws over the certified domain. *)
+
 From Stdlib Require Import List Bool.
 From Galois.Lattice Require Import Simple.
 From Galois.Domains Require Import LangSig ValueSig Product Translate.
 From Galois.Tests.Domains Require Import ValueOpenTest TranslateTest.
 Import List.ListNotations.
 
+(** * Interface *)
+
+(** The extra obligations that the reachability widening and narrowing must meet. *)
 Module Type REACH_EXTRA.
   Parameter wrank : unit -> bool -> nat.
   Parameter widen_ub_l : forall p a b, ReachCode.leb a (ReachCode.widen p a b) = true.
@@ -29,6 +37,9 @@ Module Type REACH_EXTRA.
     ReachCode.leb a b = true -> ReachCode.is_bot b = true -> ReachCode.is_bot a = true.
 End REACH_EXTRA.
 
+(** * Certified *)
+
+(** The reachability domain, with its laws, as a value domain over the unit language. *)
 Module ReachCertified (Extra : REACH_EXTRA) <: VALUE_DOMAIN UnitLanguage.
   Include ReachCode.
   Definition leb_refl := BoolLat.leb_refl.
@@ -47,7 +58,7 @@ Module ReachCertified (Extra : REACH_EXTRA) <: VALUE_DOMAIN UnitLanguage.
   Definition wrank_widen := Extra.wrank_widen.
   Definition wrank_widen_le := Extra.wrank_widen_le.
   Definition narrow_between := Extra.narrow_between.
-  Definition gamma_mono := reach_gamma_mono.
+  Definition gamma_mono := ValueOpenTest.LawTests.gamma_mono.
   Lemma gamma_bot : forall c, ~ gamma bot c.
   Proof. intros c Hbot. discriminate Hbot. Qed.
   Lemma gamma_top : forall c, gamma top c.
@@ -55,13 +66,16 @@ Module ReachCertified (Extra : REACH_EXTRA) <: VALUE_DOMAIN UnitLanguage.
   Definition gamma_meet := Extra.gamma_meet.
   Definition is_bot_sound := Extra.is_bot_sound.
   Definition is_bot_below := Extra.is_bot_below.
-  Definition forward_sound := reach_forward_sound.
-  Definition backward_sound := reach_backward_sound.
-  Definition backward_refines := reach_backward_refines.
-  Definition guard_sound := reach_guard_sound.
-  Definition guard_refines := reach_guard_refines.
+  Definition forward_sound := ValueOpenTest.LawTests.forward_sound.
+  Definition backward_sound := ValueOpenTest.LawTests.backward_sound.
+  Definition backward_refines := ValueOpenTest.LawTests.backward_refines.
+  Definition guard_sound := ValueOpenTest.LawTests.guard_sound.
+  Definition guard_refines := ValueOpenTest.LawTests.guard_refines.
 End ReachCertified.
 
+(** * Clients *)
+
+(** Product and translated laws instantiated with the certified reachability domain. *)
 Module ReachProductClients (Extra : REACH_EXTRA).
   Module D := ReachCertified Extra.
   Module P := Product UnitLanguage D D.

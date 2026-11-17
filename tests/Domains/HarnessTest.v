@@ -4,10 +4,19 @@
     For example, a short table leaves every input unchanged.
     Builds on: Harness. *)
 
+(* Groups:
+   - Fixtures: a position language, a natural base, a table of candidates and the harness.
+   - Backward: backward entries of equal, shorter and longer length.
+   - Guard: guard entries of equal, shorter and longer length.
+   - Helpers: the positional meet of two lists. *)
+
 From Stdlib Require Import List Arith ZArith.
 From Galois.Domains Require Import Harness.
 Import List.ListNotations.
 
+(** * Fixtures *)
+
+(** Operators, guards and values are naturals, and no operator evaluates. *)
 Module PositionLanguage.
   Definition op := nat.
   Definition guard := nat.
@@ -16,6 +25,7 @@ Module PositionLanguage.
   Definition literal (_ : op) : option Z := None.
 End PositionLanguage.
 
+(** Naturals ordered as usual, with zero as bottom and seven as top. *)
 Module PositionBase.
   Definition t := nat.
   Definition leb := Nat.leb.
@@ -31,6 +41,7 @@ Module PositionBase.
   Definition abst (x : nat) := x.
 End PositionBase.
 
+(** Candidate lists of length two, one and three, and none for other keys. *)
 Module PositionTable.
   Definition fwd (_ : nat) (_ : list nat) : option nat := None.
   Definition candidates (k : nat) : option (list nat) :=
@@ -44,42 +55,66 @@ Module PositionTable.
   Definition grd (k : nat) (_ : list nat) := candidates k.
 End PositionTable.
 
+(** The harness over the position language, base and table. *)
 Module PositionHarness := HarnessCode PositionLanguage PositionBase PositionTable.
 
-(** Equal-length backward entries meet each original position. *)
-Example backward_positions : PositionHarness.backward 0 7 [5; 1] = [2; 1].
-Proof.
-  vm_compute. reflexivity.
-Qed.
+(** * Backward *)
 
-(** A short backward entry cannot drop an operand. *)
-Example backward_short : PositionHarness.backward 1 7 [5; 1] = [5; 1].
-Proof.
-  vm_compute. reflexivity.
-Qed.
+Module BackwardTests.
 
-(** A long backward entry cannot append an operand. *)
-Example backward_long : PositionHarness.backward 2 7 [5; 1] = [5; 1].
-Proof.
-  vm_compute. reflexivity.
-Qed.
+  (** An entry of the same length meets each original position. *)
+  Example equal_length_meets_positions : PositionHarness.backward 0 7 [5; 1] = [2; 1].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
 
-(** Equal-length guard entries meet each original position. *)
-Example guard_positions : PositionHarness.guard 0 [5; 1] = [2; 1].
-Proof.
-  vm_compute. reflexivity.
-Qed.
+  (** A shorter entry leaves the operands unchanged. *)
+  Example shorter_entry_keeps_operands : PositionHarness.backward 1 7 [5; 1] = [5; 1].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
 
-(** Guard dispatch also rejects both shorter and longer entries. *)
-Example guard_lengths :
-  (PositionHarness.guard 1 [5; 1], PositionHarness.guard 2 [5; 1]) =
-    ([5; 1], [5; 1]).
-Proof.
-  vm_compute. reflexivity.
-Qed.
+  (** A longer entry leaves the operands unchanged. *)
+  Example longer_entry_keeps_operands : PositionHarness.backward 2 7 [5; 1] = [5; 1].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
 
-(** The positional helper preserves an unmatched original suffix. *)
-Example meet_all_suffix : PositionHarness.meet_all [5; 4; 3] [2] = [2; 4; 3].
-Proof.
-  vm_compute. reflexivity.
-Qed.
+End BackwardTests.
+
+(** * Guard *)
+
+Module GuardTests.
+
+  (** A guard entry of the same length meets each original position. *)
+  Example equal_length_guard_meets_positions : PositionHarness.guard 0 [5; 1] = [2; 1].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A shorter guard entry leaves the operands unchanged. *)
+  Example shorter_guard_keeps_operands : PositionHarness.guard 1 [5; 1] = [5; 1].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A longer guard entry leaves the operands unchanged. *)
+  Example longer_guard_keeps_operands : PositionHarness.guard 2 [5; 1] = [5; 1].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End GuardTests.
+
+(** * Helpers *)
+
+Module HelperTests.
+
+  (** The positional meet keeps the suffix of the longer list that has no partner. *)
+  Example meet_all_keeps_unmatched_suffix :
+    PositionHarness.meet_all [5; 4; 3] [2] = [2; 4; 3].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End HelperTests.

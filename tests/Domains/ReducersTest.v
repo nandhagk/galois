@@ -2,7 +2,15 @@
 
     Reducers exchange facts between tagged word payloads.
     For example, known low bits can refine an interval after a second exchange.
-    Builds on: Reducers and the concrete word domains. *)
+    Builds on: Reducers and the concrete word domains.
+
+    Groups:
+    - Fixtures: the word, known-bit, congruence and interval modules and their tables.
+    - Reduction: pairwise reduction of wrapped, congruence and known-bit payloads.
+    - Certified: the certified wrapped-bits factory and the pins that check it.
+    - Clipping: the clipped interval reduced against a congruence.
+    - Time fixtures: the clock modules of the reducer tables.
+    - Reducer proofs: the size and shape lemmas of the interval reducer. *)
 
 From Stdlib Require Import NArith ZArith Lia Bool List.
 From Argent Require Import Time Tactics Std.
@@ -11,6 +19,9 @@ From Galois.Domains Require Import BitsLang ValueSig WordSig Tagged Harness Thre
   CongruenceSig Congruence IntervalSig ReducersSig Reducers.
 Local Open Scope Z_scope.
 
+(** * Fixtures *)
+
+(** The low multiplier configuration used by the known-bit modules. *)
 Module Config.
   Definition multiplier := MulLow.
 End Config.
@@ -39,27 +50,45 @@ Module WR := WrappedBitsCode WordLanguageCode W K WD KD.
 Module IR := IntervalCongrCode WordLanguageCode I G ID GD.
 Module BR := IntervalBitsCode WordLanguageCode I K ID KD.
 
-Example wrapped_first_pass :
-  WR.reduce (TVal 4%positive (WItv 4 7), TVal 4%positive (Tnum 0 1)) =
-    (TVal 4%positive (WItv 4 7), TVal 4%positive (Tnum 8 5)).
-Proof. vm_compute. reflexivity. Qed.
-Example wrapped_second_pass_refines :
-  fst (WR.reduce (WR.reduce (TVal 4%positive (WItv 4 7), TVal 4%positive (Tnum 0 1)))) =
-    TVal 4%positive (WItv 5 7).
-Proof. vm_compute. reflexivity. Qed.
-Example congruence_rounds_endpoints :
-  fst (IR.to_left (TVal 8%positive (I (Fin 0) (Fin 10)), TVal 8%positive (C 4 1))) =
-    TVal 8%positive (I (Fin 1) (Fin 9)).
-Proof. vm_compute. reflexivity. Qed.
-Example interval_bits_refines_lower :
-  fst (BR.to_left (TVal 4%positive (I (Fin 0) (Fin 7)), TVal 4%positive (Tnum 0 1))) =
-    TVal 4%positive (I (Fin 1) (Fin 7)).
-Proof. vm_compute. reflexivity. Qed.
-Example mismatched_widths_unchanged :
-  WR.reduce (TVal 4%positive (WItv 4 7), TVal 8%positive (Tnum 0 1)) =
-    (TVal 4%positive (WItv 4 7), TVal 8%positive (Tnum 0 1)).
-Proof. vm_compute. reflexivity. Qed.
+(** * Reduction *)
 
+Module ReductionTests.
+
+  (** Reducing the arc from 4 to 7 with the known bits 0 1 gives the known bits 8 5. *)
+  Example wrapped_arc_gives_known_bits :
+    WR.reduce (TVal 4%positive (WItv 4 7), TVal 4%positive (Tnum 0 1)) =
+      (TVal 4%positive (WItv 4 7), TVal 4%positive (Tnum 8 5)).
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A second reduction pass narrows the arc from 4 to 7 to the arc from 5 to 7. *)
+  Example second_pass_narrows_arc :
+    fst (WR.reduce (WR.reduce (TVal 4%positive (WItv 4 7), TVal 4%positive (Tnum 0 1)))) =
+      TVal 4%positive (WItv 5 7).
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** Reducing the interval from 0 to 10 against the congruence C 4 1 gives 1 to 9. *)
+  Example congruence_rounds_interval_endpoints :
+    fst (IR.to_left (TVal 8%positive (I (Fin 0) (Fin 10)), TVal 8%positive (C 4 1))) =
+      TVal 8%positive (I (Fin 1) (Fin 9)).
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** Known bits 0 1 raise the lower bound of the interval from 0 to 7 to 1. *)
+  Example bits_refine_interval_lower_bound :
+    fst (BR.to_left (TVal 4%positive (I (Fin 0) (Fin 7)), TVal 4%positive (Tnum 0 1))) =
+      TVal 4%positive (I (Fin 1) (Fin 7)).
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** Operands of different widths are returned unchanged. *)
+  Example mismatched_widths_are_unchanged :
+    WR.reduce (TVal 4%positive (WItv 4 7), TVal 8%positive (Tnum 0 1)) =
+      (TVal 4%positive (WItv 4 7), TVal 8%positive (Tnum 0 1)).
+  Proof. vm_compute. reflexivity. Qed.
+
+End ReductionTests.
+
+(** * Certified fixtures *)
+
+(** The certified modules over the word language, with their domains and tables. *)
 Module WF := Wrapped WordLanguage.
 Module KF := KnownBits WordLanguage Config.
 Module GF := Congruence WordLanguage.
@@ -77,14 +106,26 @@ Module WRF := WrappedBits WordLanguage Config WF KF WDomain.Domain KDomain.Domai
 Module IRF := IntervalCongr WordLanguage Thresholds SF IF GF IDomain.Domain GDomain.Domain.
 Module BRF := IntervalBits WordLanguage Config Thresholds SF IF KF IDomain.Domain KDomain.Domain.
 
-Example certified_factory_computes :
-  fst (WRF.reduce (TVal 4%positive (WItv 4 7), TVal 4%positive (Tnum 0 1))) =
-    TVal 4%positive (WItv 4 7).
-Proof. vm_compute. reflexivity. Qed.
+(** * Certified *)
+
+Module CertifiedTests.
+
+  (** The certified factory keeps the arc from 4 to 7 for the known bits 0 1. *)
+  Example certified_factory_keeps_arc :
+    fst (WRF.reduce (TVal 4%positive (WItv 4 7), TVal 4%positive (Tnum 0 1))) =
+      TVal 4%positive (WItv 4 7).
+  Proof. vm_compute. reflexivity. Qed.
+
+End CertifiedTests.
+
+(** The pins that check the certified modules against their interfaces. *)
 Module WPin <: WRAPPED_BITS_PIN WordLanguage Config WF KF WDomain.Domain KDomain.Domain WRF := WRF.
 Module IPin <: INTERVAL_CONGR_PIN WordLanguage IF GF IDomain.Domain GDomain.Domain IRF := IRF.
 Module BPin <: INTERVAL_BITS_PIN WordLanguage Config IF KF IDomain.Domain KDomain.Domain BRF := BRF.
 
+(** * Time fixtures *)
+
+(** The clock modules of the wrapped, known-bit, congruence and interval tables. *)
 Module WTTime := WrappedT WordLanguageT.
 Module KTTime := KnownBitsT WordLanguageT Config.
 Module GTTime := CongruenceT WordLanguageT.
@@ -111,10 +152,19 @@ Module IPinTime <: INTERVAL_CONGR_PIN WordLanguage ITTime GTTime
 Module BPinTime <: INTERVAL_BITS_PIN WordLanguage Config ITTime KTTime
   IDomainTime.Domain KDomainTime.Domain BRT := BRT.
 
-Example clipped_interval_singleton_congruence :
-  snd (IR.to_right (TVal 4%positive (I (Fin 15) (Fin 20)), TVal 4%positive (C 1 0))) =
-    TVal 4%positive (C 0 15).
-Proof. vm_compute. reflexivity. Qed.
+(** * Clipping *)
+
+Module ClippingTests.
+
+  (** The right reduction of the interval from 15 to 20 with the congruence C 1 0 gives C 0 15. *)
+  Example clipped_interval_gives_congruence :
+    snd (IR.to_right (TVal 4%positive (I (Fin 15) (Fin 20)), TVal 4%positive (C 1 0))) =
+      TVal 4%positive (C 0 15).
+  Proof. vm_compute. reflexivity. Qed.
+
+End ClippingTests.
+
+(** * Reducer proofs *)
 
 (** These three interval shapes form a subalgebra of the payload lattice operations. *)
 Definition reducer_simple_interval (w : positive) (a : itv) : bool :=

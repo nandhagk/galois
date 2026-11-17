@@ -4,6 +4,13 @@
     For example, a one-bit operand cannot supply a bit at offset eight.
     Builds on: KnownBitsOps and the generated word-operation clocks. *)
 
+(* Groups:
+   - Fixtures: the stage configuration, the known-bit masks and the table.
+   - Extraction: forward and backward extraction, inside and outside the operand width.
+   - Backward: backward transfers of bitwise, projection, order, negation and shift operators.
+   - Rotation: backward rotations at several widths.
+   - Clocks: lower bounds on the time of unchecked extraction. *)
+
 From Stdlib Require Import ZArith NArith List Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op.
@@ -11,11 +18,20 @@ From Galois.Domains Require Import BitsLang KnownBitsSig KnownBits KnownBitsOps 
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
+(** * Fixtures *)
+
+(** The multiplier stage configuration used by the known-bit modules. *)
 Module Stages <: TNUM_CONFIG.
   Definition multiplier := MulStages.
 End Stages.
+(** The timed known-bit masks over the word language. *)
 Module Masks := KnownBitsT WordLanguageT Stages.
+(** The clocks of the unchecked known-bit operations. *)
 Module RawClocks := KnownBitsOpsClock WordLanguageT Stages Masks.
+(** The timed known-bit table over the masks. *)
+Module Table := KnownBitsTableT WordLanguageT Stages Masks.
+
+(** * Clocks *)
 
 (** Converting a unary successor count visits every constructor. *)
 Local Lemma successor_conversion_clock_lower : forall n,
@@ -25,182 +41,7 @@ Proof.
     rewrite ?Nat2N.inj_succ; lia.
 Qed.
 
-Module Table := KnownBitsTableT WordLanguageT Stages Masks.
-
-(** The old unchecked forward value was Some (Tnum 1 0). *)
-Example extraction_outside_operand_rejected :
-  Table.wfwd (bvextract 0 8) 1%positive [(1%positive, tnum_top)] = None.
-Proof. vm_compute; reflexivity. Qed.
-
-Example backward_extraction_outside_operand_rejected :
-  Table.wbwd (bvextract 0 8) 1%positive tnum_top [(1%positive, tnum_top)] = None.
-Proof. vm_compute; reflexivity. Qed.
-
-Example extraction_at_zero_preserved :
-  Table.wfwd (bvextract 0 0) 1%positive [(1%positive, tnum_top)] = Some tnum_top.
-Proof. vm_compute; reflexivity. Qed.
-
-Example backward_extraction_at_zero_preserved :
-  Table.wbwd (bvextract 0 0) 1%positive (tnum_const 1%positive 1)
-    [(1%positive, tnum_top)] = Some [tnum_const 1%positive 1].
-Proof. vm_compute; reflexivity. Qed.
-
-(** Shared masks keep the exact arithmetic refinements specified by constant operands. *)
-Example backward_shared_arithmetic :
-  Table.wbwd bvand 8%positive (tnum_const 8%positive 15)
-    [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 255)] =
-      Some [tnum_const 8%positive 15; tnum_const 8%positive 255] /\
-  Table.wbwd bvor 8%positive (tnum_const 8%positive 15)
-    [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 0)] =
-      Some [tnum_const 8%positive 15; tnum_const 8%positive 0] /\
-  Table.wbwd bvxor 8%positive (tnum_const 8%positive 15)
-    [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 3)] =
-      Some [tnum_const 8%positive 12; tnum_const 8%positive 3] /\
-  Table.wbwd bvadd 64%positive (tnum_const 64%positive 15)
-    [(64%positive, tnum_top); (64%positive, tnum_const 64%positive 3)] =
-      Some [tnum_const 64%positive 12; tnum_const 64%positive 3] /\
-  Table.wbwd bvsub 8%positive (tnum_const 8%positive 15)
-    [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 3)] =
-      Some [tnum_const 8%positive 18; tnum_const 8%positive 3].
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
-
-(** Shared source and result masks preserve resizing, extraction and concatenation. *)
-Example backward_shared_projection :
-  Table.wbwd (bvzext 4%positive) 8%positive (tnum_const 8%positive 5)
-    [(4%positive, tnum_top)] = Some [tnum_const 4%positive 5] /\
-  Table.wbwd (bvsext 4%positive) 8%positive (tnum_const 8%positive 253)
-    [(4%positive, tnum_top)] = Some [tnum_const 4%positive 13] /\
-  Table.wbwd (bvextract 7 4) 4%positive (tnum_const 4%positive 5)
-    [(8%positive, tnum_top)] = Some [Tnum 160 80] /\
-  Table.wbwd bvconcat 8%positive (tnum_const 8%positive 90)
-    [(4%positive, tnum_top); (4%positive, tnum_top)] =
-      Some [tnum_const 4%positive 5; tnum_const 4%positive 10].
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
-
-(** Backward order bounds still retain every allowed low-nibble value. *)
-Example backward_shared_order :
-  Table.wbwd bvult 1%positive (tnum_const 1%positive 1)
-    [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 16)] =
-      Some [Tnum 240 0; tnum_const 8%positive 16] /\
-  Table.wbwd bvule 1%positive (tnum_const 1%positive 1)
-    [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 15)] =
-      Some [Tnum 240 0; tnum_const 8%positive 15].
-Proof.
-  vm_compute. split; reflexivity.
-Qed.
-
-(** One-bit, inconsistent and oversized masks keep their specified exact results. *)
-Example backward_shared_boundary_masks :
-  Table.wbwd bvnot 1%positive (tnum_const 1%positive 0)
-    [(1%positive, tnum_top)] = Some [tnum_const 1%positive 1] /\
-  Table.wbwd bvnot 8%positive (Tnum 7 7)
-    [(8%positive, Tnum 7 7)] = Some [Tnum 7 7] /\
-  Table.wbwd bvnot 8%positive (Tnum 511 256)
-    [(8%positive, tnum_top)] = Some [Tnum 0 255].
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
-
-(** Inverse variable shifts retain the common copied bits and the arithmetic sign bit. *)
-Example backward_fast_variable_shifts :
-  Table.wbwd bvshl 8%positive (tnum_const 8%positive 128)
-    [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
-      Some [Tnum 15 0; Tnum 252 0] /\
-  Table.wbwd bvlshr 8%positive (tnum_const 8%positive 128)
-    [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
-      Some [Tnum 120 0; Tnum 252 0] /\
-  Table.wbwd bvashr 8%positive (tnum_const 8%positive 128)
-    [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
-      Some [Tnum 120 128; Tnum 252 0].
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
-
-(** A possible shift by the width erases copied bits but keeps arithmetic sign information. *)
-Example backward_fast_oversized_shift :
-  Table.wbwd bvlshr 8%positive (tnum_const 8%positive 15)
-    [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
-      Some [tnum_top; Tnum 247 0] /\
-  Table.wbwd bvashr 8%positive (tnum_const 8%positive 15)
-    [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
-      Some [Tnum 128 0; Tnum 247 0].
-Proof.
-  vm_compute. split; reflexivity.
-Qed.
-
-(** A zero rotation stride preserves the projected constant in both directions. *)
-Example backward_fast_rotation_stop :
-  Table.wbwd bvrotl 8%positive (tnum_const 8%positive 15)
-    [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
-      Some [tnum_const 8%positive 15; Tnum 247 0] /\
-  Table.wbwd bvrotr 8%positive (tnum_const 8%positive 15)
-    [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
-      Some [tnum_const 8%positive 15; Tnum 247 0].
-Proof.
-  vm_compute. split; reflexivity.
-Qed.
-
-(** At width one, only arithmetic shifts and rotations retain the known result bit. *)
-Example backward_fast_width_one :
-  Table.wbwd bvshl 1%positive (tnum_const 1%positive 1)
-    [(1%positive, tnum_top); (1%positive, tnum_top)] = Some [tnum_top; tnum_top] /\
-  Table.wbwd bvashr 1%positive (tnum_const 1%positive 1)
-    [(1%positive, tnum_top); (1%positive, tnum_top)] = Some [Tnum 0 1; tnum_top] /\
-  Table.wbwd bvrotl 1%positive (tnum_const 1%positive 1)
-    [(1%positive, tnum_top); (1%positive, tnum_top)] = Some [Tnum 0 1; tnum_top].
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
-
-(** A non-power-of-two width keeps every required rotation stage. *)
-Example backward_fast_rotation_nonpower_width :
-  Table.wbwd bvrotl 5%positive (tnum_const 5%positive 1)
-    [(5%positive, tnum_top); (5%positive, Tnum 15 0)] = Some [Tnum 14 0; Tnum 15 0] /\
-  Table.wbwd bvrotr 5%positive (tnum_const 5%positive 1)
-    [(5%positive, tnum_top); (5%positive, Tnum 15 0)] = Some [Tnum 28 0; Tnum 15 0].
-Proof.
-  vm_compute. split; reflexivity.
-Qed.
-
-(** Unknown rotations preserve an all-one 64-bit result through both inverse projections. *)
-Example backward_fast_rotation_width_64 :
-  Table.wbwd bvrotl 64%positive (Tnum 0 18446744073709551615)
-    [(64%positive, tnum_top); (64%positive, tnum_top)] =
-      Some [Tnum 0 18446744073709551615; tnum_top] /\
-  Table.wbwd bvrotr 64%positive (Tnum 0 18446744073709551615)
-    [(64%positive, tnum_top); (64%positive, tnum_top)] =
-      Some [Tnum 0 18446744073709551615; tnum_top].
-Proof.
-  vm_compute. split; reflexivity.
-Qed.
-
-(** Fast projection keeps the original observations on oversized and inconsistent masks. *)
-Example backward_fast_raw_masks :
-  Table.wbwd bvshl 8%positive (Tnum 511 256)
-    [(8%positive, tnum_top); (8%positive, Tnum 256 0)] = Some [tnum_top; tnum_top] /\
-  Table.wbwd bvashr 8%positive (Tnum 511 256)
-    [(8%positive, tnum_top); (8%positive, Tnum 256 0)] = Some [Tnum 128 0; tnum_top] /\
-  Table.wbwd bvlshr 8%positive (Tnum 7 7)
-    [(8%positive, Tnum 7 7); (8%positive, Tnum 252 0)] = Some [Tnum 7 7; Tnum 252 0].
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
-
-(** Rejected offsets have the same genuine clock, however large the offset is. *)
-Example rejected_extraction_clock_constant : forall lo, (1 <= lo)%nat ->
-  Table.T_wfwd (bvextract 0 lo) 1%positive [(1%positive, tnum_top)] =
-  Table.T_wfwd (bvextract 0 1) 1%positive [(1%positive, tnum_top)].
-Proof. intros [|lo] Hlo; [lia|reflexivity]. Qed.
-
-Example rejected_backward_extraction_clock_constant : forall lo, (1 <= lo)%nat ->
-  Table.T_wbwd (bvextract 0 lo) 1%positive tnum_top [(1%positive, tnum_top)] =
-  Table.T_wbwd (bvextract 0 1) 1%positive tnum_top [(1%positive, tnum_top)].
-Proof. intros [|lo] Hlo; [lia|reflexivity]. Qed.
-
+(** Converting a natural offset takes at least as many steps as its value. *)
 Local Lemma offset_conversion_clock_lower : forall n,
   (N.of_nat n <= Op.Z.T_of_nat n)%N.
 Proof.
@@ -219,12 +60,266 @@ Proof.
   time_unfold T_tnum_map. time_cbn. lia.
 Qed.
 
-(** No constant budget for fixed one-bit operands bounds all unchecked offsets. *)
-Example unchecked_extraction_clock_unbounded : forall budget : N,
-  exists lo, (budget < RawClocks.T_tnum_forward_raw (bvextract 0 lo)
-    [(1%positive, tnum_top)] 1%positive)%N.
-Proof.
-  intro budget. exists (N.to_nat (N.succ budget)).
-  pose proof (raw_extraction_clock_lower (N.to_nat (N.succ budget))) as Hlower.
-  rewrite N2Nat.id in Hlower. lia.
-Qed.
+Module ClockTests.
+
+  (** Rejected offsets above the operand width cost the same however large they are. *)
+  Example rejected_extraction_clock_constant : forall lo, (1 <= lo)%nat ->
+    Table.T_wfwd (bvextract 0 lo) 1%positive [(1%positive, tnum_top)] =
+    Table.T_wfwd (bvextract 0 1) 1%positive [(1%positive, tnum_top)].
+  Proof. intros [|lo] Hlo; [lia|reflexivity]. Qed.
+
+  (** Rejected backward offsets above the operand width cost the same however large they are. *)
+  Example rejected_backward_extraction_clock_constant : forall lo, (1 <= lo)%nat ->
+    Table.T_wbwd (bvextract 0 lo) 1%positive tnum_top [(1%positive, tnum_top)] =
+    Table.T_wbwd (bvextract 0 1) 1%positive tnum_top [(1%positive, tnum_top)].
+  Proof. intros [|lo] Hlo; [lia|reflexivity]. Qed.
+
+  (** No fixed budget bounds the time of unchecked extraction at every offset. *)
+  Example unchecked_extraction_clock_unbounded : forall budget : N,
+    exists lo, (budget < RawClocks.T_tnum_forward_raw (bvextract 0 lo)
+      [(1%positive, tnum_top)] 1%positive)%N.
+  Proof.
+    intro budget. exists (N.to_nat (N.succ budget)).
+    pose proof (raw_extraction_clock_lower (N.to_nat (N.succ budget))) as Hlower.
+    rewrite N2Nat.id in Hlower. lia.
+  Qed.
+
+End ClockTests.
+
+(** * Extraction *)
+
+(** The old unchecked forward value was Some (Tnum 1 0). *)
+Module ExtractionTests.
+
+  (** A forward extraction past the operand width has no result. *)
+  Example forward_extraction_past_width_is_none :
+    Table.wfwd (bvextract 0 8) 1%positive [(1%positive, tnum_top)] = None.
+  Proof. vm_compute; reflexivity. Qed.
+
+  (** A backward extraction past the operand width has no result. *)
+  Example backward_extraction_past_width_is_none :
+    Table.wbwd (bvextract 0 8) 1%positive tnum_top [(1%positive, tnum_top)] = None.
+  Proof. vm_compute; reflexivity. Qed.
+
+  (** A forward extraction from bit zero keeps the top operand. *)
+  Example forward_extraction_at_zero_keeps_top :
+    Table.wfwd (bvextract 0 0) 1%positive [(1%positive, tnum_top)] = Some tnum_top.
+  Proof. vm_compute; reflexivity. Qed.
+
+  (** A backward extraction from bit zero keeps the constant operand. *)
+  Example backward_extraction_at_zero_keeps_constant :
+    Table.wbwd (bvextract 0 0) 1%positive (tnum_const 1%positive 1)
+      [(1%positive, tnum_top)] = Some [tnum_const 1%positive 1].
+  Proof. vm_compute; reflexivity. Qed.
+
+End ExtractionTests.
+
+(** * Backward *)
+
+Module BackwardTests.
+
+  (** A backward and with a constant result refines its operand to the constant. *)
+  Example backward_and_constant_result :
+    Table.wbwd bvand 8%positive (tnum_const 8%positive 15)
+      [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 255)] =
+        Some [tnum_const 8%positive 15; tnum_const 8%positive 255].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward or with a constant result refines its operand to the constant. *)
+  Example backward_or_constant_result :
+    Table.wbwd bvor 8%positive (tnum_const 8%positive 15)
+      [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 0)] =
+        Some [tnum_const 8%positive 15; tnum_const 8%positive 0].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward xor with a constant result refines its operand to the difference. *)
+  Example backward_xor_constant_result :
+    Table.wbwd bvxor 8%positive (tnum_const 8%positive 15)
+      [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 3)] =
+        Some [tnum_const 8%positive 12; tnum_const 8%positive 3].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward addition at width sixty-four refines its operand to the difference. *)
+  Example backward_add_width_64 :
+    Table.wbwd bvadd 64%positive (tnum_const 64%positive 15)
+      [(64%positive, tnum_top); (64%positive, tnum_const 64%positive 3)] =
+        Some [tnum_const 64%positive 12; tnum_const 64%positive 3].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward subtraction with a constant result refines its operand to the sum. *)
+  Example backward_sub_constant_result :
+    Table.wbwd bvsub 8%positive (tnum_const 8%positive 15)
+      [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 3)] =
+        Some [tnum_const 8%positive 18; tnum_const 8%positive 3].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward zero extension projects a constant onto its narrow source. *)
+  Example backward_zero_extension_projects :
+    Table.wbwd (bvzext 4%positive) 8%positive (tnum_const 8%positive 5)
+      [(4%positive, tnum_top)] = Some [tnum_const 4%positive 5].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward sign extension projects a constant onto its narrow source. *)
+  Example backward_sign_extension_projects :
+    Table.wbwd (bvsext 4%positive) 8%positive (tnum_const 8%positive 253)
+      [(4%positive, tnum_top)] = Some [tnum_const 4%positive 13].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward extraction projects a constant onto the bits it takes. *)
+  Example backward_extraction_projects :
+    Table.wbwd (bvextract 7 4) 4%positive (tnum_const 4%positive 5)
+      [(8%positive, tnum_top)] = Some [Tnum 160 80].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward concatenation splits a constant into its two parts. *)
+  Example backward_concat_splits_constant :
+    Table.wbwd bvconcat 8%positive (tnum_const 8%positive 90)
+      [(4%positive, tnum_top); (4%positive, tnum_top)] =
+        Some [tnum_const 4%positive 5; tnum_const 4%positive 10].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward unsigned less-than bounds its first operand below the constant. *)
+  Example backward_unsigned_less_than_bound :
+    Table.wbwd bvult 1%positive (tnum_const 1%positive 1)
+      [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 16)] =
+        Some [Tnum 240 0; tnum_const 8%positive 16].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward unsigned less-or-equal bounds its first operand at the constant. *)
+  Example backward_unsigned_less_equal_bound :
+    Table.wbwd bvule 1%positive (tnum_const 1%positive 1)
+      [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 15)] =
+        Some [Tnum 240 0; tnum_const 8%positive 15].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward negation at width one gives the constant one. *)
+  Example backward_not_at_width_one :
+    Table.wbwd bvnot 1%positive (tnum_const 1%positive 0)
+      [(1%positive, tnum_top)] = Some [tnum_const 1%positive 1].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward negation of an exact mask keeps that mask. *)
+  Example backward_not_of_exact_mask :
+    Table.wbwd bvnot 8%positive (Tnum 7 7) [(8%positive, Tnum 7 7)] = Some [Tnum 7 7].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward negation of an oversized mask gives the complementary mask. *)
+  Example backward_not_of_oversized_mask :
+    Table.wbwd bvnot 8%positive (Tnum 511 256) [(8%positive, tnum_top)] =
+      Some [Tnum 0 255].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward left shift keeps the copied bits of a constant shifted by a known count. *)
+  Example backward_shift_left_known_count :
+    Table.wbwd bvshl 8%positive (tnum_const 8%positive 128)
+      [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
+        Some [Tnum 15 0; Tnum 252 0].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward logical right shift keeps the copied bits of a constant. *)
+  Example backward_shift_right_known_count :
+    Table.wbwd bvlshr 8%positive (tnum_const 8%positive 128)
+      [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
+        Some [Tnum 120 0; Tnum 252 0].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A backward arithmetic right shift keeps the sign bit of a constant. *)
+  Example backward_arithmetic_shift_keeps_sign :
+    Table.wbwd bvashr 8%positive (tnum_const 8%positive 128)
+      [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
+        Some [Tnum 120 128; Tnum 252 0].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A possible logical shift by the width erases the copied bits. *)
+  Example backward_logical_shift_by_width_erases_bits :
+    Table.wbwd bvlshr 8%positive (tnum_const 8%positive 15)
+      [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
+        Some [tnum_top; Tnum 247 0].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A possible arithmetic shift by the width keeps the sign information. *)
+  Example backward_arithmetic_shift_by_width_keeps_sign :
+    Table.wbwd bvashr 8%positive (tnum_const 8%positive 15)
+      [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
+        Some [Tnum 128 0; Tnum 247 0].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** At width one, a backward left shift gives no information about its operand. *)
+  Example backward_shift_left_width_one :
+    Table.wbwd bvshl 1%positive (tnum_const 1%positive 1)
+      [(1%positive, tnum_top); (1%positive, tnum_top)] = Some [tnum_top; tnum_top].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** At width one, a backward arithmetic shift keeps the known result bit. *)
+  Example backward_arithmetic_shift_width_one :
+    Table.wbwd bvashr 1%positive (tnum_const 1%positive 1)
+      [(1%positive, tnum_top); (1%positive, tnum_top)] = Some [Tnum 0 1; tnum_top].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A raw shift count of a larger width keeps the masks specified by the raw inputs. *)
+  Example backward_shift_raw_mask_left :
+    Table.wbwd bvshl 8%positive (Tnum 511 256)
+      [(8%positive, tnum_top); (8%positive, Tnum 256 0)] = Some [tnum_top; tnum_top].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** An arithmetic shift of a raw oversized mask keeps the sign bit. *)
+  Example backward_shift_raw_mask_arithmetic :
+    Table.wbwd bvashr 8%positive (Tnum 511 256)
+      [(8%positive, tnum_top); (8%positive, Tnum 256 0)] = Some [Tnum 128 0; tnum_top].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A logical shift of an exact mask by an exact count keeps the exact mask. *)
+  Example backward_shift_exact_mask_logical :
+    Table.wbwd bvlshr 8%positive (Tnum 7 7)
+      [(8%positive, Tnum 7 7); (8%positive, Tnum 252 0)] = Some [Tnum 7 7; Tnum 252 0].
+  Proof. vm_compute. reflexivity. Qed.
+
+End BackwardTests.
+
+(** * Rotation *)
+
+Module RotationTests.
+
+  (** A zero rotation stride keeps the constant on the left rotation. *)
+  Example backward_rotate_left_keeps_constant :
+    Table.wbwd bvrotl 8%positive (tnum_const 8%positive 15)
+      [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
+        Some [tnum_const 8%positive 15; Tnum 247 0].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A zero rotation stride keeps the constant on the right rotation. *)
+  Example backward_rotate_right_keeps_constant :
+    Table.wbwd bvrotr 8%positive (tnum_const 8%positive 15)
+      [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
+        Some [tnum_const 8%positive 15; Tnum 247 0].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A left rotation at width five gives the inverse rotation of the constant. *)
+  Example backward_rotate_left_nonpower_width :
+    Table.wbwd bvrotl 5%positive (tnum_const 5%positive 1)
+      [(5%positive, tnum_top); (5%positive, Tnum 15 0)] =
+        Some [Tnum 14 0; Tnum 15 0].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A right rotation at width five gives the inverse rotation of the constant. *)
+  Example backward_rotate_right_nonpower_width :
+    Table.wbwd bvrotr 5%positive (tnum_const 5%positive 1)
+      [(5%positive, tnum_top); (5%positive, Tnum 15 0)] =
+        Some [Tnum 28 0; Tnum 15 0].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A left rotation at width sixty-four keeps an all-one unknown mask. *)
+  Example backward_rotate_left_width_64 :
+    Table.wbwd bvrotl 64%positive (Tnum 0 18446744073709551615)
+      [(64%positive, tnum_top); (64%positive, tnum_top)] =
+        Some [Tnum 0 18446744073709551615; tnum_top].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** A right rotation at width sixty-four keeps an all-one unknown mask. *)
+  Example backward_rotate_right_width_64 :
+    Table.wbwd bvrotr 64%positive (Tnum 0 18446744073709551615)
+      [(64%positive, tnum_top); (64%positive, tnum_top)] =
+        Some [Tnum 0 18446744073709551615; tnum_top].
+  Proof. vm_compute. reflexivity. Qed.
+
+End RotationTests.
