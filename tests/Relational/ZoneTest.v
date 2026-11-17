@@ -420,7 +420,7 @@ Module AssignClosedTests.
     (Zones.assume (ZGuardCmp Lt) [Leaf 1%positive; Node (ZConst 11%Z) []]
     (Zones.assume (ZGuardCmp Lt) [Node (ZConst (-1)%Z) []; Leaf 1%positive] Zones.top))))).
 
-  (** A state widened from an earlier one, which keeps its two-edge path and drops a composed entry. *)
+  (** A state widened from an earlier one, which keeps a two-edge path and drops a bound. *)
   Definition assignment_widened_state : Zones.t :=
     let later := Zones.assume (ZGuardCmp Lt)
       [Node ZSub [Leaf 3%positive; Leaf 2%positive]; Node (ZConst 2%Z) []]

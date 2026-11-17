@@ -507,7 +507,7 @@ End PivotTests.
 
 Module BareissTests.
 
-  (** The determinant of the coupled coefficients by cofactor expansion, independent of elimination. *)
+  (** The determinant of the coupled coefficients, computed by cofactor expansion. *)
   Example laplace_determinant_of_coupled_matrix :
     karr_determinant 3 [[2; 1; 1]; [1; 3; 2]; [3; 0; 4]] = 17.
   Proof.

@@ -30,7 +30,8 @@ Module Linear.
     | Node (ZConst z) [] => Some (Lin nat [] z, NoWrap)
     | _ => None
     end.
-  Definition atoms_of (_ : ZLangCode.guard) (_ : list (term ZLangCode.op nat)) : list (atom nat) := [].
+  Definition atoms_of (_ : ZLangCode.guard) (_ : list (term ZLangCode.op nat))
+      : list (atom nat) := [].
 End Linear.
 
 Module Numeric.
