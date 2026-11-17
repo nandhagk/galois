@@ -4,8 +4,6 @@
     For example, a divisor range excluding zero rules out division by zero.
 
     Main results
-    - [width_sound] A reported width is the width of every concrete value that the abstract
-      value describes.
     - [may_fail_sound] A successful check excludes concrete errors.
     - [may_fail_complexity] A check is linear in its operand work.
 
