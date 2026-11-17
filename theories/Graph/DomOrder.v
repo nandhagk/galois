@@ -3909,7 +3909,6 @@ Local Transparent dom_lt_eval T_dom_lt_eval dom_lt_predecessor T_dom_lt_predeces
 Local Transparent dom_lt_settle T_dom_lt_settle.
 Local Opaque Argent.Loop.loop T_loopN.
 
-(* BEGIN G2-G BUCKET SUPPORT *)
 Local Opaque dom_lt_eval T_dom_lt_eval.
 
 Lemma dom_lt_phase_eval_clock fuel semis links source :
@@ -4428,9 +4427,6 @@ Proof.
   eapply dom_lt_pipeline_numeric_budget;
     [exact Hpositive|exact Hlayout|exact Hreverse_paid|exact Hfold_paid].
 Qed.
-
-
-(* END G2-G BUCKET SUPPORT *)
 
 Local Opaque Argent.Loop.loop T_loopN.
 
