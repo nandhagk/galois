@@ -444,7 +444,8 @@ Module WidthTests.
   Proof. vm_compute. reflexivity. Qed.
 
   (** Left shift of one by one at width eight gives two. *)
-  Example width8_shl_by_one : eval_op bvshl [(8%positive, 1); (8%positive, 1)] = Some (8%positive, 2).
+  Example width8_shl_by_one :
+    eval_op bvshl [(8%positive, 1); (8%positive, 1)] = Some (8%positive, 2).
   Proof. vm_compute. reflexivity. Qed.
 
   (** A left shift whose amount has a different width is rejected. *)
