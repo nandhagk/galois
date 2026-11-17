@@ -2,6 +2,13 @@
 
     A finite interval vocabulary distinguishes assignment, havoc and guard precision.
     For example, havoc changes a bounded fact to Any.
+
+    Groups:
+    - Terms: the term evaluator gives the operations' values, or None for an undefined operation.
+    - Actions: assignment keeps a fact, havoc forgets it, and the empty list keeps the state.
+    - Guards: an impossible guard is bottom under the precise state domain, and not under the coarse one.
+    - Candidates: the hand candidate for the two-edge CFG is accepted, and a smaller one is rejected.
+
     Builds on: Framework.Interp and Domains.LangSig. *)
 
 From Stdlib Require Import List Bool ZArith.
@@ -13,13 +20,20 @@ From Galois.Program Require Import CfgSig.
 From Galois.Framework Require Import InterpSig Interp.
 Import List.ListNotations.
 
+(** * Fixtures *)
+
+(** Operations of the finite language: a constant, an addition, and a less-than test. *)
 Inductive op :=
   | Const (z : Z)
   | Add
   | Lt.
+
+(** Guards of the finite language: below three, and never. *)
 Inductive guard :=
   | Below3
   | Never.
+
+(** Facts of the finite vocabulary: dead, the constants 0 to 3, and any value. *)
 Inductive fact :=
   | Dead
   | U0
@@ -27,6 +41,8 @@ Inductive fact :=
   | U2
   | U3
   | Any.
+
+(** The finite language, whose values are integers. *)
 Module Lang <: LANG_OPS.
   Definition op := op.
   Definition guard := guard.
@@ -40,6 +56,8 @@ Module Lang <: LANG_OPS.
     end.
   Definition literal k := match k with Const z => Some z | _ => None end.
 End Lang.
+
+(** The finite lattice of facts, ordered as a flat chain of constants below Any. *)
 Module V <: VALUE_DOMAIN_OPS Lang.
   Definition t := fact.
   Definition leb a b :=
@@ -78,6 +96,8 @@ Module V <: VALUE_DOMAIN_OPS Lang.
   Definition backward (_ : op) (_ : t) (fs : list t) := fs.
   Definition guard (_ : guard) (fs : list t) := fs.
 End V.
+
+(** The precise state domain, whose guards and assignments use the value domain. *)
 Module D <: STATE_DOMAIN_OPS UnitKeyCode Lang V.
   Definition t := V.t.
   Definition leb := V.leb.
@@ -103,6 +123,8 @@ Module D <: STATE_DOMAIN_OPS UnitKeyCode Lang V.
     | _, _, _ => a
     end.
 End D.
+
+(** The coarse state domain, which keeps every state under an assumption. *)
 Module Coarse <: STATE_DOMAIN_OPS UnitKeyCode Lang V.
   Definition t := D.t.
   Definition leb := D.leb.
@@ -119,99 +141,147 @@ Module Coarse <: STATE_DOMAIN_OPS UnitKeyCode Lang V.
   Definition eval := D.eval.
   Definition assume (_ : guard) (_ : list (term op unit)) (a : t) := a.
 End Coarse.
+
 Module Prog <: TYPE. Definition t := unit. End Prog.
 Module Edge <: TYPE. Definition t := list (action op guard unit). End Edge.
+
+(** A CFG with one edge from false to true and no edges of its own. *)
 Module Cfg <: CFG_OPS Prog BoolKeyCode Edge.
   Definition entries (_ : unit) := [false].
   Definition edges (_ : unit) : list Edge.t := [].
   Definition src (_ : unit) (_ : Edge.t) := false.
   Definition dst (_ : unit) (_ : Edge.t) := true.
 End Cfg.
+
+(** Each edge is its own list of actions. *)
 Module Actions <: ACTIONS_OPS Prog Edge UnitKeyCode Lang.
   Definition actions (_ : unit) (e : Edge.t) := e.
 End Actions.
+
 Module S := InterpCode Prog BoolKeyCode Edge Cfg UnitKeyCode Lang V Actions D.
-Definition apply_actions acts a :=
-  match S.resume tt acts a with Ret out => out | _ => Dead end.
 
-Example undefined_term : eval_term Lang.eval (fun _ : unit => 2%Z) (Node Add []) = None.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+(** * Terms *)
 
-Example empty_operand_node :
-  eval_term Lang.eval (fun _ : unit => 99%Z) (Node (Const 2) []) = Some 2%Z.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+Module TermTests.
 
-Example nested_term_value :
-  D.eval (Node Add [Leaf tt; Node (Const 1) []]) U2 = U3.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** An undefined operation has no value. *)
+  Example undefined_operation_is_none :
+    eval_term Lang.eval (fun _ : unit => 2%Z) (Node Add []) = None.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Example havoc_vs_assign :
-  (apply_actions [Assign tt (Node (Const 0) [])] U3,
-   apply_actions [Havoc tt] U3) = (U0, Any).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** A constant node with no operands evaluates to its value, whatever the environment. *)
+  Example constant_node_evaluates :
+    eval_term Lang.eval (fun _ : unit => 99%Z) (Node (Const 2) []) = Some 2%Z.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Example havoc_does_not_keep_assignment_bound : V.leb (apply_actions [Havoc tt] U3) U0 = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** A nested sum of the leaf fact U2 and the constant 1 gives U3. *)
+  Example nested_term_evaluates_to_u3 :
+    D.eval (Node Add [Leaf tt; Node (Const 1) []]) U2 = U3.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Example empty_actions : apply_actions [] U3 = U3.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+End TermTests.
 
-Example precise_impossible_guard_bottom : D.assume Never [Leaf tt] U3 = Dead.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+(** * Actions *)
 
-(* coarse_impossible_guard_nonbottom had U3 <> Dead. *)
-Example coarse_impossible_guard_nonbottom : D.is_bot (Coarse.assume Never [Leaf tt] U3) = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+Module ActionTests.
 
-(* FrameworkEnvSoundTest's lattice_ok, gamma_ok, value_ok, update_ok, state_ok,
-   link_ok, actions_ok, env_ok, candidate_post and reachable_loop_head are law
-   clients. head_three_reachable is a concrete reachability derivation.
-   nested_term_sound states membership of 3 in U3, whose computed value is above.
-   havoc_accepts_an_outside_value and empty_concrete_actions use exec_all proofs.
-   havoc_sound_for_an_outside_value and assignment_excludes_an_outside_value use
-   the old gamma predicate at -7. precise_impossible_guard_infeasible,
-   coarse_impossible_guard_has_no_store and coarse_impossible_result_is_inhabited
-   prove store predicates. Task 3.9 adds computed observations only. *)
+  (** Runs the actions on the state, and gives the state after them, or Dead when they do not return. *)
+  Definition apply_actions acts a :=
+    match S.resume tt acts a with Ret out => out | _ => Dead end.
 
-Module CounterEdge <: TYPE. Definition t := bool. End CounterEdge.
-Module CounterCfg <: CFG_OPS Prog BoolKeyCode CounterEdge.
-  Definition entries (_ : unit) := [false].
-  Definition edges (_ : unit) := [false; true].
-  Definition src (_ : unit) (e : bool) := e.
-  Definition dst (_ : unit) (_ : bool) := true.
-End CounterCfg.
-Module CounterActions <: ACTIONS_OPS Prog CounterEdge UnitKeyCode Lang.
-  Definition actions (_ : unit) (e : bool) : list (action op guard unit) :=
-    if e then [Assume Below3 [Leaf tt]; Assign tt (Node Add [Leaf tt; Node (Const 1) []])]
-    else [Assign tt (Node (Const 0) [])].
-End CounterActions.
-Module CS := InterpCode Prog BoolKeyCode CounterEdge CounterCfg UnitKeyCode Lang V CounterActions D.
-Module C := CheckCode D CS.
-Definition candidate a := PTrieCode.set (BoolKeyCode.encode false) (false, Any)
-  (PTrieCode.set (BoolKeyCode.encode true) (true, a) PTrieCode.empty).
+  (** Assigning the constant 0 to a state U3 gives U0. *)
+  Example assign_constant_zero :
+    apply_actions [Assign tt (Node (Const 0) [])] U3 = U0.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Example hand_candidate_accepted : C.check tt (candidate U3) = true.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** Havoc on the state U3 gives Any. *)
+  Example havoc_gives_any :
+    apply_actions [Havoc tt] U3 = Any.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Example too_small_candidate_rejected : C.check tt (candidate U2) = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** Havoc does not keep the bound of U3, so the result is not below U0. *)
+  Example havoc_loses_bound :
+    V.leb (apply_actions [Havoc tt] U3) U0 = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** No actions keep the state U3. *)
+  Example empty_actions_keep_fact :
+    apply_actions [] U3 = U3.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End ActionTests.
+
+(** * Guards *)
+
+Module GuardTests.
+
+  (** Under the precise domain, the impossible guard Never makes the state Dead. *)
+  Example precise_impossible_guard_is_bottom :
+    D.assume Never [Leaf tt] U3 = Dead.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** Under the coarse domain, the impossible guard Never leaves the state non-bottom. *)
+  Example coarse_impossible_guard_not_bottom :
+    D.is_bot (Coarse.assume Never [Leaf tt] U3) = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End GuardTests.
+
+(** * Candidates *)
+
+Module CandidateTests.
+
+  (** The two-edge CFG, whose edge false assigns 0 and whose edge true assumes below 3 and adds 1. *)
+  Module CounterEdge <: TYPE. Definition t := bool. End CounterEdge.
+
+  Module CounterCfg <: CFG_OPS Prog BoolKeyCode CounterEdge.
+    Definition entries (_ : unit) := [false].
+    Definition edges (_ : unit) := [false; true].
+    Definition src (_ : unit) (e : bool) := e.
+    Definition dst (_ : unit) (_ : bool) := true.
+  End CounterCfg.
+
+  Module CounterActions <: ACTIONS_OPS Prog CounterEdge UnitKeyCode Lang.
+    Definition actions (_ : unit) (e : bool) : list (action op guard unit) :=
+      if e then [Assume Below3 [Leaf tt]; Assign tt (Node Add [Leaf tt; Node (Const 1) []])]
+      else [Assign tt (Node (Const 0) [])].
+  End CounterActions.
+
+  Module CS := InterpCode Prog BoolKeyCode CounterEdge CounterCfg UnitKeyCode Lang V CounterActions D.
+  Module C := CheckCode D CS.
+
+  (** The candidate that gives the entry Any and the other edge the fact a. *)
+  Definition candidate a := PTrieCode.set (BoolKeyCode.encode false) (false, Any)
+    (PTrieCode.set (BoolKeyCode.encode true) (true, a) PTrieCode.empty).
+
+  (** The candidate with U3 on the second edge satisfies the checker. *)
+  Example hand_candidate_accepted : C.check tt (candidate U3) = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The candidate with U2 on the second edge is too small and is rejected. *)
+  Example too_small_candidate_rejected : C.check tt (candidate U2) = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End CandidateTests.
