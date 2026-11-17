@@ -24622,7 +24622,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma leb_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (fst x) (snd x)))
     (fun x => T_leb (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := karr_shared_leb_factor).
+    intros [a b] [Ha Hb]. cbn [fst snd] in *.
+    eapply N.le_trans; [now apply T_karr_leb_normal|]. apply N.le_add_r.
+  Qed.
 
 
   (** Join of normal states fits one public elimination allowance. *)
@@ -24641,7 +24645,16 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       normal_s (snd (fst x)) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (snd (fst x)) (snd x)))
     (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := (karr_shared_leb_factor + c_karr + 1)%N).
+    intros [[p a] b] [Ha Hb]. cbn [fst snd] in *.
+    pose proof (T_karr_leb_normal b a Hb Ha) as Hleb.
+    rewrite karr_elimination_work_symmetric in Hleb.
+    pose proof (T_join_karr_le a b Ha Hb) as Hjoin.
+    assert (Hjoin_work : (T_join a b <= c_karr * N.of_nat (elimination_work a b))%N).
+    { unfold elimination_work. rewrite Nat2N.inj_mul, N.mul_assoc. exact Hjoin. }
+    time_unfold T_widen. destruct (leb b a); time_simpl; clear -Hleb Hjoin_work; nia.
+  Qed.
 
 
   (** The affine hull of normal sources fits one public elimination allowance. *)
