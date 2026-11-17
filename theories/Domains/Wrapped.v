@@ -8,16 +8,20 @@
     - [wrapped_add_sound] Addition retains each concrete result.
     - [wrapped_sub_sound] Subtraction retains each concrete result.
     - [wrapped_mul_sound] Multiplication retains each concrete result.
-    - [mul_complexity] Circular multiplication has the published quadratic asymptotic work.
-    - [norm_complexity] Normalization is linear in the width and the raw endpoints.
-    - [neg_complexity] Arithmetic negation is linear.
-    - [double_complexity] Circular expansion is linear.
-    - [not_complexity] Bitwise negation is linear.
-    - [split_complexity] Pole splitting is linear.
-    - [add_complexity] Addition is linear.
-    - [sub_complexity] Subtraction is linear.
-    - [udiv_complexity] Unsigned division has the published quadratic class.
-    - [urem_complexity] Unsigned remainder has the published quadratic class.
+    - [mul_complexity] Circular multiplication has the published quadratic asymptotic work,
+      O((w + 1)^2 + wrapped_bits a + wrapped_bits b).
+    - [norm_complexity] Normalization is linear in the width and the raw endpoints,
+      O(w + wrapped_bits a + 1).
+    - [neg_complexity] Arithmetic negation is linear, O(w + wrapped_bits a + 1).
+    - [double_complexity] Circular expansion is linear, O(w + wrapped_bits a + 1).
+    - [not_complexity] Bitwise negation is linear, O(w + wrapped_bits a + 1).
+    - [split_complexity] Pole splitting is linear, O(w + wrapped_bits a + 1).
+    - [add_complexity] Addition is linear, O(w + wrapped_bits a + wrapped_bits b + 1).
+    - [sub_complexity] Subtraction is linear, O(w + wrapped_bits a + wrapped_bits b + 1).
+    - [udiv_complexity] Unsigned division has the published quadratic class,
+      O((w + 1)^2 + wrapped_bits a + wrapped_bits b).
+    - [urem_complexity] Unsigned remainder has the published quadratic class,
+      O((w + 1)^2 + wrapped_bits a + wrapped_bits b).
 
     Builds on: WrappedSig, Interval and the bit-vector operations. *)
 
