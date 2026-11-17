@@ -57,6 +57,30 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example shared_basis_skips_rows_already_present :
+  Equalities.leb (Reached [same; x1; y1]) (Reached [y1; same]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example shared_basis_recognizes_absent_consequences :
+  let xy := LCons _ [(1%positive, 1); (2%positive, -1)] REq 0 in
+  let yz := LCons _ [(2%positive, 1); (3%positive, -1)] REq 0 in
+  let xz := LCons _ [(1%positive, 1); (3%positive, -1)] REq 0 in
+  Equalities.leb (Reached [xy; yz]) (Reached [xz]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example shared_basis_rejects_an_absent_nonconsequence :
+  let xy := LCons _ [(1%positive, 1); (2%positive, -1)] REq 0 in
+  let yz := LCons _ [(2%positive, 1); (3%positive, -1)] REq 0 in
+  let shifted := LCons _ [(1%positive, 1); (3%positive, -1)] REq 1 in
+  Equalities.leb (Reached [xy; yz]) (Reached [shifted]) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example infeasible_left_is_below_unrelated_rows :
   Equalities.leb (Reached [x0; x1]) (Reached [y1]) = true.
 Proof.

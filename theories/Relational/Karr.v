@@ -5879,9 +5879,10 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
       karr_list_eqb (fun p q => X.eqb (fst p) (fst q) && Z.eqb (snd p) (snd q))
         (lhs r) (lhs s).
 
-  Definition target_certificate (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
-    let xs := variables (c :: P) in
-    let r := karr_target (equality_basis xs P) 1
+  (** A target certificate reuses the caller's prepared equality basis. *)
+  Definition target_certificate_in (xs : list X.t) (basis : list karr_row)
+      (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
+    let r := karr_target basis 1
       (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1) in
     let sign := if (kscale r <? 0)%Z then (-1)%Z else 1%Z in
     let right := match lrel c with
@@ -5891,6 +5892,10 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     if karr_zero r && negb (Z.eqb (kscale r) 0) && right then
       Some (Cert (map (fun z => (- sign * z)%Z) (kweight r)) (Z.abs (kscale r)) false)
     else None.
+
+  Definition target_certificate (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
+    let xs := variables (c :: P) in
+    target_certificate_in xs (equality_basis xs P) P c.
 
   Definition entail_cert (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
     let candidate := match contradiction P with
@@ -5906,7 +5911,16 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     existsb (row_eqb r) P ||
       match entail_cert P r with Some _ => true | None => false end.
 
-  Definition leb (a b : t) : bool :=
+  (** A shared-basis target still passes the public certificate checker. *)
+  Definition entails_in (xs : list X.t) (basis : list karr_row)
+      (P : list (lcons X.t)) (r : lcons X.t) : bool :=
+    match target_certificate_in xs basis P r with
+    | Some k => C.check_entails P r k
+    | None => false
+    end.
+
+  (** The reference order tests each target with its own equality basis. *)
+  Definition leb_spec (a b : t) : bool :=
     match a, b with
     | Unreached, _ => true
     | Reached P, Unreached =>
@@ -5915,6 +5929,26 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
       match contradiction P with
       | Some _ => true
       | None => forallb (entails P) Q
+      end
+    end.
+
+  (** Inclusion skips literal rows and prepares one basis for all remaining targets. *)
+  Definition leb (a b : t) : bool :=
+    match a, b with
+    | Unreached, _ => true
+    | Reached P, Unreached =>
+      match contradiction P with Some _ => true | None => false end
+    | Reached P, Reached Q =>
+      match filter (fun r => negb (existsb (row_eqb r) P)) Q with
+      | [] => true
+      | rest =>
+        match contradiction P with
+        | Some _ => true
+        | None =>
+          let xs := variables (P ++ Q) in
+          let basis := equality_basis xs P in
+          forallb (entails_in xs basis P) rest
+        end
       end
     end.
 
@@ -7612,11 +7646,13 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
   (** Passing the producer's residual guard is sufficient for every lawful checker. *)
-  Lemma target_certificate_complete : forall P target k,
-    target_certificate P target = Some k -> C.check_entails P target k = true.
+  Lemma target_certificate_in_complete : forall P xs target k,
+    (forall s, In s (target :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x xs) ->
+    target_certificate_in xs (equality_basis xs P) P target = Some k ->
+    C.check_entails P target k = true.
   Proof.
-    intros P target k Hcert. unfold target_certificate in Hcert.
-    set (xs := variables (target :: P)) in *.
+    intros P xs target k Hsupport Hcert. unfold target_certificate_in in Hcert.
     set (r := karr_target (equality_basis xs P) 1
       (KRow (dense xs target) (rhs target) (repeat 0%Z (length P)) 1)) in *.
     set (sign := if (kscale r <? 0)%Z then (-1)%Z else 1%Z) in *.
@@ -7631,12 +7667,21 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     apply negb_true_iff, Z.eqb_neq in Hscale.
     apply row_tracks_check_entails with (xs := xs).
     - apply reduced_target_tracks.
-    - intros s Hs x z Hin. apply variables_contains with (r := s) (z := z);
-        assumption.
+    - exact Hsupport.
     - exact Hzero.
     - exact Hscale.
     - destruct (lrel target); [now apply Z.eqb_eq |now apply Z.leb_le].
   Qed.
+
+  Lemma target_certificate_complete : forall P target k,
+    target_certificate P target = Some k -> C.check_entails P target k = true.
+  Proof.
+    intros P target k Hcert.
+    apply target_certificate_in_complete with (xs := variables (target :: P)).
+    - intros s Hin x z Hterm. now apply variables_contains with (r := s) (z := z).
+    - exact Hcert.
+  Qed.
+
 
   Lemma entails_of_target_certificate : forall P target k,
     target_certificate P target = Some k -> entails P target = true.
@@ -7916,12 +7961,14 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - destruct (lrel target); rewrite comb_rhs_scale; nia.
   Qed.
 
-  Lemma target_certificate_equality : forall P target k,
-    target_certificate P target = Some k ->
+  (** A covered target carries a valid equality combination over the shared basis. *)
+  Lemma target_certificate_in_equality : forall P xs target k,
+    (forall s, In s (target :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x xs) ->
+    target_certificate_in xs (equality_basis xs P) P target = Some k ->
     equality_certificate P target (mults k) (scale k).
   Proof.
-    intros P target k Hcert. unfold target_certificate in Hcert.
-    set (xs := variables (target :: P)) in *.
+    intros P xs target k Hsupport Hcert. unfold target_certificate_in in Hcert.
     set (r := karr_target (equality_basis xs P) 1
       (KRow (dense xs target) (rhs target) (repeat 0%Z (length P)) 1)) in *.
     set (sign := if (kscale r <? 0)%Z then (-1)%Z else 1%Z) in *.
@@ -7936,10 +7983,34 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     apply negb_true_iff, Z.eqb_neq in Hscale.
     apply row_tracks_equality_certificate with (xs := xs).
     - apply reduced_target_tracks.
-    - intros s Hs x z Hin. apply variables_contains with (r := s) (z := z); assumption.
+    - exact Hsupport.
     - exact Hzero.
     - exact Hscale.
     - destruct (lrel target); [now apply Z.eqb_eq |now apply Z.leb_le].
+  Qed.
+
+  Lemma target_certificate_equality : forall P target k,
+    target_certificate P target = Some k ->
+    equality_certificate P target (mults k) (scale k).
+  Proof.
+    intros P target k Hcert.
+    apply target_certificate_in_equality with (xs := variables (target :: P)).
+    - intros s Hin x z Hterm. now apply variables_contains with (r := s) (z := z).
+    - exact Hcert.
+  Qed.
+
+
+  (** A shared-basis certificate holds under every rational equality model. *)
+  Lemma target_certificate_in_sound_Q : forall P xs target k,
+    (forall s, In s (target :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x xs) ->
+    target_certificate_in xs (equality_basis xs P) P target = Some k -> forall v,
+    Forall (fun r => lrel r = REq -> satQ v r) P -> satQ v target.
+  Proof.
+    intros P xs target k Hsupport Hcert v Hmodels.
+    apply equality_certificate_sound_Q with (P := P) (ms := mults k) (sc := scale k).
+    - now apply target_certificate_in_equality with (xs := xs).
+    - exact Hmodels.
   Qed.
 
   Lemma target_certificate_sound_Q : forall P target k,
@@ -8014,20 +8085,6 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
       now apply (proj1 (Forall_forall _ _) Hmodels r Hin).
     - destruct (entail_cert P r) as [k |] eqn:Hsome; [|discriminate].
       now apply entail_cert_sound_Q with (P := P) (k := k).
-  Qed.
-
-  Lemma leb_eq_sound_Q : forall P R,
-    leb (Reached P) (Reached R) = true -> forall v,
-    Forall (fun r => lrel r = REq -> satQ v r) P ->
-    Forall (fun r => lrel r = REq -> satQ v r) R.
-  Proof.
-    intros P R Hle v Hmodels. unfold leb in Hle.
-    destruct (contradiction P) as [ms |] eqn:Hempty.
-    - exfalso. exact (contradiction_sound_Q P ms Hempty v Hmodels).
-    - apply Forall_forall. intros r Hin Hrel. apply entails_eq_sound_Q with (P := P).
-      + now apply (proj1 (forallb_forall _ _) Hle).
-      + exact Hrel.
-      + exact Hmodels.
   Qed.
 
   (** The dense basis always has the structural echelon form proved above. *)
@@ -8126,21 +8183,19 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
   (** Every rational consequence of the equality rows passes the producer residual guard. *)
-  Lemma target_certificate_complete_Q : forall P target,
+  Lemma target_certificate_in_complete_Q : forall P xs target,
+    NoDup xs ->
+    (forall s, In s (target :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x xs) ->
     contradiction P = None ->
     (forall v : X.t -> Q,
       Forall (fun r => lrel r = REq -> satQ v r) P -> satQ v target) ->
-    exists k, target_certificate P target = Some k.
+    exists k, target_certificate_in xs (equality_basis xs P) P target = Some k.
   Proof.
-    intros P target Hnone Hsemantic.
+    intros P xs target Hunique Hsupport Hnone Hsemantic.
     destruct (contradiction_none_model_Q P Hnone) as [v0 Hmodel0].
-    set (xs := variables (target :: P)).
     set (initial := KRow (dense xs target) (rhs target) (repeat 0%Z (length P)) 1).
     set (r := karr_target (equality_basis xs P) 1 initial).
-    assert (Hunique : NoDup xs) by apply variables_nodup.
-    assert (Hsupport : forall s, In s (target :: P) ->
-      forall x z, In (x, z) (lhs s) -> In x xs).
-    { intros s Hin x z Hterm. now apply variables_contains with (r := s) (z := z). }
     assert (Hsource : forall s, In s P ->
       forall x z, In (x, z) (lhs s) -> In x xs).
     { intros s Hin. apply Hsupport. now right. }
@@ -8213,10 +8268,25 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
           assert (Hrhs : (0 <= inject_Z (kright r))%Q) by nra.
           change (inject_Z 0 <= inject_Z (kright r))%Q in Hrhs.
           rewrite <- Zle_Qle in Hrhs. lia. }
-    unfold target_certificate. fold xs initial r.
+    unfold target_certificate_in. fold initial r.
     assert (Hscale_bool : Z.eqb (kscale r) 0 = false) by now apply Z.eqb_neq.
     rewrite Hzero, Hscale_bool, Hright. eexists. reflexivity.
   Qed.
+
+  Lemma target_certificate_complete_Q : forall P target,
+    contradiction P = None ->
+    (forall v : X.t -> Q,
+      Forall (fun r => lrel r = REq -> satQ v r) P -> satQ v target) ->
+    exists k, target_certificate P target = Some k.
+  Proof.
+    intros P target Hnone Hsemantic. unfold target_certificate.
+    apply target_certificate_in_complete_Q.
+    - apply variables_nodup.
+    - intros s Hin x z Hterm. now apply variables_contains with (r := s) (z := z).
+    - exact Hnone.
+    - exact Hsemantic.
+  Qed.
+
 
   Lemma entails_complete_Q : forall P target,
     (forall v : X.t -> Q,
@@ -8230,6 +8300,95 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
       rewrite Hchecked. apply orb_true_r.
     - destruct (target_certificate_complete_Q P target Hempty Hsemantic) as [k Htarget].
       now apply entails_of_target_certificate with (k := k).
+  Qed.
+
+  (** On a nonliteral row, the common basis recognizes the same rational consequence. *)
+  Lemma entails_in_eq : forall P xs target,
+    NoDup xs ->
+    (forall s, In s (target :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x xs) ->
+    contradiction P = None -> existsb (row_eqb target) P = false ->
+    entails_in xs (equality_basis xs P) P target = entails P target.
+  Proof.
+    intros P xs target Hunique Hsupport Hnone Hliteral.
+    apply Bool.eq_iff_eq_true. split.
+    - intro Hfast. apply entails_complete_Q. intros v Hmodels.
+      unfold entails_in in Hfast.
+      destruct (target_certificate_in xs (equality_basis xs P) P target)
+        as [k|] eqn:Hcert; [|discriminate].
+      now apply target_certificate_in_sound_Q with (P := P) (xs := xs) (k := k).
+    - intro Hold. unfold entails in Hold. rewrite Hliteral in Hold.
+      cbn [orb] in Hold.
+      destruct (entail_cert P target) as [k|] eqn:Hcert; [|discriminate].
+      assert (Hsemantic : forall v : X.t -> Q,
+        Forall (fun r => lrel r = REq -> satQ v r) P -> satQ v target).
+      { now apply entail_cert_sound_Q with (k := k). }
+      destruct (target_certificate_in_complete_Q P xs target Hunique Hsupport
+        Hnone Hsemantic) as [candidate Hcandidate].
+      unfold entails_in. rewrite Hcandidate.
+      now apply target_certificate_in_complete with (xs := xs).
+  Qed.
+
+  (** Removing rows already present in the source preserves the reference inclusion test. *)
+  Lemma entails_filter : forall P Q,
+    forallb (entails P) Q =
+      forallb (entails P) (filter (fun r => negb (existsb (row_eqb r) P)) Q).
+  Proof.
+    intros P Q. induction Q as [|r Q IH]; [reflexivity|].
+    cbn [filter forallb]. destruct (existsb (row_eqb r) P) eqn:Hliteral; cbn [negb].
+    - assert (Hentails : entails P r = true).
+      { unfold entails. now rewrite Hliteral. }
+      rewrite Hentails. cbn [andb]. exact IH.
+    - cbn [forallb]. now rewrite IH.
+  Qed.
+
+  (** Shared-basis inclusion agrees with the reference operation on every state. *)
+  Lemma leb_eq : forall a b, leb a b = leb_spec a b.
+  Proof.
+    intros [|P] [|Q]; try reflexivity.
+    unfold leb, leb_spec.
+    rewrite (entails_filter P Q).
+    remember (filter (fun r => negb (existsb (row_eqb r) P)) Q) as rest eqn:Hrest.
+    destruct rest as [|r rest].
+    - destruct (contradiction P); reflexivity.
+    - destruct (contradiction P) eqn:Hnone; [reflexivity|].
+      assert (Hagree : forall target, In target (r :: rest) ->
+        entails_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P target =
+        entails P target).
+      { intros target Hin.
+        assert (Hfiltered : In target
+          (filter (fun r => negb (existsb (row_eqb r) P)) Q)).
+        { rewrite <- Hrest. exact Hin. }
+        apply filter_In in Hfiltered as [Htarget Hliteral].
+        apply entails_in_eq.
+        - apply variables_nodup.
+        - intros s Hs x z Hterm.
+          apply variables_contains with (r := s) (z := z); [|exact Hterm].
+          apply in_or_app. destruct Hs as [Hsame|Hs].
+          + right. now subst s.
+          + now left.
+        - exact Hnone.
+        - now apply negb_true_iff. }
+      apply Bool.eq_iff_eq_true. split; intro Hforall;
+        apply forallb_forall; intros target Hin.
+      + rewrite <- (Hagree target Hin).
+        exact (proj1 (forallb_forall _ _) Hforall target Hin).
+      + rewrite (Hagree target Hin).
+        exact (proj1 (forallb_forall _ _) Hforall target Hin).
+  Qed.
+
+  Lemma leb_eq_sound_Q : forall P R,
+    leb (Reached P) (Reached R) = true -> forall v,
+    Forall (fun r => lrel r = REq -> satQ v r) P ->
+    Forall (fun r => lrel r = REq -> satQ v r) R.
+  Proof.
+    intros P R Hle v Hmodels. rewrite leb_eq in Hle. unfold leb_spec in Hle.
+    destruct (contradiction P) as [ms |] eqn:Hempty.
+    - exfalso. exact (contradiction_sound_Q P ms Hempty v Hmodels).
+    - apply Forall_forall. intros r Hin Hrel. apply entails_eq_sound_Q with (P := P).
+      + now apply (proj1 (forallb_forall _ _) Hle).
+      + exact Hrel.
+      + exact Hmodels.
   Qed.
 
 
@@ -8672,7 +8831,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
 
   Lemma leb_refl  : forall a, leb a a = true.
   Proof.
-    intros [| P]; [reflexivity |]. unfold leb.
+    intros [| P]; [reflexivity |]. rewrite leb_eq. unfold leb_spec.
     destruct (contradiction P); [reflexivity |].
     apply forallb_forall. intros r Hin. unfold entails. apply orb_true_iff. left.
     apply existsb_exists. exists r. split; [exact Hin | apply row_eqb_refl].
@@ -8681,17 +8840,19 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof.
     intros [|P] b c Hleft Hright; [destruct c; reflexivity|].
     destruct (contradiction P) as [ms|] eqn:Hempty.
-    { destruct c; unfold leb; now rewrite Hempty. }
+    { destruct c; rewrite leb_eq; unfold leb_spec; now rewrite Hempty. }
     destruct b as [|R].
-    { unfold leb in Hleft. rewrite Hempty in Hleft. discriminate. }
+    { rewrite leb_eq in Hleft. unfold leb_spec in Hleft. rewrite Hempty in Hleft. discriminate. }
     pose proof (leb_eq_sound_Q P R Hleft) as Hsource.
     assert (HnonemptyR : contradiction R = None).
     { destruct (contradiction R) as [ns|] eqn:HR; [|reflexivity].
       exfalso. destruct (contradiction_none_model_Q P Hempty) as [v Hmodel].
       exact (contradiction_sound_Q R ns HR v (Hsource v Hmodel)). }
     destruct c as [|S].
-    { unfold leb in Hright. rewrite HnonemptyR in Hright. discriminate. }
-    unfold leb in Hleft, Hright |- *. rewrite Hempty in Hleft |- *.
+    { rewrite leb_eq in Hright. unfold leb_spec in Hright.
+      rewrite HnonemptyR in Hright. discriminate. }
+    rewrite !leb_eq in Hleft, Hright |- *.
+    unfold leb_spec in Hleft, Hright |- *. rewrite Hempty in Hleft |- *.
     rewrite HnonemptyR in Hright.
     apply forallb_forall. intros target Hin.
     pose proof (proj1 (forallb_forall _ _) Hright target Hin) as Hentail.
@@ -8715,13 +8876,13 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof.
     intros [| P] b Hbot; [destruct b; reflexivity |].
     unfold is_bot in Hbot. destruct (contradiction P) eqn:Hempty; [| discriminate].
-    destruct b; unfold leb; now rewrite Hempty.
+    destruct b; rewrite leb_eq; unfold leb_spec; now rewrite Hempty.
   Qed.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
     intros [|a] [|b]; try reflexivity.
     - apply leb_refl.
-    - unfold join, leb. destruct (contradiction a); [reflexivity |].
+    - rewrite leb_eq. unfold join, leb_spec. destruct (contradiction a); [reflexivity |].
       apply forallb_forall. intros r Hin. apply entails_complete_Q. intros v Hmodels.
       exact (proj1 (Forall_forall _ _) (affine_hull_sound_Q_left a b v Hmodels) r Hin).
   Qed.
@@ -8729,13 +8890,13 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof.
     intros [|a] [|b]; try reflexivity.
     - apply leb_refl.
-    - unfold join, leb. destruct (contradiction b); [reflexivity |].
+    - rewrite leb_eq. unfold join, leb_spec. destruct (contradiction b); [reflexivity |].
       apply forallb_forall. intros r Hin. apply entails_complete_Q. intros v Hmodels.
       exact (proj1 (Forall_forall _ _) (affine_hull_sound_Q_right a b v Hmodels) r Hin).
   Qed.
   Lemma top_greatest : forall a, leb a top = true.
   Proof.
-    intros [| P]; [reflexivity |]. unfold leb, top.
+    intros [| P]; [reflexivity |]. rewrite leb_eq. unfold leb_spec, top.
     destruct (contradiction P); reflexivity.
   Qed.
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
@@ -9016,7 +9177,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Lemma leb_complete_span : forall a b,
     Forall (in_span a) b -> leb (Reached a) (Reached b) = true.
   Proof.
-    intros a b Hspan. unfold leb. destruct (contradiction a); [reflexivity |].
+    intros a b Hspan. rewrite leb_eq. unfold leb_spec. destruct (contradiction a); [reflexivity |].
     apply forallb_forall. intros r Hin. apply entails_of_span.
     now apply (proj1 (Forall_forall _ _) Hspan).
   Qed.
@@ -9035,7 +9196,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Lemma leb_sound_span : forall a b, leb (Reached a) (Reached b) = true ->
     Forall (in_span a) b \/ in_span a false_row.
   Proof.
-    intros a b Hle. unfold leb in Hle.
+    intros a b Hle. rewrite leb_eq in Hle. unfold leb_spec in Hle.
     destruct (contradiction a) as [ms |] eqn:Hempty.
     - right. now apply span_of_contradiction with (ms := ms).
     - left. apply Forall_forall. intros r Hin.
@@ -9053,7 +9214,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Lemma leb_false : forall a b, in_span a false_row -> leb (Reached a) (Reached b) = true.
   Proof.
     intros a b Hfalse. destruct (span_false_contradiction a Hfalse) as [ms Hempty].
-    unfold leb. now rewrite Hempty.
+    rewrite leb_eq. unfold leb_spec. now rewrite Hempty.
   Qed.
 
   (** Splitting a full equality multiplier vector preserves both source predicates. *)
@@ -10307,10 +10468,12 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
   Proof.
     intros [| P] [| Q] v Hle Hmodels; cbn [ngamma] in *; try contradiction.
-    - unfold leb in Hle. destruct (contradiction P) as [ms |] eqn:Hempty;
+    - rewrite leb_eq in Hle. unfold leb_spec in Hle.
+      destruct (contradiction P) as [ms |] eqn:Hempty;
         [| discriminate].
       exact (contradiction_sound P ms v Hempty Hmodels).
-    - unfold leb in Hle. destruct (contradiction P) as [ms |] eqn:Hempty.
+    - rewrite leb_eq in Hle. unfold leb_spec in Hle.
+      destruct (contradiction P) as [ms |] eqn:Hempty.
       + exfalso. exact (contradiction_sound P ms v Hempty Hmodels).
       + apply Forall_forall. intros r Hin.
         apply entails_sound with (P := P); [| exact Hmodels].
@@ -10478,9 +10641,12 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun empty_certificate.
   TimeFun contradiction.
   TimeFun row_eqb.
+  TimeFun target_certificate_in.
   TimeFun target_certificate.
   TimeFun entail_cert.
   TimeFun entails.
+  TimeFun entails_in.
+  TimeFun leb_spec.
   TimeFun leb.
   TimeFun bot.
   TimeFun is_bot.
@@ -14530,7 +14696,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (forall v : X.t -> Q, Forall (satQ v) a -> Forall (satQ v) b) ->
     leb (Reached a) (Reached b) = true.
   Proof.
-    intros a b [Hequalities _] Hsemantic. unfold leb.
+    intros a b [Hequalities _] Hsemantic. rewrite leb_eq. unfold leb_spec.
     destruct (contradiction a); [reflexivity|].
     apply forallb_forall. intros target Hin. apply entails_complete_Q.
     intros v Hmodels. assert (Hfull : Forall (satQ v) a).
@@ -16019,21 +16185,21 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   (** Target certificates inherit the final elimination row's width. *)
-  Lemma karr_target_certificate_envelope : forall P c k dim bits,
-    target_certificate P c = Some k ->
+  Lemma karr_target_certificate_in_envelope : forall xs basis P c k dim bits,
+    target_certificate_in xs basis P c = Some k ->
     karr_row_envelope dim (length P) bits
-      (karr_target (equality_basis (variables (c :: P)) P) 1
-        (KRow (dense (variables (c :: P)) c) (rhs c)
+      (karr_target basis 1
+        (KRow (dense xs c) (rhs c)
           (repeat 0%Z (length P)) 1%Z)) ->
     length (mults k) <= length P /\
     Forall (fun z => Z.size_nat z <= bits) (mults k) /\
     Z.size_nat (scale k) <= bits.
   Proof.
-    intros P c k dim bits Hcert Hrow.
-    unfold target_certificate in Hcert.
+    intros xs basis P c k dim bits Hcert Hrow.
+    unfold target_certificate_in in Hcert.
     cbn zeta in Hcert.
-    set (row := karr_target (equality_basis (variables (c :: P)) P) 1
-      (KRow (dense (variables (c :: P)) c) (rhs c)
+    set (row := karr_target basis 1
+      (KRow (dense xs c) (rhs c)
         (repeat 0%Z (length P)) 1%Z)) in *.
     destruct Hrow as [_ [_ [_ [Hlength [Hweights Hscale]]]]].
     destruct (karr_zero row && negb (Z.eqb (kscale row) 0) &&
@@ -16052,6 +16218,22 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       [replace ((- (-1)) * z)%Z with z by ring|
        replace ((- 1) * z)%Z with (- z)%Z by ring];
       [exact Hwidth|rewrite karr_size_opp; exact Hwidth].
+  Qed.
+
+  (** Target certificates inherit the final elimination row's width. *)
+  Lemma karr_target_certificate_envelope : forall P c k dim bits,
+    target_certificate P c = Some k ->
+    karr_row_envelope dim (length P) bits
+      (karr_target (equality_basis (variables (c :: P)) P) 1
+        (KRow (dense (variables (c :: P)) c) (rhs c)
+          (repeat 0%Z (length P)) 1%Z)) ->
+    length (mults k) <= length P /\
+    Forall (fun z => Z.size_nat z <= bits) (mults k) /\
+    Z.size_nat (scale k) <= bits.
+  Proof.
+    intros P c k dim bits Hcert Hrow.
+    unfold target_certificate in Hcert.
+    eapply karr_target_certificate_in_envelope; eassumption.
   Qed.
 
   (** Contradiction certificates retain one bounded basis weight vector. *)
@@ -16923,31 +17105,43 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     nia.
   Qed.
 
-  Lemma T_karr_target_certificate_components : forall P c,
-    normal (c :: nil) ->
-    let xs := variables (c :: P) in
-    let target := KRow (dense xs c) (rhs c)
-      (repeat 0%Z (length P)) 1%Z in
-    let bits := ellB (length xs + length P + 3)
-      (nell (Reached P) + C.row_bits c + 1) in
-    (T_target_certificate P c <=
-      T_variables (c :: P) + T_equality_basis xs P +
-      T_dense xs c + T_karr_target (equality_basis xs P) 1 target +
+  (** The factored wrapper retains one invocation within the same finish budget. *)
+  Lemma karr_target_finish_reserve_budget : forall base init neg right zero scale map
+      extra work : N,
+    (1 <= work)%N ->
+    (extra <= 13)%N ->
+    (init <= 3 * work)%N -> (neg <= 8 * work)%N ->
+    (right <= 32 * work)%N -> (zero <= 8 * work)%N ->
+    (scale <= 2)%N -> (map <= 64 * work)%N ->
+    (base + init + neg + right + zero + scale + map + extra <=
+      base + 1024 * work)%N.
+  Proof.
+    intros base init neg right zero scale map extra work Hwork Hextra
+      Hinit Hneg Hright Hzero Hscale Hmap.
+    nia.
+  Qed.
+
+  (** Certificate finishing needs only the final target envelope. *)
+  Lemma T_karr_target_certificate_in_from_result : forall xs basis P c bits,
+    karr_row_envelope (length xs) (length P) bits
+      (karr_target basis 1
+        (KRow (dense xs c) (rhs c)
+          (repeat 0%Z (length P)) 1%Z)) ->
+    (T_target_certificate_in xs basis P c + 1 <=
+      T_dense xs c +
+      T_karr_target basis 1
+        (KRow (dense xs c) (rhs c)
+          (repeat 0%Z (length P)) 1%Z) +
       1024 * N.of_nat (length xs + length P + 1) *
         N.of_nat ((bits + 1)^2))%N.
   Proof.
-    intros P c Hnormal.
-    set (xs := variables (c :: P)).
+    intros xs basis P c bits Hresult.
     set (target := KRow (dense xs c) (rhs c)
-      (repeat 0%Z (length P)) 1%Z).
-    set (bits := ellB (length xs + length P + 3)
-      (nell (Reached P) + C.row_bits c + 1)).
-    set (result := karr_target (equality_basis xs P) 1 target).
-    pose proof (karr_target_envelope_result _ _ _ _ _ _
-      (karr_target_seed_envelope xs P c Hnormal)) as Hresult.
-    time_unfold T_target_certificate.
+      (repeat 0%Z (length P)) 1%Z) in *.
+    set (result := karr_target basis 1 target) in *.
+    time_unfold T_target_certificate_in.
     cbn zeta.
-    fold xs target result bits.
+    fold target result.
     time_simpl.
     destruct Hresult as [Hcoeff [_ [Hright [Hweight [Hweights Hscale]]]]].
     change (length (kcoeff result) <= length xs) in Hcoeff.
@@ -17054,10 +17248,8 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       lazymatch goal with
       | |- context [if ?test then _ else _] => destruct test
       end; time_simpl; clearbody work.
-    all: set (vclock := T_variables (c :: P)) in *;
-      set (bclock := T_equality_basis xs P) in *;
-      set (dclock := T_dense xs c) in *;
-      set (tclock := T_karr_target (equality_basis xs P) 1 target) in *;
+    all: set (dclock := T_dense xs c) in *;
+      set (tclock := T_karr_target basis 1 target) in *;
       set (iclock := (Datatypes.T_length P +
         ListDef.T_repeat 0%Z (length P))%N) in *;
       set (nclock := Z.T_ltb (kscale result) 0) in *;
@@ -17080,74 +17272,102 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         Hright_positive_total Hright_negative_total Hmap_positive_total
         Hmap_negative_total Hwork;
       ring_simplify;
-      clearbody vclock bclock dclock tclock iclock nclock eqclock zclock
+      clearbody dclock tclock iclock nclock eqclock zclock
         sclock mnclock.
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
-    1: replace (vclock + bclock + dclock + iclock + tclock + nclock +
-      eqclock + zclock + sclock + mnclock + 12)%N with
-      (base + iclock + nclock + eqclock + zclock + sclock + mnclock + 12)%N
+    1: set (base := (dclock + tclock)%N).
+    1: replace (dclock + iclock + tclock + nclock +
+      eqclock + zclock + sclock + mnclock + 13)%N with
+      (base + iclock + nclock + eqclock + zclock + sclock + mnclock + 13)%N
       by (unfold base; ring).
     1: fold base.
-    1: eapply karr_target_finish_budget;
+    1: eapply karr_target_finish_reserve_budget;
       [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
        exact Hscale_zero|exact Hmap_negative_total].
     1: nia.
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
-    1: replace (vclock + bclock + dclock + iclock + tclock + nclock +
-      eqclock + zclock + sclock + 9)%N with
-      (base + iclock + nclock + eqclock + zclock + sclock + 0 + 9)%N
+    1: set (base := (dclock + tclock)%N).
+    1: replace (dclock + iclock + tclock + nclock +
+      eqclock + zclock + sclock + 10)%N with
+      (base + iclock + nclock + eqclock + zclock + sclock + 0 + 10)%N
       by (unfold base; ring).
     1: fold base.
-    1: eapply karr_target_finish_budget;
+    1: eapply karr_target_finish_reserve_budget;
       [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
        exact Hscale_zero|lia].
     1: nia.
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: set (base := (dclock + tclock)%N).
     1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + eqclock + zclock + sclock + mpclock + 12)%N).
+      (base + iclock + nclock + eqclock + zclock + sclock + mpclock + 13)%N).
     1: unfold base, mpclock; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
+    1: eapply karr_target_finish_reserve_budget;
       [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
        exact Hscale_zero|exact Hmap_positive_total].
     1: nia.
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: set (base := (dclock + tclock)%N).
     1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + eqclock + zclock + sclock + 0 + 9)%N).
+      (base + iclock + nclock + eqclock + zclock + sclock + 0 + 10)%N).
     1: unfold base; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
+    1: eapply karr_target_finish_reserve_budget;
       [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
        exact Hscale_zero|lia].
     1: nia.
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: set (base := (dclock + tclock)%N).
     1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + rnclock + zclock + sclock + mnclock + 12)%N).
+      (base + iclock + nclock + rnclock + zclock + sclock + mnclock + 13)%N).
     1: unfold base, rnclock; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
+    1: eapply karr_target_finish_reserve_budget;
       [exact Hwork|lia|exact Hinit|exact Hnegative_total|
        exact Hright_negative_total|exact Hzero_total|
        exact Hscale_zero|exact Hmap_negative_total].
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: set (base := (dclock + tclock)%N).
     1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + rnclock + zclock + sclock + 0 + 9)%N).
+      (base + iclock + nclock + rnclock + zclock + sclock + 0 + 10)%N).
     1: unfold base, rnclock; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
+    1: eapply karr_target_finish_reserve_budget;
       [exact Hwork|lia|exact Hinit|exact Hnegative_total|
        exact Hright_negative_total|exact Hzero_total|exact Hscale_zero|lia].
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: set (base := (dclock + tclock)%N).
     1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + rpclock + zclock + sclock + mpclock + 12)%N).
+      (base + iclock + nclock + rpclock + zclock + sclock + mpclock + 13)%N).
     1: unfold base, rpclock, mpclock; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
+    1: eapply karr_target_finish_reserve_budget;
       [exact Hwork|lia|exact Hinit|exact Hnegative_total|
        exact Hright_positive_total|exact Hzero_total|
        exact Hscale_zero|exact Hmap_positive_total].
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: set (base := (dclock + tclock)%N).
     1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + rpclock + zclock + sclock + 0 + 9)%N).
+      (base + iclock + nclock + rpclock + zclock + sclock + 0 + 10)%N).
     1: unfold base, rpclock; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
+    1: eapply karr_target_finish_reserve_budget;
       [exact Hwork|lia|exact Hinit|exact Hnegative_total|
        exact Hright_positive_total|exact Hzero_total|exact Hscale_zero|lia].
+  Qed.
+
+  Lemma T_karr_target_certificate_components : forall P c,
+    normal (c :: nil) ->
+    let xs := variables (c :: P) in
+    let target := KRow (dense xs c) (rhs c)
+      (repeat 0%Z (length P)) 1%Z in
+    let bits := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) in
+    (T_target_certificate P c <=
+      T_variables (c :: P) + T_equality_basis xs P +
+      T_dense xs c + T_karr_target (equality_basis xs P) 1 target +
+      1024 * N.of_nat (length xs + length P + 1) *
+        N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros P c Hnormal.
+    set (xs := variables (c :: P)).
+    set (target := KRow (dense xs c) (rhs c)
+      (repeat 0%Z (length P)) 1%Z).
+    set (bits := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1)).
+    pose proof (karr_target_envelope_result _ _ _ _ _ _
+      (karr_target_seed_envelope xs P c Hnormal)) as Hresult.
+    pose proof (T_karr_target_certificate_in_from_result xs
+      (equality_basis xs P) P c bits Hresult) as Hclock.
+    cbn zeta. time_unfold T_target_certificate.
+    fold xs target bits. fold target in Hclock.
+    time_simpl. clear Hresult Hnormal. lia.
   Qed.
 
   (** Executable coordinates inherit their source row's key width. *)
@@ -20772,213 +20992,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         N.of_nat ((bits + 1)^2))%N.
   Proof.
     intros P c bits Hresult.
-    set (xs := variables (c :: P)) in *.
-    set (target := KRow (dense xs c) (rhs c)
-      (repeat 0%Z (length P)) 1%Z) in *.
-    set (result := karr_target (equality_basis xs P) 1 target) in *.
+    pose proof (T_karr_target_certificate_in_from_result
+      (variables (c :: P)) (equality_basis (variables (c :: P)) P)
+      P c bits Hresult) as Hclock.
     time_unfold T_target_certificate.
-    cbn zeta.
-    fold xs target result.
-    time_simpl.
-    destruct Hresult as [Hcoeff [_ [Hright [Hweight [Hweights Hscale]]]]].
-    change (length (kcoeff result) <= length xs) in Hcoeff.
-    change (Z.size_nat (kright result) <= bits) in Hright.
-    change (length (kweight result) <= length P) in Hweight.
-    change (Forall (fun z => Z.size_nat z <= bits) (kweight result)) in Hweights.
-    change (Z.size_nat (kscale result) <= bits) in Hscale.
-    pose proof (Datatypes.T_length_le P) as Hlength.
-    pose proof (T_karr_repeat_zero_bounded (length P)) as Hrepeat.
-    pose proof (T_karr_zero_bounded result) as Hzero.
-    pose proof (T_karr_zero_test (kright result)) as Hright_zero.
-    pose proof (T_karr_zero_test (kscale result)) as Hscale_zero.
-    pose proof (Z.T_ltb_le (kscale result) 0) as Hnegative.
-    pose proof (T_karr_signed_right_bounded 1 (kright result) bits
-      (or_introl eq_refl) Hright) as Hright_positive.
-    pose proof (T_karr_signed_right_bounded (-1) (kright result) bits
-      (or_intror eq_refl) Hright) as Hright_negative.
-    pose proof (T_karr_signed_weights_bounded 1 (kweight result) bits
-      (or_introl eq_refl) Hweights) as Hmap_positive.
-    pose proof (T_karr_signed_weights_bounded (-1) (kweight result) bits
-      (or_intror eq_refl) Hweights) as Hmap_negative.
-    set (work := (N.of_nat (length xs + length P + 1) *
-      N.of_nat ((bits + 1)^2))%N).
-    assert (Hwork : (1 <= work)%N).
-    { unfold work.
-      assert (Hfirst : (1 <= N.of_nat (length xs + length P + 1))%N) by lia.
-      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
-    assert (Hspan : (N.of_nat (length xs + length P + 1) <= work)%N).
-    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
-    assert (Hbitmass : (N.of_nat (bits + 1) <= work)%N).
-    { unfold work.
-      assert (Hlen : (1 <= N.of_nat (length xs + length P + 1))%N) by lia.
-      assert (Hsquare : bits + 1 <= (bits + 1)^2).
-      { cbn [Nat.pow]. nia. }
-      assert (HsquareN : (N.of_nat (bits + 1) <=
-        N.of_nat ((bits + 1)^2))%N) by lia. nia. }
-    assert (Hweightmass : (N.of_nat (length (kweight result) + 1) *
-      N.of_nat (bits + 1) <= work)%N).
-    { assert (HlenNat : length (kweight result) + 1 <=
-        length xs + length P + 1) by lia.
-      assert (HlenN : (N.of_nat (length (kweight result) + 1) <=
-        N.of_nat (length xs + length P + 1))%N) by lia.
-      assert (Hsquare : bits + 1 <= (bits + 1)^2).
-      { cbn [Nat.pow]. nia. }
-      assert (HsquareN : (N.of_nat (bits + 1) <=
-        N.of_nat ((bits + 1)^2))%N) by lia.
-      unfold work. now apply N.mul_le_mono. }
-    assert (Hinit : (Datatypes.T_length P +
-      ListDef.T_repeat 0%Z (length P) <= 3 * work)%N).
-    { pose proof (Datatypes.T_length_le P) as Hlen.
-      pose proof (T_karr_repeat_zero_bounded (length P)) as Hrep.
-      assert (Hsize : (N.of_nat (length P + 1) <= work)%N) by lia.
-      nia. }
-    assert (Hzero_total : (T_karr_zero result <= 8 * work)%N).
-    { eapply N.le_trans; [exact Hzero|]. apply N.mul_le_mono_l. lia. }
-    assert (Hnegative_total : (Z.T_ltb (kscale result) 0 <= 8 * work)%N).
-    { pose proof (Z.T_ltb_le (kscale result) 0) as Hbound.
-      assert (Hsize : (N.of_nat (Z.size_nat (kscale result) + 1) <= work)%N)
-        by lia. nia. }
-    assert (Hright_positive_total :
-      (Z.T_mul 1 (kright result) + Z.T_leb 0 (1 * kright result) <=
-        32 * work)%N).
-    { eapply N.le_trans; [exact Hright_positive|].
-      now apply N.mul_le_mono_l. }
-    assert (Hright_negative_total :
-      (Z.T_mul (-1) (kright result) + Z.T_leb 0 ((-1) * kright result) <=
-        32 * work)%N).
-    { eapply N.le_trans; [exact Hright_negative|].
-      now apply N.mul_le_mono_l. }
-    assert (Hmap_positive_total : (ListDef.T_map
-      (fun z => (-1 * z)%Z)
-      (fun z => (1 + (1 + Z.T_mul (-1) z))%N)
-      (kweight result) <= 64 * work)%N).
-    { change (ListDef.T_map (fun z => (-1 * z)%Z)
-        (fun z => (1 + (1 + Z.T_mul (-1) z))%N)
-        (kweight result) <=
-        64 * N.of_nat (length (kweight result) + 1) *
-          N.of_nat (bits + 1))%N in Hmap_positive.
-      eapply N.le_trans; [exact Hmap_positive|].
-      replace (64 * N.of_nat (length (kweight result) + 1) *
-        N.of_nat (bits + 1))%N with
-        (64 * (N.of_nat (length (kweight result) + 1) *
-          N.of_nat (bits + 1)))%N by ring.
-      apply N.mul_le_mono_l. exact Hweightmass. }
-    assert (Hmap_negative_total : (ListDef.T_map
-      (fun z => (- (-1) * z)%Z)
-      (fun z => (1 + (1 + Z.T_mul (- (-1)) z))%N)
-      (kweight result) <= 64 * work)%N).
-    { change (ListDef.T_map (fun z => (- (-1) * z)%Z)
-        (fun z => (1 + (1 + Z.T_mul (- (-1)) z))%N)
-        (kweight result) <=
-        64 * N.of_nat (length (kweight result) + 1) *
-          N.of_nat (bits + 1))%N in Hmap_negative.
-      eapply N.le_trans; [exact Hmap_negative|].
-      replace (64 * N.of_nat (length (kweight result) + 1) *
-        N.of_nat (bits + 1))%N with
-        (64 * (N.of_nat (length (kweight result) + 1) *
-          N.of_nat (bits + 1)))%N by ring.
-      apply N.mul_le_mono_l. exact Hweightmass. }
-    replace (1024 * N.of_nat (length xs + length P + 1) *
-      N.of_nat ((bits + 1)^2))%N with (1024 * work)%N
-      by (unfold work; ring).
-    destruct (lrel c); destruct ((kscale result <? 0)%Z); time_simpl;
-      lazymatch goal with
-      | |- context [if ?test then _ else _] => destruct test
-      end; time_simpl; clearbody work.
-    all: set (vclock := T_variables (c :: P)) in *;
-      set (bclock := T_equality_basis xs P) in *;
-      set (dclock := T_dense xs c) in *;
-      set (tclock := T_karr_target (equality_basis xs P) 1 target) in *;
-      set (iclock := (Datatypes.T_length P +
-        ListDef.T_repeat 0%Z (length P))%N) in *;
-      set (nclock := Z.T_ltb (kscale result) 0) in *;
-      set (zclock := T_karr_zero result) in *;
-      set (sclock := Z.T_eqb (kscale result) 0) in *;
-      set (eqclock := Z.T_eqb (kright result) 0) in *;
-      set (rpclock := (Z.T_mul 1 (kright result) +
-        Z.T_leb 0 (1 * kright result))%N) in *;
-      set (rnclock := (Z.T_mul (-1) (kright result) +
-        Z.T_leb 0 ((-1) * kright result))%N) in *;
-      set (mpclock := ListDef.T_map
-        (fun z => (- (1) * z)%Z)
-        (fun z => (1 + (1 + Z.T_mul (- (1)) z))%N)
-        (kweight result)) in *;
-      set (mnclock := ListDef.T_map
-        (fun z => (- (-1) * z)%Z)
-        (fun z => (1 + (1 + Z.T_mul (- (-1)) z))%N)
-        (kweight result)) in *;
-      clear - Hinit Hzero_total Hnegative_total Hright_zero Hscale_zero
-        Hright_positive_total Hright_negative_total Hmap_positive_total
-        Hmap_negative_total Hwork;
-      ring_simplify;
-      clearbody vclock bclock dclock tclock iclock nclock eqclock zclock
-        sclock mnclock.
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
-    1: replace (vclock + bclock + dclock + iclock + tclock + nclock +
-      eqclock + zclock + sclock + mnclock + 12)%N with
-      (base + iclock + nclock + eqclock + zclock + sclock + mnclock + 12)%N
-      by (unfold base; ring).
-    1: fold base.
-    1: eapply karr_target_finish_budget;
-      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
-       exact Hscale_zero|exact Hmap_negative_total].
-    1: nia.
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
-    1: replace (vclock + bclock + dclock + iclock + tclock + nclock +
-      eqclock + zclock + sclock + 9)%N with
-      (base + iclock + nclock + eqclock + zclock + sclock + 0 + 9)%N
-      by (unfold base; ring).
-    1: fold base.
-    1: eapply karr_target_finish_budget;
-      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
-       exact Hscale_zero|lia].
-    1: nia.
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
-    1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + eqclock + zclock + sclock + mpclock + 12)%N).
-    1: unfold base, mpclock; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
-      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
-       exact Hscale_zero|exact Hmap_positive_total].
-    1: nia.
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
-    1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + eqclock + zclock + sclock + 0 + 9)%N).
-    1: unfold base; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
-      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
-       exact Hscale_zero|lia].
-    1: nia.
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
-    1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + rnclock + zclock + sclock + mnclock + 12)%N).
-    1: unfold base, rnclock; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
-      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
-       exact Hright_negative_total|exact Hzero_total|
-       exact Hscale_zero|exact Hmap_negative_total].
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
-    1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + rnclock + zclock + sclock + 0 + 9)%N).
-    1: unfold base, rnclock; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
-      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
-       exact Hright_negative_total|exact Hzero_total|exact Hscale_zero|lia].
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
-    1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + rpclock + zclock + sclock + mpclock + 12)%N).
-    1: unfold base, rpclock, mpclock; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
-      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
-       exact Hright_positive_total|exact Hzero_total|
-       exact Hscale_zero|exact Hmap_positive_total].
-    1: set (base := (vclock + bclock + dclock + tclock)%N).
-    1: eapply N.le_trans with (m :=
-      (base + iclock + nclock + rpclock + zclock + sclock + 0 + 9)%N).
-    1: unfold base, rpclock; ring_simplify; apply N.le_refl.
-    1: eapply karr_target_finish_budget;
-      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
-       exact Hright_positive_total|exact Hzero_total|exact Hscale_zero|lia].
+    time_simpl. lia.
   Qed.
 
   (** Preparing source rows cannot introduce a variable into the public support. *)
@@ -22850,10 +22868,274 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clear -Hclock Hproduct HcountN Hpositive. nia.
   Qed.
 
+  (** Shared coordinates come from the union of the two declared variable sets. *)
+  Lemma karr_shared_variables_public : forall P Q,
+    length (variables (P ++ Q)) <= length (vars_of P) + length (vars_of Q).
+  Proof.
+    intros P Q. rewrite <- length_app.
+    apply NoDup_incl_length; [apply variables_nodup|].
+    intros x Hx. destruct (karr_variables_support (P ++ Q) x Hx)
+      as [row [Hrow Hterm]].
+    apply in_app_or in Hrow as [HP|HQ]; apply in_or_app.
+    - left. eapply karr_vars_of_contains; eassumption.
+    - right. eapply karr_vars_of_contains; eassumption.
+  Qed.
+
+  (** Raw occurrence counts add across concatenation. *)
+  Lemma karr_terms_app : forall a b,
+    terms (Reached (a ++ b)) = terms (Reached a) + terms (Reached b).
+  Proof.
+    intros a b. induction a as [|r a IH].
+    - reflexivity.
+    - change (length (lhs r) + terms (Reached (a ++ b)) =
+        length (lhs r) + terms (Reached a) + terms (Reached b)).
+      rewrite IH. lia.
+  Qed.
+
+  (** Shared raw coordinates retain the dimensions of the two input states. *)
+  Lemma karr_lattice_shared_dimensions : forall P Q m,
+    mu (Reached P) + mu (Reached Q) <= m ->
+    length (variables (P ++ Q)) + length P + 3 <= m + 1 /\
+    Forall (fun x => X.bits x <= m) (variables (P ++ Q)) /\
+    terms (Reached (P ++ Q)) + length (P ++ Q) <= m /\
+    Forall (fun r => C.row_key_bits r <= m /\ C.row_bits r <= m) (P ++ Q).
+  Proof.
+    intros P Q m Hmeasure.
+    pose proof (karr_shared_variables_public P Q) as Hvars.
+    assert (Hdim : length (variables (P ++ Q)) + length P + 3 <= m + 1).
+    { unfold mu, n, nell in Hmeasure. cbn [rows_of] in Hmeasure. lia. }
+    destruct (karr_lattice_source P m ltac:(lia)) as [_ [_ [_ [_ [_ [_ [_ [_ HP]]]]]]]].
+    destruct (karr_lattice_source Q m ltac:(lia)) as [_ [_ [_ [_ [_ [_ [_ [_ HQ]]]]]]]].
+    assert (Hrows : Forall (fun r => C.row_key_bits r <= m /\ C.row_bits r <= m)
+      (P ++ Q)).
+    { apply Forall_app. split; eapply Forall_impl; [|eassumption| |eassumption];
+        intros r [_ Hwidth]; exact Hwidth. }
+    split; [exact Hdim|]. split.
+    - apply karr_variables_key_bound. eapply Forall_impl; [|exact Hrows].
+      intros r [Hkey _]. exact Hkey.
+    - split; [|exact Hrows]. rewrite karr_terms_app, length_app.
+      unfold mu, n in Hmeasure. cbn [rows_of] in Hmeasure. lia.
+  Qed.
+
+  (** A target over shared coordinates fits the common raw lattice envelope. *)
+  Lemma karr_lattice_shared_target_result : forall P Q c m,
+    mu (Reached P) + mu (Reached Q) <= m -> In c Q ->
+    karr_row_envelope (length (variables (P ++ Q))) (length P)
+      (ellB (m + 1) m)
+      (karr_target (equality_basis (variables (P ++ Q)) P) 1
+        (KRow (dense (variables (P ++ Q)) c) (rhs c)
+          (repeat 0%Z (length P)) 1%Z)).
+  Proof.
+    intros P Q c m Hmeasure Hc.
+    destruct (karr_lattice_target_dimensions P Q c m Hmeasure Hc)
+      as [_ [Hbits _]].
+    destruct (karr_lattice_shared_dimensions P Q m Hmeasure) as [Hdim _].
+    assert (Hnormal : normal (normalize_row c :: nil)).
+    { change (normal (map normalize_row (c :: nil))). apply normal_normalize_rows. }
+    pose proof (karr_target_seed_envelope (variables (P ++ Q)) P
+      (normalize_row c) Hnormal) as Htrace.
+    rewrite dense_normalize_row in Htrace. cbn [normalize_row rhs] in Htrace.
+    pose proof (karr_target_envelope_result _ _ _ _ _ _ Htrace) as Hresult.
+    eapply karr_row_envelope_mono; [|exact Hresult].
+    now apply ellB_mono.
+  Qed.
+
+  (** A target over shared coordinates fits the common raw lattice envelope. *)
+  Lemma T_karr_shared_target_raw : forall P Q c m,
+    mu (Reached P) + mu (Reached Q) <= m -> In c Q ->
+    (T_karr_target (equality_basis (variables (P ++ Q)) P) 1
+      (KRow (dense (variables (P ++ Q)) c) (rhs c)
+        (repeat 0%Z (length P)) 1%Z) <=
+      16384 * N.of_nat ((m + 1)^3 * (ellB (m + 1) m + 1)^2))%N.
+  Proof.
+    intros P Q c m Hmeasure Hc.
+    destruct (karr_lattice_target_dimensions P Q c m Hmeasure Hc)
+      as [_ [Hbits _]].
+    destruct (karr_lattice_shared_dimensions P Q m Hmeasure) as [Hdim _].
+    assert (Hnormal : normal (normalize_row c :: nil)).
+    { change (normal (map normalize_row (c :: nil))). apply normal_normalize_rows. }
+    pose proof (T_karr_target_seed_bounded (variables (P ++ Q)) P
+      (normalize_row c) Hnormal) as Hclock.
+    rewrite dense_normalize_row in Hclock. cbn [normalize_row rhs] in Hclock.
+    pose proof (ellB_mono _ _ _ _ Hdim Hbits) as Hwidth.
+    assert (Hnat : (length P + 1) * (length (variables (P ++ Q)) + length P + 1) *
+      (ellB (length (variables (P ++ Q)) + length P + 3)
+        (nell (Reached P) + C.row_bits (normalize_row c) + 1) + 1)^2 <=
+      (m + 1)^3 * (ellB (m + 1) m + 1)^2).
+    { apply Nat.mul_le_mono.
+      - eapply Nat.le_trans with (m := (m + 1)^2).
+        + rewrite Nat.pow_2_r. apply Nat.mul_le_mono; lia.
+        + cbn [Nat.pow]. nia.
+      - apply Nat.pow_le_mono_l. lia. }
+    eapply N.le_trans; [exact Hclock|].
+    replace (16384 * N.of_nat (length P + 1) *
+      N.of_nat (length (variables (P ++ Q)) + length P + 1) *
+      N.of_nat ((ellB (length (variables (P ++ Q)) + length P + 3)
+        (nell (Reached P) + C.row_bits (normalize_row c) + 1) + 1)^2))%N with
+      (16384 * N.of_nat ((length P + 1) *
+        (length (variables (P ++ Q)) + length P + 1) *
+        (ellB (length (variables (P ++ Q)) + length P + 3)
+          (nell (Reached P) + C.row_bits (normalize_row c) + 1) + 1)^2))%N
+      by (rewrite !Nat2N.inj_mul; ring).
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** Checking a shared raw target uses the same certificate envelope. *)
+  Lemma T_karr_shared_candidate_checker : forall P Q c k m,
+    mu (Reached P) + mu (Reached Q) <= m -> In c Q ->
+    target_certificate_in (variables (P ++ Q))
+      (equality_basis (variables (P ++ Q)) P) P c = Some k ->
+    (C.T_check_entails P c k <= 256 * C.c_lc *
+      N.of_nat ((m + 1)^3 * (ellB (m + 1) m + 1)^2))%N.
+  Proof.
+    intros P Q c k m Hmeasure Hc Hcandidate.
+    destruct (karr_target_certificate_in_envelope (variables (P ++ Q))
+      (equality_basis (variables (P ++ Q)) P) P c k (length (variables (P ++ Q)))
+      (ellB (m + 1) m) Hcandidate
+      (karr_lattice_shared_target_result P Q c m Hmeasure Hc))
+      as [Hlength [Hmult Hscale]].
+    destruct (karr_lattice_source P m ltac:(lia)) as
+      [Hcount [_ [_ [_ [_ [_ [_ [_ Hsource]]]]]]]].
+    destruct (karr_lattice_target_dimensions P Q c m Hmeasure Hc)
+      as [_ [_ [Hconclusion_length [Hconclusion_keys Hconclusion_bits]]]].
+    set (d := m + 1).
+    set (v := ellB d m + 1).
+    assert (Hd : 2 <= d).
+    { assert (Hnp : 1 <= mu (Reached P)) by (unfold mu, nell; lia).
+      assert (Hnq : 1 <= mu (Reached Q)) by (unfold mu, nell; lia).
+      unfold d. lia. }
+    assert (Hsource' : Forall (fun row => length (lhs row) <= d /\
+      C.row_key_bits row <= m /\ C.row_bits row <= m) P).
+    { eapply Forall_impl; [|exact Hsource]. intros row [Hlen [Hkey Hbit]].
+      unfold d. repeat split; lia. }
+    assert (Hmult' : Forall (fun z => Z.size_nat z <= 8 * v) (mults k)).
+    { eapply Forall_impl; [|exact Hmult]. intros z Hz. cbn beta in Hz. unfold v, d. lia. }
+    pose proof (karr_checker_envelope P c k d m m (8 * v)
+      ltac:(unfold d; lia) Hsource' ltac:(unfold d; lia) Hmult'
+      ltac:(unfold d; lia) Hconclusion_keys Hconclusion_bits
+      ltac:(unfold v, d; lia)) as Hclock.
+    pose proof (karr_checker_work_public d m Hd) as Hwork.
+    fold v in Hwork.
+    eapply N.le_trans; [exact Hclock|].
+    replace (256 * C.c_lc * N.of_nat (d^3 * v^2))%N with
+      (C.c_lc * N.of_nat (256 * (d^3 * v^2)))%N
+      by (rewrite Nat2N.inj_mul;
+        change (N.of_nat 256) with 256%N; ring).
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** A shared raw target pays only its dense row, basis walk and certificate finishing. *)
+  Lemma T_karr_shared_target_certificate_raw : forall P Q c m,
+    mu (Reached P) + mu (Reached Q) <= m -> In c Q ->
+    (T_target_certificate_in (variables (P ++ Q))
+      (equality_basis (variables (P ++ Q)) P) P c <=
+      (2 * karr_dense_factor + 17408) *
+        N.of_nat ((m + 1)^3 * (ellB (m + 1) m + 1)^2))%N.
+  Proof.
+    intros P Q c m Hmeasure Hc.
+    destruct (karr_lattice_shared_dimensions P Q m Hmeasure)
+      as [Hdim [Hkeys _]].
+    destruct (karr_lattice_target_dimensions P Q c m Hmeasure Hc)
+      as [_ [_ [Hlength [Hrowkeys Hbits]]]].
+    pose proof (T_karr_dense_bounded (variables (P ++ Q)) c m m
+      ltac:(lia) Hlength Hbits Hkeys) as Hdense.
+    pose proof (T_karr_shared_target_raw P Q c m Hmeasure Hc) as Htarget.
+    pose proof (T_karr_target_certificate_in_from_result (variables (P ++ Q))
+      (equality_basis (variables (P ++ Q)) P) P c (ellB (m + 1) m)
+      (karr_lattice_shared_target_result P Q c m Hmeasure Hc)) as Hclock.
+    set (d := m + 1) in *.
+    set (v := ellB d m + 1) in *.
+    set (work := N.of_nat (d^3 * v^2)) in *.
+    assert (Hwidth : 1 <= v^2) by (unfold v; cbn [Nat.pow]; nia).
+    assert (HdenseNat : d^2 * (m + m + 1) <= 2 * (d^3 * v^2)).
+    { eapply Nat.le_trans with (m := d^2 * (2 * d)).
+      - apply Nat.mul_le_mono_l. unfold d. lia.
+      - replace (d^2 * (2 * d)) with (2 * d^3) by (cbn [Nat.pow]; ring). nia. }
+    assert (Hdense_total : (T_dense (variables (P ++ Q)) c <= 2 * karr_dense_factor * work)%N).
+    { eapply N.le_trans; [exact Hdense|].
+      replace (2 * karr_dense_factor * work)%N with
+        (karr_dense_factor * N.of_nat (2 * (d^3 * v^2)))%N
+        by (unfold work; rewrite Nat2N.inj_mul;
+          change (N.of_nat 2) with 2%N; ring).
+      replace (karr_dense_factor * N.of_nat d^2 * N.of_nat (m + m + 1))%N with
+        (karr_dense_factor * N.of_nat (d^2 * (m + m + 1)))%N
+        by (rewrite Nat2N.inj_mul, Nat2N.inj_pow;
+          change (N.of_nat 2) with 2%N; ring).
+      apply N.mul_le_mono_l. lia. }
+    assert (Hfinish : (1024 * N.of_nat (length (variables (P ++ Q)) + length P + 1) *
+      N.of_nat (v^2) <= 1024 * work)%N).
+    { assert (Hspan : length (variables (P ++ Q)) + length P + 1 <= d^3).
+      { assert (1 <= d) by (unfold d; lia). cbn [Nat.pow]. nia. }
+      replace (1024 * N.of_nat (length (variables (P ++ Q)) + length P + 1) *
+        N.of_nat (v^2))%N with
+        (1024 * N.of_nat ((length (variables (P ++ Q)) + length P + 1) * v^2))%N
+        by (rewrite Nat2N.inj_mul; ring).
+      apply N.mul_le_mono_l. unfold work.
+      assert (Hproduct : (length (variables (P ++ Q)) + length P + 1) * v^2 <=
+        d^3 * v^2) by (now apply Nat.mul_le_mono_r).
+      lia. }
+    clear -Hdense_total Htarget Hclock Hfinish. clearbody work. nia.
+  Qed.
+
+  (** A shared raw conclusion test adds one certificate check to its target walk. *)
+  Lemma T_karr_entails_in_raw : forall P Q c m,
+    mu (Reached P) + mu (Reached Q) <= m -> In c Q ->
+    (T_entails_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P c <=
+      (2 * karr_dense_factor + 17408 + 256 * C.c_lc + 8) *
+        N.of_nat ((m + 1)^3 * (ellB (m + 1) m + 1)^2))%N.
+  Proof.
+    intros P Q c m Hmeasure Hc.
+    pose proof (T_karr_shared_target_certificate_raw P Q c m Hmeasure Hc) as Htarget.
+    destruct (karr_lattice_volume m) as [_ [_ [Hpositive_nat _]]].
+    set (work := N.of_nat ((m + 1)^3 * (ellB (m + 1) m + 1)^2)) in *.
+    assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+    time_unfold T_entails_in.
+    destruct (target_certificate_in (variables (P ++ Q))
+      (equality_basis (variables (P ++ Q)) P) P c) as [k|] eqn:Hcandidate.
+    - pose proof (T_karr_shared_candidate_checker P Q c k m Hmeasure Hc
+        Hcandidate) as Hchecker.
+      fold work in Hchecker. time_simpl.
+      clear -Htarget Hchecker Hpositive. clearbody work. nia.
+    - time_simpl. clear -Htarget Hpositive. clearbody work. nia.
+  Qed.
+
+  (** A filtered raw conclusion scan still fits the lattice budget's leading factor. *)
+  Lemma T_karr_shared_lattice_scan : forall P Q rest m,
+    mu (Reached P) + mu (Reached Q) <= m ->
+    incl rest Q -> length rest <= length Q ->
+    (List.T_forallb
+      (entails_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P)
+      (T_entails_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P)
+      rest <= (2 * karr_dense_factor + 17408 + 256 * C.c_lc + 16) *
+        N.of_nat (lat m))%N.
+  Proof.
+    intros P Q rest m Hmeasure Hincl Hlength.
+    pose proof (karr_T_forallb_members (lcons X.t)
+      (entails_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P)
+      (T_entails_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P)
+      ((2 * karr_dense_factor + 17408 + 256 * C.c_lc + 8) *
+        N.of_nat ((m + 1)^3 * (ellB (m + 1) m + 1)^2))%N rest
+      ltac:(intros c Hc; apply T_karr_entails_in_raw; [exact Hmeasure|now apply Hincl]))
+      as Hclock.
+    assert (Hcount : length rest <= m).
+    { unfold mu, n in Hmeasure. cbn [rows_of] in Hmeasure. lia. }
+    assert (Hnat : ((m + 1)^3 * (ellB (m + 1) m + 1)^2) * length rest <= lat m).
+    { unfold lat. set (w := (m + 1)^3 * (ellB (m + 1) m + 1)^2).
+      clearbody w. nia. }
+    assert (Hproduct : (N.of_nat ((m + 1)^3 * (ellB (m + 1) m + 1)^2) *
+      N.of_nat (length rest) <= N.of_nat (lat m))%N).
+    { rewrite <- Nat2N.inj_mul. lia. }
+    assert (HcountN : (N.of_nat (length rest) <= N.of_nat (lat m))%N).
+    { unfold lat. nia. }
+    assert (Hpositive : (1 <= N.of_nat (lat m))%N).
+    { pose proof (karr_lat_pos m). lia. }
+    clear -Hclock Hproduct HcountN Hpositive. nia.
+  Qed.
+
   Definition karr_lattice_leb_factor : N :=
     (karr_lattice_contradiction_factor + karr_lattice_entails_factor + 16)%N.
 
-  (** The complete order test accepts arbitrary raw states. *)
+  (** Shared elimination and a filtered scan preserve the raw-state lattice bound. *)
   Lemma T_karr_leb_raw : forall a b,
     (T_leb a b <= karr_lattice_leb_factor * N.of_nat (lat (mu a + mu b)))%N.
   Proof.
@@ -22871,29 +23153,78 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       { eapply N.le_trans; [exact Hclock|]. apply N.mul_le_mono_l. lia. }
       time_unfold T_leb. destruct (contradiction P); time_simpl;
         unfold karr_lattice_leb_factor; clear -Hcontradiction Hpositive; nia.
-    - pose proof (T_karr_contradiction_raw P (mu (Reached P) + mu (Reached Q))
-        ltac:(lia)) as Hclock.
-      pose proof (karr_lattice_work_le (mu (Reached P) + mu (Reached Q))) as Hwork.
-      assert (Hcontradiction : (T_contradiction P <= karr_lattice_contradiction_factor *
-        N.of_nat (lat (mu (Reached P) + mu (Reached Q))))%N).
-      { eapply N.le_trans; [exact Hclock|]. apply N.mul_le_mono_l. lia. }
-      pose proof (T_karr_lattice_scan P Q (mu (Reached P) + mu (Reached Q))
-        (Nat.le_refl _)) as Hscan.
+    - set (m := mu (Reached P) + mu (Reached Q)) in *.
+      assert (Hmeasure : mu (Reached P) + mu (Reached Q) <= m) by (unfold m; lia).
+      destruct (karr_lattice_shared_dimensions P Q m Hmeasure)
+        as [Hdim [Hkeys [Hmass Hrows]]].
+      pose proof (karr_lattice_work_le m) as Hwork.
+      pose proof (T_karr_contradiction_raw P m ltac:(lia)) as Hcontradiction_raw.
+      pose proof (T_karr_variables_lattice (P ++ Q) m Hmass Hrows) as Hvariables_raw.
+      pose proof (T_karr_equality_basis_raw (variables (P ++ Q)) P m
+        ltac:(lia) ltac:(lia) Hkeys) as Hbasis_raw.
+      assert (Hcontradiction : (T_contradiction P <=
+        karr_lattice_contradiction_factor * N.of_nat (lat m))%N).
+      { eapply N.le_trans; [exact Hcontradiction_raw|]. apply N.mul_le_mono_l. lia. }
+      assert (Hvariables : (T_variables (P ++ Q) <=
+        3 * karr_variables_factor * N.of_nat (lat m))%N).
+      { eapply N.le_trans; [exact Hvariables_raw|]. apply N.mul_le_mono_l. lia. }
+      assert (Hbasis : (T_equality_basis (variables (P ++ Q)) P <=
+        karr_lattice_basis_factor * N.of_nat (lat m))%N).
+      { eapply N.le_trans; [exact Hbasis_raw|]. apply N.mul_le_mono_l. lia. }
+      assert (Hcount : length Q <= m /\ length P <= m).
+      { unfold m, mu, n. cbn [rows_of]. lia. }
+      assert (Happ : (Datatypes.T_app P Q <= 2 * N.of_nat (lat m))%N).
+      { pose proof (Datatypes.T_app_le P Q) as Hclock.
+        assert (m + 1 <= lat m) by (unfold lat; nia). nia. }
       time_unfold T_leb.
-      change (fun r : lcons X.t => T_entails P r) with (T_entails P).
-      destruct (contradiction P); time_simpl;
-        unfold karr_lattice_leb_factor; clear -Hcontradiction Hscan Hpositive; nia.
-  Qed.
-
-  (** Raw occurrence counts add across concatenation. *)
-  Lemma karr_terms_app : forall a b,
-    terms (Reached (a ++ b)) = terms (Reached a) + terms (Reached b).
-  Proof.
-    intros a b. induction a as [|r a IH].
-    - reflexivity.
-    - change (length (lhs r) + terms (Reached (a ++ b)) =
-        length (lhs r) + terms (Reached a) + terms (Reached b)).
-      rewrite IH. lia.
+      lazymatch goal with
+      | |- context [List.T_filter ?f ?Tf Q] =>
+        assert (Hfilter : (List.T_filter f Tf Q <=
+          (X.c_key + 136) * N.of_nat (lat m))%N);
+        [ pose proof (karr_T_filter_members (lcons X.t) f Tf
+            ((X.c_key + 130) *
+              N.of_nat ((m + 1)^3 * (ellB (m + 1) m + 1)^2))%N Q) as Hclock;
+          specialize (Hclock ltac:(
+            intros c Hc;
+            destruct (karr_lattice_target_dimensions P Q c m Hmeasure Hc)
+              as [_ [_ [Hlength [Hrowkeys Hbits]]]];
+            pose proof (T_karr_row_search_bounded P c m
+              ltac:(lia) Hlength Hrowkeys Hbits) as Hsearch;
+            destruct (karr_lattice_volume m) as [_ [_ [Hone _]]];
+            time_simpl;
+            change (fun r : lcons X.t => T_row_eqb c r) with (T_row_eqb c);
+            nia));
+          assert (Hproduct :
+            (N.of_nat ((m + 1)^3 * (ellB (m + 1) m + 1)^2) *
+              N.of_nat (length Q) <= N.of_nat (lat m))%N);
+          [ rewrite <- Nat2N.inj_mul;
+            assert (((m + 1)^3 * (ellB (m + 1) m + 1)^2) * length Q <= lat m)
+              by (unfold lat; nia); lia
+          | assert (HcountN : (N.of_nat (length Q) <= N.of_nat (lat m))%N)
+              by (unfold lat; nia);
+            clear -Hclock Hproduct HcountN Hpositive; nia ]
+        | ]
+      end.
+      change (List.T_filter (fun r : lcons X.t => negb (existsb (row_eqb r) P))
+        (fun r : lcons X.t => (1 +
+          (List.T_existsb (row_eqb r) (fun c => T_row_eqb r c) P + 1))%N) Q <=
+        (X.c_key + 136) * N.of_nat (lat m))%N in Hfilter.
+      set (rest := filter (fun r => negb (existsb (row_eqb r) P)) Q) in *.
+      assert (Hrest_in : incl rest Q).
+      { intros c Hc. unfold rest in Hc. now apply filter_In in Hc as [Hc _]. }
+      assert (Hrest_length : length rest <= length Q).
+      { unfold rest. apply filter_length_le. }
+      pose proof (T_karr_shared_lattice_scan P Q rest m Hmeasure Hrest_in Hrest_length)
+        as Hscan.
+      change (fun r : lcons X.t =>
+        T_entails_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P r)
+        with (T_entails_in (variables (P ++ Q))
+          (equality_basis (variables (P ++ Q)) P) P).
+      destruct rest as [|r rest]; [|destruct (contradiction P)]; time_simpl;
+        unfold karr_lattice_leb_factor, karr_lattice_entails_factor,
+          karr_lattice_entail_factor, karr_lattice_target_factor;
+        clear -Hpositive Hcontradiction Hvariables Hbasis Happ Hfilter Hscan;
+        nia.
   Qed.
 
   (** Raw normalization fits the common lattice elimination polynomial. *)
@@ -23473,6 +23804,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     time_unfold T_narrow. nia.
   Qed.
 
+  (** Assignment is linear in its declared numeric work. *)
   Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
@@ -23483,6 +23815,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     change (N.of_nat 1) with 1%N in Hclock. nia.
   Qed.
 
+  (** Havoc is linear in its declared numeric work. *)
   Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x)))
     (fun x => T_havoc (fst x) (snd x)).
@@ -23493,6 +23826,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     change (N.of_nat 1) with 1%N in Hclock. nia.
   Qed.
 
+  (** Assumption is linear in its declared numeric work. *)
   Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
@@ -23503,6 +23837,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     change (N.of_nat 1) with 1%N in Hclock. nia.
   Qed.
 
+  (** A range query is linear in its declared numeric work. *)
   Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
     (fun x => T_range (fst x) (snd x)).
@@ -23513,11 +23848,784 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     change (N.of_nat 1) with 1%N in Hclock. nia.
   Qed.
 
+  (** Declared coordinates also stay inside the union of the two variable sets. *)
+  Lemma karr_vars_of_app_bound : forall P Q,
+    length (vars_of (P ++ Q)) <= length (vars_of P) + length (vars_of Q).
+  Proof.
+    intros P Q. rewrite <- length_app.
+    apply NoDup_incl_length; [apply karr_vars_of_nodup|].
+    intros x Hx. destruct (karr_vars_of_support (P ++ Q) x Hx)
+      as [row [Hrow Hterm]].
+    apply in_app_or in Hrow as [HP|HQ]; apply in_or_app.
+    - left. eapply karr_vars_of_contains; eassumption.
+    - right. eapply karr_vars_of_contains; eassumption.
+  Qed.
+
+  (** A shared target trace retains eight common Hadamard widths. *)
+  Lemma karr_shared_target_width : forall P Q c,
+    normal P -> In c Q ->
+    ellB (length (variables (P ++ Q)) + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) + 1 <=
+      8 * (ellB (n (Reached P) + n (Reached Q) + 1)
+        (ell (Reached P) + ell (Reached Q)) + 1).
+  Proof.
+    intros P Q c HP Hc.
+    set (d := n (Reached P) + n (Reached Q) + 1).
+    set (w := ell (Reached P) + ell (Reached Q)).
+    set (s := length (variables (P ++ Q)) + length P + 3).
+    pose proof (karr_shared_variables_public P Q) as Hvars.
+    assert (HQ : 1 <= length Q).
+    { destruct Q; cbn [In] in Hc; [contradiction|cbn [length]; lia]. }
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of]. lia. }
+    assert (Hs : s <= d + 1).
+    { unfold s, d, n. cbn [rows_of]. lia. }
+    assert (Hrowbits : C.row_bits c <= ell (Reached Q)).
+    { pose proof (karr_max_member _ C.row_bits 0 Q c Hc).
+      unfold ell. cbn [rows_of]. lia. }
+    pose proof (karr_normal_terms_log P HP) as Hterms.
+    assert (Hlogd : Nat.log2 (n (Reached P) + 1) <= Nat.log2 d).
+    { apply Nat.log2_le_mono. unfold d. lia. }
+    assert (Hlogs : Nat.log2 s <= Nat.log2 d + 1).
+    { eapply Nat.le_trans; [apply Nat.log2_le_mono; exact Hs|].
+      replace (d + 1) with (S d) by lia.
+      replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+      apply Nat.log2_succ_le. }
+    assert (Hlogpos : 1 <= Nat.log2 d).
+    { pose proof (Nat.log2_le_mono 2 d Hd) as Hmono.
+      change (1 <= Nat.log2 d) in Hmono. exact Hmono. }
+    unfold nell, ellB in *. fold d w s. nia.
+  Qed.
+
+  (** A support-parametric target walk costs a quadratic dimension allowance. *)
+  Lemma T_karr_target_quadratic : forall xs P c d v,
+    normal (c :: nil) ->
+    length P + 1 <= d -> length xs + length P + 1 <= d ->
+    ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) + 1 <= 8 * v ->
+    (T_karr_target (equality_basis xs P) 1
+      (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1%Z) <=
+      16384 * 64 * N.of_nat (d^2 * v^2))%N.
+  Proof.
+    intros xs P c d v Hc Hcount Hspan Hbits.
+    pose proof (T_karr_target_seed_bounded xs P c Hc) as Hclock.
+    set (b := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) + 1) in *.
+    assert (Hsquare : b^2 <= 64 * v^2).
+    { replace (64 * v^2) with ((8 * v)^2) by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    assert (Hvolume : (length P + 1) * (length xs + length P + 1) * b^2 <=
+      64 * (d^2 * v^2)).
+    { eapply Nat.le_trans with (m := (d * d) * (64 * v^2)).
+      - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; assumption|exact Hsquare].
+      - cbn [Nat.pow]. ring_simplify. apply Nat.le_refl. }
+    eapply N.le_trans; [exact Hclock|].
+    replace (16384 * N.of_nat (length P + 1) *
+      N.of_nat (length xs + length P + 1) * N.of_nat (b^2))%N with
+      (16384 * N.of_nat ((length P + 1) * (length xs + length P + 1) * b^2))%N
+      by (rewrite !Nat2N.inj_mul; ring).
+    replace (16384 * 64 * N.of_nat (d^2 * v^2))%N with
+      (16384 * N.of_nat (64 * (d^2 * v^2)))%N
+      by (rewrite Nat2N.inj_mul; change (N.of_nat 64) with 64%N; ring).
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** Every normal right-hand row uses the same quadratic target allowance. *)
+  Lemma T_karr_shared_target_public : forall P Q c,
+    normal P -> normal Q -> In c Q ->
+    let d := n (Reached P) + n (Reached Q) + 1 in
+    let v := ellB d (ell (Reached P) + ell (Reached Q)) + 1 in
+    (T_karr_target (equality_basis (variables (P ++ Q)) P) 1
+      (KRow (dense (variables (P ++ Q)) c) (rhs c)
+        (repeat 0%Z (length P)) 1%Z) <=
+      16384 * 64 * N.of_nat (d^2 * v^2))%N.
+  Proof.
+    intros P Q c HP HQ Hc d v.
+    apply T_karr_target_quadratic.
+    - constructor; [|constructor].
+      exact (proj1 (Forall_forall _ _) HQ c Hc).
+    - unfold d, n. cbn [rows_of]. lia.
+    - pose proof (karr_shared_variables_public P Q).
+      unfold d, n. cbn [rows_of]. lia.
+    - exact (karr_shared_target_width P Q c HP Hc).
+  Qed.
+
+  (** The same public checker polynomial already has quadratic dimension degree. *)
+  Lemma karr_checker_work_quadratic : forall d w,
+    2 <= d ->
+    (2 * d + 1) * (d + 1) *
+      (w + (8 * (ellB d w + 1) + 1) * (w + 1) + 1) +
+    (8 * (ellB d w + 1) + 1) *
+      ((d + 1) * (w + w + 1) + 8 * (ellB d w + 1) +
+        w + Nat.log2 d + 2) <=
+    256 * (d^2 * (ellB d w + 1)^2).
+  Proof.
+    intros d w Hd.
+    set (v := ellB d w + 1).
+    set (l := Nat.log2 d).
+    assert (Hv : 1 <= v) by (unfold v, ellB; nia).
+    assert (Hwv : w + 1 <= v) by (unfold v, ellB; nia).
+    assert (Hlv : l + 1 <= v) by (unfold v, ellB, l; nia).
+    assert (Hpref : (2 * d + 1) * (d + 1) <= 6 * d^2).
+    { cbn [Nat.pow]. nia. }
+    assert (Hinner : w + (8 * v + 1) * (w + 1) + 1 <= 10 * v^2).
+    { assert (Hproduct : (8 * v + 1) * (w + 1) <= 9 * v * v).
+      { apply Nat.mul_le_mono; lia. }
+      cbn [Nat.pow]. nia. }
+    assert (Hfirst : (2 * d + 1) * (d + 1) *
+      (w + (8 * v + 1) * (w + 1) + 1) <= 60 * d^2 * v^2).
+    { assert (Hproduct : (2 * d + 1) * (d + 1) *
+        (w + (8 * v + 1) * (w + 1) + 1) <=
+        (6 * d^2) * (10 * v^2)).
+      { apply Nat.mul_le_mono; assumption. }
+      nia. }
+    assert (Hsecond_inner : (d + 1) * (w + w + 1) +
+      8 * v + w + l + 2 <= 9 * d * v).
+    { assert (Hproduct : (d + 1) * (w + w + 1) <=
+        (2 * d) * (2 * v)).
+      { apply Nat.mul_le_mono; lia. }
+      nia. }
+    assert (Hsecond : (8 * v + 1) *
+      ((d + 1) * (w + w + 1) + 8 * v + w + l + 2) <=
+      81 * d * v^2).
+    { assert (Hproduct : (8 * v + 1) *
+        ((d + 1) * (w + w + 1) + 8 * v + w + l + 2) <=
+        (9 * v) * (9 * d * v)).
+      { apply Nat.mul_le_mono; lia. }
+      cbn [Nat.pow]. nia. }
+    assert (Hdegree : d * v^2 <= d^2 * v^2).
+    { apply Nat.mul_le_mono_r. cbn [Nat.pow]. nia. }
+    assert (Hsecond_final : (8 * v + 1) *
+      ((d + 1) * (w + w + 1) + 8 * v + w + l + 2) <=
+      81 * (d^2 * v^2)).
+    { eapply Nat.le_trans; [exact Hsecond|].
+      replace (81 * d * v^2) with (81 * (d * v^2)) by ring.
+      now apply Nat.mul_le_mono_l. }
+    fold v l.
+    replace (60 * d^2 * v^2) with (60 * (d^2 * v^2)) in Hfirst by ring.
+    clear -Hfirst Hsecond_final. lia.
+  Qed.
+
+  (** A bounded shared certificate costs one quadratic checker allowance. *)
+  Lemma T_karr_shared_checker_bounded : forall P c k d w,
+    2 <= d -> length P <= d ->
+    Forall (fun row => length (lhs row) <= d /\
+      C.row_key_bits row <= w /\ C.row_bits row <= w) P ->
+    length (mults k) <= d ->
+    Forall (fun z => Z.size_nat z <= 8 * (ellB d w + 1)) (mults k) ->
+    length (lhs c) <= d -> C.row_key_bits c <= w -> C.row_bits c <= w ->
+    Z.size_nat (scale k) <= 8 * (ellB d w + 1) ->
+    (C.T_check_entails P c k <=
+      256 * C.c_lc * N.of_nat (d^2 * (ellB d w + 1)^2))%N.
+  Proof.
+    intros P c k d w Hd Hcount Hrows Hmlen Hmult Hclen Hkeys Hbits Hscale.
+    pose proof (karr_checker_envelope P c k d w w (8 * (ellB d w + 1))
+      Hcount Hrows Hmlen Hmult Hclen Hkeys Hbits Hscale) as Hclock.
+    pose proof (karr_checker_work_quadratic d w Hd) as Hwork.
+    eapply N.le_trans; [exact Hclock|].
+    replace (256 * C.c_lc * N.of_nat (d^2 * (ellB d w + 1)^2))%N with
+      (C.c_lc * N.of_nat (256 * (d^2 * (ellB d w + 1)^2)))%N
+      by (rewrite Nat2N.inj_mul; change (N.of_nat 256) with 256%N; ring).
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** The public dimension of a row list is subadditive under concatenation. *)
+  Lemma karr_n_app_bound : forall P Q,
+    n (Reached (P ++ Q)) <= n (Reached P) + n (Reached Q).
+  Proof.
+    intros P Q. pose proof (karr_vars_of_app_bound P Q).
+    unfold n. cbn [rows_of]. rewrite length_app. lia.
+  Qed.
+
+  (** Appending rows adds at most their two public width measures. *)
+  Lemma karr_ell_app_bound : forall P Q,
+    ell (Reached (P ++ Q)) <= ell (Reached P) + ell (Reached Q).
+  Proof.
+    intros P Q.
+    assert (Hmax : forall (f : lcons X.t -> nat),
+      fold_right Nat.max 0 (map f (P ++ Q)) <=
+      fold_right Nat.max 0 (map f P) + fold_right Nat.max 0 (map f Q)).
+    { intro f. apply karr_max_bound; [lia|].
+      apply Forall_forall. intros row Hin.
+      apply in_app_or in Hin as [HP|HQ].
+      - pose proof (karr_max_member _ f 0 P row HP). lia.
+      - pose proof (karr_max_member _ f 0 Q row HQ). lia. }
+    pose proof (Hmax C.row_bits). pose proof (Hmax C.row_key_bits).
+    unfold ell. cbn [rows_of]. lia.
+  Qed.
+
+  (** The shared coordinate pass fits one public elimination allowance. *)
+  Lemma T_karr_shared_variables_public : forall P Q,
+    normal P -> normal Q -> Q <> nil ->
+    (T_variables (P ++ Q) <= 8 * karr_variables_factor *
+      N.of_nat (elimination_work (Reached P) (Reached Q)))%N.
+  Proof.
+    intros P Q HP HQ Hnonempty. unfold elimination_work.
+    apply T_karr_variables_public.
+    - apply Forall_app. now split.
+    - pose proof (karr_n_app_bound P Q). lia.
+    - apply karr_ell_app_bound.
+    - destruct Q; [contradiction|]. unfold n. cbn [rows_of length]. lia.
+  Qed.
+
+  (** A zero row lists every right coordinate without increasing right numeric widths. *)
+  Lemma karr_shared_basis_public : forall P Q,
+    normal P -> Q <> nil ->
+    (T_equality_basis (variables (P ++ Q)) P <=
+      (33554500 + 32 * karr_seed_factor + 8 * karr_prepare_factor) *
+        N.of_nat (elimination_work (Reached P) (Reached Q)))%N.
+  Proof.
+    intros P Q HP Hnonempty.
+    set (c := LCons X.t (map (fun x => (x, 0%Z)) (vars_of Q)) REq 0%Z).
+    assert (Hcnormal : normal (c :: nil)).
+    { constructor; [|constructor]. unfold c. cbn [lhs].
+      rewrite map_map. change (NoDup (map (fun x : X.t => x) (vars_of Q))).
+      rewrite map_id. apply karr_vars_of_nodup. }
+    assert (Hcoordinates : incl (variables (P ++ Q)) (variables (c :: P))).
+    { intros x Hx. destruct (karr_variables_support (P ++ Q) x Hx)
+        as [row [Hrow Hterm]].
+      apply in_app_or in Hrow as [Hrow|Hrow].
+      - apply in_map_iff in Hterm as [[y z] [Heq Hin]]. cbn [fst] in Heq. subst y.
+        apply variables_contains with (r := row) (z := z); [now right|exact Hin].
+      - apply variables_contains with (r := c) (z := 0%Z); [now left|].
+        unfold c. cbn [lhs]. apply in_map_iff. exists x. split; [reflexivity|].
+        eapply karr_vars_of_contains; eassumption. }
+    assert (Hdim : length (variables (P ++ Q)) <= length (variables (c :: P))).
+    { apply NoDup_incl_length; [apply variables_nodup|exact Hcoordinates]. }
+    assert (Hkeys : Forall (fun x => X.bits x <=
+      ell (Reached P) + ell (Reached (c :: nil))) (variables (P ++ Q))).
+    { apply Forall_forall. intros x Hx.
+      exact (proj1 (Forall_forall _ _) (karr_entail_variables_keys P c HP Hcnormal)
+        x (Hcoordinates x Hx)). }
+    assert (Hnc : n (Reached (c :: nil)) <= n (Reached Q)).
+    { pose proof (karr_vars_of_cons_bound nil c) as Hvars.
+      assert (Hempty : vars_of nil = nil) by reflexivity. rewrite Hempty in Hvars.
+      assert (HQcount : 1 <= length Q).
+      { destruct Q; [contradiction|cbn [length]; lia]. }
+      assert (Hclen : length (lhs c) = length (vars_of Q)).
+      { unfold c. cbn [lhs]. apply length_map. }
+      rewrite Hclen in Hvars. unfold n. cbn [rows_of length]. cbn [length] in Hvars. lia. }
+    assert (Hbits : C.row_bits c = 0).
+    { assert (Hzero : C.row_bits c <= 0).
+      { unfold C.row_bits, c. cbn [rhs lhs Z.size_nat].
+        apply karr_max_bound; [lia|]. apply Forall_map, Forall_forall.
+        intros x _. cbn [snd Z.size_nat]. lia. }
+      lia. }
+    assert (Hkeywidth : C.row_key_bits c <= ell (Reached Q)).
+    { unfold C.row_key_bits, c. cbn [lhs]. apply karr_max_bound; [lia|].
+      apply Forall_map, Forall_forall. intros x Hx. cbn [fst].
+      destruct (karr_vars_of_support Q x Hx) as [row [Hrow Hterm]].
+      apply in_map_iff in Hterm as [p [Heq Hp]]. subst x.
+      pose proof (karr_row_key_member row p Hp) as Hkey.
+      pose proof (karr_max_member _ C.row_key_bits 0 Q row Hrow) as Hrowkey.
+      unfold ell. cbn [rows_of]. lia. }
+    assert (Hellc : ell (Reached (c :: nil)) <= ell (Reached Q)).
+    { unfold ell at 1. cbn [rows_of map fold_right]. rewrite Hbits. lia. }
+    pose proof (T_karr_equality_basis_public P c (variables (P ++ Q))
+      HP Hdim Hkeys) as Hclock.
+    assert (Hwork : elimination_work (Reached P) (Reached (c :: nil)) <=
+      elimination_work (Reached P) (Reached Q)).
+    { unfold elimination_work. apply karr_numeric_polynomial_mono; lia. }
+    eapply N.le_trans; [exact Hclock|]. apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** Dense reconstruction separates the source dimension from its input bit width. *)
+  Lemma T_karr_dense_quadratic : forall xs c d w,
+    1 <= d -> length xs <= d -> length (lhs c) <= d -> C.row_bits c <= w ->
+    Forall (fun x => X.bits x <= w) xs ->
+    (T_dense xs c <= 8 * karr_dense_factor *
+      N.of_nat (d^2 * (ellB d w + 1)^2))%N.
+  Proof.
+    intros xs c d w Hd Hxs Hclen Hbits Hkeys.
+    pose proof (T_karr_dense_bounded xs c d w Hxs Hclen Hbits Hkeys) as Hclock.
+    set (v := ellB d w + 1).
+    assert (Hv : 1 <= v) by (unfold v; lia).
+    assert (Hdv : d <= v) by (unfold v, ellB; nia).
+    assert (Hwv : w + 1 <= v) by (unfold v, ellB; nia).
+    assert (Hdsquare : (d + 1)^2 <= 4 * d^2).
+    { replace (4 * d^2) with ((2 * d)^2) by (cbn [Nat.pow]; ring).
+      apply Nat.pow_le_mono_l. lia. }
+    assert (Hvsquare : v <= v^2) by (cbn [Nat.pow]; nia).
+    assert (Hvolume : (d + 1)^2 * (w + d + 1) <= 8 * (d^2 * v^2)).
+    { eapply Nat.le_trans with (m := (4 * d^2) * (2 * v^2)).
+      - apply Nat.mul_le_mono; [exact Hdsquare|lia].
+      - ring_simplify. apply Nat.le_refl. }
+    assert (HvolumeN : (N.of_nat ((d + 1)^2 * (w + d + 1)) <=
+      N.of_nat (8 * (d^2 * v^2)))%N) by lia.
+    rewrite Nat2N.inj_mul, Nat2N.inj_pow in HvolumeN.
+    change (N.of_nat 2) with 2%N in HvolumeN.
+    rewrite Nat2N.inj_mul in HvolumeN.
+    change (N.of_nat 8) with 8%N in HvolumeN.
+    fold v. nia.
+  Qed.
+
+  (** Row comparison keeps dimension and coefficient width as separate factors. *)
+  Lemma T_karr_row_eqb_dimension_bits : forall c r d w,
+    length (lhs c) <= d -> C.row_key_bits c <= w -> C.row_bits c <= w ->
+    (T_row_eqb c r <= (X.c_key + 64) * N.of_nat (d + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intros c r d w Hlength Hkeys Hbits.
+    assert (Hpair : forall p q, In p (lhs c) -> In q (lhs r) ->
+      (T_karr_equal_term p q <= (X.c_key + 16) * N.of_nat (w + 1))%N).
+    { intros p q Hp _.
+      pose proof (karr_row_key_member c p Hp) as Hkey.
+      pose proof (karr_row_entry_bits c p Hp) as Hbit.
+      apply T_karr_equal_term_bounded; [unfold X.bits; lia|lia]. }
+    pose proof (karr_T_list_eqb_members (X.t * Z) karr_equal_term
+      T_karr_equal_term ((X.c_key + 16) * N.of_nat (w + 1))%N
+      (lhs c) (lhs r) Hpair) as Hlist.
+    pose proof (Z.T_eqb_le (rhs c) (rhs r)) as Hright.
+    pose proof (karr_row_rhs_bits c) as Hright_bits.
+    time_unfold T_row_eqb.
+    change (fun p q => X.eqb (fst p) (fst q) && Z.eqb (snd p) (snd q))
+      with karr_equal_term.
+    time_simpl.
+    lazymatch goal with
+    | |- context [T_karr_list_eqb karr_equal_term ?Tf (lhs c) (lhs r)] =>
+      change Tf with T_karr_equal_term
+    end.
+    assert (HlengthN : (N.of_nat (length (lhs c) + 1) <= N.of_nat (d + 1))%N) by lia.
+    assert (HrightN : (N.of_nat (Z.size_nat (rhs c)) + 1 <= N.of_nat (w + 1))%N)
+      by (rewrite Nat2N.inj_add; cbn [N.of_nat]; lia).
+    assert (Hwidth : (1 <= N.of_nat (w + 1))%N) by lia.
+    assert (Hdim : (1 <= N.of_nat (d + 1))%N) by lia.
+    destruct (lrel c), (lrel r); time_simpl;
+      clear -Hlist Hright HlengthN HrightN Hwidth Hdim; nia.
+  Qed.
+
+  (** Adding a single proof-only zero row costs a fixed factor in elimination work. *)
+  Lemma karr_public_work_succ : forall d w,
+    1 <= d ->
+    (d + 1)^3 * (ellB (d + 1) w + 1)^2 <=
+      128 * (d^3 * (ellB d w + 1)^2).
+  Proof.
+    intros d w Hd. set (v := ellB d w + 1).
+    assert (Hlog : Nat.log2 (d + 1) <= Nat.log2 d + 1).
+    { replace (d + 1) with (S d) by lia.
+      replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+      apply Nat.log2_succ_le. }
+    assert (Hwidth : ellB (d + 1) w + 1 <= 4 * v).
+    { unfold v, ellB. nia. }
+    assert (Hcube : (d + 1)^3 <= 8 * d^3).
+    { replace (8 * d^3) with ((2 * d)^3) by (cbn [Nat.pow]; ring).
+      apply Nat.pow_le_mono_l. lia. }
+    assert (Hsquare : (ellB (d + 1) w + 1)^2 <= 16 * v^2).
+    { replace (16 * v^2) with ((4 * v)^2) by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    eapply Nat.le_trans with (m := (8 * d^3) * (16 * v^2)).
+    - now apply Nat.mul_le_mono.
+    - ring_simplify. apply Nat.le_refl.
+  Qed.
+
+  (** Contradiction detection fits the public two-state work even with an empty right state. *)
+  Lemma T_karr_shared_contradiction_public : forall P Q,
+    normal P ->
+    (T_contradiction P <=
+      128 * (8 * karr_variables_factor + 33554500 +
+        32 * karr_seed_factor + 8 * karr_prepare_factor +
+        256 * (C.c_lc + 1) + 64) *
+      N.of_nat (elimination_work (Reached P) (Reached Q)))%N.
+  Proof.
+    intros P Q HP.
+    set (zero := LCons X.t nil REq 0%Z).
+    pose proof (T_karr_contradiction_public P zero HP) as Hclock.
+    set (d := n (Reached P) + n (Reached Q) + 1).
+    set (w := ell (Reached P) + ell (Reached Q)).
+    assert (Hzero_n : n (Reached (zero :: nil)) = 1) by reflexivity.
+    assert (Hzero_ell : ell (Reached (zero :: nil)) = 0) by reflexivity.
+    assert (Hwork : elimination_work (Reached P) (Reached (zero :: nil)) <=
+      128 * elimination_work (Reached P) (Reached Q)).
+    { unfold elimination_work. fold d w.
+      eapply Nat.le_trans; [|apply karr_public_work_succ; unfold d; lia].
+      apply karr_numeric_polynomial_mono; rewrite ?Hzero_n, ?Hzero_ell;
+        unfold d, w; lia. }
+    eapply N.le_trans; [exact Hclock|].
+    replace (128 * (8 * karr_variables_factor + 33554500 +
+      32 * karr_seed_factor + 8 * karr_prepare_factor +
+      256 * (C.c_lc + 1) + 64) *
+      N.of_nat (elimination_work (Reached P) (Reached Q)))%N with
+      ((8 * karr_variables_factor + 33554500 +
+      32 * karr_seed_factor + 8 * karr_prepare_factor +
+      256 * (C.c_lc + 1) + 64) *
+      N.of_nat (128 * elimination_work (Reached P) (Reached Q)))%N
+      by (rewrite Nat2N.inj_mul; change (N.of_nat 128) with 128%N; ring).
+    apply N.mul_le_mono_l. lia.
+  Qed.
+  (** Shared coordinates inherit the two input width measures. *)
+  Lemma karr_shared_coordinate_keys : forall P Q,
+    normal P -> normal Q ->
+    Forall (fun x => X.bits x <= ell (Reached P) + ell (Reached Q))
+      (variables (P ++ Q)).
+  Proof.
+    intros P Q HP HQ. apply karr_variables_key_bound.
+    apply Forall_app. split.
+    - eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
+      intros row [_ [Hkeys _]]. cbn beta in Hkeys. lia.
+    - eapply Forall_impl; [|apply karr_normal_source_envelope; exact HQ].
+      intros row [_ [Hkeys _]]. cbn beta in Hkeys. lia.
+  Qed.
+
+  (** The result of a shared target walk has the common certificate width. *)
+  Lemma karr_shared_target_result : forall P Q c,
+    normal P -> normal Q -> In c Q ->
+    let xs := variables (P ++ Q) in
+    let d := n (Reached P) + n (Reached Q) + 1 in
+    let v := ellB d (ell (Reached P) + ell (Reached Q)) + 1 in
+    karr_row_envelope (length xs) (length P) (8 * v)
+      (karr_target (equality_basis xs P) 1
+        (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1%Z)).
+  Proof.
+    intros P Q c HP HQ Hc xs d v.
+    assert (Hnormal : normal (c :: nil)).
+    { constructor; [|constructor]. exact (proj1 (Forall_forall _ _) HQ c Hc). }
+    pose proof (karr_target_envelope_result _ _ _ _ _ _
+      (karr_target_seed_envelope xs P c Hnormal)) as Hresult.
+    eapply karr_row_envelope_mono; [|exact Hresult].
+    pose proof (karr_shared_target_width P Q c HP Hc) as Hwidth.
+    fold xs d v in Hwidth. lia.
+  Qed.
+
+  Definition karr_shared_target_factor : N :=
+    (8 * karr_dense_factor + (16384 + 1024) * 64)%N.
+
+  (** Producing a target certificate from a shared basis costs only quadratic work. *)
+  Lemma T_karr_shared_target_certificate : forall P Q c,
+    normal P -> normal Q -> In c Q ->
+    let xs := variables (P ++ Q) in
+    let d := n (Reached P) + n (Reached Q) + 1 in
+    let v := ellB d (ell (Reached P) + ell (Reached Q)) + 1 in
+    (T_target_certificate_in xs (equality_basis xs P) P c <=
+      karr_shared_target_factor * N.of_nat (d^2 * v^2))%N.
+  Proof.
+    intros P Q c HP HQ Hc xs d v.
+    set (w := ell (Reached P) + ell (Reached Q)) in *.
+    set (bits := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1)).
+    assert (Hnormal : normal (c :: nil)).
+    { constructor; [|constructor]. exact (proj1 (Forall_forall _ _) HQ c Hc). }
+    pose proof (karr_target_envelope_result _ _ _ _ _ _
+      (karr_target_seed_envelope xs P c Hnormal)) as Hresult.
+    pose proof (T_karr_target_certificate_in_from_result xs (equality_basis xs P) P c
+      bits Hresult) as Hparts.
+    destruct (proj1 (Forall_forall _ _) (karr_normal_source_envelope Q HQ) c Hc)
+      as [Hclen [Hckeys Hcbits]].
+    assert (Hd : 1 <= d) by (unfold d; lia).
+    assert (Hspan : length xs + length P + 1 <= d).
+    { pose proof (karr_shared_variables_public P Q).
+      unfold xs, d, n. cbn [rows_of]. lia. }
+    assert (Hkeys : Forall (fun x => X.bits x <= w) xs).
+    { exact (karr_shared_coordinate_keys P Q HP HQ). }
+    pose proof (T_karr_dense_quadratic xs c d w Hd ltac:(lia)
+      ltac:(unfold d; lia) ltac:(unfold w; lia) Hkeys) as Hdense.
+    pose proof (T_karr_shared_target_public P Q c HP HQ Hc) as Htarget.
+    cbv zeta in Htarget. fold xs d w v in Htarget, Hdense.
+    assert (Hbits : bits + 1 <= 8 * v).
+    { exact (karr_shared_target_width P Q c HP Hc). }
+    assert (Hfinish_nat : (length xs + length P + 1) * (bits + 1)^2 <=
+      64 * (d^2 * v^2)).
+    { assert (Hsquare : (bits + 1)^2 <= 64 * v^2).
+      { replace (64 * v^2) with ((8 * v)^2) by (cbn [Nat.pow]; ring).
+        now apply Nat.pow_le_mono_l. }
+      eapply Nat.le_trans with (m := d * (64 * v^2)).
+      - now apply Nat.mul_le_mono.
+      - cbn [Nat.pow]. nia. }
+    assert (Hfinish : (1024 * N.of_nat (length xs + length P + 1) *
+      N.of_nat ((bits + 1)^2) <= 1024 * 64 * N.of_nat (d^2 * v^2))%N).
+    { replace (1024 * N.of_nat (length xs + length P + 1) *
+        N.of_nat ((bits + 1)^2))%N with
+        (1024 * N.of_nat ((length xs + length P + 1) * (bits + 1)^2))%N
+        by (rewrite Nat2N.inj_mul; ring).
+      replace (1024 * 64 * N.of_nat (d^2 * v^2))%N with
+        (1024 * N.of_nat (64 * (d^2 * v^2)))%N
+        by (rewrite Nat2N.inj_mul; change (N.of_nat 64) with 64%N; ring).
+      apply N.mul_le_mono_l. lia. }
+    unfold karr_shared_target_factor. clear -Hparts Hdense Htarget Hfinish. nia.
+  Qed.
+
+  Definition karr_shared_entails_factor : N :=
+    (karr_shared_target_factor + 256 * C.c_lc + 8)%N.
+
+  (** Checking one right row reuses the shared basis and keeps quadratic work. *)
+  Lemma T_karr_shared_entails_public : forall P Q c,
+    normal P -> normal Q -> In c Q ->
+    let xs := variables (P ++ Q) in
+    let d := n (Reached P) + n (Reached Q) + 1 in
+    let w := ell (Reached P) + ell (Reached Q) in
+    let v := ellB d w + 1 in
+    (T_entails_in xs (equality_basis xs P) P c <=
+      karr_shared_entails_factor * N.of_nat (d^2 * v^2))%N.
+  Proof.
+    intros P Q c HP HQ Hc xs d w v.
+    pose proof (T_karr_shared_target_certificate P Q c HP HQ Hc) as Htarget.
+    cbv zeta in Htarget. fold xs d w v in Htarget.
+    assert (Hnonempty : 1 <= length Q).
+    { destruct Q; cbn [In] in Hc; [contradiction|cbn [length]; lia]. }
+    assert (Hd : 2 <= d) by (unfold d, n; cbn [rows_of]; lia).
+    assert (Hpositive : (1 <= N.of_nat (d^2 * v^2))%N).
+    { assert (Hv : 1 <= v) by (unfold v; lia). cbn [Nat.pow]. nia. }
+    time_unfold T_entails_in.
+    destruct (target_certificate_in xs (equality_basis xs P) P c) as [k|] eqn:Hcandidate;
+      time_simpl.
+    - pose proof (karr_shared_target_result P Q c HP HQ Hc) as Hresult.
+      cbv zeta in Hresult. fold xs d w v in Hresult.
+      destruct (karr_target_certificate_in_envelope xs (equality_basis xs P) P c k
+        (length xs) (8 * v) Hcandidate Hresult) as [Hmlen [Hmult Hscale]].
+      assert (Hsource : Forall (fun row => length (lhs row) <= d /\
+        C.row_key_bits row <= w /\ C.row_bits row <= w) P).
+      { eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
+        intros row [Hlen [Hkey Hbit]]. unfold d, w. repeat split; lia. }
+      destruct (proj1 (Forall_forall _ _) (karr_normal_source_envelope Q HQ) c Hc)
+        as [Hclen [Hckey Hcbit]].
+      pose proof (T_karr_shared_checker_bounded P c k d w Hd
+        ltac:(unfold d, n; cbn [rows_of]; lia) Hsource
+        ltac:(unfold d, n; cbn [rows_of]; lia) Hmult
+        ltac:(unfold d; lia) ltac:(unfold w; lia) ltac:(unfold w; lia) Hscale)
+        as Hchecker.
+      fold v in Hchecker. unfold karr_shared_entails_factor.
+      clear -Htarget Hchecker Hpositive. nia.
+    - unfold karr_shared_entails_factor. clear -Htarget Hpositive. nia.
+  Qed.
+
+  (** Syntactic lookup costs quadratic dimensions and the shared bit allowance. *)
+  Lemma T_karr_row_search_dimension_bits : forall P c d w,
+    1 <= d -> length P <= d -> length (lhs c) <= d ->
+    C.row_key_bits c <= w -> C.row_bits c <= w ->
+    (List.T_existsb (row_eqb c) (T_row_eqb c) P <=
+      (2 * (X.c_key + 64) + 4) * N.of_nat (d^2 * (ellB d w + 1)^2))%N.
+  Proof.
+    intros P c d w Hd Hcount Hclen Hkeys Hbits.
+    pose proof (karr_T_existsb_members (lcons X.t) (row_eqb c) (T_row_eqb c)
+      ((X.c_key + 64) * N.of_nat (d + 1) * N.of_nat (w + 1))%N P
+      ltac:(intros r _; now apply T_karr_row_eqb_dimension_bits)) as Hclock.
+    set (v := ellB d w + 1).
+    assert (Hv : 1 <= v) by (unfold v; lia).
+    assert (Hwv : w + 1 <= v) by (unfold v, ellB; nia).
+    assert (Hvolume : (d + 1) * (w + 1) * length P <= 2 * (d^2 * v^2)).
+    { eapply Nat.le_trans with (m := (2 * d) * v * d).
+      - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|exact Hcount].
+      - cbn [Nat.pow]. nia. }
+    assert (Hproduct : (N.of_nat (d + 1) * N.of_nat (w + 1) * N.of_nat (length P) <=
+      2 * N.of_nat (d^2 * v^2))%N).
+    { rewrite <- !Nat2N.inj_mul.
+      replace (2 * N.of_nat (d^2 * v^2))%N with
+        (N.of_nat (2 * (d^2 * v^2))) by (rewrite Nat2N.inj_mul; reflexivity). lia. }
+    assert (Hdsquare : d <= d^2) by (clear -Hd; cbn [Nat.pow]; nia).
+    assert (Hvsquare : 1 <= v^2) by (clear -Hv; cbn [Nat.pow]; nia).
+    assert (Hdimension : d <= d^2 * v^2).
+    { eapply Nat.le_trans; [exact Hdsquare|].
+      replace (d^2) with (d^2 * 1) at 1 by lia.
+      now apply Nat.mul_le_mono_l. }
+    assert (HcountN : (N.of_nat (length P) <= N.of_nat (d^2 * v^2))%N) by lia.
+    assert (Hpositive : (1 <= N.of_nat (d^2 * v^2))%N) by lia.
+    fold v. clear -Hclock Hproduct HcountN Hpositive. nia.
+  Qed.
+
+  (** All public elimination allowances contain their dimension and a unit. *)
+  Lemma karr_shared_volume : forall P Q,
+    let d := n (Reached P) + n (Reached Q) + 1 in
+    let v := ellB d (ell (Reached P) + ell (Reached Q)) + 1 in
+    1 <= d^2 * v^2 /\ d <= d^3 * v^2 /\
+    d^2 * v^2 <= d^3 * v^2.
+  Proof.
+    intros P Q d v.
+    assert (Hd : 1 <= d) by (unfold d; lia).
+    assert (Hv : 1 <= v) by (unfold v; lia).
+    clearbody d v.
+    assert (Hdsquare : d <= d^2) by (clear -Hd; cbn [Nat.pow]; nia).
+    assert (Hvsquare : 1 <= v^2) by (clear -Hv; cbn [Nat.pow]; nia).
+    assert (Hquadratic : d <= d^2 * v^2).
+    { eapply Nat.le_trans; [exact Hdsquare|].
+      replace (d^2) with (d^2 * 1) at 1 by lia.
+      now apply Nat.mul_le_mono_l. }
+    assert (Hdegree : d^2 * v^2 <= d^3 * v^2).
+    { apply Nat.mul_le_mono_r.
+      replace (d^3) with (d^2 * d) by (cbn [Nat.pow]; ring).
+      replace (d^2) with (d^2 * 1) at 1 by lia.
+      now apply Nat.mul_le_mono_l. }
+    split; [lia|]. split; [eapply Nat.le_trans; eassumption|exact Hdegree].
+  Qed.
+
+  Definition karr_shared_filter_factor : N := (2 * (X.c_key + 64) + 8)%N.
+
+  (** Filtering all right rows uses at most one cubic public allowance. *)
+  Lemma T_karr_shared_filter_public : forall P Q T_missing,
+    normal Q ->
+    (forall c, In c Q -> (T_missing c <=
+      List.T_existsb (row_eqb c) (T_row_eqb c) P + 2)%N) ->
+    (List.T_filter (fun c => negb (existsb (row_eqb c) P)) T_missing Q <=
+      karr_shared_filter_factor *
+        N.of_nat (elimination_work (Reached P) (Reached Q)))%N.
+  Proof.
+    intros P Q T_missing HQ Hmissing.
+    set (d := n (Reached P) + n (Reached Q) + 1).
+    set (w := ell (Reached P) + ell (Reached Q)).
+    set (v := ellB d w + 1).
+    set (per_row := N.of_nat (d^2 * v^2)).
+    set (work := N.of_nat (d^3 * v^2)).
+    assert (Hd : 1 <= d) by (unfold d; lia).
+    assert (Hcallback : forall c, In c Q -> (T_missing c <=
+      (2 * (X.c_key + 64) + 4) * per_row + 2)%N).
+    { intros c Hc.
+      destruct (proj1 (Forall_forall _ _) (karr_normal_source_envelope Q HQ) c Hc)
+        as [Hclen [Hkeys Hbits]].
+      pose proof (T_karr_row_search_dimension_bits P c d w Hd
+        ltac:(unfold d, n; cbn [rows_of]; lia)
+        ltac:(unfold d; lia) ltac:(unfold w; lia) ltac:(unfold w; lia)) as Hsearch.
+      pose proof (Hmissing c Hc). fold v per_row in Hsearch. lia. }
+    pose proof (karr_T_filter_members (lcons X.t)
+      (fun c => negb (existsb (row_eqb c) P)) T_missing
+      ((2 * (X.c_key + 64) + 4) * per_row + 2)%N Q Hcallback) as Hclock.
+    assert (Hcount : length Q <= d) by (unfold d, n; cbn [rows_of]; lia).
+    assert (Hproduct : (per_row * N.of_nat (length Q) <= work)%N).
+    { unfold per_row, work. rewrite <- Nat2N.inj_mul.
+      assert (d^2 * v^2 * length Q <= d^3 * v^2) by (cbn [Nat.pow]; nia). lia. }
+    destruct (karr_shared_volume P Q) as [_ [Hdimension _]].
+    cbv zeta in Hdimension. fold d w v in Hdimension.
+    assert (HcountN : (N.of_nat (length Q) <= work)%N) by (unfold work; lia).
+    assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+    change (List.T_filter (fun c => negb (existsb (row_eqb c) P)) T_missing Q <=
+      karr_shared_filter_factor * work)%N.
+    unfold karr_shared_filter_factor. clear -Hclock Hproduct HcountN Hpositive.
+    clearbody per_row work. nia.
+  Qed.
+
+  (** A selected subset of right rows consumes one cubic shared-basis allowance. *)
+  Lemma T_karr_shared_scan_public : forall P Q rest,
+    normal P -> normal Q -> incl rest Q -> length rest <= length Q ->
+    (List.T_forallb (entails_in (variables (P ++ Q))
+      (equality_basis (variables (P ++ Q)) P) P)
+      (T_entails_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P) rest <=
+      (karr_shared_entails_factor + 3) *
+        N.of_nat (elimination_work (Reached P) (Reached Q)))%N.
+  Proof.
+    intros P Q rest HP HQ Hincl Hlength.
+    set (xs := variables (P ++ Q)).
+    set (d := n (Reached P) + n (Reached Q) + 1).
+    set (w := ell (Reached P) + ell (Reached Q)).
+    set (v := ellB d w + 1).
+    set (per_row := N.of_nat (d^2 * v^2)).
+    set (work := N.of_nat (d^3 * v^2)).
+    pose proof (karr_T_forallb_members (lcons X.t)
+      (entails_in xs (equality_basis xs P) P)
+      (T_entails_in xs (equality_basis xs P) P)
+      (karr_shared_entails_factor * per_row)%N rest
+      ltac:(intros c Hc; exact (T_karr_shared_entails_public P Q c HP HQ (Hincl c Hc))))
+      as Hclock.
+    assert (Hcount : length rest <= d) by (unfold d, n; cbn [rows_of]; lia).
+    assert (Hproduct : (per_row * N.of_nat (length rest) <= work)%N).
+    { unfold per_row, work. rewrite <- Nat2N.inj_mul.
+      assert (d^2 * v^2 * length rest <= d^3 * v^2) by (cbn [Nat.pow]; nia). lia. }
+    destruct (karr_shared_volume P Q) as [_ [Hdimension _]].
+    cbv zeta in Hdimension. fold d w v in Hdimension.
+    assert (HcountN : (N.of_nat (length rest) <= work)%N) by (unfold work; lia).
+    assert (Hpositive : (1 <= work)%N) by (unfold work; assert (Hd : 1 <= d) by (unfold d; lia); lia).
+    change (List.T_forallb (entails_in xs (equality_basis xs P) P)
+      (T_entails_in xs (equality_basis xs P) P) rest <=
+      (karr_shared_entails_factor + 3) * work)%N.
+    clear -Hclock Hproduct HcountN Hpositive. clearbody per_row work. nia.
+  Qed.
+
+  (** Every state pair has a nonzero elimination allowance. *)
+  Lemma karr_elimination_work_pos : forall a b, 1 <= elimination_work a b.
+  Proof.
+    intros a b. unfold elimination_work.
+    set (d := n a + n b + 1).
+    set (v := ellB d (ell a + ell b) + 1).
+    assert (Hd : 1 <= d) by (unfold d; lia).
+    assert (Hv : 1 <= v) by (unfold v; lia).
+    cbn [Nat.pow]. nia.
+  Qed.
+
+  Definition karr_shared_leb_factor : N :=
+    (128 * (8 * karr_variables_factor + 33554500 +
+      32 * karr_seed_factor + 8 * karr_prepare_factor + 256 * (C.c_lc + 1) + 64) +
+      (33554500 + 32 * karr_seed_factor + 8 * karr_prepare_factor) +
+      8 * karr_variables_factor + karr_shared_filter_factor +
+      karr_shared_entails_factor + 16)%N.
+
+  (** Normal-state inclusion shares one basis across all missing right rows. *)
+  Lemma T_karr_leb_normal : forall a b,
+    normal_s a -> normal_s b ->
+    (T_leb a b <= karr_shared_leb_factor * N.of_nat (elimination_work a b))%N.
+  Proof.
+    intros a b Ha Hb.
+    assert (Hpositive : (1 <= N.of_nat (elimination_work a b))%N).
+    { pose proof (karr_elimination_work_pos a b). lia. }
+    destruct a as [|P]; destruct b as [|Q].
+    - time_unfold T_leb. unfold karr_shared_leb_factor. nia.
+    - time_unfold T_leb. unfold karr_shared_leb_factor. nia.
+    - pose proof (T_karr_shared_contradiction_public P nil Ha) as Hcontradiction.
+      change (elimination_work (Reached P) (Reached nil)) with
+        (elimination_work (Reached P) Unreached) in Hcontradiction.
+      time_unfold T_leb. destruct (contradiction P); time_simpl;
+        unfold karr_shared_leb_factor; clear -Hcontradiction Hpositive; nia.
+    - change (normal P) in Ha. change (normal Q) in Hb.
+      time_unfold T_leb.
+      lazymatch goal with
+      | |- context [List.T_filter ?f ?Tf Q] =>
+        pose proof (T_karr_shared_filter_public P Q Tf Hb
+          ltac:(intros c Hc; time_simpl;
+            change (fun r : lcons X.t => T_row_eqb c r) with (T_row_eqb c); nia))
+          as Hfilter
+      end.
+      change (List.T_filter (fun r : lcons X.t => negb (existsb (row_eqb r) P))
+        (fun r : lcons X.t => (1 +
+          (List.T_existsb (row_eqb r) (fun c => T_row_eqb r c) P + 1))%N) Q <=
+        karr_shared_filter_factor *
+          N.of_nat (elimination_work (Reached P) (Reached Q)))%N in Hfilter.
+      change (fun c : lcons X.t => T_entails_in (variables (P ++ Q))
+        (equality_basis (variables (P ++ Q)) P) P c) with
+        (T_entails_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P).
+      destruct (filter (fun r => negb (existsb (row_eqb r) P)) Q)
+        as [|r rest] eqn:Hrest; time_simpl.
+      + unfold karr_shared_leb_factor. clear -Hfilter Hpositive. nia.
+      + assert (Hnonempty : Q <> nil).
+        { intro Heq. subst Q. discriminate Hrest. }
+        pose proof (T_karr_shared_contradiction_public P Q Ha) as Hcontradiction.
+        pose proof (T_karr_shared_variables_public P Q Ha Hb Hnonempty) as Hvariables.
+        pose proof (karr_shared_basis_public P Q Ha Hnonempty) as Hbasis.
+        assert (Hincl : incl (r :: rest) Q).
+        { intros c Hc.
+          assert (Hin : In c (filter (fun r => negb (existsb (row_eqb r) P)) Q))
+            by (rewrite Hrest; exact Hc).
+          apply filter_In in Hin. exact (proj1 Hin). }
+        assert (Hlength : length (r :: rest) <= length Q).
+        { rewrite <- Hrest. apply filter_length_le. }
+        pose proof (T_karr_shared_scan_public P Q (r :: rest) Ha Hb Hincl Hlength)
+          as Hscan.
+        pose proof (Datatypes.T_app_le P Q) as Happ.
+        assert (Happ_work : (Datatypes.T_app P Q <=
+          N.of_nat (elimination_work (Reached P) (Reached Q)))%N).
+        { destruct (karr_shared_volume P Q) as [_ [Hdimension _]].
+          cbv zeta in Hdimension. unfold elimination_work.
+          assert (HlengthP : length P + 1 <= n (Reached P) + n (Reached Q) + 1)
+            by (unfold n; cbn [rows_of]; lia).
+          lia. }
+        destruct (contradiction P); time_simpl.
+        * unfold karr_shared_leb_factor.
+          clear -Hfilter Hcontradiction Hpositive. nia.
+        * unfold karr_shared_leb_factor.
+          clear -Hfilter Hcontradiction Hvariables Hbasis Hscan Happ_work Hpositive. nia.
+  Qed.
+
+  (** The public elimination allowance is symmetric in its two states. *)
+  Lemma karr_elimination_work_symmetric : forall a b,
+    elimination_work a b = elimination_work b a.
+  Proof.
+    intros a b. unfold elimination_work.
+    rewrite (Nat.add_comm (n a) (n b)), (Nat.add_comm (ell a) (ell b)). reflexivity.
+  Qed.
+
+
+  (** Inclusion of normal states uses one shared elimination allowance. *)
+  (** Inclusion of normal states fits one shared elimination allowance. *)
   Lemma leb_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (fst x) (snd x)))
     (fun x => T_leb (fst x) (snd x)).
   Proof. Admitted. (* STUB *)
 
+
+  (** Join of normal states fits one public elimination allowance. *)
   Lemma join_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (fst x) (snd x)))
     (fun x => T_join (fst x) (snd x)).
@@ -23527,12 +24635,16 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     cbn [fst snd]. unfold elimination_work. rewrite Nat2N.inj_mul. nia.
   Qed.
 
+  (** Widening combines the inclusion and join elimination allowances. *)
+  (** Widening pays one inclusion check and at most one join. *)
   Lemma widen_bigO : bigO (fun x : wparam * t * t =>
       normal_s (snd (fst x)) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (snd (fst x)) (snd x)))
     (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
   Proof. Admitted. (* STUB *)
 
+
+  (** The affine hull of normal sources fits one public elimination allowance. *)
   Lemma affine_hull_bigO : bigO
     (fun x : list (lcons X.t) * list (lcons X.t) => normal (fst x) /\ normal (snd x))
     (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x))))
@@ -23543,6 +24655,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     cbn [fst snd]. nia.
   Qed.
 
+  (** Certificate production for normal inputs fits one public elimination allowance. *)
   Lemma entail_cert_bigO : bigO
     (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
     (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x :: nil))))
