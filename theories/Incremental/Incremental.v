@@ -199,6 +199,17 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
   Definition value (st : state) (x : S.key) : option L.t :=
     lookup (inc_values st) x.
 
+  (** A supplied code avoids re-encoding the key while retaining payload validation. *)
+  Definition value_code (code : positive) (x : S.key) (st : state) : option L.t :=
+    match PTrieCode.get code (inc_values st) with
+    | Some (stored_key, v) => if S.key_eqb x stored_key then Some v else None
+    | None => None
+    end.
+
+  (** Root discovery reuses the code used to test whether its value is absent. *)
+  Definition missing_code (code : positive) (x : S.key) (st : state) : bool :=
+    negb (match value_code code x st with Some _ => true | None => false end).
+
   Definition present (st : state) (x : S.key) : bool :=
     match value st x with Some _ => true | None => false end.
 
@@ -213,15 +224,15 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
        discovery_missing := []; discovery_done := [];
        discovery_rows := []; discovery_frozen := [] |}.
 
-  Definition discovery_visit (st : state) (x : S.key)
+  (** Visiting a key shares its code between the seen trie and the value trie. *)
+  Definition discovery_visit_code (code : positive) (st : state) (x : S.key)
       (acc : incremental_discovery S.key S.row L.t)
       : incremental_discovery S.key S.row L.t :=
-    let code := S.key_code x in
     match PTrieCode.get code (discovery_seen acc) with
     | Some _ => acc
     | None =>
       let seen := PTrieCode.set code tt (discovery_seen acc) in
-      match value st x with
+      match value_code code x st with
       | Some v =>
         {| discovery_pending := discovery_pending acc; discovery_seen := seen;
            discovery_missing := discovery_missing acc; discovery_done := discovery_done acc;
@@ -235,9 +246,15 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
       end
     end.
 
+  Definition discovery_visit (st : state) (x : S.key)
+      (acc : incremental_discovery S.key S.row L.t)
+      : incremental_discovery S.key S.row L.t :=
+    discovery_visit_code (S.key_code x) st x acc.
+
   Definition discovery_seed_one (st : state) (acc : incremental_discovery S.key S.row L.t)
       (x : S.key) : incremental_discovery S.key S.row L.t :=
-    if missing st x then discovery_visit st x acc else acc.
+    let code := S.key_code x in
+    if missing_code code x st then discovery_visit_code code st x acc else acc.
 
   Definition discovery_row (p : S.prog) (st : state)
       (acc : incremental_discovery S.key S.row L.t) (r : S.row)
@@ -311,7 +328,9 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
     match xs with
     | [] => base
     | x :: rest =>
-      PTrieCode.set (S.key_code x) (x, look_or S.key_code L.bot m x)
+      let code := S.key_code x in
+      let a := match trie_get code m with Some (_, a) => a | None => L.bot end in
+      PTrieCode.set code (x, a)
         (fill_local rest m base)
     end.
 
@@ -704,6 +723,32 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Local Opaque loopN.
   Local Opaque invalid_accessible.
 
+  (** Supplying a key's own code preserves its validated lookup. *)
+  Lemma value_code_eq : forall st x, value_code (S.key_code x) x st = value st x.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** The shared-code missing test has the original Boolean meaning. *)
+  Lemma missing_code_eq : forall st x, missing_code (S.key_code x) x st = missing st x.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Supplying a key's own code gives the ordinary discovery visit. *)
+  Lemma discovery_visit_code_eq : forall st x acc,
+    discovery_visit_code (S.key_code x) st x acc = discovery_visit st x acc.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Seeding retains the original missing-key branch after sharing its code. *)
+  Lemma discovery_seed_one_eq : forall st acc x,
+    discovery_seed_one st acc x = if missing st x then discovery_visit st x acc else acc.
+  Proof.
+    reflexivity.
+  Qed.
+
   Lemma discovery_rev_equation : forall p roots fuel st,
     discovery p roots fuel st =
       match loopN (discovery_step p st) fuel
@@ -1029,7 +1074,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Lemma discovery_visit_balanced : forall st x acc,
     discovery_balanced acc -> discovery_balanced (discovery_visit st x acc).
   Proof.
-    intros st x acc Hbalance; unfold discovery_visit, discovery_balanced in *.
+    intros st x acc Hbalance; unfold discovery_visit, discovery_visit_code, discovery_balanced in *;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc)); [exact Hbalance|].
     destruct (value st x); cbn [discovery_missing discovery_pending discovery_done length];
       lia.
@@ -1041,7 +1087,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Proof.
     intros st roots; induction roots as [|x rest IH]; intros acc Hbalance;
       [exact Hbalance|].
-    cbn [fold_left]; apply IH; unfold discovery_seed_one.
+    cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
     destruct (missing st x); [now apply discovery_visit_balanced|exact Hbalance].
   Qed.
 
@@ -1082,7 +1128,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     PTrieCode.get (S.key_code y) (discovery_seen acc) = Some tt ->
     PTrieCode.get (S.key_code y) (discovery_seen (discovery_visit st x acc)) = Some tt.
   Proof.
-    intros st x acc y Hseen; unfold discovery_visit.
+    intros st x acc y Hseen; unfold discovery_visit, discovery_visit_code;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc)) as [[]|] eqn:Hx;
       [exact Hseen|].
     destruct (value st x); cbn [discovery_seen].
@@ -1094,7 +1141,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Lemma discovery_visit_marks : forall st x acc,
     PTrieCode.get (S.key_code x) (discovery_seen (discovery_visit st x acc)) = Some tt.
   Proof.
-    intros st x acc; unfold discovery_visit.
+    intros st x acc; unfold discovery_visit, discovery_visit_code;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc)) as [[]|] eqn:Hx;
       [exact Hx|].
     destruct (value st x); cbn [discovery_seen]; now rewrite PTrie.get_set_same.
@@ -1111,7 +1159,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     discovery_missing_valid st acc ->
     discovery_missing_valid st (discovery_visit st x acc).
   Proof.
-    intros st x acc [Hnodup Hmissing]; unfold discovery_visit.
+    intros st x acc [Hnodup Hmissing]; unfold discovery_visit, discovery_visit_code;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc)) as [[]|] eqn:Hx.
     - split; assumption.
     - destruct (value st x) as [v|] eqn:Hvalue.
@@ -1141,7 +1190,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Proof.
     intros st roots; induction roots as [|x rest IH]; intros acc Hvalid;
       [exact Hvalid|].
-    cbn [fold_left]; apply IH; unfold discovery_seed_one.
+    cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
     destruct (missing st x); [now apply discovery_visit_missing_valid|exact Hvalid].
   Qed.
 
@@ -1287,7 +1336,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
         = discovery_rows acc).
     { intros xs; induction xs as [|x rest IH]; intros current Hcurrent;
         [exact Hcurrent|].
-      cbn [fold_left]; apply IH; unfold discovery_visit.
+      cbn [fold_left]; apply IH; unfold discovery_visit, discovery_visit_code;
+        rewrite ?value_code_eq in *.
       destruct (PTrieCode.get (S.key_code x) (discovery_seen current));
         [exact Hcurrent|].
       destruct (value st x); cbn [discovery_rows]; exact Hcurrent. }
@@ -1334,9 +1384,10 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
         discovery_rows (fold_left (discovery_seed_one st) xs current) = []).
       { intros xs; induction xs as [|x rest IH]; intros current Hrows;
           [exact Hrows|].
-        cbn [fold_left]; apply IH; unfold discovery_seed_one.
+        cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
         destruct (missing st x); [|exact Hrows].
-        unfold discovery_visit.
+        unfold discovery_visit, discovery_visit_code;
+          rewrite ?value_code_eq in *.
         destruct (PTrieCode.get (S.key_code x) (discovery_seen current));
           [exact Hrows|].
         destruct (value st x); cbn [discovery_rows]; exact Hrows. }
@@ -1368,7 +1419,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     discovery_pending_missing st acc ->
     discovery_pending_missing st (discovery_visit st x acc).
   Proof.
-    intros st x acc Hvalid y Hin; unfold discovery_visit in Hin.
+    intros st x acc Hvalid y Hin; unfold discovery_visit, discovery_visit_code in Hin;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc));
       [now apply Hvalid|].
     destruct (value st x) as [old|] eqn:Hold;
@@ -1383,7 +1435,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Proof.
     intros st roots; induction roots as [|x rest IH]; intros acc Hvalid;
       [exact Hvalid|].
-    cbn [fold_left]; apply IH; unfold discovery_seed_one.
+    cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
     destruct (missing st x); [now apply discovery_visit_pending_missing|exact Hvalid].
   Qed.
 
@@ -1439,7 +1491,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
         = discovery_rows acc).
     { intros xs; induction xs as [|x rest IH]; intros current Hcurrent;
         [exact Hcurrent|].
-      cbn [fold_left]; apply IH; unfold discovery_visit.
+      cbn [fold_left]; apply IH; unfold discovery_visit, discovery_visit_code;
+        rewrite ?value_code_eq in *.
       destruct (PTrieCode.get (S.key_code x) (discovery_seen current));
         [exact Hcurrent|].
       destruct (value st x); cbn [discovery_rows]; exact Hcurrent. }
@@ -1500,9 +1553,10 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
           discovery_rows (fold_left (discovery_seed_one st) xs current) = []).
         { intros xs; induction xs as [|x rest IH]; intros current Hrows;
             [exact Hrows|].
-          cbn [fold_left]; apply IH; unfold discovery_seed_one.
+          cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
           destruct (missing st x); [|exact Hrows].
-          unfold discovery_visit.
+          unfold discovery_visit, discovery_visit_code;
+            rewrite ?value_code_eq in *.
           destruct (PTrieCode.get (S.key_code x) (discovery_seen current));
             [exact Hrows|].
           destruct (value st x); cbn [discovery_rows]; exact Hrows. }
@@ -1537,7 +1591,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     discovery_seen_missing st (discovery_visit st x acc).
   Proof.
     intros st x acc Hvalid y Hnone Hseen.
-    unfold discovery_visit in Hseen |- *.
+    unfold discovery_visit, discovery_visit_code in Hseen |- *;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc)) as [[]|]
       eqn:Hx; [now apply Hvalid|].
     destruct (value st x) as [v|] eqn:Hvalue;
@@ -1557,7 +1612,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Proof.
     intros st roots; induction roots as [|x rest IH]; intros acc Hvalid;
       [exact Hvalid|].
-    cbn [fold_left]; apply IH; unfold discovery_seed_one.
+    cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
     destruct (missing st x); [now apply discovery_visit_seen_missing|exact Hvalid].
   Qed.
 
@@ -1597,7 +1652,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     In y (discovery_missing acc) ->
     In y (discovery_missing (discovery_visit st x acc)).
   Proof.
-    intros st x acc y Hy; unfold discovery_visit.
+    intros st x acc y Hy; unfold discovery_visit, discovery_visit_code;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc));
       [exact Hy|].
     destruct (value st x); cbn [discovery_missing]; [exact Hy|now right].
@@ -1658,7 +1714,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
           discovery_rows acc).
       { intros xs; induction xs as [|y rest IH]; intros current Hcurrent;
           [exact Hcurrent|].
-        cbn [fold_left]; apply IH; unfold discovery_visit.
+        cbn [fold_left]; apply IH; unfold discovery_visit, discovery_visit_code;
+          rewrite ?value_code_eq in *.
         destruct (PTrieCode.get (S.key_code y) (discovery_seen current));
           [exact Hcurrent|].
         destruct (value st y); cbn [discovery_rows]; exact Hcurrent. }
@@ -1677,10 +1734,11 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Proof.
     intros p st roots; induction roots as [|x rest IH]; intros acc [Hseen Hsupport];
       [now split|].
-    cbn [fold_left]; apply IH; unfold discovery_seed_one.
+    cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
     destruct (missing st x); [|now split].
     split; [now apply discovery_visit_seen_missing|].
-    intros r y Hr Hy Hnone; unfold discovery_visit in Hr |- *.
+    intros r y Hr Hy Hnone; unfold discovery_visit, discovery_visit_code in Hr |- *;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc));
       [eapply Hsupport; eauto|].
     destruct (value st x); cbn [discovery_rows discovery_missing] in Hr |- *.
@@ -1760,7 +1818,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Lemma discovery_visit_missing_queued : forall st x acc,
     discovery_missing_queued acc -> discovery_missing_queued (discovery_visit st x acc).
   Proof.
-    intros st x acc Hqueued y Hy; unfold discovery_visit in Hy |- *.
+    intros st x acc Hqueued y Hy; unfold discovery_visit, discovery_visit_code in Hy |- *;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc));
       [now apply Hqueued|].
     destruct (value st x); cbn [discovery_missing discovery_pending discovery_done] in Hy |- *.
@@ -1777,7 +1836,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Proof.
     intros st roots; induction roots as [|x rest IH]; intros acc Hqueued;
       [exact Hqueued|].
-    cbn [fold_left]; apply IH; unfold discovery_seed_one.
+    cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
     destruct (missing st x); [now apply discovery_visit_missing_queued|exact Hqueued].
   Qed.
 
@@ -1862,7 +1921,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       discovery_rows (fold_left (fun current x => discovery_visit st x current) xs current) =
       discovery_rows current).
     { intros xs; induction xs as [|x rest IH]; intros current; [reflexivity|].
-      cbn [fold_left]; rewrite IH; unfold discovery_visit.
+      cbn [fold_left]; rewrite IH; unfold discovery_visit, discovery_visit_code;
+        rewrite ?value_code_eq in *.
       destruct (PTrieCode.get (S.key_code x) (discovery_seen current));
         [reflexivity|].
       destruct (value st x); reflexivity. }
@@ -1877,7 +1937,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       discovery_done (fold_left (fun current x => discovery_visit st x current) xs current) =
       discovery_done current).
     { intros xs; induction xs as [|x rest IH]; intros current; [reflexivity|].
-      cbn [fold_left]; rewrite IH; unfold discovery_visit.
+      cbn [fold_left]; rewrite IH; unfold discovery_visit, discovery_visit_code;
+        rewrite ?value_code_eq in *.
       destruct (PTrieCode.get (S.key_code x) (discovery_seen current));
         [reflexivity|].
       destruct (value st x); reflexivity. }
@@ -1906,9 +1967,10 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     intros st roots.
     assert (Hseed_one : forall acc y,
       discovery_done (discovery_seed_one st acc y) = discovery_done acc).
-    { intros acc y; unfold discovery_seed_one.
+    { intros acc y; rewrite discovery_seed_one_eq.
       destruct (missing st y); [|reflexivity].
-      unfold discovery_visit.
+      unfold discovery_visit, discovery_visit_code;
+        rewrite ?value_code_eq in *.
       destruct (PTrieCode.get (S.key_code y) (discovery_seen acc));
         [reflexivity|].
       destruct (value st y); reflexivity. }
@@ -2018,9 +2080,10 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
         discovery_done (fold_left (discovery_seed_one st) xs current) = []).
       { intros xs; induction xs as [|y rest IH]; intros current Hdone;
           [exact Hdone|].
-        cbn [fold_left]; apply IH; unfold discovery_seed_one.
+        cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
         destruct (missing st y); [|exact Hdone].
-        unfold discovery_visit.
+        unfold discovery_visit, discovery_visit_code;
+          rewrite ?value_code_eq in *.
         destruct (PTrieCode.get (S.key_code y) (discovery_seen current));
           [exact Hdone|].
         destruct (value st y); cbn [discovery_done]; exact Hdone. }
@@ -2055,7 +2118,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     discovery_frozen_valid st acc ->
     discovery_frozen_valid st (discovery_visit st x acc).
   Proof.
-    intros st x acc Hvalid y v Hin; unfold discovery_visit in Hin.
+    intros st x acc Hvalid y v Hin; unfold discovery_visit, discovery_visit_code in Hin;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc));
       [now apply Hvalid|].
     destruct (value st x) as [old|] eqn:Hold;
@@ -2071,7 +2135,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Proof.
     intros st roots; induction roots as [|x rest IH]; intros acc Hvalid;
       [exact Hvalid|].
-    cbn [fold_left]; apply IH; unfold discovery_seed_one.
+    cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
     destruct (missing st x); [now apply discovery_visit_frozen_valid|exact Hvalid].
   Qed.
 
@@ -2148,7 +2212,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     discovery_seen_frozen st (discovery_visit st x acc).
   Proof.
     intros st x acc Hvalid y v Hvalue Hseen.
-    unfold discovery_visit in Hseen |- *.
+    unfold discovery_visit, discovery_visit_code in Hseen |- *;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc)) as [[]|]
       eqn:Hx; [now apply Hvalid|].
     destruct (value st x) as [old|] eqn:Hold;
@@ -2170,7 +2235,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Proof.
     intros st roots; induction roots as [|x rest IH]; intros acc Hvalid;
       [exact Hvalid|].
-    cbn [fold_left]; apply IH; unfold discovery_seed_one.
+    cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
     destruct (missing st x); [now apply discovery_visit_seen_frozen|exact Hvalid].
   Qed.
 
@@ -2251,9 +2316,10 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
         discovery_rows (fold_left (discovery_seed_one st) xs acc) = []).
       { intros xs; induction xs as [|y ys IH]; intros acc Hrows;
           [exact Hrows|].
-        cbn [fold_left]; apply IH; unfold discovery_seed_one.
+        cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
         destruct (missing st y); [|exact Hrows].
-        unfold discovery_visit.
+        unfold discovery_visit, discovery_visit_code;
+          rewrite ?value_code_eq in *.
         destruct (PTrieCode.get (S.key_code y) (discovery_seen acc));
           [exact Hrows|].
         destruct (value st y); cbn [discovery_rows]; exact Hrows. }
@@ -2805,7 +2871,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     In y (discovery_missing acc) ->
     In y (discovery_missing (discovery_seed_one st acc x)).
   Proof.
-    intros st acc x y Hy; unfold discovery_seed_one.
+    intros st acc x y Hy; rewrite discovery_seed_one_eq.
     destruct (missing st x); [now apply discovery_visit_missing_keeps|exact Hy].
   Qed.
 
@@ -2829,13 +2895,14 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
         [contradiction|].
       cbn [fold_left]; destruct Hin as [<-|Hin].
       - apply discovery_seed_keeps_missing.
-        unfold discovery_seed_one; rewrite (proj2 (missing_spec st y) Hnone).
-        unfold discovery_visit.
+        rewrite discovery_seed_one_eq; rewrite (proj2 (missing_spec st y) Hnone).
+        unfold discovery_visit, discovery_visit_code;
+          rewrite ?value_code_eq in *.
         destruct (PTrieCode.get (S.key_code y) (discovery_seen acc)) as [[]|]
           eqn:Hget; [now apply Hseen|].
         rewrite Hnone; cbn [discovery_missing]; now left.
       - apply IH; [|exact Hin|exact Hnone].
-        unfold discovery_seed_one; destruct (missing st y);
+        rewrite discovery_seed_one_eq; destruct (missing st y);
           [now apply discovery_visit_seen_missing|exact Hseen]. }
     intros st roots x Hin Hnone; apply Hseed; [|exact Hin|exact Hnone].
     unfold discovery_seen_missing, empty_discovery; cbn [discovery_seen].
@@ -2899,7 +2966,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     In y (discovery_missing (discovery_visit st x acc)) ->
     y = x \/ In y (discovery_missing acc).
   Proof.
-    intros st acc x y Hin; unfold discovery_visit in Hin.
+    intros st acc x y Hin; unfold discovery_visit, discovery_visit_code in Hin;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc)); [now right|].
     destruct (value st x); cbn [discovery_missing] in Hin;
       [now right|].
@@ -2909,7 +2977,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Lemma discovery_visit_rows_eq : forall st acc x,
     discovery_rows (discovery_visit st x acc) = discovery_rows acc.
   Proof.
-    intros st acc x; unfold discovery_visit.
+    intros st acc x; unfold discovery_visit, discovery_visit_code;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc));
       [reflexivity|].
     destruct (value st x); reflexivity.
@@ -2927,7 +2996,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     { intros xs; induction xs as [|y rest IH]; intros acc Hsource Hsubset;
         [exact Hsource|].
       cbn [fold_left]; apply IH.
-      - unfold discovery_seed_one; destruct (missing st y); [|exact Hsource].
+      - rewrite discovery_seed_one_eq; destruct (missing st y); [|exact Hsource].
         intros x Hx; apply discovery_visit_missing_origin in Hx as [->|Hold].
         + left; apply Hsubset; now left.
         + destruct (Hsource x Hold) as [Hroot|[r [Hr Hkey]]]; [now left|].
@@ -4668,12 +4737,15 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   TimeFun snapshot_record.
   TimeFun lookup.
   TimeFun value.
+  TimeFun value_code.
+  TimeFun missing_code.
   TimeFun present.
   TimeFun missing.
   TimeFun mem.
   TimeFun row_writes.
   TimeFun row_keys.
   TimeFun empty_discovery.
+  TimeFun discovery_visit_code.
   TimeFun discovery_visit.
   TimeFun discovery_seed_one.
   TimeFun discovery_row.
@@ -6444,7 +6516,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
         fold_left (discovery_seed_one st) xs acc = acc).
       { intros xs; induction xs as [|x rest IH]; intros acc Hxs; [reflexivity|].
         cbn [forallb fold_left] in *; apply andb_true_iff in Hxs as [Hx Hrest].
-        unfold discovery_seed_one, missing; rewrite Hx; cbn [negb].
+        rewrite discovery_seed_one_eq; unfold missing; rewrite Hx; cbn [negb].
         apply IH; exact Hrest. }
       unfold region, discovery_view, discovery.
       rewrite (Hinitial roots empty_discovery Hcovered), incremental_loopN_fuel.
@@ -6495,7 +6567,8 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     Lemma discovery_visit_frozen_unique : forall st x acc,
       frozen_unique acc -> frozen_unique (discovery_visit st x acc).
     Proof.
-      intros st x acc [Hnodup Hseen]; unfold discovery_visit.
+      intros st x acc [Hnodup Hseen]; unfold discovery_visit, discovery_visit_code;
+        rewrite ?value_code_eq in *.
       destruct (PTrieCode.get (S.key_code x) (discovery_seen acc)) as [[]|]
         eqn:Hx; [now split|].
       destruct (value st x) as [v|]; cbn [discovery_frozen discovery_seen map].
@@ -6523,7 +6596,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     Proof.
       intros st roots; induction roots as [|x rest IH]; intros acc Hunique;
         [exact Hunique|].
-      cbn [fold_left]; apply IH; unfold discovery_seed_one.
+      cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
       destruct (missing st x); [now apply discovery_visit_frozen_unique|exact Hunique].
     Qed.
 
@@ -6751,17 +6824,17 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     intros xs; induction xs as [|x rest IH]; intros m base.
     - time_unfold @T_fill_local; unfold c_inc; time_simpl; lia.
     - pose proof (S.T_key_code_le x) as Hcode.
-      pose proof (T_local_look_le m x) as Hlook.
+      pose proof (PTrieT.T_get_le (S.key * L.t) (S.key_code x) m) as Hget.
       pose proof (PTrieT.T_set_le (S.key * L.t) (S.key_code x)
         (x, look_or S.key_code L.bot m x) (fill_local rest m base)) as Hset.
       specialize (IH m base).
       time_unfold @T_fill_local; cbn [map fold_right].
+      fold (look_or S.key_code L.bot m x).
       change (PTrieCode.T_set (S.key_code x)
         (x, look_or S.key_code L.bot m x) (fill_local rest m base)) with
         (PTrieT.T_set (S.key_code x)
           (x, look_or S.key_code L.bot m x) (fill_local rest m base)).
-      change (T_look_or S.key_code (fun y : S.key => S.T_key_code y) L.bot m x) with
-        (T_look_or S.key_code S.T_key_code L.bot m x).
+      unfold PTrieT.T_get, PTrieCode.T_get in Hget.
       unfold c_inc, S.key_bits in *; time_simpl; time_cbn.
       rewrite !Nat2N.inj_add in *.
       nia.
@@ -7212,7 +7285,8 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     In (y, v) (discovery_frozen (discovery_visit st x acc)) ->
     In (y, v) (discovery_frozen acc) \/ y = x.
   Proof.
-    intros st acc x y v Hin; unfold discovery_visit in Hin.
+    intros st acc x y v Hin; unfold discovery_visit, discovery_visit_code in Hin;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc)); [now left|].
     destruct (value st x); cbn [discovery_frozen] in Hin;
       [|now left].
@@ -7227,10 +7301,11 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       discovery_frozen (fold_left (discovery_seed_one st) xs acc) =
         discovery_frozen acc).
     { intros xs; induction xs as [|x rest IH]; intro acc; [reflexivity|].
-      cbn [fold_left]; rewrite IH; unfold discovery_seed_one.
+      cbn [fold_left]; rewrite IH, discovery_seed_one_eq.
       destruct (missing st x) eqn:Hmissing; [|reflexivity].
       apply (proj1 (missing_spec st x)) in Hmissing.
-      unfold discovery_visit; destruct (PTrieCode.get (S.key_code x)
+      unfold discovery_visit, discovery_visit_code;
+        rewrite ?value_code_eq in *; destruct (PTrieCode.get (S.key_code x)
         (discovery_seen acc)); [reflexivity|].
       rewrite Hmissing; reflexivity. }
     rewrite Hseed; reflexivity.
@@ -7362,7 +7437,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       discovery_rows (fold_left (discovery_seed_one st) xs acc) =
         discovery_rows acc).
     { intros xs; induction xs as [|x rest IH]; intro acc; [reflexivity|].
-      cbn [fold_left]; rewrite IH; unfold discovery_seed_one.
+      cbn [fold_left]; rewrite IH, discovery_seed_one_eq.
       destruct (missing st x); [apply discovery_visit_rows_eq|reflexivity]. }
     rewrite Hseed; reflexivity.
   Qed.
@@ -7487,6 +7562,14 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     time_simpl; time_cbn; nia.
   Qed.
 
+  (** Reading with a supplied code omits the encoding cost of an ordinary value read. *)
+  Lemma T_value_code_le_value : forall st x,
+    (T_value_code (S.key_code x) x st <= T_value st x)%N.
+  Proof.
+    intros st x; unfold T_value_code, T_value, T_lookup.
+    time_simpl; time_cbn; lia.
+  Qed.
+
   Lemma T_discovery_visit_le : forall st x acc,
     (T_discovery_visit st x acc <=
       12 * (S.c_sys + PTrieT.c_trie + 1) *
@@ -7497,12 +7580,14 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     pose proof (PTrieT.T_get_le unit (S.key_code x) (discovery_seen acc)) as Hget.
     pose proof (PTrieT.T_set_le unit (S.key_code x) tt (discovery_seen acc)) as Hset.
     pose proof (T_value_small_le st x) as Hvalue.
-    unfold T_discovery_visit, PTrieCode.T_get, PTrieCode.T_set,
+    pose proof (T_value_code_le_value st x) as Hvalue_code.
+    unfold T_discovery_visit, T_discovery_visit_code, PTrieCode.T_get, PTrieCode.T_set,
       PTrieT.T_get, PTrieT.T_set, S.key_bits in *.
     change (1 + PTrieCode.T_replace (S.key_code x) (Some tt)
       (discovery_seen acc) <=
       PTrieT.c_trie * N.of_nat (Pos.size_nat (S.key_code x) + 1))%N in Hset.
     assert (Hbits : (1 <= N.of_nat (Pos.size_nat (S.key_code x) + 1))%N) by lia.
+    rewrite ?value_code_eq.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc)) as [[]|];
       destruct (value st x); time_simpl; time_cbn; nia.
   Qed.
@@ -7514,8 +7599,11 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Proof.
     intros st x acc.
     pose proof (T_value_small_le st x) as Hvalue.
+    pose proof (T_value_code_le_value st x) as Hvalue_code.
     pose proof (T_discovery_visit_le st x acc) as Hvisit.
-    unfold T_discovery_seed_one, T_missing, T_present, c_inc, S.key_bits in *.
+    unfold T_discovery_visit in Hvisit.
+    unfold T_discovery_seed_one, T_missing_code, c_inc, S.key_bits in *.
+    rewrite missing_code_eq.
     destruct (missing st x); time_simpl; time_cbn; nia.
   Qed.
 
@@ -7886,7 +7974,8 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Lemma discovery_visit_queue_perm : forall st x acc,
     discovery_queue_perm acc -> discovery_queue_perm (discovery_visit st x acc).
   Proof.
-    intros st x acc Hperm; unfold discovery_visit, discovery_queue_perm in *.
+    intros st x acc Hperm; unfold discovery_visit, discovery_visit_code, discovery_queue_perm in *;
+      rewrite ?value_code_eq in *.
     destruct (PTrieCode.get (S.key_code x) (discovery_seen acc)) as [[]|];
       [exact Hperm|].
     destruct (value st x); cbn [discovery_pending discovery_done discovery_missing];
@@ -7899,7 +7988,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Proof.
     intros st roots; induction roots as [|x rest IH]; intros acc Hperm;
       [exact Hperm|].
-    cbn [fold_left]; apply IH; unfold discovery_seed_one.
+    cbn [fold_left]; apply IH; rewrite discovery_seed_one_eq.
     destruct (missing st x); [now apply discovery_visit_queue_perm|exact Hperm].
   Qed.
 
@@ -10518,17 +10607,17 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     intros xs; induction xs as [|x rest IH]; intros m base.
     - time_unfold @T_fill_local; unfold finite_sum; time_simpl; lia.
     - pose proof (S.T_key_code_le x) as Hcode.
-      pose proof (T_local_look_le m x) as Hlook.
+      pose proof (PTrieT.T_get_le (S.key * L.t) (S.key_code x) m) as Hget.
       pose proof (PTrieT.T_set_le (S.key * L.t) (S.key_code x)
         (x, look_or S.key_code L.bot m x) (fill_local rest m base)) as Hset.
       specialize (IH m base).
       time_unfold @T_fill_local; cbn [map fold_right].
+      fold (look_or S.key_code L.bot m x).
       change (PTrieCode.T_set (S.key_code x)
         (x, look_or S.key_code L.bot m x) (fill_local rest m base)) with
         (PTrieT.T_set (S.key_code x)
           (x, look_or S.key_code L.bot m x) (fill_local rest m base)).
-      change (T_look_or S.key_code (fun y : S.key => S.T_key_code y) L.bot m x) with
-        (T_look_or S.key_code S.T_key_code L.bot m x).
+      unfold PTrieT.T_get, PTrieCode.T_get in Hget.
       unfold finite_sum, S.key_bits in *; time_simpl; time_cbn.
       rewrite !Nat2N.inj_add in *.
       nia.
