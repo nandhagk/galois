@@ -131,13 +131,28 @@ Module TarjanVisitor <: VISITOR_OPS.
     end.
   TimeFun lower.
 
-  Definition edge (kind : edge_kind) (u v : positive) (s : state) : state :=
+  Definition tarjan_edge_spec (kind : edge_kind) (u v : positive) (s : state) : state :=
     match kind with
     | Tree => s
     | _ => match trie_get v (tarjan_active s), trie_get v (tarjan_disc s) with
            | Some true, Some n => lower u n s
            | _, _ => s
            end
+    end.
+  TimeFun tarjan_edge_spec.
+
+  Definition edge (kind : edge_kind) (u v : positive) (s : state) : state :=
+    match kind with
+    | Tree => s
+    | _ =>
+      match trie_get v (tarjan_active s) with
+      | Some true =>
+        match trie_get v (tarjan_disc s) with
+        | Some n => lower u n s
+        | None => s
+        end
+      | _ => s
+      end
     end.
   TimeFun edge.
 
@@ -159,6 +174,20 @@ Module TarjanVisitor <: VISITOR_OPS.
     end.
   TimeFun leave.
 End TarjanVisitor.
+
+(** Explicitly testing active membership preserves the original callback on every state. *)
+Lemma tarjan_edge_agrees kind u v s :
+  TarjanVisitor.edge kind u v s = TarjanVisitor.tarjan_edge_spec kind u v s.
+Proof.
+  reflexivity.
+Qed.
+
+(** The original multiple match already omits the discovery read on inactive edges. *)
+Lemma tarjan_edge_clock_agrees kind u v s :
+  TarjanVisitor.T_edge kind u v s = TarjanVisitor.T_tarjan_edge_spec kind u v s.
+Proof.
+  reflexivity.
+Qed.
 
 (** Present low-link entries always refer to pending vertices; emitted blocks are nonempty. *)
 Definition tarjan_nonempty_state (s : tarjan_state) : Prop :=
