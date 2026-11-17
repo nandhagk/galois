@@ -1974,15 +1974,25 @@ Module UnionFindT <: UNION_FIND_ALL.
     rewrite Nat2N.inj_mul. nia.
   Qed.
 
+  (** Adding costs at most a constant times the key and counter widths. *)
   Lemma add_bigO : bigO (fun xu : positive * t => wf (snd xu))
     (fun xu => N.of_nat (Pos.size_nat (fst xu) + Nat.log2 (card (snd xu)) + 1))
     (fun xu => T_add (fst xu) (snd xu)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_uf. intros [x u] Hwf. cbn [fst snd] in *.
+    pose proof (T_add_le x u Hwf) as Hadd.
+    repeat rewrite Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
 
+  (** Union spends logarithmically many parent steps at the maximum key width. *)
   Lemma union_bigO : bigO (fun xyu : positive * positive * t => wf (snd xyu))
     (fun xyu => N.of_nat ((Nat.log2 (card (snd xyu) + 2) + 1) *
       (Nat.max (width (snd xyu))
         (Nat.max (Pos.size_nat (fst (fst xyu))) (Pos.size_nat (snd (fst xyu)))) + 1)))
     (fun xyu => T_union (fst (fst xyu)) (snd (fst xyu)) (snd xyu)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_uf. intros [[x y] u] Hwf. cbn [fst snd] in *.
+    pose proof (T_union_le x y u Hwf) as Hunion.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 End UnionFindT.
