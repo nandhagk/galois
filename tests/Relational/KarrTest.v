@@ -342,11 +342,12 @@ Module HavocTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** A source with repeated terms still gives the consequence on the other variables. *)
+  (** The two source rows, each with a repeated term in the variable 2 or 3. *)
   Definition duplicate_source_rows : list (lcons positive) :=
     [LCons _ [(1%positive, 1); (2%positive, 1); (2%positive, 1)] REq 0;
      LCons _ [(1%positive, 1); (3%positive, 1); (3%positive, 1)] REq 0].
 
+  (** Forgetting x keeps a consequence of the source rows whose repeated terms are merged. *)
   Example havoc_keeps_consequence_of_duplicate_terms :
     Equalities.leb (Equalities.havoc 1%positive (Reached duplicate_source_rows))
       (Reached [LCons _ [(2%positive, -2); (3%positive, 2)] REq 0]) = true.
