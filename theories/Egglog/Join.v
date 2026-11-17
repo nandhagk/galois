@@ -1620,11 +1620,17 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
     rewrite ?Nat2N.inj_add in *. nia.
   Qed.
 
+  (** The run clock is linear in charged work, scaled by index width and level scans. *)
   Lemma run_bigO : bigO (fun x : jplan * list I.t => wf_plan (fst x) (snd x))
     (fun x => N.of_nat ((work (fst x) (snd x) + length (snd x) + 2) *
       (wmax (fst x) (snd x) + 1) * ((nvars (fst x) + 1) * (nvars (fst x) + 1))))
     (fun x => T_run (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_join).
+    intros [p ixs] Hwf. cbn [fst snd] in Hwf |- *.
+    pose proof (T_run_le p ixs Hwf) as Hrun.
+    rewrite !Nat2N.inj_mul in *. nia.
+  Qed.
 
   Definition advance (p : jplan) (ixs : list I.t) (lvl : nat) (ns : list positive)
       (c : cell V.t) : option (list positive) := advance_nodes p ixs lvl ns c.
