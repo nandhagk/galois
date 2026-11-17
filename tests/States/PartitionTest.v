@@ -2,13 +2,14 @@
 
     These clients distinguish label routing, bottom parts and capped joins over integer states.
     For example, a stray skips a bottom part and widens the first live part.
-    Builds on: Partition, Env, Interval and ZLang.
 
     Groups:
     - [CoverageTests] Coverage of parts by labels.
     - [JoinTests] Joins of parts, with and without a label overflow.
     - [WideningTests] Routed widening of parts, and the widening coverage theorem.
-    - [BigOTests] The size and work bounds of the timed partition and disjunction. *)
+    - [BigOTests] The size and work bounds of the timed partition and disjunction.
+
+    Builds on: Partition, Env, Interval and ZLang. *)
 
 From Stdlib Require Import List NArith ZArith Lia.
 From Argent Require Import Time Tactics Std.
@@ -50,6 +51,8 @@ Definition two_live := Parts.fit [(Some 1%nat, point 0); (Some 2%nat, point 10)]
 (** A bottom part labelled 1 followed by a live part labelled 2 holding the point 0. *)
 Definition bottom_then_live := Parts.fit [(Some 1%nat, State.bot); (Some 2%nat, point 0)].
 
+(** * Coverage *)
+
 Module CoverageTests.
 
   (** A part under label 1 is covered by the same state under label 2. *)
@@ -60,6 +63,8 @@ Module CoverageTests.
   Qed.
 
 End CoverageTests.
+
+(** * Join *)
 
 Module JoinTests.
 
@@ -80,6 +85,8 @@ Module JoinTests.
   Qed.
 
 End JoinTests.
+
+(** * Widening *)
 
 Module WideningTests.
 
@@ -124,6 +131,8 @@ Module WideningTests.
   Qed.
 
 End WideningTests.
+
+(** * Big o *)
 
 Module BigOTests.
 

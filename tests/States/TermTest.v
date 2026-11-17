@@ -2,12 +2,13 @@
 
     Terms support nested operand lists and pointwise refinements.
     For example, refining a leaf meets its current fact with the target.
-    Builds on: Env and ValueOpenTest.
 
     Groups:
     - [EvalTests] Evaluating terms with nested operands.
     - [RefineTests] Refining a leaf from an assumed value.
-    - [TraceTests] Threading targets and environments through the operands of a node. *)
+    - [TraceTests] Threading targets and environments through the operands of a node.
+
+    Builds on: Env and ValueOpenTest. *)
 
 From Stdlib Require Import List Bool Arith ZArith.
 From Galois.Base Require Import Key Map.
@@ -83,6 +84,8 @@ Module ReverseTrace := TraceCode ReverseTargets.
 Module ForwardEnv := EnvCode NatKeyCode NatMap UnitLanguage ForwardTrace.
 Module ReverseEnv := EnvCode NatKeyCode NatMap UnitLanguage ReverseTrace.
 
+(** * Eval *)
+
 Module EvalTests.
 
   (** A nested term evaluates to the top value when every leaf is reachable. *)
@@ -97,6 +100,8 @@ Module EvalTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End EvalTests.
+
+(** * Refine *)
 
 Module RefineTests.
 
@@ -113,6 +118,8 @@ Module RefineTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End RefineTests.
+
+(** * Trace *)
 
 Module TraceTests.
 

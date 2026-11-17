@@ -2,14 +2,15 @@
 
     Bit-vector terms run through the tagged constant domain in an environment.
     For example, a nested arithmetic term evaluates to its wrapped singleton.
-    Builds on: Env, BitsLang and Tagged.
 
     Groups:
     - [AssumeTests] Guards that refine the variables of a state.
     - [EvalTests] Evaluating a term over an abstract state.
     - [RefineTests] Refining a variable from the result of a term.
     - [EqualTests] Guards on equality with a constant.
-    - [DifferTests] Guards on disequality with a constant. *)
+    - [DifferTests] Guards on disequality with a constant.
+
+    Builds on: Env, BitsLang and Tagged. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map.
@@ -43,6 +44,8 @@ Definition observe x s := match s with Unreached => TBot | Reached m => State.re
 
 (** A state that binds variable 0 to the 32-bit value z. *)
 Definition one_value z := Reached (Vars.set 0%nat (p 32 z) Vars.empty).
+
+(** * Assume *)
 
 Module AssumeTests.
 
@@ -98,6 +101,8 @@ Module AssumeTests.
 
 End AssumeTests.
 
+(** * Eval *)
+
 Module EvalTests.
 
   (** The term that multiplies variable 0 by 3 and adds 250, as eight-bit words. *)
@@ -110,6 +115,8 @@ Module EvalTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End EvalTests.
+
+(** * Refine *)
 
 Module RefineTests.
 
@@ -127,6 +134,8 @@ Module RefineTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End RefineTests.
+
+(** * Equal *)
 
 Module EqualTests.
 
@@ -156,6 +165,8 @@ Module EqualTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End EqualTests.
+
+(** * Differ *)
 
 Module DifferTests.
 

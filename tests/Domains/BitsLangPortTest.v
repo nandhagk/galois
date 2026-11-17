@@ -2,13 +2,14 @@
 
     These examples run word operations through the tagged constant harness.
     For example, adding two 32-bit singleton words yields a singleton two.
-    Builds on: BitsLang, Tagged and Harness.
 
     Groups:
     - [BridgeTests] Arithmetic on singleton words.
     - [GuardTests] Truth guards on singleton, unknown and malformed inputs.
     - [ExpressionTests] Bottom results of operations on malformed operands.
-    - [PointTests] The wrapping of constants. *)
+    - [PointTests] The wrapping of constants.
+
+    Builds on: BitsLang, Tagged and Harness. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Bits Require Import Op.

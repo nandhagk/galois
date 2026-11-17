@@ -2,12 +2,13 @@
 
     Finite support supplies collection ranks.
     For example, the three-key chain reaches the universe size.
-    Builds on: Bounded, TrieSet and Key.
 
     Groups:
     - [RankTests] Ranks and heights of clipped sets under a bounded universe.
     - [JoinTests] The order and join of clipped sets.
-    - [ClipTests] Clipping removes keys outside the universe. *)
+    - [ClipTests] Clipping removes keys outside the universe.
+
+    Builds on: Bounded, TrieSet and Key. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key TrieSet.

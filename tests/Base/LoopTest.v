@@ -2,11 +2,12 @@
 
     These examples check exhaustion and stopping for a countdown callback.
     For example, one unit of fuel decrements two to one.
-    Builds on: Loop.
 
     Groups:
     - [FuelTests] Runs that use up their fuel and return the state.
-    - [StopTests] Runs that stop early because the callback returns a result. *)
+    - [StopTests] Runs that stop early because the callback returns a result.
+
+    Builds on: Loop. *)
 
 From Stdlib Require Import NArith.
 From Galois.Base Require Import Loop.

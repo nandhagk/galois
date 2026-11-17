@@ -2,12 +2,13 @@
 
     These examples cover shared and disjoint bindings.
     For example, a callback combines values at a shared key.
-    Builds on: Trie.
 
     Groups:
     - [MergeTests] The bindings that a merge keeps, adds or drops.
     - [ForallTests] Pointwise comparison of two tries.
-    - [ComparisonTests] Equality of tries and their binding counts. *)
+    - [ComparisonTests] Equality of tries and their binding counts.
+
+    Builds on: Trie. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Trie.

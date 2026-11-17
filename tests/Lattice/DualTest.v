@@ -2,12 +2,13 @@
 
     Reversing boolean implication makes conjunction the join.
     For example, the dual bottom is true.
-    Builds on: Dual and Simple.
 
     Groups:
     - [OrderTests] The reversed order of the dual boolean lattice.
     - [JoinTests] The join and the bottom of the dual boolean lattice.
-    - [HeightTests] The height and the ranks of the dual boolean lattice. *)
+    - [HeightTests] The height and the ranks of the dual boolean lattice.
+
+    Builds on: Dual and Simple. *)
 
 From Stdlib Require Import Bool NArith.
 From Galois.Lattice Require Import Dual Simple.

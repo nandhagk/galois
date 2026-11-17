@@ -2,11 +2,12 @@
 
     Expressions normalize variables and constants and propagate argument failures.
     For example, a malformed nested application rejects its enclosing application.
-    Builds on: Word, Op and Expr.
 
     Groups:
     - [EvaluationTests] Nested applications, unbound variables and malformed arguments.
-    - [GenericTests] A second operator language that uses the same syntax. *)
+    - [GenericTests] A second operator language that uses the same syntax.
+
+    Builds on: Word, Op and Expr. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op Expr.

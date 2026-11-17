@@ -2,11 +2,12 @@
 
     These examples pin scalar layouts and key equality.
     For example, signed negative three has a different code from positive three.
-    Builds on: Key.
 
     Groups:
     - [ScalarTests] The codes of scalar values, including zero and the signs of integers.
-    - [WidthTests] The widths in bits of the scalar keys. *)
+    - [WidthTests] The widths in bits of the scalar keys.
+
+    Builds on: Key. *)
 
 From Stdlib Require Import Bool NArith ZArith.
 From Galois.Base Require Import Key.

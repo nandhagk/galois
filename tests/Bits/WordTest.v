@@ -2,13 +2,14 @@
 
     Wrapping and signed interpretation cover values on either side of the modulus.
     For example, eight-bit wrapping maps negative one to 255.
-    Builds on: Word.
 
     Groups:
     - [WrapTests] Wrapping of raw integers to one, eight and sixty-four bits.
     - [SignedTests] Signed interpretation of words at the sign-bit endpoints.
     - [ModulusTests] The modulus of a width, and its logarithm.
-    - [SymbolicTests] General facts about wrapping and signed values, for any width. *)
+    - [SymbolicTests] General facts about wrapping and signed values, for any width.
+
+    Builds on: Word. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Word.

@@ -2,12 +2,13 @@
 
     Checks inspect abstract operands at their recorded program points.
     For example, a zero interval triggers the sample check at a reached point.
-    Builds on: Alarms, Env and Interval.
 
     Groups:
     - [InvAtTests] The invariant recorded at a program point.
     - [AlarmTests] Whether one check raises an alarm.
-    - [AlarmsTests] Which checks raise alarms, and in what order. *)
+    - [AlarmsTests] Which checks raise alarms, and in what order.
+
+    Builds on: Alarms, Env and Interval. *)
 
 From Stdlib Require Import List ZArith Bool.
 From Galois.Base Require Import Key Map.
@@ -46,6 +47,8 @@ Definition absent_check := MkCheck nat zview nat unit 2%nat tt [Node (ZConst 0) 
 (** The invariants record only program point 1, with the top state. *)
 Definition invariants := NatMap.set 1%nat State.top NatMap.empty.
 
+(** * Inv at *)
+
 Module InvAtTests.
 
   (** A program point without a recorded invariant reads as the bottom state. *)
@@ -53,6 +56,8 @@ Module InvAtTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End InvAtTests.
+
+(** * Alarm *)
 
 Module AlarmTests.
 
@@ -69,6 +74,8 @@ Module AlarmTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End AlarmTests.
+
+(** * Alarms *)
 
 Module AlarmsTests.
 

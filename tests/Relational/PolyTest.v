@@ -2,7 +2,6 @@
 
     These examples exercise rational constraints, elimination and their expression wrappers.
     For example, 2*x <= 1 does not rationally entail x <= 0.
-    Builds on: Poly, LinCert, Linearize, ZLang and positive keys.
 
     Groups:
     - [CertificateTests] Certificates of entailment and their rational endpoints.
@@ -18,7 +17,9 @@
     - [BottomTests] The empty polyhedron.
     - [OrderTests] Comparing polyhedra.
     - [JoinTests] Joining and widening polyhedra.
-    - [SyntacticTests] The fast paths that avoid the elimination engine. *)
+    - [SyntacticTests] The fast paths that avoid the elimination engine.
+
+    Builds on: Poly, LinCert, Linearize, ZLang and positive keys. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key.

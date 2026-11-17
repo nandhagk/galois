@@ -2,12 +2,13 @@
 
     These fixtures distinguish width classes and exercise the accepted view interface.
     For example, positive signs are singletons at width two and ranges at width three.
-    Builds on: Sign, ZLang and Interval.
 
     Groups:
     - [SignTests] Symbolic and width-dependent comparisons of sign values.
     - [ConstantTests] The shifted constant payload and the constant table.
-    - [DispatchTests] Dispatch through the congruence and tagged tables. *)
+    - [DispatchTests] Dispatch through the congruence and tagged tables.
+
+    Builds on: Sign, ZLang and Interval. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Op Word.

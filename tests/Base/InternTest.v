@@ -2,14 +2,15 @@
 
     These fixtures cover reuse, reverse lookup and empty tables.
     For example, [2; 1; 2] uses exactly two IDs.
-    Builds on: Intern, Map and Key.
 
     Groups:
     - [LookupTests] Finding an identifier from a key, and a key from an identifier.
     - [SizeTests] The number of keys in a table and the size bounds.
     - [FrontierTests] The next identifier to allocate.
     - [GroupTests] Grouping of values by key, in input order.
-    - [AgreementTests] The lookups agree with the underlying maps. *)
+    - [AgreementTests] The lookups agree with the underlying maps.
+
+    Builds on: Intern, Map and Key. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key Map Intern Trie.

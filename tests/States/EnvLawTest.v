@@ -2,7 +2,6 @@
 
     These clients instantiate environment operations and laws over integer intervals.
     For example, two bindings describe different concrete values at their keys.
-    Builds on: Env, Interval and ZLang.
 
     Groups:
     - [InclusionTests] Inclusion of environments, with bottom and unreached states.
@@ -10,7 +9,9 @@
     - [SoundnessTests] The semantic clients of evaluation, assignment and guards.
     - [UpdateTests] Concrete replacements of a key by an update.
     - [BigOTests] Size and work bounds of the timed environment.
-    - [EmptyKeyTests] The meaning of environments over a key type without elements. *)
+    - [EmptyKeyTests] The meaning of environments over a key type without elements.
+
+    Builds on: Env, Interval and ZLang. *)
 
 From Stdlib Require Import List Bool NArith ZArith.
 From Galois.Base Require Import Key KeySig Map.
@@ -53,6 +54,8 @@ Definition bottom_mismatch_map :=
 Definition raised_point : IntEnv.t :=
   Reached (BoolMap.set true (I (Fin 2) (Fin 2))
     (BoolMap.set false (I (Fin 3) (Fin 3)) BoolMap.empty)).
+
+(** * Inclusion *)
 
 Module InclusionTests.
 
@@ -122,6 +125,8 @@ Module InclusionTests.
 
 End InclusionTests.
 
+(** * Widening *)
+
 Module WideningTests.
 
   (** The widening of an environment with itself keeps it exactly. *)
@@ -150,6 +155,8 @@ Module WideningTests.
 
 End WideningTests.
 
+(** * Soundness *)
+
 Module SoundnessTests.
 
   (** The two-variable point environment is in its own concretization. *)
@@ -177,6 +184,8 @@ Module SoundnessTests.
 
 End SoundnessTests.
 
+(** * Update *)
+
 Module UpdateTests.
 
   (** An update reads the new value at the key that it updates. *)
@@ -190,6 +199,8 @@ Module UpdateTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End UpdateTests.
+
+(** * Big o *)
 
 Module BigOTests.
 
@@ -214,6 +225,8 @@ Module BigOTests.
   Qed.
 
 End BigOTests.
+
+(** * Empty key *)
 
 (** Over a key type without elements, the bottom environment has no concretization. *)
 Module EmptyKeyTests (K : (KEY with Definition t := Empty_set)).

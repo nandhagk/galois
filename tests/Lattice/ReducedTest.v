@@ -2,12 +2,13 @@
 
     These examples check a reducer that clears the second boolean slot.
     For example, reducing [(false, true)] produces [(false, false)].
-    Builds on: Reduced and Simple.
 
     Groups:
     - [ReduceTests] The reducers, and the order that they give.
     - [JoinTests] Joins of reduced pairs, and their compatibility.
-    - [HeightTests] The rank of reduced pairs. *)
+    - [HeightTests] The rank of reduced pairs.
+
+    Builds on: Reduced and Simple. *)
 
 From Stdlib Require Import Bool.
 From Galois.Lattice Require Import Reduced Simple Product JoinWidening.

@@ -2,7 +2,6 @@
 
     These examples distinguish affine arithmetic from nonlinear or malformed syntax.
     For example, subtracting twice a second variable produces a negative coefficient.
-    Builds on: Key, IntervalSig, ZLang, LinForm and Linearize.
 
     Groups:
     - [GenericTests] Recognizing variables in the generic language.
@@ -12,7 +11,9 @@
     - [UnsignedGuardTests] Linearizing unsigned comparisons.
     - [SignedLinearTests] Linearizing signed words.
     - [SignedGuardTests] Linearizing signed comparisons.
-    - [ClockTests] The time charged for linearization. *)
+    - [ClockTests] The time charged for linearization.
+
+    Builds on: Key, IntervalSig, ZLang, LinForm and Linearize. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key.

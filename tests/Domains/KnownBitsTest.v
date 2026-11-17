@@ -2,7 +2,6 @@
 
     These examples check normalized masks, contradictory facts and closed-form arithmetic.
     For example, seven or fifteen plus one exposes uncertainty in the fourth and fifth bits.
-    Builds on: DomainsTnum and DomainsTnumArith.
 
     Groups:
     - [MaskTests] Order, equivalence and widening of raw masks.
@@ -10,7 +9,9 @@
     - [ShiftTests] Variable shifts by unknown, constant, odd and conflicting amounts.
     - [RotationTests] Variable rotations by the same kinds of amount.
     - [FlatTests] Prepared xor, negation, addition, subtraction and carry operations.
-    - [SpecificationTests] The masked operations agree with the reference operations. *)
+    - [SpecificationTests] The masked operations agree with the reference operations.
+
+    Builds on: DomainsTnum and DomainsTnumArith. *)
 
 From Stdlib Require Import ZArith Bool List.
 From Galois.Domains Require Import KnownBitsSig KnownBits BitsLang.

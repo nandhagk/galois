@@ -2,12 +2,13 @@
 
     These examples check may and must ordering and joins.
     For example, the may join contains both singleton members.
-    Builds on: Sets, TrieSet and Key.
 
     Groups:
     - [MayTests] The may lattice, where a set is above the sets it contains.
     - [MustTests] The must lattice, with an unrestricted option carrier.
-    - [EnumerationTests] Comparisons and listings of trie sets. *)
+    - [EnumerationTests] Comparisons and listings of trie sets.
+
+    Builds on: Sets, TrieSet and Key. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key TrieSet Trie.

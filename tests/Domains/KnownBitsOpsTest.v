@@ -2,14 +2,15 @@
 
     Forward and backward operations retain their source mask observations.
     For example, an unknown shift count can retain several possible bits.
-    Builds on: KnownBitsOps and KnownBitsBack.
 
     Groups:
     - [ShiftTests] Shifts with variable and negative counts.
     - [ExtractionTests] Bit extraction with known and unknown endpoints.
     - [RangeTests] Unsigned range queries and the public range contract.
     - [OperatorTests] Rotation, comparison and concatenation.
-    - [BackwardTests] Backward transfer of addition. *)
+    - [BackwardTests] Backward transfer of addition.
+
+    Builds on: KnownBitsOps and KnownBitsBack. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Op.

@@ -2,7 +2,6 @@
 
     Integer observations exercise total division, signed endpoints, counts and rotations.
     For example, signed remainder and signed modulus differ on operands of opposite signs.
-    Builds on: Word, Fun, Testbit and Arith.
 
     Groups:
     - [SignedTests] Signed endpoints at width one and width eight.
@@ -12,7 +11,9 @@
     - [ShiftTests] Shifts beyond the width.
     - [RotationTests] Rotations with cyclic amounts.
     - [CountTests] Leading zeros, trailing zeros and population counts.
-    - [BitwiseTests] Truth tables and testbit observations. *)
+    - [BitwiseTests] Truth tables and testbit observations.
+
+    Builds on: Word, Fun, Testbit and Arith. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Fun Testbit Arith.

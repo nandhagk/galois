@@ -96,6 +96,8 @@ Module OutputOrder <: SYSTEM_OPS PairOps.
 End OutputOrder.
 Module OW := WorklistCode PairOps OutputOrder P HeapCode.
 
+(** * Output order *)
+
 Module OutputOrderTests.
 
   (** After one step, the stored value at key 1 is the primary output, not a side one. *)

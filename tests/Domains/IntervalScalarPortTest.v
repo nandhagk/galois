@@ -2,7 +2,6 @@
 
     These examples exercise clipping, arithmetic and comparisons.
     For example, clipping at width one retains the interval from zero to one.
-    Builds on: IntervalOps IntervalBack BitsLang Tagged Harness WordSig ZLang.
 
     Groups:
     - [ClipTests] Clipping an interval to a word.
@@ -17,7 +16,9 @@
     - [SignedConstantTests] Signs and signed views of constant ranges.
     - [JoinMeetTests] Join and meet of scalar intervals.
     - [WideningTests] Widening and narrowing with thresholds.
-    - [ThresholdTreeTests] Threshold trees and their ranks. *)
+    - [ThresholdTreeTests] Threshold trees and their ranks.
+
+    Builds on: IntervalOps IntervalBack BitsLang Tagged Harness WordSig ZLang. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op.

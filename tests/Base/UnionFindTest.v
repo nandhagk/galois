@@ -2,13 +2,14 @@
 
     These fixtures observe representatives and path compression.
     For example, a lookup of an unknown key returns that key.
-    Builds on: UnionFind and Trie.
 
     Groups:
     - [FindTests] Representatives, unknown keys and path compression.
     - [UnionTests] Which keys share a class after a union, and the roots that a union picks.
     - [SupportTests] The keys that a forest holds, in order.
-    - [StaleSizeTests] A stored size that outlives its key, and the add that resets it. *)
+    - [StaleSizeTests] A stored size that outlives its key, and the add that resets it.
+
+    Builds on: UnionFind and Trie. *)
 
 From Stdlib Require Import List NArith Lia.
 From Galois.Base Require Import Trie UnionFind.

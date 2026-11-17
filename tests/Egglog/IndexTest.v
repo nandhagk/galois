@@ -2,14 +2,15 @@
 
     These examples exercise prefix sharing, duplicate insertion and deletion.
     For example, deleting one tuple leaves another tuple with the same first cell live.
-    Builds on: Index, Syntax and the operations-only value interface.
 
     Groups:
     - [NavigationTests] Child and degree observations of a shared prefix.
     - [InsertTests] Insertion of duplicate, shared-prefix and fresh suffixes.
     - [RemoveTests] Removal of tuples, and pruning of empty nodes and table entries.
     - [TerminalTests] The empty tuple and the mixed cell kinds.
-    - [NodeTests] Node identifiers and cached degrees. *)
+    - [NodeTests] Node identifiers and cached degrees.
+
+    Builds on: Index, Syntax and the operations-only value interface. *)
 
 From Stdlib Require Import List PArith NArith.
 From Galois.Base Require Import Trie.
@@ -42,6 +43,8 @@ Definition shared_index := RuntimeIndex.insert second_tuple
 
 (** The index after the first tuple is removed from the shared index. *)
 Definition shared_without_first := RuntimeIndex.remove first_tuple shared_index.
+
+(** * Navigation *)
 
 Module NavigationTests.
 
@@ -83,6 +86,8 @@ Module NavigationTests.
   Qed.
 
 End NavigationTests.
+
+(** * Insert *)
 
 Module InsertTests.
 
@@ -180,6 +185,8 @@ Module InsertTests.
   Qed.
 
 End InsertTests.
+
+(** * Remove *)
 
 Module RemoveTests.
 
@@ -303,6 +310,8 @@ Module RemoveTests.
 
 End RemoveTests.
 
+(** * Terminal *)
+
 Module TerminalTests.
 
   Local Open Scope positive_scope.
@@ -370,6 +379,8 @@ Module TerminalTests.
   Qed.
 
 End TerminalTests.
+
+(** * Node *)
 
 Module NodeTests.
 

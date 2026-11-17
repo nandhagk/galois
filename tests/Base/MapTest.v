@@ -2,14 +2,15 @@
 
     These fixtures observe replacement, deletion and canonical enumeration.
     For example, codes two, one and three have the trie traversal order.
-    Builds on: Map and Key.
 
     Groups:
     - [LookupTests] Reading values of a map, present or absent.
     - [UpdateTests] Adding and removing keys.
     - [EnumerationTests] The order and the content of the elements of a map.
     - [ComparisonTests] Equality of a map with itself.
-    - [CollisionTests] Maps whose keys share one encoded code, or whose storage is malformed. *)
+    - [CollisionTests] Maps whose keys share one encoded code, or whose storage is malformed.
+
+    Builds on: Map and Key. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key Map Trie.

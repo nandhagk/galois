@@ -2,7 +2,6 @@
 
     These examples exercise normalization, arithmetic and CRT intersection.
     For example, the intersection of 1 modulo 4 and 3 modulo 6 is 9 modulo 12.
-    Builds on: Congruence.
 
     Groups:
     - [NormalizationTests] Reducing a congruence class to its normal residue.
@@ -18,7 +17,9 @@
     - [ForwardEntryTests] Forward entries of the transfer table.
     - [OneBitTests] Forward entries at width one.
     - [EmptyOperandTests] Empty operands give empty classes.
-    - [MalformedTests] Operand lists of the wrong length. *)
+    - [MalformedTests] Operand lists of the wrong length.
+
+    Builds on: Congruence. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op.

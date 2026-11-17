@@ -2,11 +2,12 @@
 
     These examples check equality of composite encoded keys.
     For example, reversing distinct pair components changes their keys.
-    Builds on: Key and Code.
 
     Groups:
     - [PairTests] Codes of pairs, which change when the components are reversed.
-    - [SumTests] Codes of sums, which change with the tag of the value. *)
+    - [SumTests] Codes of sums, which change with the tag of the value.
+
+    Builds on: Key and Code. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key Code.

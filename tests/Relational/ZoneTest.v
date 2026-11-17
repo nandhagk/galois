@@ -2,7 +2,6 @@
 
     These examples exercise code on finite difference constraints and malformed stored labels.
     For example, closure composes bounds three and four into an upper bound seven.
-    Builds on: Zone, trie maps and the integer language.
 
     Groups:
     - [ConstraintTests] Inserting bounds into a zone and reading empty rows.
@@ -11,7 +10,9 @@
     - [RangeTests] Reading the interval of an affine form.
     - [AssumeTests] Adding the constraints of a guard.
     - [AssignTests] Assigning affine forms and word forms.
-    - [AssignClosedTests] Assignments on closed and widened fixtures. *)
+    - [AssignClosedTests] Assignments on closed and widened fixtures.
+
+    Builds on: Zone, trie maps and the integer language. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map Trie.

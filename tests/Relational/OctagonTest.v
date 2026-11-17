@@ -2,7 +2,6 @@
 
     These examples observe the code tower on small signed difference matrices.
     For example, tightening a bound preserves the stronger bound already stored.
-    Builds on: Octagon, keyed trie maps and the integer language.
 
     Groups:
     - [CoherenceTests] Whether a signed matrix is symmetric and well formed.
@@ -14,7 +13,9 @@
     - [RangeTests] The bounds of an affine form.
     - [AssignTests] Assigning affine forms to a variable.
     - [AgreeTests] The fast assignment paths against their specifications.
-    - [OddEntriesTests] Strong closure on a matrix with an odd unary entry. *)
+    - [OddEntriesTests] Strong closure on a matrix with an odd unary entry.
+
+    Builds on: Octagon, keyed trie maps and the integer language. *)
 
 From Stdlib Require Import List ZArith Lia.
 From Galois.Base Require Import Key Map Trie.

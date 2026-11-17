@@ -2,13 +2,14 @@
 
     These clients exercise a flat boolean value paired with a boolean fact.
     For example, joining unequal known values produces a flat top coordinate.
-    Builds on: Product, Flat and Simple.
 
     Groups:
     - [PairTests] Pairs of flat and boolean coordinates, with their order and join.
     - [UnitPairTests] Pairs of a boolean and a unit coordinate.
     - [BoolPairTests] Pairs of two boolean coordinates, incomparable ones included.
-    - [MeasureTests] Heights and ranks of the product lattices. *)
+    - [MeasureTests] Heights and ranks of the product lattices.
+
+    Builds on: Product, Flat and Simple. *)
 
 From Stdlib Require Import Bool NArith List.
 From Galois.Base Require Import Key.

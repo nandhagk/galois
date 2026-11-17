@@ -2,13 +2,14 @@
 
     Capped joins combine flat alternatives.
     For example, cap one collapses incomparable values to top.
-    Builds on: Disjunction, Flat and Key.
 
     Groups:
     - [CapTests] Clipping and joining under caps of zero, one and two.
     - [OrderTests] The order of disjunctions, including its least elements.
     - [BottomTests] Testing for the bottom disjunction.
-    - [BoundTests] The time bounds of inclusion, join, bottom test and clipping. *)
+    - [BoundTests] The time bounds of inclusion, join, bottom test and clipping.
+
+    Builds on: Disjunction, Flat and Key. *)
 
 From Stdlib Require Import List Bool NArith.
 From Galois.Base Require Import Key.

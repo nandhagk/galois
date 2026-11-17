@@ -2,13 +2,14 @@
 
     These examples check comparison refinement and half-infinite arithmetic.
     For example, x < 10 bounds x above by 9.
-    Builds on: Interval, ZLang and Thresholds.
 
     Groups:
     - [GuardTests] Comparisons narrow or empty their operands.
     - [ArithmeticTests] Adding or subtracting a constant shifts a half-infinite range.
     - [ShiftTests] Left shifts below and beyond the shift cutoff.
-    - [SignedSplitTests] Splitting an interval at the sign boundary. *)
+    - [SignedSplitTests] Splitting an interval at the sign boundary.
+
+    Builds on: Interval, ZLang and Thresholds. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Domains Require Import ValueSig IntervalSig Thresholds ZLang Interval.

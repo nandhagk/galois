@@ -2,14 +2,15 @@
 
     These examples exercise annihilators, inverses and numeric expressions.
     For example, assuming x + 3 = 7 refines x to 4.
-    Builds on: Const and Tagged.
 
     Groups:
     - [RawPayloadTests] A raw constant payload keeps its integer outside the width.
     - [ForwardTests] Forward transfers on constant operands.
     - [AnnihilatorTests] Zero and maximum operands fix the result of an operation.
     - [TaggedTests] Tagged operands of mismatched widths.
-    - [InverseTests] Backward transfers from a known result. *)
+    - [InverseTests] Backward transfers from a known result.
+
+    Builds on: Const and Tagged. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op Expr.

@@ -2,14 +2,15 @@
 
     Construction sorts and removes repeated thresholds before building a balanced tree.
     For example, a search around four in thresholds zero and eight returns those bounds.
-    Builds on: Thresholds.
 
     Groups:
     - [ConstructionTests] Building a tree from an unsorted list, with duplicates and edge sizes.
     - [SearchTests] The nearest threshold below and above a value.
     - [DepthTests] The depth of a tree built from a thousand thresholds.
     - [PreparationTests] Sorting and removing repeats before construction.
-    - [LargeSetTests] Searches in a thousand and in a hundred and one thresholds. *)
+    - [LargeSetTests] Searches in a thousand and in a hundred and one thresholds.
+
+    Builds on: Thresholds. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Domains Require Import Thresholds ThresholdsSig.

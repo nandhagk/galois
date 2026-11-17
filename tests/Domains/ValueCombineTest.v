@@ -2,12 +2,13 @@
 
     Product abstractions combine facts from their components.
     For example, a reducer can replace a product transfer result.
-    Builds on: Product, Reduced and ValueOpenTest.
 
     Groups:
     - [ProductTests] Forward, guard and reduced transfers of a product of reachability domains.
     - [ReducedIdentityTests] Reduced transfers with a reducer that keeps its input.
-    - [JoinTests] Left folds of joins over lists, with weak and ordered joins. *)
+    - [JoinTests] Left folds of joins over lists, with weak and ordered joins.
+
+    Builds on: Product, Reduced and ValueOpenTest. *)
 
 From Stdlib Require Import List Bool.
 From Galois.Domains Require Import Product Reduced.
@@ -24,6 +25,8 @@ Module OneRound.
   Definition rounds := 1%nat.
 End OneRound.
 Module ReachReduced := ReducedCode UnitLanguage ReachCode ReachCode FixtureReducer OneRound.
+
+(** * Product *)
 
 Module ProductTests.
 
@@ -85,6 +88,8 @@ End IdentityReducer.
 Module ReachIdentity :=
   ReducedCode UnitLanguage ReachCode HeadReachCode IdentityReducer OneRound.
 
+(** * Reduced identity *)
+
 Module ReducedIdentityTests.
 
   (** A non-bottom first operand keeps the reduced forward result. *)
@@ -140,6 +145,8 @@ Definition join_all {A} (bot : A) (join : A -> A -> A) (xs : list A) :=
   | [] => bot
   | x :: rest => fold_left join rest x
   end.
+
+(** * Join *)
 
 Module JoinTests.
 

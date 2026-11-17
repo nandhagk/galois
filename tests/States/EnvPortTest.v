@@ -2,7 +2,6 @@
 
     Integer points exercise assignment, refinement and the top-default boundary.
     For example, copying a variable retains its point and havoc gives top.
-    Builds on: Env and Const.
 
     Groups:
     - [AssignTests] Assignment and havoc of one variable.
@@ -12,7 +11,9 @@
     - [WideningTests] Widening over three iterations.
     - [NarrowTests] Narrowing against a candidate with a stored bottom.
     - [BoundaryTests] The order on a value domain whose top is not the greatest element.
-    - [PointTests] Meets and tops of the point domain. *)
+    - [PointTests] Meets and tops of the point domain.
+
+    Builds on: Env and Const. *)
 
 From Stdlib Require Import List Bool ZArith.
 From Galois.Base Require Import Key Map.
@@ -63,6 +64,8 @@ Definition stored (xs : list (bool * Points.t)) : E.t :=
 (** The value of variable x in an environment, or bottom when unreached. *)
 Definition get x (s : E.t) := match s with Unreached => FBot | Reached m => E.read m x end.
 
+(** * Assign *)
+
 Module AssignTests.
 
   (** Assigning a constant gives the variable that constant. *)
@@ -85,6 +88,8 @@ Module AssignTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End AssignTests.
+
+(** * Assume *)
 
 Module AssumeTests.
 
@@ -127,6 +132,8 @@ Module AssumeTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End AssumeTests.
+
+(** * Trace *)
 
 Module TraceTests.
 
@@ -191,6 +198,8 @@ Module TraceTests.
 
 End TraceTests.
 
+(** * Join *)
+
 Module JoinTests.
 
   (** The join of two environments that bind different keys. *)
@@ -234,6 +243,8 @@ Module JoinTests.
 
 End JoinTests.
 
+(** * Widening *)
+
 Module WideningTests.
 
   (** The environment after the first widening from bottom. *)
@@ -259,6 +270,8 @@ Module WideningTests.
 
 End WideningTests.
 
+(** * Narrow *)
+
 Module NarrowTests.
 
   (** The candidate environment, with a stored bottom for variable false. *)
@@ -271,6 +284,8 @@ Module NarrowTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End NarrowTests.
+
+(** * Boundary *)
 
 Module BoundaryTests.
 
@@ -329,6 +344,8 @@ Module BoundaryTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End BoundaryTests.
+
+(** * Point *)
 
 Module PointTests.
 

@@ -2,12 +2,13 @@
 
     These examples check fresh variables, literal children and shared node references.
     For example, [f(x) = x] compiles to one query and one identifier union.
-    Builds on: Compile, Egraph syntax and the operations-only value interface.
 
     Groups:
     - [RewriteTests] A rewrite compiles to a query and the unions of its right side.
     - [ConditionTests] A condition takes fresh variables after the left side's nodes.
-    - [AnalysisTests] Compiling a program keeps its analysis rules. *)
+    - [AnalysisTests] Compiling a program keeps its analysis rules.
+
+    Builds on: Compile, Egraph syntax and the operations-only value interface. *)
 
 From Stdlib Require Import List PArith.
 From Galois.Egglog Require Import ValueSig Syntax.
@@ -31,6 +32,8 @@ Module Compiler := CompileCode CompileValue.
 Definition erase_wrapper : rewrite positive :=
   Rewrite positive (FPat positive [PHole 1%positive; PApp 2%positive [0]] 1)
     (FPat positive [PHole 1%positive] 0) [].
+
+(** * Rewrite *)
 
 Module RewriteTests.
 
@@ -78,6 +81,8 @@ Module RewriteTests.
 
 End RewriteTests.
 
+(** * Condition *)
+
 Module ConditionTests.
 
   Local Open Scope positive_scope.
@@ -104,6 +109,8 @@ Module ConditionTests.
   Qed.
 
 End ConditionTests.
+
+(** * Analysis *)
 
 Module AnalysisTests.
 

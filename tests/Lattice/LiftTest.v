@@ -2,12 +2,13 @@
 
     Unknown absorbs joins and lies above every known element.
     For example, joining Unknown with Elem false gives Unknown.
-    Builds on: WithTop and Simple.
 
     Groups:
     - [JoinTests] Joins with the top element, and the bottom.
     - [OrderTests] The order of the top element against a known value.
-    - [RankTests] The heights and the ranks of the lifted lattice. *)
+    - [RankTests] The heights and the ranks of the lifted lattice.
+
+    Builds on: WithTop and Simple. *)
 
 From Stdlib Require Import NArith.
 From Galois.Lattice Require Import WithTop Simple JoinWidening.

@@ -2,7 +2,6 @@
 
     These examples exercise elimination, affine hulls and raw coefficient normalization.
     For example, the hull of (0, 0) and (1, 1) retains x = y.
-    Builds on: Key, ZLang, Linearize, LinCert and Karr.
 
     Groups:
     - [DivideTests] Dividing a row exactly by a weight.
@@ -20,7 +19,9 @@
     - [RangeTests] The bounds of an affine form.
     - [SharedBasisTests] Entailment checked against a shared basis.
     - [WidenTests] Widening keeps equivalent systems.
-    - [FusedBasisTests] Fraction-free rows kept and projected in one pass. *)
+    - [FusedBasisTests] Fraction-free rows kept and projected in one pass.
+
+    Builds on: Key, ZLang, Linearize, LinCert and Karr. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key.

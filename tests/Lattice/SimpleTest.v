@@ -2,12 +2,13 @@
 
     These examples check boolean and unit lattice operations and lifted bottom.
     For example, [Some false] lies above [None].
-    Builds on: Simple and WithBot.
 
     Groups:
     - [BooleanTests] The boolean lattice, its order, join and widening.
     - [UnitTests] The unit lattice.
-    - [LiftTests] The lifted boolean lattice with a fresh bottom, and its heights. *)
+    - [LiftTests] The lifted boolean lattice with a fresh bottom, and its heights.
+
+    Builds on: Simple and WithBot. *)
 
 From Stdlib Require Import Bool List.
 From Galois.Lattice Require Import Simple WithBot JoinWidening.

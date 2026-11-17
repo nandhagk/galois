@@ -2,7 +2,6 @@
 
     Independent concrete enumeration checks the audit's two five-bit multiplier witnesses.
     For example, three times {6,7} has concrete results {18,21}.
-    Builds on: DomainsTnumMul and public Bits arithmetic.
 
     Groups:
     - [ProductTests] Sparse, constant and conflicting products of the short-stage masks.
@@ -11,7 +10,9 @@
     - [EdgeTests] Zero, conflicting, one-bit, odd-width and wrapped operands.
     - [StagedRuleTests] The carry, normalization and low-bit rules of the staged loops.
     - [RawMaskTests] Equivalent raw masks, and the gamma and product controls on them.
-    - [SharedLowTests] The low multiplier agrees with the public specification. *)
+    - [SharedLowTests] The low multiplier agrees with the public specification.
+
+    Builds on: DomainsTnumMul and public Bits arithmetic. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Word Fun.

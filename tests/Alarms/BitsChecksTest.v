@@ -2,13 +2,14 @@
 
     Checks use range endpoints to decide whether an error is possible.
     For example, a positive divisor range excludes division by zero.
-    Builds on: BitsChecks and the constant value domain.
 
     Groups:
     - [DivZeroTests] Division by a divisor range that may be zero.
     - [BoundsTests] An index checked against an array bound.
     - [NullDerefTests] A dereference of a pointer of unknown value.
-    - [OverflowTests] Sums and products checked against their word width. *)
+    - [OverflowTests] Sums and products checked against their word width.
+
+    Builds on: BitsChecks and the constant value domain. *)
 
 From Stdlib Require Import List ZArith Bool.
 From Galois.Bits Require Import Word Op.
@@ -40,6 +41,8 @@ Module Width.
 End Width.
 Module Checks := BitsChecksCode Values Range Range Width.
 
+(** * Div zero *)
+
 Module DivZeroTests.
 
   (** A divisor range that excludes zero raises no division alarm. *)
@@ -52,6 +55,8 @@ Module DivZeroTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End DivZeroTests.
+
+(** * Bounds *)
 
 Module BoundsTests.
 
@@ -67,6 +72,8 @@ Module BoundsTests.
 
 End BoundsTests.
 
+(** * Null deref *)
+
 Module NullDerefTests.
 
   (** A pointer of unknown value may be null, so it raises an alarm. *)
@@ -74,6 +81,8 @@ Module NullDerefTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End NullDerefTests.
+
+(** * Overflow *)
 
 Module OverflowTests.
 

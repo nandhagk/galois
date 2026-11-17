@@ -2,7 +2,6 @@
 
     Operators validate dynamic words before evaluating arithmetic and width changes.
     For example, unequal widths reject addition and concatenation accepts them.
-    Builds on: Word, Fun, Op and BaseEncoding.
 
     Groups:
     - [RawTests] Sixty-four-bit operands outside the normalized range.
@@ -13,7 +12,9 @@
     - [RejectionTests] Operand lists of the wrong length or with widths that do not fit.
     - [CountTests] Leading zeros, trailing zeros and population counts.
     - [CodeTests] The operator encodings and the distinctness of their tags.
-    - [SymbolicTests] Width checks and value formulas for any operand width. *)
+    - [SymbolicTests] Width checks and value formulas for any operand width.
+
+    Builds on: Word, Fun, Op and BaseEncoding. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Word Fun Op.

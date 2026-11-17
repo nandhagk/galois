@@ -2,14 +2,15 @@
 
     These examples exercise raw coefficients, admissible weights and integer cuts.
     For example, a rational contradiction accepts a conclusion even at zero scale.
-    Builds on: Key, LinForm, LinCertSig and LinCert.
 
     Groups:
     - [CombineTests] Building a row from a list of weights.
     - [EntailTests] Checking a certificate against a conclusion.
     - [EmptyTests] Whether the rows of a system have a model.
     - [ContradictionTests] Accepting any conclusion from an inconsistent system.
-    - [CutTests] Rounding the bounds of an integer certificate. *)
+    - [CutTests] Rounding the bounds of an integer certificate.
+
+    Builds on: Key, LinForm, LinCertSig and LinCert. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key.

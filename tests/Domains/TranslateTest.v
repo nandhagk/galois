@@ -2,10 +2,11 @@
 
     A language morphism lets a value abstraction run under a source language.
     For example, renaming a value abstraction keeps its operator result.
-    Builds on: Translate and ValueOpenTest.
 
     Groups:
-    - [RenamingTests] The translated value abstraction keeps the forward result. *)
+    - [RenamingTests] The translated value abstraction keeps the forward result.
+
+    Builds on: Translate and ValueOpenTest. *)
 
 From Stdlib Require Import List Bool Arith ZArith.
 From Galois.Domains Require Import Translate.

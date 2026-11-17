@@ -181,6 +181,8 @@ Module ExhaustedA := CertifiedCode BoolOps Rows Exhausted C N.
 Module RejectedA := CertifiedCode BoolOps Rows RejectedSource C N.
 Module ProducerA := CertifiedCode BoolOps Rows Producer C N.
 
+(** * Wrapper *)
+
 Module WrapperTests.
 
   (** A source that runs out of fuel makes the wrapper report OutOfFuel. *)

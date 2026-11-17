@@ -2,12 +2,13 @@
 
     Reducers exchange facts between tagged word payloads.
     For example, known low bits can refine an interval after a second exchange.
-    Builds on: Reducers and the concrete word domains.
 
     Groups:
     - [ReductionTests] Pairwise reduction of wrapped, congruence and known-bit payloads.
     - [CertifiedTests] The certified wrapped-bits factory and the pins that check it.
-    - [ClippingTests] The clipped interval reduced against a congruence. *)
+    - [ClippingTests] The clipped interval reduced against a congruence.
+
+    Builds on: Reducers and the concrete word domains. *)
 
 From Stdlib Require Import NArith ZArith Lia Bool List.
 From Argent Require Import Time Tactics Std.

@@ -2,13 +2,14 @@
 
     Extraction offsets must be bounded before the table evaluates their arithmetic.
     For example, a one-bit operand cannot supply a bit at offset eight.
-    Builds on: KnownBitsOps and the generated word-operation clocks.
 
     Groups:
     - [ClockTests] Lower bounds on the time of unchecked extraction.
     - [ExtractionTests] Forward and backward extraction, inside and outside the operand width.
     - [BackwardTests] Backward transfers of bitwise, projection, order, negation and shifts.
-    - [RotationTests] Backward rotations at several widths. *)
+    - [RotationTests] Backward rotations at several widths.
+
+    Builds on: KnownBitsOps and the generated word-operation clocks. *)
 
 From Stdlib Require Import ZArith NArith List Lia.
 From Argent Require Import Time Tactics Std.
@@ -58,6 +59,8 @@ Proof.
   time_unfold RawClocks.T_tnum_forward_raw. time_cbn.
   time_unfold T_tnum_map. time_cbn. lia.
 Qed.
+
+(** * Clock *)
 
 Module ClockTests.
 

@@ -2,14 +2,15 @@
 
     Consecutive variables preserve operand order and extensions preserve low bits.
     For example, subtraction through variables zero and one retains their order.
-    Builds on: Word, Op, Expr and Bridge.
 
     Groups:
     - [ApplicationTests] Applying an operator to the consecutive variables of its arity.
     - [ExtensionTests] Zero and sign extension of words.
     - [TruncationTests] Truncation after extension and after an overflowing sum.
     - [ConcatTests] The high and low parts of a concatenation, and reversed extraction bounds.
-    - [SecondLanguageTests] A bridge into a second operator language with its own values. *)
+    - [SecondLanguageTests] A bridge into a second operator language with its own values.
+
+    Builds on: Word, Op, Expr and Bridge. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op Expr Bridge.

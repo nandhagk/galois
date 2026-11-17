@@ -2,12 +2,13 @@
 
     These examples exercise the executable tagged-value helpers used by the budget.
     For example, untagging rejects a value without a concrete width.
-    Builds on: EnvBudgetSig.
 
     Groups:
     - [UntagTests] Reading a list of tagged values back as concrete pairs.
     - [BinaryTests] Combining two tagged values with a payload function.
-    - [IntersectionTests] Intersecting two tagged values. *)
+    - [IntersectionTests] Intersecting two tagged values.
+
+    Builds on: EnvBudgetSig. *)
 
 From Stdlib Require Import List Arith PArith.
 From Galois.Domains Require Import WordSig.
@@ -21,6 +22,8 @@ Definition zero_payload (_ : positive) (n : nat) := Nat.eqb n 0.
 
 (** The payload combination that adds two numbers. *)
 Definition add_payload (_ : positive) := Nat.add.
+
+(** * Untag *)
 
 Module UntagTests.
 
@@ -36,6 +39,8 @@ Module UntagTests.
 
 End UntagTests.
 
+(** * Binary *)
+
 Module BinaryTests.
 
   (** Two values of the same width combine into one value of that width. *)
@@ -50,6 +55,8 @@ Module BinaryTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End BinaryTests.
+
+(** * Intersection *)
 
 Module IntersectionTests.
 

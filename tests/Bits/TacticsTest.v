@@ -2,11 +2,12 @@
 
     The default hook solves bitwise cases and leaves all other operators to the client.
     For example, the client handles every remaining operator through a non-bitwise witness.
-    Builds on: Op and Tactics.
 
     Groups:
     - [DefaultTests] The cases that the operator and kind tactics leave to the client.
-    - [WidthTests] The result widths that the operator checks give. *)
+    - [WidthTests] The result widths that the operator checks give.
+
+    Builds on: Op and Tactics. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Op Tactics.

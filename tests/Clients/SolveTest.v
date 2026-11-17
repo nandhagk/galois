@@ -2,11 +2,12 @@
 
     Both pointer clients preserve seed rows and propagate an address through a copy constraint.
     For example, copying pointer one to pointer three transfers address ten without address twenty.
-    Builds on: the relational code tower and the Andersen and Steensgaard clients.
 
     Groups:
     - [SeedTests] The seed database keeps the three input rows of each client.
-    - [SolveTests] Saturation copies an address through a copy constraint. *)
+    - [SolveTests] Saturation copies an address through a copy constraint.
+
+    Builds on: the relational code tower and the Andersen and Steensgaard clients. *)
 
 From Stdlib Require Import List PArith NArith Bool.
 From Galois.Base Require Import Key.
@@ -36,6 +37,8 @@ Definition solve_input : pointer_input :=
 
 (** Saturation stops after at most 10 iterations and allocates at most 100 identifiers. *)
 Definition solve_limits : limits := Limits 10 100.
+
+(** * Seed *)
 
 Module SeedTests.
 
@@ -67,6 +70,8 @@ Module SeedTests.
   Qed.
 
 End SeedTests.
+
+(** * Solve *)
 
 Module SolveTests.
 

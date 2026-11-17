@@ -2,11 +2,12 @@
 
     These clients instantiate product and translated domain laws over integer intervals.
     For example, a product forward result describes each concrete evaluation result.
-    Builds on: Product, Translate and Interval.
 
     Groups:
     - [ProductTests] The forward and guard laws of a product of two interval domains.
-    - [TranslationTests] The translated forward law under the identity language. *)
+    - [TranslationTests] The translated forward law under the identity language.
+
+    Builds on: Product, Translate and Interval. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Domains Require Import LangSig ValueSig Product Translate Interval Thresholds ZLang.

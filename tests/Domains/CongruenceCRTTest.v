@@ -2,13 +2,14 @@
 
     These fixtures compare the first-order CRT loop with the standard library.
     For example, signed inputs keep the same ordered Bezout coefficients.
-    Builds on: Congruence and BitsLang.
 
     Groups:
     - [ExtgcdTests] The extended gcd agrees with the standard library.
     - [CombineTests] The CRT combination agrees with the standard library.
     - [MeetTests] Meet and narrow agree with a reference on congruence classes.
-    - [DivisionTests] Aligned division agrees with Euclidean division. *)
+    - [DivisionTests] Aligned division agrees with Euclidean division.
+
+    Builds on: Congruence and BitsLang. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Domains Require Import Congruence CongruenceSig BitsLang.

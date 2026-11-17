@@ -2,12 +2,13 @@
 
     Flat booleans distinguish two incomparable known values.
     For example, their join is top even though neither covers the other.
-    Builds on: Flat.
 
     Groups:
     - [JoinTests] Joins of known, bottom and top values.
     - [OrderTests] The order of known values.
-    - [RankTests] The rank of each level of the flat lattice. *)
+    - [RankTests] The rank of each level of the flat lattice.
+
+    Builds on: Flat. *)
 
 From Stdlib Require Import Bool NArith.
 From Galois.Base Require Import Key.

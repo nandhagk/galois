@@ -2,12 +2,13 @@
 
     These fixtures cover duplicate keys, set operations and empty input.
     For example, removing a singleton's member empties it.
-    Builds on: TrieSet and Key.
 
     Groups:
     - [MembershipTests] Members, non-members and the listing of a set.
     - [OperationTests] Union, intersection and difference, including the empty sets.
-    - [EqualityTests] Equality of sets with shared and one-sided members. *)
+    - [EqualityTests] Equality of sets with shared and one-sided members.
+
+    Builds on: TrieSet and Key. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key TrieSet Trie.

@@ -2,12 +2,13 @@
 
     Mining collects nested literals and expands their neighbors.
     For example, literal four contributes three, four and five.
-    Builds on: Mining, ZLang and Thresholds.
 
     Groups:
     - [LiteralTests] Collecting the literals of a term, and the linear bound on it.
     - [NeighborTests] The thresholds that mining produces around the literals.
-    - [BoundTests] The time bound of mining, composed from its parts. *)
+    - [BoundTests] The time bound of mining, composed from its parts.
+
+    Builds on: Mining, ZLang and Thresholds. *)
 
 From Stdlib Require Import List ZArith NArith.
 From Argent Require Import Std.

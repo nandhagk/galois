@@ -2,14 +2,15 @@
 
     These examples check raw endpoints and word boundary clipping.
     For example, clipping an unbounded interval at width one gives [0, 1].
-    Builds on: Interval, IntervalOps, Thresholds and ZLang.
 
     Groups:
     - [ClippingTests] Clipping a raw interval to a word keeps or changes its representation.
     - [RankTests] The rank of an interval with an infinite endpoint.
     - [PayloadWideningTests] Widening payloads at word boundaries and thresholds.
     - [PayloadBoundsTests] Raw intervals outside the word range act as bottom.
-    - [ShiftTests] Shifts with negative or ordered endpoints. *)
+    - [ShiftTests] Shifts with negative or ordered endpoints.
+
+    Builds on: Interval, IntervalOps, Thresholds and ZLang. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Domains Require Import ValueSig IntervalSig Interval IntervalOps IntervalBack BitsLang

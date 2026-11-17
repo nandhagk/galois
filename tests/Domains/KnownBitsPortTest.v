@@ -2,7 +2,6 @@
 
     Known-bit transfers run through the shared tagged word harness.
     For example, a variable shift joins the possible bit positions.
-    Builds on: KnownBitsBack, Tagged and Harness.
 
     Groups:
     - [ForwardTests] Forward transfers of operations, with their widths and conflicts.
@@ -13,7 +12,9 @@
     - [MultiplierTests] The staged multiplier against the low multiplier on the same inputs.
     - [PayloadTests] The direct payload computations of the low and staged modules.
     - [SymbolicTests] The extraction and rotation facts for every width and value.
-    - [TableTests] The public table of the harness on shifted concatenation. *)
+    - [TableTests] The public table of the harness on shifted concatenation.
+
+    Builds on: KnownBitsBack, Tagged and Harness. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
 From Galois.Bits Require Import Word Op Fun.

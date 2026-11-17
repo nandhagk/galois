@@ -2,7 +2,6 @@
 
     These examples cover normalization, joins and expanding widening.
     For example, the arc from 250 to 3 crosses zero at width eight.
-    Builds on: Wrapped and BitsLang.
 
     Groups:
     - [NormalizationTests] The size and the normal form of circular arcs.
@@ -13,7 +12,9 @@
     - [MultiplicationTests] Products of arcs at width eight and at width sixty-four.
     - [DivisionTests] Unsigned division by zero.
     - [RankTests] The rank that decreases along widening.
-    - [MeetTests] The meet of two arcs against its right operand. *)
+    - [MeetTests] The meet of two arcs against its right operand.
+
+    Builds on: Wrapped and BitsLang. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Domains Require Import WrappedSig Wrapped BitsLang.
@@ -130,6 +131,8 @@ Definition wrapped_mask_observation (w : positive) (a b : wrapped) :=
 Definition same_at_both_widths (a b : wrapped) (expected : bool * wrapped * wrapped * wrapped)
   : Prop :=
   Forall (fun w => wrapped_mask_observation w a b = expected) [8%positive; 64%positive].
+
+(** * Mask *)
 
 Module MaskTests.
 

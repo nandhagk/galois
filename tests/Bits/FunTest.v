@@ -2,7 +2,6 @@
 
     These computations cover division, shifts and population counts at boundaries.
     For example, division by zero yields the all-ones word.
-    Builds on: Fun.
 
     Groups:
     - [RawTests] Operations on raw sixty-four-bit operands that are out of range.
@@ -13,7 +12,9 @@
     - [PopcountTests] Population counts, and the steps of the digit traversal.
     - [OperationTests] Division by zero, shifts by the width and population counts at fixed widths.
     - [WidthOneTests] Negation, signed value and bit counts at width one.
-    - [SymbolicTests] General facts about the operations, for any width. *)
+    - [SymbolicTests] General facts about the operations, for any width.
+
+    Builds on: Fun. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Word Fun.

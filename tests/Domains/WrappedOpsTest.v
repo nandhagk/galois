@@ -2,12 +2,13 @@
 
     Circular transfers split operands at numeric poles before evaluation.
     For example, signed division can produce an arc that crosses zero.
-    Builds on: WrappedOps and BitsLang.
 
     Groups:
     - [ForwardTests] Forward transfers of masks, division, truncation and extension.
     - [BackwardTests] Backward transfers that assume a comparison or an addition.
-    - [RangeTests] The unsigned range of a tagged value. *)
+    - [RangeTests] The unsigned range of a tagged value.
+
+    Builds on: WrappedOps and BitsLang. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Op.

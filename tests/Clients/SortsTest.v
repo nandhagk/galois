@@ -2,13 +2,16 @@
 
     The sort checker accepts the pointer analysis programs.
     For example, the inclusion rules use bound value variables in their actions.
-    Builds on: Egglog sorts and the pointer analysis signatures.
 
     Groups:
-    - [ProgramTests] The inclusion and unification programs are well sorted. *)
+    - [ProgramTests] The inclusion and unification programs are well sorted.
+
+    Builds on: Egglog sorts and the pointer analysis signatures. *)
 
 From Galois.Egglog Require Import Sorts.
 From Galois.Clients Require Import AndersenSig SteensgaardSig.
+
+(** * Program *)
 
 Module ProgramTests.
 

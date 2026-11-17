@@ -2,12 +2,13 @@
 
     These examples check deep paths, absent keys and canonical collapse.
     For example, removing the only binding returns the empty constructor.
-    Builds on: PTrieCode.
 
     Groups:
     - [LookupTests] Reading keys from a trie, present or absent.
     - [UpdateTests] Setting a key, present or absent, and removing one.
-    - [ForallTests] Pairwise comparison of two tries. *)
+    - [ForallTests] Pairwise comparison of two tries.
+
+    Builds on: PTrieCode. *)
 
 From Stdlib Require Import NArith.
 From Galois.Base Require Import Trie.

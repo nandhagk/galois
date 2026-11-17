@@ -2,12 +2,13 @@
 
     These fixtures distinguish numeric code ties, strict decreases and empty pop.
     For example, equal-priority codes one and two pop in that numeric order.
-    Builds on: Heap and Key.
 
     Groups:
     - [PopTests] Which entry pop returns, and what an empty heap gives.
     - [PushTests] How a later push changes the priority of an entry.
-    - [EntryTests] The order in which the entries of a heap are listed. *)
+    - [EntryTests] The order in which the entries of a heap are listed.
+
+    Builds on: Heap and Key. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Trie Heap.

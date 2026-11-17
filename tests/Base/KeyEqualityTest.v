@@ -2,11 +2,12 @@
 
     Equality tests distinguish matching, different and boundary keys.
     For example, lists compare by their injective serialized codes.
-    Builds on: Key and Code.
 
     Groups:
     - [ListTests] Equality of lists of natural numbers through their codes.
-    - [PositiveKeyTests] Equality of positive scalar keys. *)
+    - [PositiveKeyTests] Equality of positive scalar keys.
+
+    Builds on: Key and Code. *)
 
 From Stdlib Require Import Bool List NArith.
 From Galois.Base Require Import Key Code.

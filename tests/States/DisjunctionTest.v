@@ -2,7 +2,6 @@
 
     The shared bounded carrier holds alternatives and state transfers map over them.
     For example, a cap of one collapses two alternatives into one state.
-    Builds on: State Disjunction, Env and the shared disjunction lattice.
 
     Groups:
     - [BottomTests] The empty disjunction.
@@ -10,7 +9,9 @@
     - [WideningTests] Widening of alternatives, including the empty case.
     - [HavocTests] Havoc of a capped disjunction.
     - [MeetTests] Meets of capped disjunctions.
-    - [PartitionTests] The labelled partition that the disjunction is built on. *)
+    - [PartitionTests] The labelled partition that the disjunction is built on.
+
+    Builds on: State Disjunction, Env and the shared disjunction lattice. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map.
@@ -49,6 +50,8 @@ Definition meet_left := Shared2.clip [interval_state 0 10; interval_state 20 30]
 (** Two alternatives, [5, 25] and [27, 28], clipped to the cap of two. *)
 Definition meet_right := Shared2.clip [interval_state 5 25; interval_state 27 28].
 
+(** * Bottom *)
+
 Module BottomTests.
 
   (** The empty disjunction is bottom. *)
@@ -56,6 +59,8 @@ Module BottomTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End BottomTests.
+
+(** * Join *)
 
 Module JoinTests.
 
@@ -65,6 +70,8 @@ Module JoinTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End JoinTests.
+
+(** * Widening *)
 
 Module WideningTests.
 
@@ -82,6 +89,8 @@ Module WideningTests.
 
 End WideningTests.
 
+(** * Havoc *)
+
 Module HavocTests.
 
   (** Havoc of a capped disjunction keeps the number of its alternatives. *)
@@ -90,6 +99,8 @@ Module HavocTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End HavocTests.
+
+(** * Meet *)
 
 Module MeetTests.
 
@@ -107,6 +118,8 @@ Module MeetTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End MeetTests.
+
+(** * Partition *)
 
 Module PartitionTests.
 

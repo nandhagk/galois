@@ -2,12 +2,13 @@
 
     The program checker rejects actions that misuse values and class identifiers.
     For example, union requires two bound class identifiers.
-    Builds on: Egglog syntax and sorts.
 
     Groups:
     - [DeclarationTests] Arity and the sorts that a duplicate declaration keeps.
     - [VariableTests] Query variables and their sorts.
-    - [ActionTests] The sorts of make, let, union and primitive results. *)
+    - [ActionTests] The sorts of make, let, union and primitive results.
+
+    Builds on: Egglog syntax and sorts. *)
 
 From Stdlib Require Import List PArith.
 From Galois.Egglog Require Import Syntax Sorts.
@@ -21,6 +22,8 @@ Definition value_relation : decl := Decl 1 [SVal] ORel.
 
 (** A relation of one class argument. *)
 Definition class_relation : decl := Decl 2 [SId] ORel.
+
+(** * Declaration *)
 
 Module DeclarationTests.
 
@@ -51,6 +54,8 @@ Module DeclarationTests.
   Qed.
 
 End DeclarationTests.
+
+(** * Variable *)
 
 Module VariableTests.
 
@@ -105,6 +110,8 @@ Module VariableTests.
   Qed.
 
 End VariableTests.
+
+(** * Action *)
 
 Module ActionTests.
 

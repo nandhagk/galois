@@ -2,7 +2,6 @@
 
     These examples exercise the public tagged harness and its circular interval table.
     For example, arithmetic across zero retains the circular result.
-    Builds on: WrappedOps, Tagged and Harness.
 
     Groups:
     - [NarrowingTests] Meets and narrowing of single arcs and pairs of arcs.
@@ -12,7 +11,9 @@
     - [BackwardTests] Assumptions that narrow the operands of each operation.
     - [FullAliasTests] Full-width arcs under each width change.
     - [MalformedTests] Backward inputs with the wrong number of operands.
-    - [ConsistencyTests] The assumed consistency of two operand arcs. *)
+    - [ConsistencyTests] The assumed consistency of two operand arcs.
+
+    Builds on: WrappedOps, Tagged and Harness. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Op.

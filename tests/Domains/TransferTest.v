@@ -2,13 +2,14 @@
 
     These examples exercise singleton evaluation and abstract table dispatch.
     For example, a missing entry gives top when point collection fails.
-    Builds on: Harness.
 
     Groups:
     - [DispatchTests] Forward results of the table on points, failures and missing entries.
     - [ArityTests] Forward results for one, two, three and four operands.
     - [BackwardTests] The default backward transfer of the table.
-    - [WordContextTests] Word results that lie in the one-bit unsigned context. *)
+    - [WordContextTests] Word results that lie in the one-bit unsigned context.
+
+    Builds on: Harness. *)
 
 From Stdlib Require Import List Arith NArith ZArith.
 From Galois.Bits Require Import Word Op.

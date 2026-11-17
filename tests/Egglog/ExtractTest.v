@@ -3,7 +3,6 @@
     Inventories select full constructor slots, and certificates unfold through earlier entries.
     For example, shared children contribute their tree cost each time they occur, while a
     forward reference is rejected before costing.
-    Builds on: Extract, Database and Index code towers.
 
     Groups:
     - [CycleTests] The cheapest finite alternative breaks a cycle.
@@ -14,7 +13,9 @@
     - [IndexPathTests] Index paths of stored tuples.
     - [RowTests] The constructor rows of a database.
     - [CandidateTests] An extraction candidate is checked against its budget and root.
-    - [CodedTests] The coded extraction state of a row. *)
+    - [CodedTests] The coded extraction state of a row.
+
+    Builds on: Extract, Database and Index code towers. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia.
 From Argent Require Import Time.
@@ -89,6 +90,8 @@ Definition checker_graph : extraction_dag positive :=
    (2%positive, (20%positive, [Id 1%positive; Id 1%positive]));
    (3%positive, (30%positive, []))].
 
+(** * Cycle *)
+
 Module CycleTests.
 
   (** A class that holds a nullary alternative and a self cycle is cycled through. *)
@@ -138,6 +141,8 @@ Module CycleTests.
   Qed.
 
 End CycleTests.
+
+(** * Best rows *)
 
 Module BestRowsTests.
 
@@ -191,6 +196,8 @@ Module BestRowsTests.
 
 End BestRowsTests.
 
+(** * Inventory *)
+
 Module InventoryTests.
 
   (** Declarations of two constructors, two relations and a lattice, one constructor twice. *)
@@ -236,6 +243,8 @@ Module InventoryTests.
   Qed.
 
 End InventoryTests.
+
+(** * Unfold *)
 
 Module UnfoldTests.
 
@@ -288,6 +297,8 @@ Module UnfoldTests.
   Qed.
 
 End UnfoldTests.
+
+(** * Checker *)
 
 Module CheckerTests.
 
@@ -364,6 +375,8 @@ Module CheckerTests.
 
 End CheckerTests.
 
+(** * Index path *)
+
 Module IndexPathTests.
 
   (** The path of a stored tuple of depth two is that tuple. *)
@@ -385,6 +398,8 @@ Module IndexPathTests.
   Qed.
 
 End IndexPathTests.
+
+(** * Row *)
 
 Module RowTests.
 
@@ -430,6 +445,8 @@ Module RowTests.
   Qed.
 
 End RowTests.
+
+(** * Candidate *)
 
 Module CandidateTests.
 
@@ -477,6 +494,8 @@ Module CandidateTests.
   Qed.
 
 End CandidateTests.
+
+(** * Coded *)
 
 Module CodedTests.
 

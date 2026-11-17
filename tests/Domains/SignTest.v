@@ -2,7 +2,6 @@
 
     These examples exercise transfers, numeric refinement, intersection and finite height.
     For example, incompatible sign classes intersect to bottom.
-    Builds on: Sign.
 
     Groups:
     - [MeetTests] Intersection of sign classes.
@@ -12,7 +11,9 @@
     - [ExtensionTests] Extensions and selection.
     - [ConstantTests] Constants and tagged abstraction at width sixty-four.
     - [RefinementTests] Tagged meet refines a sign.
-    - [EmptyOperandTests] Empty operands give empty signs. *)
+    - [EmptyOperandTests] Empty operands give empty signs.
+
+    Builds on: Sign. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op Expr.

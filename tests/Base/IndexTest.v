@@ -2,10 +2,11 @@
 
     Grouping checks interleaved buckets, absent keys and empty input.
     For example, one bucket retains both its first and last input values.
-    Builds on: Intern and Key.
 
     Groups:
-    - [GroupTests] The members of one bucket, in input order, for each input. *)
+    - [GroupTests] The members of one bucket, in input order, for each input.
+
+    Builds on: Intern and Key. *)
 
 From Stdlib Require Import List.
 From Galois.Base Require Import Intern Key.
