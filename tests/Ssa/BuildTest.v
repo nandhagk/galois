@@ -90,3 +90,13 @@ Definition build_duplicate_block : TestSource.t :=
 Example build_rejects_duplicate_block_before_renaming :
   TestBuild.produce build_duplicate_block = None.
 Proof. vm_compute; reflexivity. Qed.
+
+(** Short-circuit validation keeps the checked result on accepted and rejected inputs. *)
+Example build_short_circuit_agrees :
+  map TestBuild.build [build_diamond; build_unavailable] =
+    map (fun p => match TestBuild.produce p with
+      | None => None
+      | Some (s, c) =>
+        if andb (TestValidate.check p s c) (TestValidate.check_ssa s) then Some s else None
+      end) [build_diamond; build_unavailable].
+Proof. vm_compute; reflexivity. Qed.

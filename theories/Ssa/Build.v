@@ -1074,7 +1074,10 @@ Module BuildCode (O : OPS)
   Definition build (p : P.t) : option P.t :=
     match produce p with
     | None => None
-    | Some (s, c) => if andb (Va.check p s c) (Va.check_ssa s) then Some s else None
+    | Some (s, c) =>
+      if Va.check p s c then
+        if Va.check_ssa s then Some s else None
+      else None
     end.
 End BuildCode.
 
@@ -1125,7 +1128,8 @@ Module Build (O : OPS)
     | Some (s, c) => if andb (Va.check p s c) (Va.check_ssa s) then Some s else None
     end.
   Proof.
-    reflexivity.
+    intro p; unfold build.
+    destruct (produce p) as [[s c]|]; [destruct (Va.check p s c)|]; reflexivity.
   Qed.
   Lemma build_correct : forall p s, imp_form p -> build p = Some s ->
     ssa_wf s /\ forall n ins, run_with O.eval O.test n s ins = run_with O.eval O.test n p ins.
@@ -5048,7 +5052,7 @@ Module BuildT (O : OPS)
   Proof.
     intro p. unfold k_wrap. time_unfold T_build.
     destruct (produce p) as [[s c]|]; time_simpl; time_cbn.
-    - destruct (andb (Va.check p s c) (Va.check_ssa s)); lia.
+    - destruct (Va.check p s c), (Va.check_ssa s); lia.
     - lia.
   Qed.
 
