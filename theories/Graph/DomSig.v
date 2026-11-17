@@ -2,13 +2,30 @@
 
     An independent checker validates immediate-parent maps before tree interval queries.
     For example, the root has no strict parent and a reachable nonroot has its immediate parent.
+
+    Main results
+    - [check_sound] Acceptance establishes semantic exactness without a trusted producer or
+      cache premise.
+    - [tree_exact] An accepted map gives an exact numbered tree over the semantic reachable
+      domain.
+    - [dominates_b_spec] Interval queries reflect dominance for every reachable target.
+    - [kids_spec] Child rows invert the supplied accepted map and follow increasing tree
+      preorder.
+    - [check_complexity] Checking has the published linear bit-cost bound,
+      O((n + e + 1) (w + 1)).
+    - [tree_complexity] Numbering is linear in the listed vertices and the identifier width,
+      with no edge term.
+    - [dominates_b_complexity] Query costs depend on the supplied interval and key widths.
+    - [build_complexity] Building keeps the graph-size times logarithmic bit-cost target.
+
     Builds on: graph semantics, canonical tries and preparation measures. *)
 
 From Stdlib Require Import PArith NArith List Bool Sorting.Sorted.
-From Argent Require Import Time BigO.
+From Argent Require Import Time Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data Spec DigraphSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** Strict dominance excludes equality of the queried vertices. *)
 Definition strictly_dominates (g : digraph) (r u v : positive) : Prop :=
@@ -167,22 +184,21 @@ Module Type DOM_TIME (Import D : DOM).
     (T_build g r <= c_dom * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (Nat.log2 (graph_n (base g)) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   (** Checking has the published linear bit-cost bound. *)
-  Parameter check_complexity : bigO (fun _ : prepared * positive * ptrie positive * list positive => True)
-    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1))) (fun '(g, r, m, o) => T_check g r m o).
+  Parameter check_complexity :
+    T_check g r m o ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))) for (g, r, m, o).
   (** Numbering is linear in the listed vertices and the identifier width, with no edge term. *)
-  Parameter tree_complexity : bigO (fun '(g, r, m, o) => check g r m o = true)
-    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, r, m, o) => T_tree g r m o).
+  Parameter tree_complexity :
+    T_tree g r m o ∈ 𝑂(N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))
+      for (g, r, m, o) | check g r m o = true.
   (** Query costs depend on the supplied interval and key widths. *)
-  Parameter dominates_b_complexity : bigO (fun _ : domtree * positive * positive => True)
-    (fun '(t, u, v) => N.of_nat (query_width t u v + 1))
-    (fun '(t, u, v) => T_dominates_b t u v).
+  Parameter dominates_b_complexity :
+    T_dominates_b t u v ∈ 𝑂(N.of_nat (query_width t u v + 1)) for (t, u, v).
   (** Building keeps the graph-size times logarithmic bit-cost target. *)
-  Parameter build_complexity : bigO (fun '(g, _) => prepared_ok g)
-    (fun '(g, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+  Parameter build_complexity :
+    T_build g r ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, r) => T_build g r).
+      for (g, r) | prepared_ok g.
 End DOM_TIME.
 
 Module Type DOM_T := DOM <+ DOM_TIME.

@@ -2,13 +2,30 @@
 
     The checker validates preorder intervals and low-high witnesses independently of production.
     For example, a direct parent edge supplies the low-high witness of its child.
+
+    Main results
+    - [check_sound] Acceptance establishes semantic exactness without a trusted producer or
+      cache premise.
+    - [tree_exact] An accepted map gives an exact numbered tree over the semantic reachable
+      domain.
+    - [dominates_b_spec] Interval queries reflect dominance for every reachable target.
+    - [kids_spec] Child rows invert the supplied accepted map and follow increasing tree
+      preorder.
+    - [check_complexity] Checking has the published linear bit-cost bound,
+      O((n + e + 1) (w + 1)).
+    - [tree_complexity] Numbering is linear in the listed vertices and the identifier width,
+      with no edge term.
+    - [dominates_b_complexity] Query costs depend on the supplied interval and key widths.
+    - [build_complexity] Building keeps the graph-size times logarithmic bit-cost target.
+
     Builds on: first-order graphs, canonical tries and dominator certificate signatures. *)
 
 From Stdlib Require Import List Bool PArith NArith Arith Lia Sorting.Sorted Wellfounded.Inverse_Image.
-From Argent Require Import Time Tactics Std BigO Loop.
+From Argent Require Import Time Tactics Std Complexity Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig DomProducer DomOrder.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module N.
   TimeFun N.min.
@@ -6251,9 +6268,9 @@ Module DomT <: DOM_ALL.
     nia.
   Qed.
 
-  Lemma check_complexity : bigO (fun _ : prepared * positive * ptrie positive * list positive => True)
-    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1))) (fun '(g, r, m, o) => T_check g r m o).
+  Lemma check_complexity :
+    T_check g r m o ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))) for (g, r, m, o).
   Proof.
     exists c_dom. intros [[[g r] m] o] Htrue.
     pose proof (T_check_le g r m o) as Hbound.
@@ -6261,26 +6278,25 @@ Module DomT <: DOM_ALL.
   Qed.
 
   (** Tree numbering pays only for the listed vertices and their key width. *)
-  Lemma tree_complexity : bigO (fun '(g, r, m, o) => check g r m o = true)
-    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, r, m, o) => T_tree g r m o).
+  Lemma tree_complexity :
+    T_tree g r m o ∈ 𝑂(N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))
+      for (g, r, m, o) | check g r m o = true.
   Proof.
     exists k_tree. intros [[[g r] m] o] Hcheck.
     pose proof (T_tree_plan_le g r m o Hcheck) as Htree. nia.
   Qed.
 
-  Lemma dominates_b_complexity : bigO (fun _ : domtree * positive * positive => True)
-    (fun '(t, u, v) => N.of_nat (query_width t u v + 1))
-    (fun '(t, u, v) => T_dominates_b t u v).
+  Lemma dominates_b_complexity :
+    T_dominates_b t u v ∈ 𝑂(N.of_nat (query_width t u v + 1)) for (t, u, v).
   Proof.
     exists c_dom. intros [[t u] v] Htrue.
     pose proof (T_dominates_b_le t u v) as Hbound. nia.
   Qed.
 
-  Lemma build_complexity : bigO (fun '(g, _) => prepared_ok g)
-    (fun '(g, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+  Lemma build_complexity :
+    T_build g r ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, r) => T_build g r).
+      for (g, r) | prepared_ok g.
   Proof.
     exists c_dom. intros [g r] Hready.
     pose proof (T_build_le g r Hready) as Hbound.
