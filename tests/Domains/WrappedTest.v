@@ -2,18 +2,18 @@
 
     These examples cover normalization, joins and expanding widening.
     For example, the arc from 250 to 3 crosses zero at width eight.
-    Builds on: Wrapped and BitsLang. *)
+    Builds on: Wrapped and BitsLang.
 
-(* Groups:
-   - Fixtures: the circular domain over the word language, at width eight.
-   - Size and normalization: the size and the normal form of circular arcs.
-   - Order: the inclusion test on arcs, including arcs that cross zero.
-   - Join: the least arc that covers two arcs.
-   - Widening: the expanding widening, with stable and full results.
-   - Masks: order, join and widening observed together at two widths.
-   - Multiplication: products of arcs at width eight and at width sixty-four.
-   - Rank: the rank that decreases along widening.
-   - Meet: the meet contract on the payload. *)
+    Groups:
+    - [NormalizationTests] The size and the normal form of circular arcs.
+    - [OrderTests] The inclusion test on arcs, including arcs that cross zero.
+    - [JoinTests] The least arc that covers two arcs.
+    - [WideningTests] The expanding widening, with stable and full results.
+    - [MaskTests] Order, join and widening observed together at two widths.
+    - [MultiplicationTests] Products of arcs at width eight and at width sixty-four.
+    - [DivisionTests] Unsigned division by zero.
+    - [RankTests] The rank that decreases along widening.
+    - [MeetTests] The meet of two arcs against its right operand. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Domains Require Import WrappedSig Wrapped BitsLang.
@@ -46,7 +46,7 @@ Module NormalizationTests.
   Example raw_endpoints_reduce_to_arc : wrapped_norm w8 (WItv (-6) 259) = WItv 250 3.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** An arc whose upper endpoint is below its lower endpoint normalises to the full arc. *)
+  (** An arc from 10 around to 9 covers every point, so it normalises to the full arc. *)
   Example wrapping_arc_normalises_to_full : wrapped_norm w8 (WItv 10 9) = WFull.
   Proof. vm_compute. reflexivity. Qed.
 
@@ -126,66 +126,74 @@ End WideningTests.
 Definition wrapped_mask_observation (w : positive) (a b : wrapped) :=
   (W.pleb w a b, W.pjoin w a b, W.pwiden tt w a b, W.pnarrow w a b).
 
+(** Whether two arcs give the same expected observation at widths eight and sixty-four. *)
+Definition same_at_both_widths (a b : wrapped) (expected : bool * wrapped * wrapped * wrapped)
+  : Prop :=
+  Forall (fun w => wrapped_mask_observation w a b = expected) [8%positive; 64%positive].
+
 Module MaskTests.
 
-  (** Two arcs that cross zero give the same observations at widths eight and sixty-four. *)
-  Example mask_arcs_crossing_zero :
-    map (fun w => wrapped_mask_observation w (WItv 250 3) (WItv 1 9))
-      [8%positive; 64%positive] =
-    [(false, WItv 250 9, WItv 240 13, WItv 250 3);
-     (false, WItv 250 9, WFull, WItv 250 3)].
+  (** Two arcs that cross zero widen to an arc short of the full circle at width eight. *)
+  Example mask_arcs_crossing_zero_width_8 :
+    wrapped_mask_observation 8%positive (WItv 250 3) (WItv 1 9) =
+      (false, WItv 250 9, WItv 240 13, WItv 250 3).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Two arcs that cross zero widen to the full arc at width sixty-four. *)
+  Example mask_arcs_crossing_zero_width_64 :
+    wrapped_mask_observation 64%positive (WItv 250 3) (WItv 1 9) =
+      (false, WItv 250 9, WFull, WItv 250 3).
   Proof.
     vm_compute. reflexivity.
   Qed.
 
   (** Two disjoint arcs give the same observations at widths eight and sixty-four. *)
   Example mask_disjoint_arcs :
-    map (fun w => wrapped_mask_observation w (WItv 10 11) (WItv 20 21))
-      [8%positive; 64%positive] =
-    [(false, WItv 10 21, WItv 8 21, WItv 10 11);
-     (false, WItv 10 21, WItv 8 21, WItv 10 11)].
+    same_at_both_widths (WItv 10 11) (WItv 20 21)
+      (false, WItv 10 21, WItv 8 21, WItv 10 11).
   Proof.
-    vm_compute. reflexivity.
+    unfold same_at_both_widths.
+    repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+    apply Forall_nil.
   Qed.
 
   (** The bottom arc on the left is below an arc at both widths. *)
   Example mask_bottom_left :
-    map (fun w => wrapped_mask_observation w WBot (WItv 250 3))
-      [8%positive; 64%positive] =
-    [(true, WItv 250 3, WItv 250 3, WBot);
-     (true, WItv 250 3, WItv 250 3, WBot)].
+    same_at_both_widths WBot (WItv 250 3) (true, WItv 250 3, WItv 250 3, WBot).
   Proof.
-    vm_compute. reflexivity.
+    unfold same_at_both_widths.
+    repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+    apply Forall_nil.
   Qed.
 
   (** The bottom arc on the right is not above an arc at both widths. *)
   Example mask_bottom_right :
-    map (fun w => wrapped_mask_observation w (WItv 250 3) WBot)
-      [8%positive; 64%positive] =
-    [(false, WItv 250 3, WItv 250 3, WItv 250 3);
-     (false, WItv 250 3, WItv 250 3, WItv 250 3)].
+    same_at_both_widths (WItv 250 3) WBot
+      (false, WItv 250 3, WItv 250 3, WItv 250 3).
   Proof.
-    vm_compute. reflexivity.
+    unfold same_at_both_widths.
+    repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+    apply Forall_nil.
   Qed.
 
   (** The full arc on the left is not below an arc at both widths. *)
   Example mask_full_left :
-    map (fun w => wrapped_mask_observation w WFull (WItv 250 3))
-      [8%positive; 64%positive] =
-    [(false, WFull, WFull, WItv 250 3);
-     (false, WFull, WFull, WItv 250 3)].
+    same_at_both_widths WFull (WItv 250 3) (false, WFull, WFull, WItv 250 3).
   Proof.
-    vm_compute. reflexivity.
+    unfold same_at_both_widths.
+    repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+    apply Forall_nil.
   Qed.
 
   (** The full arc on the right is above an arc at both widths. *)
   Example mask_full_right :
-    map (fun w => wrapped_mask_observation w (WItv 250 3) WFull)
-      [8%positive; 64%positive] =
-    [(true, WFull, WFull, WItv 250 3);
-     (true, WFull, WFull, WItv 250 3)].
+    same_at_both_widths (WItv 250 3) WFull (true, WFull, WFull, WItv 250 3).
   Proof.
-    vm_compute. reflexivity.
+    unfold same_at_both_widths.
+    repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+    apply Forall_nil.
   Qed.
 
   (** Widening a raw arc whose upper endpoint is zero keeps it at both widths. *)
@@ -196,7 +204,7 @@ Module MaskTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** Raw endpoints outside the range are reduced in the mask observation at width eight. *)
+  (** Order, join and narrowing reduce a raw arc at width eight, and widening keeps it. *)
   Example mask_raw_endpoints_reduce :
     wrapped_mask_observation w8 (WItv (-6) 259) (WItv 250 3) =
     (true, WItv 250 3, WItv (-6) 259, WItv 250 3).
@@ -218,7 +226,7 @@ Module MultiplicationTests.
   Example mul_signed_arcs : wrapped_mul w8 (WItv 250 255) (WItv 2 3) = WItv 238 254.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Multiplying arcs that cross both poles gives the full arc of their products. *)
+  (** Multiplying an arc that crosses both signed poles by two gives the arc from 0 to 254. *)
   Example mul_arcs_across_both_poles : wrapped_mul w8 (WItv 100 50) (WItv 2 2) = WItv 0 254.
   Proof. vm_compute. reflexivity. Qed.
 
@@ -317,7 +325,7 @@ End MultiplicationTests.
 
 Module DivisionTests.
 
-  (** Unsigned division by the zero arc gives the top unsigned value. *)
+  (** Unsigned division by zero gives the all-ones value 255 at width eight. *)
   Example udiv_by_zero_is_top :
     wrapped_udiv w8 (WItv 1 3) (WItv 0 0) = WItv 255 255.
   Proof. vm_compute. reflexivity. Qed.
@@ -343,8 +351,7 @@ End RankTests.
 
 Module MeetTests.
 
-  (** The payload meet contract requires a lower bound on its left operand, so an
-      arc that is not below the right operand is not a refinement of it. *)
+  (** The meet of the arcs 0 to 200 and 150 to 50 is not below the second arc. *)
   Example two_arcs_do_not_refine_right :
     W.pleb w8 (W.pmeet w8 (WItv 0 200) (WItv 150 50)) (WItv 150 50) = false.
   Proof. vm_compute. reflexivity. Qed.
