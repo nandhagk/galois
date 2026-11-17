@@ -2,6 +2,17 @@
 
     Value domains connect abstract transfers to a concrete operator language.
     For example, backward refinement retains operands that can produce the requested result.
+
+    Main results
+    - [is_bot_sound] A positive bottom test excludes every concrete value.
+    - [forward_sound] Forward transfer contains every successful concrete result.
+    - [backward_sound] Backward transfer retains operands consistent with the abstract result.
+    - [guard_sound] Guard transfer retains operands satisfying the concrete guard.
+
+    Glossary
+    - [wsize] The size of a widening parameter, such as a threshold set.
+    - [wunits] Zero, so a value domain pays the parameter's size once per widening.
+
     Builds on: LangSig and LatticeSig. *)
 
 From Stdlib Require Import List ZArith.
