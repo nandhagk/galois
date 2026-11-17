@@ -2,15 +2,14 @@
 
     Forward and backward operations retain their source mask observations.
     For example, an unknown shift count can retain several possible bits.
-    Builds on: KnownBitsOps and KnownBitsBack. *)
+    Builds on: KnownBitsOps and KnownBitsBack.
 
-(* Groups:
-   - Fixtures: the stage configuration, the mask and operation modules, and the tables.
-   - Shifts: shifts with variable and negative counts.
-   - Extraction: bit extraction with known and unknown endpoints.
-   - Ranges: unsigned range queries and the public range contract.
-   - Operators: rotation, comparison, arithmetic shift and concatenation.
-   - Backward: backward transfer of addition. *)
+    Groups:
+    - [ShiftTests] Shifts with variable and negative counts.
+    - [ExtractionTests] Bit extraction with known and unknown endpoints.
+    - [RangeTests] Unsigned range queries and the public range contract.
+    - [OperatorTests] Rotation, comparison and concatenation.
+    - [BackwardTests] Backward transfer of addition. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Op.
@@ -69,7 +68,7 @@ Module ShiftTests.
     tnum_scalar_value bvashr 8%positive (-1) 1 = 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A left shift by a known count gives the shifted known bits. *)
+  (** Shifting a constant one left by zero to three bits leaves the high four bits known zero. *)
   Example variable_left_shift_known_count :
     Ops.tnum_forward_raw bvshl [(8%positive, tnum_const 8%positive 1);
       (8%positive, Tnum 252 0)] 8%positive = Tnum 240 0.
@@ -87,7 +86,7 @@ End ShiftTests.
 
 Module ExtractionTests.
 
-  (** Extracting bits 7 to 4 from a known four-bit value gives the high bits. *)
+  (** Bits 7 to 4 of a four-bit value lie beyond its width and extract as zeros. *)
   Example extract_high_bits_of_known_word :
     Ops.tnum_forward_raw (bvextract 7 4) [(4%positive, Tnum 8 1)] 4%positive = Tnum 15 0.
   Proof. vm_compute. reflexivity. Qed.
@@ -97,34 +96,34 @@ Module ExtractionTests.
     Ops.tnum_forward_raw (bvextract 3 0) [(4%positive, Tnum 8 1)] 4%positive = Tnum 8 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Extracting bits 7 to 4 from an eight-bit value with known bits gives the high nibble. *)
+  (** The high nibble of an eight-bit value whose high four bits are known zero is known zero. *)
   Example extract_high_nibble_of_eight_bits :
     Ops.tnum_forward_raw (bvextract 7 4) [(8%positive, Tnum 240 15)] 4%positive =
       Tnum 15 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Extracting bits 3 to 0 from an eight-bit value with known bits gives the low nibble. *)
+  (** The low nibble of an eight-bit value whose low four bits are known one is known one. *)
   Example extract_low_nibble_of_eight_bits :
     Ops.tnum_forward_raw (bvextract 3 0) [(8%positive, Tnum 240 15)] 4%positive =
       Tnum 0 15.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Extracting bits 7 to 4 from an unknown four-bit value gives unknown bits. *)
+  (** Bits 7 to 4 of an unknown four-bit value lie beyond its width and extract as zeros. *)
   Example extract_high_bits_of_unknown_word :
     Ops.tnum_forward_raw (bvextract 7 4) [(4%positive, Tnum 0 0)] 4%positive = Tnum 15 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Extracting bits 3 to 0 from an unknown four-bit value gives zero. *)
+  (** Bits 3 to 0 of an unknown four-bit value stay unknown. *)
   Example extract_low_bits_of_unknown_word :
     Ops.tnum_forward_raw (bvextract 3 0) [(4%positive, Tnum 0 0)] 4%positive = Tnum 0 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Extracting bits 7 to 4 from an unknown eight-bit value gives zero. *)
+  (** Bits 7 to 4 of an unknown eight-bit value stay unknown. *)
   Example extract_high_bits_of_unknown_eight_bits :
     Ops.tnum_forward_raw (bvextract 7 4) [(8%positive, Tnum 0 0)] 4%positive = Tnum 0 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Extracting bits 3 to 0 from an unknown eight-bit value gives zero. *)
+  (** Bits 3 to 0 of an unknown eight-bit value stay unknown. *)
   Example extract_low_bits_of_unknown_eight_bits :
     Ops.tnum_forward_raw (bvextract 3 0) [(8%positive, Tnum 0 0)] 4%positive = Tnum 0 0.
   Proof. vm_compute. reflexivity. Qed.
@@ -174,28 +173,34 @@ End RangeTests.
 
 Module OperatorTests.
 
-  (** Rotating left a constant one by a known count at width five gives 28. *)
+  (** Rotating a one left by zero or sixteen at width five leaves bits 0 and 1 unknown. *)
   Example rotate_left_at_width_five :
     Ops.tnum_forward_raw bvrotl [(5%positive, tnum_const 5%positive 1);
       (5%positive, Tnum 15 0)] 5%positive = Tnum 28 0.
   Proof. vm_compute. auto. Qed.
 
-  (** Rotating right a constant one by a known count at width five gives 14. *)
+  (** Rotating a one right by zero or sixteen at width five leaves bits 0 and 4 unknown. *)
   Example rotate_right_at_width_five :
     Ops.tnum_forward_raw bvrotr [(5%positive, tnum_const 5%positive 1);
       (5%positive, Tnum 15 0)] 5%positive = Tnum 14 0.
   Proof. vm_compute. auto. Qed.
 
-  (** An unsigned comparison of a known high-bit value and a constant keeps its precision. *)
-  Example unsigned_comparison_keeps_precision :
+  (** A value below 128 is known to be unsigned-less than the constant 128. *)
+  Example unsigned_comparison_known_true :
     Ops.tnum_forward_raw bvult [(8%positive, Tnum 128 0);
       (8%positive, tnum_const 8%positive 128)] 1%positive = Tnum 0 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Concatenating the known bits of two words gives the concatenated known bits. *)
-  Example concat_known_bits :
-    Ops.tnum_forward_raw bvconcat [(8%positive, Tnum 240 15); (8%positive, Tnum 252 1)]
-      16%positive = Tnum 61692 3841.
+  (** The known-zero mask of a concatenation joins the two known-zero masks. *)
+  Example concat_zeros_join_masks :
+    zeros (Ops.tnum_forward_raw bvconcat [(8%positive, Tnum 240 15); (8%positive, Tnum 252 1)]
+      16%positive) = Z.lor (Z.shiftl 240 8) 252.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** The known-one mask of a concatenation joins the two known-one masks. *)
+  Example concat_ones_join_masks :
+    ones (Ops.tnum_forward_raw bvconcat [(8%positive, Tnum 240 15); (8%positive, Tnum 252 1)]
+      16%positive) = Z.lor (Z.shiftl 15 8) 1.
   Proof. vm_compute. reflexivity. Qed.
 
   (** Concatenation of each fixture gives the concatenation specification. *)
