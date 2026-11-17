@@ -2,6 +2,7 @@
 
     These examples exercise normalization, arithmetic and CRT intersection.
     For example, the intersection of 1 modulo 4 and 3 modulo 6 is 9 modulo 12.
+    Builds on: Congruence.
 
     Groups:
     - [NormalizationTests] Reducing a congruence class to its normal residue.
@@ -17,8 +18,7 @@
     - [ForwardEntryTests] Forward entries of the transfer table.
     - [OneBitTests] Forward entries at width one.
     - [EmptyOperandTests] Empty operands give empty classes.
-    - [MalformedTests] Operand lists of the wrong length.
-    Builds on: Congruence. *)
+    - [MalformedTests] Operand lists of the wrong length. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op.
@@ -52,7 +52,10 @@ Definition assume_payload o xs rw r :=
   map (payload_at rw) (Domain.backward (BOp o) (TVal rw r) (tagged_args xs)).
 
 (** Six residue classes that the transfer examples apply to. *)
-Definition p1_cong_inputs := [C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot].
+Definition class_inputs := [C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot].
+
+(** The two word widths, eight and sixty-four, at which the transfers agree on these classes. *)
+Definition wide_widths : list positive := [8%positive; 64%positive].
 
 (** * Normalization *)
 
@@ -73,14 +76,11 @@ Module NormalizationTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** Normal residues are unchanged at the two larger test widths. *)
+  (** Normal residues are unchanged at each of the two larger test widths. *)
   Example normal_residues_unchanged_at_wide_widths :
-    map (fun w => map (Payload.congr_norm w)
-      [C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot]) [8%positive; 64%positive] =
-      [[C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot];
-       [C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot]].
+    Forall (fun w => map (Payload.congr_norm w) class_inputs = class_inputs) wide_widths.
   Proof.
-    vm_compute. reflexivity.
+    repeat constructor; vm_compute; reflexivity.
   Qed.
 
   (** A negative modulus is normalized to its absolute value. *)
@@ -126,7 +126,7 @@ Module WidthOneTests.
 
   (** At width one, negation normalizes each out-of-range constant to bottom. *)
   Example width_one_neg_normalizes_inputs :
-    map (Payload.congr_neg 1%positive) p1_cong_inputs =
+    map (Payload.congr_neg 1%positive) class_inputs =
       [C 0 1; CBot; CBot; C 0 1; CBot; CBot].
   Proof.
     vm_compute. reflexivity.
@@ -134,35 +134,35 @@ Module WidthOneTests.
 
   (** At width one, an addition with an out-of-range constant gives bottom for every input. *)
   Example width_one_add_gives_bottom :
-    map (fun a => Payload.congr_add 1%positive a (C 8 3)) p1_cong_inputs = repeat CBot 6.
+    map (fun a => Payload.congr_add 1%positive a (C 8 3)) class_inputs = repeat CBot 6.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
   (** At width one, a subtraction with an out-of-range constant gives bottom for every input. *)
   Example width_one_sub_gives_bottom :
-    map (fun a => Payload.congr_sub 1%positive a (C 8 3)) p1_cong_inputs = repeat CBot 6.
+    map (fun a => Payload.congr_sub 1%positive a (C 8 3)) class_inputs = repeat CBot 6.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
   (** At width one, a product with an out-of-range constant gives bottom for every input. *)
   Example width_one_mul_gives_bottom :
-    map (fun a => Payload.congr_mul 1%positive a (C 8 3)) p1_cong_inputs = repeat CBot 6.
+    map (fun a => Payload.congr_mul 1%positive a (C 8 3)) class_inputs = repeat CBot 6.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
   (** At width one, a shift by an out-of-range class gives bottom for every input. *)
   Example width_one_shl_gives_bottom :
-    map (fun a => Payload.congr_shl 1%positive a (C 0 5)) p1_cong_inputs = repeat CBot 6.
+    map (fun a => Payload.congr_shl 1%positive a (C 0 5)) class_inputs = repeat CBot 6.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
   (** At width one, projection normalizes each input to its width-one class. *)
   Example width_one_project_normalizes_inputs :
-    map (Payload.congr_project 1%positive 1%positive) p1_cong_inputs =
+    map (Payload.congr_project 1%positive 1%positive) class_inputs =
       [C 0 1; CBot; CBot; C 0 1; CBot; CBot].
   Proof.
     vm_compute. reflexivity.
@@ -176,16 +176,23 @@ Module NegationTests.
 
   (** Eight-bit negation reduces residues modulo the gcd with 256. *)
   Example neg_width_eight_reduces_modulo_gcd :
-    map (Payload.congr_neg 8%positive) p1_cong_inputs =
+    map (Payload.congr_neg 8%positive) class_inputs =
       [C 4 3; C 8 5; C 0 251; C 1 0; C 2 0; CBot].
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Sixty-four-bit negation wraps the exact constant at its word modulus. *)
+  (** Sixty-four-bit negation wraps the exact constant five at its word modulus. *)
   Example neg_width_sixty_four_wraps_constant :
-    map (Payload.congr_neg 64%positive) p1_cong_inputs =
-      [C 4 3; C 8 5; C 0 (2 ^ 64 - 5); C 1 0; C 2 0; CBot].
+    Payload.congr_neg 64%positive (C 0 5) = C 0 (2 ^ 64 - 5).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Sixty-four-bit negation reduces the other classes as eight-bit negation does. *)
+  Example neg_width_sixty_four_reduces_other_classes :
+    map (Payload.congr_neg 64%positive) [C 4 1; C 8 3; C 3 1; C 6 2; CBot] =
+      [C 4 3; C 8 5; C 1 0; C 2 0; CBot].
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -196,22 +203,28 @@ End NegationTests.
 
 Module AdditionTests.
 
-  (** Addition keeps common power-of-two factors of the moduli at two widths. *)
+  (** The classes that adding [C 8 3] gives for each of [class_inputs]. *)
+  Definition add_eight_three_cases : list congr :=
+    [C 4 0; C 8 6; C 8 0; C 1 0; C 2 1; CBot].
+
+  (** The classes that subtracting [C 8 3] gives for each of [class_inputs]. *)
+  Definition sub_eight_three_cases : list congr :=
+    [C 4 2; C 8 0; C 8 2; C 1 0; C 2 1; CBot].
+
+  (** Addition keeps common power-of-two factors of the moduli at both widths. *)
   Example add_keeps_common_power_of_two_factors :
-    map (fun w => map (fun a => Payload.congr_add w a (C 8 3)) p1_cong_inputs)
-      [8%positive; 64%positive] =
-      repeat [C 4 0; C 8 6; C 8 0; C 1 0; C 2 1; CBot] 2.
+    Forall (fun w => map (fun a => Payload.congr_add w a (C 8 3)) class_inputs =
+      add_eight_three_cases) wide_widths.
   Proof.
-    vm_compute. reflexivity.
+    repeat constructor; vm_compute; reflexivity.
   Qed.
 
-  (** Subtraction keeps common power-of-two factors of the moduli at two widths. *)
+  (** Subtraction keeps common power-of-two factors of the moduli at both widths. *)
   Example sub_keeps_common_power_of_two_factors :
-    map (fun w => map (fun a => Payload.congr_sub w a (C 8 3)) p1_cong_inputs)
-      [8%positive; 64%positive] =
-      repeat [C 4 2; C 8 0; C 8 2; C 1 0; C 2 1; CBot] 2.
+    Forall (fun w => map (fun a => Payload.congr_sub w a (C 8 3)) class_inputs =
+      sub_eight_three_cases) wide_widths.
   Proof.
-    vm_compute. reflexivity.
+    repeat constructor; vm_compute; reflexivity.
   Qed.
 
   (** The sum of two residue classes is the class of the sum of their residues. *)
@@ -234,13 +247,16 @@ End AdditionTests.
 
 Module MultiplicationTests.
 
-  (** The product class uses the gcd of the coefficient products at two widths. *)
+  (** The classes that multiplying each of [class_inputs] by [C 8 3] gives. *)
+  Definition mul_eight_three_cases : list congr :=
+    [C 4 3; C 8 1; C 8 7; C 1 0; C 2 0; CBot].
+
+  (** The product class uses the gcd of the coefficient products at both widths. *)
   Example mul_uses_gcd_of_coefficient_products :
-    map (fun w => map (fun a => Payload.congr_mul w a (C 8 3)) p1_cong_inputs)
-      [8%positive; 64%positive] =
-      repeat [C 4 3; C 8 1; C 8 7; C 1 0; C 2 0; CBot] 2.
+    Forall (fun w => map (fun a => Payload.congr_mul w a (C 8 3)) class_inputs =
+      mul_eight_three_cases) wide_widths.
   Proof.
-    vm_compute. reflexivity.
+    repeat constructor; vm_compute; reflexivity.
   Qed.
 
   (** The product of two constants wraps at the word width. *)
@@ -258,7 +274,7 @@ Module ShiftTests.
 
   (** A shifted modulus can collapse to an exact value at the smaller width. *)
   Example shl_at_width_eight_collapses_modulus :
-    map (fun a => Payload.congr_shl 8%positive a (C 0 5)) p1_cong_inputs =
+    map (fun a => Payload.congr_shl 8%positive a (C 0 5)) class_inputs =
       [C 128 32; C 0 96; C 0 160; C 32 0; C 64 0; CBot].
   Proof.
     vm_compute. reflexivity.
@@ -266,7 +282,7 @@ Module ShiftTests.
 
   (** At width sixty-four, the same shift keeps the modulus of the wider word. *)
   Example shl_at_width_sixty_four_keeps_modulus :
-    map (fun a => Payload.congr_shl 64%positive a (C 0 5)) p1_cong_inputs =
+    map (fun a => Payload.congr_shl 64%positive a (C 0 5)) class_inputs =
       [C 128 32; C 256 96; C 0 160; C 32 0; C 64 0; CBot].
   Proof.
     vm_compute. reflexivity.
@@ -301,7 +317,7 @@ Module ProjectionTests.
 
   (** Projection at width eight folds each input into a divisor of the word modulus. *)
   Example project_folds_moduli_at_width_eight :
-    map (Payload.congr_project 8%positive 8%positive) p1_cong_inputs =
+    map (Payload.congr_project 8%positive 8%positive) class_inputs =
       [C 4 1; C 8 3; C 0 5; C 1 0; C 2 0; CBot].
   Proof.
     vm_compute. reflexivity.
@@ -309,7 +325,7 @@ Module ProjectionTests.
 
   (** Projection from width sixty-four to thirty-two folds each input into a divisor of 2^32. *)
   Example project_folds_moduli_from_sixty_four_to_thirty_two :
-    map (Payload.congr_project 64%positive 32%positive) p1_cong_inputs =
+    map (Payload.congr_project 64%positive 32%positive) class_inputs =
       [C 4 1; C 8 3; C 0 5; C 1 0; C 2 0; CBot].
   Proof.
     vm_compute. reflexivity.
@@ -323,27 +339,19 @@ Module WideningTests.
 
   (** Stable widening returns its original operand, including raw payloads. *)
   Example stable_widen_at_width_one_returns_operand :
-    map (fun a => Payload.pwiden tt 1%positive a (C 8 5)) p1_cong_inputs = p1_cong_inputs.
+    map (fun a => Payload.pwiden tt 1%positive a (C 8 5)) class_inputs = class_inputs.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
   (** Stable widening at widths eight and sixty-four keeps every raw payload. *)
   Example stable_widen_at_word_widths_keeps_raw_payloads :
-    map (fun w => map (fun a => Payload.pwiden tt w a (C 8 5)) p1_cong_inputs)
+    map (fun w => map (fun a => Payload.pwiden tt w a (C 8 5)) class_inputs)
       [8%positive; 64%positive] =
       repeat [C 4 1; C 2 1; C 8 5; C 1 0; C 1 0; C 8 5] 2.
   Proof.
     vm_compute. reflexivity.
   Qed.
-
-(* Old rank was 10%nat; the current widening rank is 0%nat.
-Example dom4_cong_height : PayloadSpec.pwrank tt 8%positive (C 1 0) = 10%nat.
-Proof.
-  vm_compute. reflexivity.
-Qed.
-
-*)
 
 End WideningTests.
 
@@ -505,10 +513,11 @@ Module EmptyOperandTests.
 
   (** Every entry of the operand table gives bottom when its operands are bottom. *)
   Example empty_operands_give_bottom :
-    map (fun '(o, xs, rw) => forward_payload o
-      (map (fun wp => (fst wp, CBot)) xs) rw) cong_entry_cases = repeat CBot 9.
+    Forall (fun r => r = CBot)
+      (map (fun '(o, xs, rw) => forward_payload o
+        (map (fun wp => (fst wp, CBot)) xs) rw) cong_entry_cases).
   Proof.
-    vm_compute. reflexivity.
+    vm_compute. repeat constructor.
   Qed.
 
 End EmptyOperandTests.
@@ -541,15 +550,16 @@ Module MalformedTests.
     vm_compute. reflexivity.
   Qed.
 
+  (** Operand lists of zero, one, three and four classes, none of which fits an addition. *)
+  Definition wrong_count_operands : list (list (positive * congr)) :=
+    [[]; [(8%positive, C 4 1)]; [(8%positive, C 0 1)];
+     [(8%positive, C 4 1); (8%positive, C 0 2); (8%positive, C 0 3)];
+     [(8%positive, C 0 1); (8%positive, C 0 2); (8%positive, C 0 3); (8%positive, C 0 4)]].
+
   (** A backward addition with a wrong operand count returns its operands unchanged. *)
   Example assume_add_with_wrong_operand_count_returns_operands :
-    map (fun xs => assume_payload bvadd xs 8%positive CBot)
-      [[]; [(8%positive, C 4 1)]; [(8%positive, C 0 1)];
-       [(8%positive, C 4 1); (8%positive, C 0 2); (8%positive, C 0 3)];
-       [(8%positive, C 0 1); (8%positive, C 0 2); (8%positive, C 0 3);
-        (8%positive, C 0 4)]] =
-      [[]; [C 4 1]; [C 0 1]; [C 4 1; C 0 2; C 0 3];
-       [C 0 1; C 0 2; C 0 3; C 0 4]].
+    map (fun xs => assume_payload bvadd xs 8%positive CBot) wrong_count_operands =
+      map (map snd) wrong_count_operands.
   Proof.
     vm_compute. reflexivity.
   Qed.
