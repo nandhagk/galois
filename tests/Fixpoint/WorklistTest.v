@@ -8,7 +8,7 @@ From Stdlib Require Import List Bool NArith PArith.
 From Galois.Base Require Import Trie Heap.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig PolicySig SolverSig Policy Check Narrow
-  Worklist Certified.
+  Worklist WorklistSig Certified.
 Import List.ListNotations.
 
 Module BoolOps <: WLATTICE_OPS.
@@ -102,6 +102,51 @@ Qed.
 Example assignment_lookup_present_missing :
   let m := PTrieCode.set 1%positive (1%positive, true) PTrieCode.empty in
   (C.look m 1%positive, C.look m 2%positive) = (true, false).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition wide_key : positive := 549755813888%positive.
+
+Module WideCycle <: SYSTEM_OPS BoolOps.
+  Definition prog := bool.
+  Definition key := positive.
+  Definition row := positive.
+  Definition frame := unit.
+  Definition key_code (x : positive) := x.
+  Definition key_eqb := Pos.eqb.
+  Definition rows (p : bool) := if p then [1; 2; 3; 1; wide_key]%positive else [].
+  Definition target (_ : bool) (r : positive) := r.
+  Definition start (_ : bool) (r : positive) : query key bool unit :=
+    if Pos.eqb r 1 then Ask 2%positive tt
+    else if Pos.eqb r 2 then Ask 1%positive tt
+    else if Pos.eqb r wide_key then Ret true
+    else Side 1%positive true (Side 1%positive false (Ret false)).
+  Definition resume (_ : bool) (_ : unit) (a : bool) : query key bool unit := Ret a.
+  Definition deps (_ : bool) (r : positive) :=
+    if Pos.eqb r 1 then [2]%positive else if Pos.eqb r 2 then [1]%positive else [].
+  Definition sides (_ : bool) (r : positive) :=
+    if Pos.eqb r 3 then [1; 1]%positive else [].
+End WideCycle.
+
+Module WideW := WorklistCode BoolOps WideCycle P HeapCode.
+
+Definition wide_state (b : bool) : WideW.state :=
+  let s := WideW.prepare true flat in
+  WorklistState (PTrieCode.set wide_key (wide_key, b) (ws_store s))
+    (ws_counters s) (ws_queue s) (ws_live s) (ws_rows s) (ws_readers s)
+    (ws_armed s) (ws_ranks s).
+
+Example stable_wide_update_preserves_state :
+  WideW.update_one true flat (wide_state true) (wide_key, true) = wide_state true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example strict_wide_update_writes_and_arms :
+  let s := WideW.update_one true flat (wide_state false) (wide_key, true) in
+  (trie_get wide_key (ws_store s), trie_get wide_key (ws_counters s),
+   trie_get wide_key (ws_armed s)) = (Some (wide_key, true), Some 0%N, Some tt).
 Proof.
   vm_compute; reflexivity.
 Qed.

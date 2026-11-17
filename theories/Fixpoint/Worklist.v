@@ -378,7 +378,10 @@ Module WorklistCode (L : WLATTICE_OPS) (S : SYSTEM_OPS L)
   Definition update_one p pol (s : state) (xa : S.key * L.t) : state :=
     let '(x, a) := xa in
     let c := S.key_code x in
-    let old := look_or S.key_code L.bot (ws_store s) x in
+    let old := match trie_get c (ws_store s) with
+      | Some (_, value) => value
+      | None => L.bot
+      end in
     if L.leb a old then s else
     let cnt := match trie_get c (ws_counters s) with Some n => n | None => 0%N end in
     let ac := P.update pol c cnt old a in
@@ -1975,8 +1978,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     ws_rows (update_one p pol s xa) = ws_rows s /\
     ws_readers (update_one p pol s xa) = ws_readers s.
   Proof.
-    intros p pol s [x a]; unfold update_one.
-    destruct (L.leb a (look_or S.key_code L.bot (ws_store s) x));
+    intros p pol s [x a]; rewrite F6_indexed.
+    destruct (L.leb a (look s x));
       [split; reflexivity|].
     destruct (trie_get (S.key_code x) (ws_armed s));
       unfold arm, enqueue; split; reflexivity.
@@ -3384,7 +3387,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     destruct (time_unit_bounds p) as [Hu [Hkey [_ [Hlat _]]]].
     assert (Hwidth : (N.of_nat (Pos.size_nat c + 1) <= unit p)%N) by lia.
     pose proof (S.T_key_code_le x) as Hcode.
-    pose proof (T_lookup_bound (ws_store s) x) as Hlook.
+    pose proof (PTrieT.T_get_le (S.key * L.t) c (ws_store s)) as Hlook.
     pose proof (L.T_leb_le a (look s x)) as Hleb.
     pose proof (PTrieT.T_get_le N c (ws_counters s)) as Hcount.
     pose proof (PTrieT.T_get_le Datatypes.unit c (ws_armed s)) as Harmed.
@@ -3395,15 +3398,17 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     pose proof (T_policy_update_bound p pol s x a Hwf Hinv Ha Hsupport) as Hpolicy.
     change (@PTrieT.T_set (S.key * L.t)) with (@PTrieCode.T_set (S.key * L.t)) in Hstore.
     change (@PTrieT.T_set N) with (@PTrieCode.T_set N) in Hcounter.
-    unfold PTrieT.T_get in Hcount, Harmed.
-    unfold S.key_bits in Hcode, Hlook; fold c in Hcode, Hlook, Hpolicy.
+    unfold PTrieT.T_get in Hlook, Hcount, Harmed.
+    unfold S.key_bits in Hcode; fold c in Hcode, Hpolicy.
     fold ac in Hpolicy.
+    assert (Hlook_bound : (T_trie_get c (ws_store s) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat c + 1))%N) by lia.
     assert (Hcount_bound : (T_trie_get c (ws_counters s) <=
       PTrieT.c_trie * N.of_nat (Pos.size_nat c + 1))%N) by lia.
     assert (Harmed_bound : (T_trie_get c (ws_armed s) <=
       PTrieT.c_trie * N.of_nat (Pos.size_nat c + 1))%N) by lia.
     assert (Hcommon : (S.T_key_code x +
-      T_look_or S.key_code S.T_key_code L.bot (ws_store s) x + L.T_leb a (look s x) +
+      T_trie_get c (ws_store s) + L.T_leb a (look s x) +
       T_trie_get c (ws_counters s) + T_trie_get c (ws_armed s) +
       PTrieCode.T_set c (x, fst ac) (ws_store s) +
       PTrieCode.T_set c (snd ac) (ws_counters s) + T_readers s c +
@@ -3418,14 +3423,16 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       eapply N.le_trans.
       - apply N.add_le_mono; [apply N.add_le_mono; [apply N.add_le_mono;
           [apply N.add_le_mono; [apply N.add_le_mono; [apply N.add_le_mono;
-            [apply N.add_le_mono; [apply N.add_le_mono; [exact Hcode|exact Hlook]|
+            [apply N.add_le_mono; [apply N.add_le_mono; [exact Hcode|exact Hlook_bound]|
               eapply N.le_trans; [exact Hleb|exact Hvalues]]|exact Hcount_bound]|
               exact Harmed_bound]|
             exact Hstore]|exact Hcounter]|exact Hreaders]|exact Harm].
       - unfold c_lookup in *; clear -Hwidth Hu; nia. }
     unfold T_update_one.
-    change (fun y => S.T_key_code y) with S.T_key_code.
-    cbn beta iota zeta; fold c; fold (look s x); fold (counter s c); fold ac; fold s1.
+    cbn beta iota zeta; fold c.
+    change (match trie_get c (ws_store s) with
+      | Some (_, value) => value | None => L.bot end) with (look s x).
+    fold (counter s c); fold ac; fold s1.
     destruct (L.leb a (look s x)); [|destruct (trie_get c (ws_armed s)) as [[]|]];
       time_simpl; time_cbn;
       clear -Hcommon Hpolicy Hu; unfold c_lookup in *; nia.

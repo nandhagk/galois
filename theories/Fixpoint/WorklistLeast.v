@@ -111,6 +111,7 @@ Module WorklistCodeLeast (L : WLATTICE) (LB : LUB L) (S : SYSTEM L)
     ws_rows (V.update_one p pol s xa) = ws_rows s.
   Proof.
     intros p pol s [x a]; unfold V.update_one.
+    fold (look_or S.key_code L.bot (ws_store s) x).
     destruct (L.leb a (look_or S.key_code L.bot (ws_store s) x)); [reflexivity|].
     destruct (trie_get (S.key_code x) (ws_armed s)); cbn [V.arm ws_rows].
     - reflexivity.
@@ -125,6 +126,7 @@ Module WorklistCodeLeast (L : WLATTICE) (LB : LUB L) (S : SYSTEM L)
       (x, L.join (look_or S.key_code L.bot (ws_store s) x) a) (ws_store s).
   Proof.
     intros p pol s x a Hfree; unfold V.update_one.
+    fold (look_or S.key_code L.bot (ws_store s) x).
     destruct (L.leb a (look_or S.key_code L.bot (ws_store s) x)) eqn:Hstable;
       [reflexivity|].
     rewrite P.update_spec, Hstable, Hfree; cbn [fst snd].
