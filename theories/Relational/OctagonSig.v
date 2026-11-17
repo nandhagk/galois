@@ -2,15 +2,37 @@
 
     Octagons bound differences of signed variable literals.
     For example, a bound from minus x to plus x bounds twice x.
+
+    Main results
+    - [entry_spec] Entries use the shared literal-key map twice.
+    - [tclose_complexity] Tight closure is cubic in the support.
+    - [incr_close_complexity] Incremental closure is quadratic in the support, plus the stored
+      key weight.
+    - [leb_complexity] Inclusion walks the skeletons, stored entries and key weights of both
+      matrices.
+    - [join_complexity] Join merges the skeletons, stored entries and key weights of both
+      matrices.
+    - [widen_complexity] Widening is an inclusion test followed by one merge.
+    - [assign_fast_complexity] Assignment copies a row and a column, so it is linear in the
+      support.
+
+    Glossary
+    - [supp] The number of distinct keys that a matrix stores.
+    - [b] The largest bit length of a stored key.
+    - [ell] The largest bit length of a stored bound.
+    - [skel] The number of trie nodes of a matrix, its outer map and all its rows.
+    - [skels] The trie nodes of a state, zero when it is unreached.
+
     Builds on: MapSig, EnvSig and NumStateSig. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import KeySig MapSig Code Key.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig.
+Import ComplexityNotations.
 
 Local Open Scope nat_scope.
 
@@ -114,33 +136,29 @@ Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
       N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat) +
     c_octagon * N.of_nat (M.weight m))%N.
   (** Tight closure is cubic in the support. *)
-  Parameter tclose_complexity : bigO (fun m : dbm => dbm_wf m)
-    (fun m => N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
-    (fun m => T_tclose m).
+  Parameter tclose_complexity :
+    T_tclose m ∈ 𝑂(N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
+      for m | dbm_wf m.
   (** Incremental closure is quadratic in the support, plus the stored key weight. *)
-  Parameter incr_close_complexity : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
-    (fun x => N.of_nat ((supp (snd x) + 1)^2 *
-      (b (snd x) + K.bits (fst (fst (fst x))) + K.bits (snd (fst (fst x))) +
-        ell (snd x) + Z.size_nat (snd (fst x)) + 1) + M.weight (snd x)))
-    (fun x => T_incr_close (fst (fst (fst x))) (snd (fst (fst x))) (snd (fst x)) (snd x)).
+  Parameter incr_close_complexity :
+    T_incr_close i j d m ∈ 𝑂(N.of_nat ((supp m + 1)^2 *
+      (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1) + M.weight m))
+      for (i, j, d, m) | dbm_wf m.
   (** Inclusion walks the skeletons, stored entries and key weights of both matrices. *)
-  Parameter leb_complexity : bigO (fun _ : t * t => True)
-    (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
-        labs (fst x) + labs (snd x) + 1) *
-      (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
-    (fun x => T_leb (fst x) (snd x)).
+  Parameter leb_complexity :
+    T_leb p q ∈ 𝑂(N.of_nat ((skels p + skels q + entries p + entries q +
+        labs p + labs q + 1) *
+      (bs p + bs q + ells p + ells q + 1))) for (p, q).
   (** Join merges the skeletons, stored entries and key weights of both matrices. *)
-  Parameter join_complexity : bigO (fun _ : t * t => True)
-    (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
-        labs (fst x) + labs (snd x) + 1) *
-      (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
-    (fun x => T_join (fst x) (snd x)).
+  Parameter join_complexity :
+    T_join p q ∈ 𝑂(N.of_nat ((skels p + skels q + entries p + entries q +
+        labs p + labs q + 1) *
+      (bs p + bs q + ells p + ells q + 1))) for (p, q).
   (** Widening is an inclusion test followed by one merge. *)
-  Parameter widen_complexity : bigO (fun _ : wparam * t * t => True)
-    (fun x => N.of_nat ((skels (snd (fst x)) + skels (snd x) +
-        entries (snd (fst x)) + entries (snd x) + labs (snd (fst x)) + labs (snd x) + 1) *
-      (bs (snd (fst x)) + bs (snd x) + ells (snd (fst x)) + ells (snd x) + 1)))
-    (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter widen_complexity :
+    T_widen w p q ∈ 𝑂(N.of_nat ((skels p + skels q +
+        entries p + entries q + labs p + labs q + 1) *
+      (bs p + bs q + ells p + ells q + 1))) for (w, p, q).
 End OCTAGON_TIME.
 
 Module Type OCTAGON_T (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
@@ -312,14 +330,11 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   Parameter range_bits_def : forall e s,
     range_bits e s = ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
   (** Assignment copies a row and a column, so it is linear in the support. *)
-  Parameter assign_fast_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
-    (fun x => (N.of_nat (skels (snd x) +
-      (ns (snd x) + 1) * (bs (snd x) + ells (snd x) + X.bits (fst (fst x)) +
-        F.bits_e (snd (fst x)) + lin_bits (snd (fst x)) + 1) +
-      (tsize (snd (fst x)) + 1) * (bs (snd x) + ells (snd x) + F.bits_e (snd (fst x)) +
-        Nat.log2 (tsize (snd (fst x))) + 1)^2 + labs (snd x)) +
-      F.T_lin_of (snd (fst x)))%N)
-    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter assign_fast_complexity :
+    T_assign x e s ∈ 𝑂((N.of_nat (skels s +
+      (ns s + 1) * (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) +
+      (tsize e + 1) * (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2 + labs s) +
+      F.T_lin_of e)%N) for (x, e, s).
   Fixpoint fw_trace (ks : list K.t) (m : dbm) : list (K.t * dbm) :=
     match ks with
     | nil => nil

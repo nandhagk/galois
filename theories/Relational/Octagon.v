@@ -2,15 +2,30 @@
 
     Sparse signed difference matrices support entrywise lattice operations.
     For example, joining upper bounds 3 and 5 retains the weaker bound 5.
+
+    Main results
+    - [entry_spec] Entries use the shared literal-key map twice.
+    - [tclose_complexity] Tight closure is cubic in the support.
+    - [incr_close_complexity] Incremental closure is quadratic in the support, plus the stored
+      key weight.
+    - [leb_complexity] Inclusion walks the skeletons, stored entries and key weights of both
+      matrices.
+    - [join_complexity] Join merges the skeletons, stored entries and key weights of both
+      matrices.
+    - [widen_complexity] Widening is an inclusion test followed by one merge.
+    - [assign_fast_complexity] Assignment copies a row and a column, so it is linear in the
+      support.
+
     Builds on: OctagonSig, keyed map laws and numeric linearization. *)
 
 From Stdlib Require Import List Bool ZArith NArith Lia ArithRing.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import KeySig MapSig Code Key.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig OctagonSig Zone.
+Import ComplexityNotations.
 Local Open Scope nat_scope.
 
 Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%type
@@ -13954,9 +13969,8 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Assignment is linear in the numeric work charged by its contract. *)
-  Lemma assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
-    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assign_complexity :
+    T_assign x e s ∈ 𝑂(N.of_nat (assign_work x e s)) for (x, e, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [[x e] s] _.
     cbn [fst snd]. pose proof (T_assign_le x e s) as Htime.
@@ -13964,9 +13978,8 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Havoc is linear in the numeric work charged by its contract. *)
-  Lemma havoc_complexity : bigO (fun _ : X.t * t => True)
-    (fun x => N.of_nat (havoc_work (fst x) (snd x)))
-    (fun x => T_havoc (fst x) (snd x)).
+  Lemma havoc_complexity :
+    T_havoc x s ∈ 𝑂(N.of_nat (havoc_work x s)) for (x, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [x s] _.
     cbn [fst snd]. pose proof (T_havoc_le x s) as Htime.
@@ -13974,9 +13987,8 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Assumption is linear in the numeric work charged by its contract. *)
-  Lemma assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
-    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assume_complexity :
+    T_assume g es s ∈ 𝑂(N.of_nat (assume_work g es s)) for (g, es, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [[g es] s] _.
     cbn [fst snd]. pose proof (T_assume_le g es s) as Htime.
@@ -13984,9 +13996,8 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** A range query is linear in the numeric work charged by its contract. *)
-  Lemma range_complexity : bigO (fun _ : term L.op X.t * t => True)
-    (fun x => N.of_nat (range_work (fst x) (snd x)))
-    (fun x => T_range (fst x) (snd x)).
+  Lemma range_complexity :
+    T_range e s ∈ 𝑂(N.of_nat (range_work e s)) for (e, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [e s] _.
     cbn [fst snd]. pose proof (T_range_le e s) as Htime.
@@ -13994,20 +14005,19 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Tight closure is cubic in the support with a linear bit-width factor. *)
-  Lemma tclose_complexity : bigO (fun m : dbm => dbm_wf m)
-    (fun m => N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
-    (fun m => T_tclose m).
+  Lemma tclose_complexity :
+    T_tclose m ∈ 𝑂(N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
+      for m | dbm_wf m.
   Proof.
     apply bigO_intro with (c := c_octagon). intros m Hwf.
     pose proof (T_tclose_le m Hwf) as Htime. rewrite Nat2N.inj_mul. nia.
   Qed.
 
   (** Incremental closure is quadratic in the support and also scans the outer labels. *)
-  Lemma incr_close_complexity : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
-    (fun x => N.of_nat ((supp (snd x) + 1)^2 *
-      (b (snd x) + K.bits (fst (fst (fst x))) + K.bits (snd (fst (fst x))) +
-        ell (snd x) + Z.size_nat (snd (fst x)) + 1) + M.weight (snd x)))
-    (fun x => T_incr_close (fst (fst (fst x))) (snd (fst (fst x))) (snd (fst x)) (snd x)).
+  Lemma incr_close_complexity :
+    T_incr_close i j d m ∈ 𝑂(N.of_nat ((supp m + 1)^2 *
+      (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1) + M.weight m))
+      for (i, j, d, m) | dbm_wf m.
   Proof.
     apply bigO_intro with (c := c_octagon). intros [[[i j] d] m] _.
     cbn [fst snd]. pose proof (T_incr_close_le i j d m) as Htime.
@@ -14015,11 +14025,10 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Inclusion is linear in sparse structure and stored entries times their bit width. *)
-  Lemma leb_complexity : bigO (fun _ : t * t => True)
-    (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
-        labs (fst x) + labs (snd x) + 1) *
-      (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
-    (fun x => T_leb (fst x) (snd x)).
+  Lemma leb_complexity :
+    T_leb p q ∈ 𝑂(N.of_nat ((skels p + skels q + entries p + entries q +
+        labs p + labs q + 1) *
+      (bs p + bs q + ells p + ells q + 1))) for (p, q).
   Proof.
     apply bigO_intro with (c := matrix_time_factor). intros [a b] _.
     cbn [fst snd]. pose proof (T_leb_entries_le a b) as Htime.
@@ -14027,11 +14036,10 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Join is linear in sparse structure and stored entries times their bit width. *)
-  Lemma join_complexity : bigO (fun _ : t * t => True)
-    (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
-        labs (fst x) + labs (snd x) + 1) *
-      (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
-    (fun x => T_join (fst x) (snd x)).
+  Lemma join_complexity :
+    T_join p q ∈ 𝑂(N.of_nat ((skels p + skels q + entries p + entries q +
+        labs p + labs q + 1) *
+      (bs p + bs q + ells p + ells q + 1))) for (p, q).
   Proof.
     apply bigO_intro with (c := matrix_time_factor). intros [a b] _.
     cbn [fst snd]. pose proof (T_join_entries_le a b) as Htime.
@@ -14039,11 +14047,10 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Widening is linear in sparse structure and stored entries times their bit width. *)
-  Lemma widen_complexity : bigO (fun _ : wparam * t * t => True)
-    (fun x => N.of_nat ((skels (snd (fst x)) + skels (snd x) +
-        entries (snd (fst x)) + entries (snd x) + labs (snd (fst x)) + labs (snd x) + 1) *
-      (bs (snd (fst x)) + bs (snd x) + ells (snd (fst x)) + ells (snd x) + 1)))
-    (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma widen_complexity :
+    T_widen w p q ∈ 𝑂(N.of_nat ((skels p + skels q +
+        entries p + entries q + labs p + labs q + 1) *
+      (bs p + bs q + ells p + ells q + 1))) for (w, p, q).
   Proof.
     apply bigO_intro with (c := c_lat). intros [[p a] b] _.
     cbn [fst snd]. pose proof (T_widen_entries_le p a b) as Htime.
@@ -14051,14 +14058,11 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Fast assignment is linear in matrix support plus source interval arithmetic. *)
-  Lemma assign_fast_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
-    (fun x => (N.of_nat (skels (snd x) +
-      (ns (snd x) + 1) * (bs (snd x) + ells (snd x) + X.bits (fst (fst x)) +
-        F.bits_e (snd (fst x)) + lin_bits (snd (fst x)) + 1) +
-      (tsize (snd (fst x)) + 1) * (bs (snd x) + ells (snd x) + F.bits_e (snd (fst x)) +
-        Nat.log2 (tsize (snd (fst x))) + 1)^2 + labs (snd x)) +
-      F.T_lin_of (snd (fst x)))%N)
-    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assign_fast_complexity :
+    T_assign x e s ∈ 𝑂((N.of_nat (skels s +
+      (ns s + 1) * (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) +
+      (tsize e + 1) * (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2 + labs s) +
+      F.T_lin_of e)%N) for (x, e, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [[x e] [|m]] _.
     - cbn [fst snd].
