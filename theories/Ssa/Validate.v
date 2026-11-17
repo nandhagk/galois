@@ -2,15 +2,28 @@
 
     The translation checker follows each instruction and checks the supplied entry renamings.
     For example, it accepts a renamed return only when both returns read corresponding values.
+
+    Main results
+    - [check_sound] An accepted translation has the same result at every fuel and input list.
+    - [check_ssa_sound] Acceptance of the SSA checker establishes the language's strict
+      definition discipline.
+    - [check_core_ssa_sound] Accepted SSA functions also meet the supplied core presentation's
+      laws.
+    - [check_complexity] Translation checking has the published certificate-sensitive
+      bit-cost bound.
+    - [check_ssa_complexity] SSA checking has the published syntax and dominator bit-cost
+      bound.
+
     Builds on: ValidateSig. *)
 
 From Stdlib Require Import List PArith NArith Bool Arith Lia.
-From Argent Require Import Time Tactics Std BigO Loop.
+From Argent Require Import Time Tactics Std Complexity Loop.
 From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig.
 From Galois.Program Require Import CfgSig SsaSig.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module Datatypes.
   TimeFun option_map.
@@ -4966,9 +4979,9 @@ Module ValidateT (O : OPS)
     apply N.mul_le_mono_r; apply N.mul_le_mono_r; unfold c_val; apply N.le_add_l.
   Qed.
   (** Translation checking has the published certificate-sensitive bit-cost bound. *)
-  Lemma check_complexity : bigO (fun _ : P.t * P.t * cert => True)
-    (fun '(p, s, c) => N.of_nat ((function_size p + function_size s + cert_size c + 1) *
-      (check_width p s c + 1) + op_bits p + 1)) (fun '(p, s, c) => T_check p s c).
+  Lemma check_complexity :
+    T_check p s c ∈ 𝑂(N.of_nat ((function_size p + function_size s + cert_size c + 1) *
+      (check_width p s c + 1) + op_bits p + 1)) for (p, s, c).
   Proof.
     exists c_val; intros [[p s] c] Htrue.
     eapply N.le_trans; [apply T_check_le|].
@@ -4979,9 +4992,9 @@ Module ValidateT (O : OPS)
     apply N.le_add_r.
   Qed.
   (** SSA checking has the published syntax and dominator bit-cost bound. *)
-  Lemma check_ssa_complexity : bigO (fun _ : P.t => True)
-    (fun s => ((N.of_nat (function_size s + 1) + dom_bound s) *
-      N.of_nat (function_width s + 1))%N) T_check_ssa.
+  Lemma check_ssa_complexity :
+    T_check_ssa s ∈ 𝑂(((N.of_nat (function_size s + 1) + dom_bound s) *
+      N.of_nat (function_width s + 1))%N) for s.
   Proof.
     exists c_val; intros s Htrue; eapply N.le_trans; [apply T_check_ssa_le|].
     lazymatch goal with |- (?lhs <= ?rhs)%N =>

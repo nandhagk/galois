@@ -2,15 +2,29 @@
 
     Edges retain the source block and the selected exit arm.
     For example, two arms aimed at the same block remain distinct.
+
+    Main results
+    - [edges_complexity] Edge enumeration is linear in its output, in the block and the point
+      occurrence modules.
+    - [entries_complexity] Entry enumeration is linear in its output, in both modules.
+    - [out_complexity] Outgoing lookup is linear in the node key and returned edges, in both
+      modules.
+    - [inc_complexity] Incoming lookup is linear in the node key and returned edges, in both
+      modules.
+    - [nodes_complexity] Node enumeration is linear in its output, in both modules.
+    - [prepare_complexity] The concrete preparation clock has the published asymptotic bound,
+      O((s + 1) (w + 1)) for s function size and width w.
+
     Builds on: Ssa.Lang. *)
 
 From Stdlib Require Import List PArith NArith ZArith Bool Lia Arith Wf_nat.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity BigO.
 From Galois.Base Require Import Code KeySig Key Trie.
 From Galois.Graph Require Import DigraphSig.
 From Galois.Program Require Import CfgSig VarsSig Vars SsaSig Ssa.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Inductive exit_arm :=
   | Jump_arm
@@ -1275,40 +1289,40 @@ Module BlockCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     unfold PosKeyT.bits, PosKeyT.encode, PosKeyCode.encode; PTrieT.trie_get_le; nia.
   Qed.
   (** Edge enumeration is linear in its output. *)
-  Lemma edges_complexity : bigO (fun _ : Q.t => True)
-    (fun p => N.of_nat (length (edges p))) T_edges.
+  Lemma edges_complexity :
+    T_edges p ∈ 𝑂(N.of_nat (length (edges p))) for p.
   Proof.
     apply bigO_intro with (c := c_cfg). intros p _.
     pose proof (T_edges_le p) as Htime.
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Entry enumeration is linear in its output. *)
-  Lemma entries_complexity : bigO (fun _ : Q.t => True)
-    (fun p => N.of_nat (length (entries p))) T_entries.
+  Lemma entries_complexity :
+    T_entries p ∈ 𝑂(N.of_nat (length (entries p))) for p.
   Proof.
     apply bigO_intro with (c := c_cfg). intros p _.
     pose proof (T_entries_le p) as Htime.
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Outgoing lookup is linear in the node key and returned edges. *)
-  Lemma out_complexity : bigO (X := Q.t * PosKeyT.t) (fun _ => True)
-    (fun '(p, n) => N.of_nat (PosKeyT.bits n + length (out p n))) (fun '(p, n) => T_out p n).
+  Lemma out_complexity :
+    T_out p n ∈ 𝑂(N.of_nat (PosKeyT.bits n + length (out p n))) for (p, n).
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
     pose proof (T_out_le p n) as Htime.
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Incoming lookup is linear in the node key and returned edges. *)
-  Lemma inc_complexity : bigO (X := Q.t * PosKeyT.t) (fun _ => True)
-    (fun '(p, n) => N.of_nat (PosKeyT.bits n + length (inc p n))) (fun '(p, n) => T_inc p n).
+  Lemma inc_complexity :
+    T_inc p n ∈ 𝑂(N.of_nat (PosKeyT.bits n + length (inc p n))) for (p, n).
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
     pose proof (T_inc_le p n) as Htime.
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Node enumeration is linear in its output. *)
-  Lemma nodes_complexity : bigO (fun _ : Q.t => True)
-    (fun p => N.of_nat (length (nodes p))) T_nodes.
+  Lemma nodes_complexity :
+    T_nodes p ∈ 𝑂(N.of_nat (length (nodes p))) for p.
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros p _.
     pose proof (T_nodes_le p) as Htime.
@@ -1440,40 +1454,40 @@ Module PointCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite !Nat2N.inj_add in *; nia.
   Qed.
   (** Edge enumeration is linear in its output. *)
-  Lemma edges_complexity : bigO (fun _ : Q.t => True)
-    (fun p => N.of_nat (length (edges p))) T_edges.
+  Lemma edges_complexity :
+    T_edges p ∈ 𝑂(N.of_nat (length (edges p))) for p.
   Proof.
     apply bigO_intro with (c := c_cfg). intros p _.
     pose proof (T_edges_le p) as Htime.
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Entry enumeration is linear in its output. *)
-  Lemma entries_complexity : bigO (fun _ : Q.t => True)
-    (fun p => N.of_nat (length (entries p))) T_entries.
+  Lemma entries_complexity :
+    T_entries p ∈ 𝑂(N.of_nat (length (entries p))) for p.
   Proof.
     apply bigO_intro with (c := c_cfg). intros p _.
     pose proof (T_entries_le p) as Htime.
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Outgoing lookup is linear in the node key and returned edges. *)
-  Lemma out_complexity : bigO (X := Q.t * PointKey.t) (fun _ => True)
-    (fun '(p, n) => N.of_nat (PointKey.bits n + length (out p n))) (fun '(p, n) => T_out p n).
+  Lemma out_complexity :
+    T_out p n ∈ 𝑂(N.of_nat (PointKey.bits n + length (out p n))) for (p, n).
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
     pose proof (T_out_le p n) as Htime.
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Incoming lookup is linear in the node key and returned edges. *)
-  Lemma inc_complexity : bigO (X := Q.t * PointKey.t) (fun _ => True)
-    (fun '(p, n) => N.of_nat (PointKey.bits n + length (inc p n))) (fun '(p, n) => T_inc p n).
+  Lemma inc_complexity :
+    T_inc p n ∈ 𝑂(N.of_nat (PointKey.bits n + length (inc p n))) for (p, n).
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
     pose proof (T_inc_le p n) as Htime.
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Node enumeration is linear in its output. *)
-  Lemma nodes_complexity : bigO (fun _ : Q.t => True)
-    (fun p => N.of_nat (length (nodes p))) T_nodes.
+  Lemma nodes_complexity :
+    T_nodes p ∈ 𝑂(N.of_nat (length (nodes p))) for p.
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros p _.
     pose proof (T_nodes_le p) as Htime.
@@ -4281,8 +4295,8 @@ Module PrepareT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     time_unfold T_prepare. lia.
   Qed.
   (** The concrete preparation clock has the published asymptotic bound. *)
-  Lemma prepare_complexity : bigO (fun _ : func positive O.K O.G => True)
-    (fun p => N.of_nat ((function_size p + 1) * (function_width p + 1))) T_prepare.
+  Lemma prepare_complexity :
+    T_prepare p ∈ 𝑂(N.of_nat ((function_size p + 1) * (function_width p + 1))) for p.
   Proof.
     unfold bigO. exists c_prepare. intros p Hdomain.
     pose proof (T_prepare_le p) as Htime. rewrite Nat2N.inj_mul.

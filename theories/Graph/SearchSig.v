@@ -2,13 +2,19 @@
 
     Search folds a visitor over one exact depth-first trace.
     For example, a self-loop produces a back-edge event between entering and leaving its vertex.
+
+    Main results
+    - [trace_edges_sound] Every edge event comes from a reachable source and a real successor.
+    - [dfs_complexity] Search has the reachable-size bound when visitor work stays bounded.
+
     Builds on: graph data, graph semantics and preparation measures. *)
 
 From Stdlib Require Import PArith NArith List Bool Sorting.Permutation.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Inductive event :=
   | Enter (v : positive)
@@ -213,13 +219,11 @@ Module Type SEARCH_TIME (V : VISITOR_T) (Import S : SEARCH V).
       (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
         N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
   (** Search has the reachable-size bound when visitor work stays bounded. *)
-  Parameter dfs_complexity : bigO
-    (fun '(g, roots, s, B) => work_bounded g roots s B)
-    (fun '(g, roots, _, B) =>
-      (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+  Parameter dfs_complexity :
+    T_dfs g roots s ∈ 𝑂((N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
         (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
           N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1))%N)
-    (fun '(g, roots, s, _) => T_dfs g roots s).
+      for (g, roots, s, B) | work_bounded g roots s B.
 End SEARCH_TIME.
 
 Module Type SEARCH_T (V : VISITOR_T) := SEARCH V <+ SEARCH_TIME V.

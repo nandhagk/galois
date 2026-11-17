@@ -2,13 +2,19 @@
 
     Search visits roots and successor occurrences in their supplied order.
     For example, an edge to an active vertex produces a back-edge event.
+
+    Main results
+    - [trace_edges_sound] Every edge event comes from a reachable source and a real successor.
+    - [dfs_complexity] Search has the reachable-size bound when visitor work stays bounded.
+
     Builds on: graph data, binary-fuel loops and the search signature. *)
 
 From Stdlib Require Import List NArith PArith Lia Arith Sorting.Permutation.
-From Argent Require Import Time Tactics Std BigO Loop.
+From Argent Require Import Time Tactics Std Complexity Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig Digraph SearchSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition search_step (g : digraph) (s : search_state) : search_state + (list event) :=
   match s with
@@ -3402,13 +3408,11 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Qed.
 
   (** The public pointwise search bound gives the reachable-size family bound. *)
-  Lemma dfs_complexity : bigO
-    (fun '(g, roots, s, B) => work_bounded g roots s B)
-    (fun '(g, roots, _, B) =>
-      (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+  Lemma dfs_complexity :
+    T_dfs g roots s ∈ 𝑂((N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
         (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
           N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1))%N)
-    (fun '(g, roots, s, _) => T_dfs g roots s).
+      for (g, roots, s, B) | work_bounded g roots s B.
   Proof.
     exists c_dfs; intros [[[g roots] s] B] Hwork.
     eapply N.le_trans; [apply T_dfs_le; exact Hwork|].

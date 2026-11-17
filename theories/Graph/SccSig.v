@@ -2,13 +2,21 @@
 
     Components partition the listed graph vertices in reverse topological order.
     For example, two vertices joined in both directions have the same present owner.
+
+    Main results
+    - [comp_spec] Equal present owners characterize mutual reachability of listed vertices.
+    - [owners_spec] Owner indices are one-based positions in the component list.
+    - [run_complexity] SCC computation has the published linear bit-cost bound,
+      O((n + e + 1) (w + 1)).
+
     Builds on: graph semantics, trie data and preparation measures. *)
 
 From Stdlib Require Import PArith NArith List Sorting.Permutation.
-From Argent Require Import Time BigO.
+From Argent Require Import Time Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** Mutual reachability permits zero-edge paths at each endpoint. *)
 Definition mutually_reachable (g : digraph) (u v : positive) : Prop :=
@@ -79,9 +87,9 @@ Module Type SCC_TIME (Import S : SCC).
     (T_run g <= c_scc * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
   (** SCC computation has the published linear bit-cost bound. *)
-  Parameter run_complexity : bigO (fun _ => True)
-    (fun g => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1))) T_run.
+  Parameter run_complexity :
+    T_run g ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))) for g.
 End SCC_TIME.
 
 Module Type SCC_T := SCC <+ SCC_TIME.

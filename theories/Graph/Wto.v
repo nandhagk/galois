@@ -2,14 +2,25 @@
 
     The producer recursively removes an entry header from each cyclic component.
     For example, a singleton self edge produces an empty loop body.
+
+    Main results
+    - [check_sound] Acceptance establishes exact rooted coverage and the nesting edge condition.
+    - [heads_spec] Heads are the structural loop heads in traversal order.
+    - [ranks_spec] Ranks number the unique linear order starting at one.
+    - [heads_complexity] Head projection is linear in the order length.
+    - [ranks_complexity] Ranking is linear in the order length and the key and counter widths.
+    - [check_complexity] Checking is linear in graph size and identifier width.
+    - [build_complexity] Building has the published nesting-sensitive bound.
+
     Builds on: Tarjan search, first-order graph data and the WTO signature. *)
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation
   Wellfounded.Inverse_Image.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig Digraph SearchSig Search SccSig Scc WtoSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module TimeHelpers.
   Module List.
@@ -3741,28 +3752,27 @@ Module WtoT <: WTO_ALL.
     rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
-  Lemma heads_complexity : bigO (fun _ : wto => True)
-    (fun w => N.of_nat (length (wto_order w))) T_heads.
+  Lemma heads_complexity :
+    T_heads w ∈ 𝑂(N.of_nat (length (wto_order w))) for w.
   Proof.
     exists c_wto. intros w _.
     eapply N.le_trans; [apply T_heads_le|].
     rewrite Nat2N.inj_add. nia.
   Qed.
 
-  Lemma ranks_complexity : bigO (fun _ : wto => True)
-    (fun w => N.of_nat ((length (wto_order w) + 1) *
-      (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1)))
-    T_ranks.
+  Lemma ranks_complexity :
+    T_ranks w ∈ 𝑂(N.of_nat ((length (wto_order w) + 1) *
+      (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))) for w.
   Proof.
     exists c_wto. intros w _.
     eapply N.le_trans; [apply T_ranks_le|].
     rewrite Nat2N.inj_mul. nia.
   Qed.
 
-  Lemma check_complexity : bigO (fun _ : prepared * list positive * wto => True)
-    (fun '(g, roots, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
+  Lemma check_complexity :
+    T_check g roots w ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
       (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
-    (fun '(g, roots, w) => T_check g roots w).
+      for (g, roots, w).
   Proof.
     exists c_wto. intros [[g roots] w] _.
     eapply N.le_trans; [apply T_check_le|].
@@ -6812,11 +6822,11 @@ Module WtoT <: WTO_ALL.
       N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
   Proof. apply T_build_le. Qed.
 
-  Lemma build_complexity : bigO (fun _ : prepared * list positive => True)
-    (fun '(g, roots) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
+  Lemma build_complexity :
+    T_build g roots ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
       (wto_depth (build g roots) + 1) *
       (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
-    (fun '(g, roots) => T_build g roots).
+      for (g, roots).
   Proof.
     exists c_wto. intros [g roots] _.
     pose proof (T_build_le g roots) as Hbuild.

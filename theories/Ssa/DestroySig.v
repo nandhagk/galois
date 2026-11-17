@@ -2,13 +2,20 @@
 
     Destruction splits parameter-carrying branch edges and checks parallel-copy sequences.
     For example, a swap uses a fresh temporary on its own incoming edge.
+
+    Main results
+    - [destroy_correct] Destruction adds at most one block step per original edge and retains
+      finite results.
+    - [destroy_complexity] Destruction has the published linear bit-cost bound.
+
     Builds on: Ssa.Lang, core SSA presentations and checked parallel moves. *)
 
 From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import KeySig Key.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig ParMoveSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition destroy_edge_args {K G} (p : func positive K G) : nat :=
   fold_right (fun item n =>
@@ -74,8 +81,8 @@ Module Type DESTROY_TIME (O : OPS)
   Parameter T_destroy_le : forall s,
     (T_destroy s <= c_ds * N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
   (** Destruction has the published linear bit-cost bound. *)
-  Parameter destroy_complexity : bigO (fun _ : P.t => True)
-    (fun s => N.of_nat (destroy_work s * (function_width s + 1))) T_destroy.
+  Parameter destroy_complexity :
+    T_destroy s ∈ 𝑂(N.of_nat (destroy_work s * (function_width s + 1))) for s.
 End DESTROY_TIME.
 
 Module Type DESTROY_T (O : OPS)

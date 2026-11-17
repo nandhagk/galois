@@ -2,12 +2,21 @@
 
     Preparation caches predecessor occurrences and graph sizes.
     For example, two parallel successor occurrences give two predecessor occurrences.
+
+    Main results
+    - [prepare_correct] Preparation computes caches even when vertex or edge lists contain
+      duplicates.
+    - [prepare_complexity] Preparation has the published linear bit-cost bound,
+      O((n + e + 1) (w + 1)) for n vertices, e edge occurrences and key width w.
+
     Builds on: graph data, graph semantics and Argent time interfaces. *)
 
 From Stdlib Require Import PArith NArith List Arith Sorting.Permutation.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Graph Require Import Data Spec.
 Import List.ListNotations.
+Import ComplexityNotations.
+
 Fixpoint graph_max (a b : nat) : nat :=
   match a, b with
   | 0, _ => b
@@ -66,8 +75,8 @@ Module Type DIGRAPH_TIME (Import D : DIGRAPH).
     (T_prepare g <= c_prepare * N.of_nat (graph_n g + graph_e g + 1) *
       N.of_nat (graph_width g + 1))%N.
   (** Preparation has the published linear bit-cost bound. *)
-  Parameter prepare_complexity : bigO (fun _ => True)
-    (fun g => N.of_nat ((graph_n g + graph_e g + 1) * (graph_width g + 1))) T_prepare.
+  Parameter prepare_complexity :
+    T_prepare g ∈ 𝑂(N.of_nat ((graph_n g + graph_e g + 1) * (graph_width g + 1))) for g.
 End DIGRAPH_TIME.
 
 Module Type DIGRAPH_T := DIGRAPH <+ DIGRAPH_TIME.

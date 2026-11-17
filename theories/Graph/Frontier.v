@@ -2,14 +2,22 @@
 
     Frontier columns share a visited table across the predecessors of each target.
     For example, parallel edges do not duplicate a target in a frontier row.
+
+    Main results
+    - [df_spec] Frontier rows meet the requested semantic boundary for the root argument.
+    - [idf_spec] Iteration returns precisely the least frontier closure seeded by definitions.
+    - [df_complexity] Frontier construction has the published output-sensitive bound.
+    - [idf_complexity] Iteration has the published visited-frontier bound.
+
     Builds on: prepared graphs, dominator trees and binary-fuel loops. *)
 
 From Stdlib Require Import PArith NArith List Bool Arith Lia.
 From Stdlib.Sorting Require Import Permutation.
-From Argent Require Import Time Tactics Std BigO Loop.
+From Argent Require Import Time Tactics Std Complexity Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig DomProducer DomOrder FrontierSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** A prepared predecessor occurrence is exactly an edge from a listed source. *)
 Lemma frontier_preds_member : forall g y x,
@@ -2783,22 +2791,20 @@ Module FrontierT <: FRONTIER_ALL.
     time_unfold T_idf. lia.
   Qed.
 
-  Lemma df_complexity : bigO (fun '(g, t, r) =>
-      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
-    (fun '(g, t, _) => N.of_nat
-      ((graph_n (base g) + graph_e (base g) + df_size g t + 1) *
-        (graph_width (base g) + 1))) (fun '(g, t, _) => T_df g t).
+  Lemma df_complexity :
+    T_df g t ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + df_size g t + 1) *
+      (graph_width (base g) + 1)))
+      for (g, t, r) | wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t.
   Proof.
     exists c_frontier. intros [[g t] r] [Hgraph [Hprepared Htree]].
     pose proof (T_df_le g t r Hgraph Hprepared Htree) as Hbound.
     rewrite Nat2N.inj_mul. nia.
   Qed.
 
-  Lemma idf_complexity : bigO (fun _ : ptrie (list positive) * list positive => True)
-    (fun '(rows, seeds) => N.of_nat
-      ((length seeds + idf_work idf rows seeds + 1) *
-        (vertex_width (seeds ++ flat_map (frontier_row rows) (seeds ++ idf rows seeds)) + 1)))
-    (fun '(rows, seeds) => T_idf rows seeds).
+  Lemma idf_complexity :
+    T_idf rows seeds ∈ 𝑂(N.of_nat ((length seeds + idf_work idf rows seeds + 1) *
+      (vertex_width (seeds ++ flat_map (frontier_row rows) (seeds ++ idf rows seeds)) + 1)))
+      for (rows, seeds).
   Proof.
     exists c_frontier. intros [rows seeds] Htrue.
     pose proof (T_idf_le rows seeds) as Hbound. rewrite Nat2N.inj_mul. nia.

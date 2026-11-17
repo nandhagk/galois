@@ -2,13 +2,24 @@
 
     A checked order covers the reachable vertices and sends backward edges to enclosing heads.
     For example, a self-loop requires its vertex to be a loop head.
+
+    Main results
+    - [check_sound] Acceptance establishes exact rooted coverage and the nesting edge condition.
+    - [heads_spec] Heads are the structural loop heads in traversal order.
+    - [ranks_spec] Ranks number the unique linear order starting at one.
+    - [heads_complexity] Head projection is linear in the order length.
+    - [ranks_complexity] Ranking is linear in the order length and the key and counter widths.
+    - [check_complexity] Checking is linear in graph size and identifier width.
+    - [build_complexity] Building has the published nesting-sensitive bound.
+
     Builds on: graph semantics, preparation measures and Argent time interfaces. *)
 
 From Stdlib Require Import PArith NArith List Arith Sorting.Permutation.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Fixpoint wto_order (w : wto) : list positive :=
   match w with
@@ -156,24 +167,23 @@ Module Type WTO_TIME (Import W : WTO).
     (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
       N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
   (** Head projection is linear in the order length. *)
-  Parameter heads_complexity : bigO (fun _ : wto => True)
-    (fun w => N.of_nat (length (wto_order w))) T_heads.
+  Parameter heads_complexity :
+    T_heads w ∈ 𝑂(N.of_nat (length (wto_order w))) for w.
   (** Ranking is linear in the order length and the key and counter widths. *)
-  Parameter ranks_complexity : bigO (fun _ : wto => True)
-    (fun w => N.of_nat ((length (wto_order w) + 1) *
-      (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1)))
-    T_ranks.
+  Parameter ranks_complexity :
+    T_ranks w ∈ 𝑂(N.of_nat ((length (wto_order w) + 1) *
+      (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))) for w.
   (** Checking is linear in graph size and identifier width. *)
-  Parameter check_complexity : bigO (fun _ : prepared * list positive * wto => True)
-    (fun '(g, roots, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
+  Parameter check_complexity :
+    T_check g roots w ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
       (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
-    (fun '(g, roots, w) => T_check g roots w).
+      for (g, roots, w).
   (** Building has the published nesting-sensitive bound. *)
-  Parameter build_complexity : bigO (fun _ : prepared * list positive => True)
-    (fun '(g, roots) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
+  Parameter build_complexity :
+    T_build g roots ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
       (wto_depth (build g roots) + 1) *
       (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
-    (fun '(g, roots) => T_build g roots).
+      for (g, roots).
 End WTO_TIME.
 
 Module Type WTO_T := WTO <+ WTO_TIME.

@@ -2,13 +2,21 @@
 
     Frontiers identify dominated predecessors across a strict-dominance boundary.
     For example, either arm of a diamond has the join in its frontier.
+
+    Main results
+    - [df_spec] Frontier rows meet the requested semantic boundary for the root argument.
+    - [idf_spec] Iteration returns precisely the least frontier closure seeded by definitions.
+    - [df_complexity] Frontier construction has the published output-sensitive bound.
+    - [idf_complexity] Iteration has the published visited-frontier bound.
+
     Builds on: graph semantics, dominator predicates and preparation measures. *)
 
 From Stdlib Require Import PArith NArith List.
-From Argent Require Import Time Std BigO Loop.
+From Argent Require Import Time Std Complexity Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition frontier_row (rows : ptrie (list positive)) (u : positive) : list positive :=
   match trie_get u rows with
@@ -120,15 +128,15 @@ Module Type FRONTIER_TIME (Import F : FRONTIER).
       N.of_nat (vertex_width
         (seeds ++ flat_map (frontier_row rows) (seeds ++ idf rows seeds)) + 1))%N.
   (** Frontier construction has the published output-sensitive bound. *)
-  Parameter df_complexity : bigO (fun '(g, t, r) =>
-      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
-    (fun '(g, t, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + df_size g t + 1) *
-      (graph_width (base g) + 1))) (fun '(g, t, _) => T_df g t).
+  Parameter df_complexity :
+    T_df g t ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + df_size g t + 1) *
+      (graph_width (base g) + 1)))
+      for (g, t, r) | wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t.
   (** Iteration has the published visited-frontier bound. *)
-  Parameter idf_complexity : bigO (fun _ : ptrie (list positive) * list positive => True)
-    (fun '(rows, seeds) => N.of_nat ((length seeds + idf_work idf rows seeds + 1) *
+  Parameter idf_complexity :
+    T_idf rows seeds ∈ 𝑂(N.of_nat ((length seeds + idf_work idf rows seeds + 1) *
       (vertex_width (seeds ++ flat_map (frontier_row rows) (seeds ++ idf rows seeds)) + 1)))
-    (fun '(rows, seeds) => T_idf rows seeds).
+      for (rows, seeds).
 End FRONTIER_TIME.
 
 Module Type FRONTIER_T := FRONTIER <+ FRONTIER_TIME.

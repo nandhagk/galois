@@ -2,12 +2,20 @@
 
     Preparation caches predecessor occurrences and graph sizes.
     For example, parallel edges contribute repeated predecessors.
+
+    Main results
+    - [prepare_correct] Preparation computes caches even when vertex or edge lists contain
+      duplicates.
+    - [prepare_complexity] Preparation has the published linear bit-cost bound,
+      O((n + e + 1) (w + 1)) for n vertices, e edge occurrences and key width w.
+
     Builds on: graph data and the public preparation signature. *)
 
 From Stdlib Require Import List NArith PArith Lia Arith Sorting.Permutation.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import Key Trie.
 From Galois.Graph Require Import Data DigraphSig.
+Import ComplexityNotations.
 
 Module DigraphCode <: DIGRAPH_OPS.
   Definition add_pred (u v : positive) (p : ptrie (list positive)) :=
@@ -438,8 +446,8 @@ Module DigraphT <: DIGRAPH_T.
     nia.
   Qed.
 
-  Lemma prepare_complexity : bigO (fun _ => True)
-    (fun g => N.of_nat ((graph_n g + graph_e g + 1) * (graph_width g + 1))) T_prepare.
+  Lemma prepare_complexity :
+    T_prepare g ∈ 𝑂(N.of_nat ((graph_n g + graph_e g + 1) * (graph_width g + 1))) for g.
   Proof.
     exists c_prepare. intros g _.
     eapply N.le_trans; [apply T_prepare_le|].

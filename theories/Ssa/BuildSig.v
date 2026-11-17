@@ -2,15 +2,25 @@
 
     The builder validates an untrusted placement and renaming result before returning it.
     For example, a join receives a parameter for a variable live on both incoming paths.
+
+    Main results
+    - [build_correct] Every returned candidate is SSA and has the source result at every fuel
+      and input.
+    - [build_complexity] SSA construction takes time linear in its build work times the
+      variable width, plus the operator bits.
+    - [produce_complexity] Producing a candidate is linear in the construction work times the
+      width.
+
     Builds on: core point presentations, liveness, dominance frontiers and SSA validation. *)
 
 From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time Std BigO Loop.
+From Argent Require Import Time Std Complexity Loop.
 From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig FrontierSig.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition exit_arg_count {G} (e : exit positive G) : nat :=
   match e with
@@ -131,11 +141,11 @@ Module Type BUILD_TIME (O : OPS)
   Parameter T_build_le : forall p,
     (T_build p <= c_build * N.of_nat (build_work p) * N.of_nat (function_width p + 1) +
       c_build * N.of_nat (Va.op_bits p + 1))%N.
-  Parameter build_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (build_work p * (function_width p + 1) + Va.op_bits p + 1)) T_build.
+  Parameter build_complexity :
+    T_build p ∈ 𝑂(N.of_nat (build_work p * (function_width p + 1) + Va.op_bits p + 1)) for p.
   (** Producing a candidate is linear in the construction work times the width. *)
-  Parameter produce_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (build_work p * (function_width p + 1))) T_produce.
+  Parameter produce_complexity :
+    T_produce p ∈ 𝑂(N.of_nat (build_work p * (function_width p + 1))) for p.
 End BUILD_TIME.
 
 Module Type BUILD_T (O : OPS)

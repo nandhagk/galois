@@ -2,14 +2,20 @@
 
     Reverse graph searches collect live variables at the entry point of each block.
     For example, a use propagates to predecessors until an edge defines its variable.
+
+    Main results
+    - [live_driver_complexity] The liveness driver takes time linear in the function size plus
+      the live-set size, times the variable width.
+
     Builds on: LiveSig and positive tries. *)
 
 From Stdlib Require Import List PeanoNat PArith NArith Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import DigraphSig.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
 From Galois.Ssa Require Import Lang LiveSig.
+Import ComplexityNotations.
 Import List.ListNotations.
 
 (** Lookup stops at an absent subtree, even when the requested key is unusually wide. *)
@@ -4369,9 +4375,9 @@ Module LiveT (O : OPS)
     unfold live_clock_atom, live_clock_width, live_driver_budget in *. nia.
   Qed.
 
-  Lemma live_driver_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
-    T_live_in.
+  Lemma live_driver_complexity :
+    T_live_in p ∈ 𝑂(N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
+      for p.
   Proof.
     exists live_driver_budget. intros p Htrue. pose proof (live_driver_bound p) as Hclock.
     rewrite Nat2N.inj_mul. nia.
@@ -4397,9 +4403,9 @@ Module LiveT (O : OPS)
     exact live_driver_bound.
   Qed.
   (** The producer has the published output-sensitive bit-cost bound. *)
-  Lemma live_in_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
-    T_live_in.
+  Lemma live_in_complexity :
+    T_live_in p ∈ 𝑂(N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
+      for p.
   Proof.
     exact live_driver_complexity.
   Qed.
