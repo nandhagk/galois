@@ -2172,12 +2172,24 @@ Module ValidateCode (O : OPS)
     | _, _ => false
     end.
 
-  Definition check_arm (t : check_tables O.K O.G) (target : positive)
+  Definition check_arm_ref (t : check_tables O.K O.G) (target : positive)
       (rho : renaming) (known : ptrie unit) (ie se : exit positive O.G)
       (choice : bool) : bool :=
     match edge_choice ie choice, edge_choice se choice with
     | Some (u, []), Some (v, args) =>
       if Pos.eqb u target then Pos.eqb u v && check_target t target rho known args
+      else true
+    | None, None => true
+    | _, _ => false
+    end.
+
+  Definition check_arm (t : check_tables O.K O.G) (target : positive)
+      (rho : renaming) (known : ptrie unit) (ie se : exit positive O.G)
+      (choice : bool) : bool :=
+    match edge_choice ie choice, edge_choice se choice with
+    | Some (u, []), Some (v, args) =>
+      if Pos.eqb u target then
+        if Pos.eqb u v then check_target t target rho known args else false
       else true
     | None, None => true
     | _, _ => false
@@ -2194,7 +2206,7 @@ Module ValidateCode (O : OPS)
     | _, _ => false
     end.
 
-  Definition check_exit (t : check_tables O.K O.G) (b : positive)
+  Definition check_exit_ref (t : check_tables O.K O.G) (b : positive)
       (ib sb : block positive O.K O.G) (rho : renaming) : bool :=
     let forward := val_index rho in
     let known := val_set (map (fun i => fst (fst i)) (code _ _ _ ib) ++
@@ -2205,6 +2217,23 @@ Module ValidateCode (O : OPS)
     | Branch g xs u [] v [], Branch h ys su _ sv _ =>
       G.eqb g h && val_args forward known xs ys && Pos.eqb u su && Pos.eqb v sv &&
         check_edge t b u rho && check_edge t b v rho
+    | _, _ => false
+    end.
+
+  Definition check_exit (t : check_tables O.K O.G) (b : positive)
+      (ib sb : block positive O.K O.G) (rho : renaming) : bool :=
+    let forward := val_index rho in
+    let known := val_set (map (fun i => fst (fst i)) (code _ _ _ ib) ++
+      index_row (cert_rows t) b) in
+    match term _ _ _ ib, term _ _ _ sb with
+    | Return xs, Return ys => val_args forward known xs ys
+    | Jump u [], Jump v _ => if Pos.eqb u v then check_edge t b u rho else false
+    | Branch g xs u [] v [], Branch h ys su _ sv _ =>
+      let guards := if G.eqb g h then val_args forward known xs ys else false in
+      let yes_target := if guards then Pos.eqb u su else false in
+      let no_target := if yes_target then Pos.eqb v sv else false in
+      let yes_edge := if no_target then check_edge t b u rho else false in
+      if yes_edge then check_edge t b v rho else false
     | _, _ => false
     end.
 
@@ -2320,6 +2349,20 @@ Module Validate (O : OPS)
     <: VALIDATE O K G P Q R E C S DG D B.
   Include ValidateCode O K G P Q R E C S DG D.
   Include VALIDATE_SPEC O K G P Q R E C S DG D.
+
+  (** Short-circuiting an arm preserves its original conjunction. *)
+  Lemma check_arm_andb t target rho known ie se choice :
+    check_arm t target rho known ie se choice = check_arm_ref t target rho known ie se choice.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Each exit check preserves the original order and result of its conjunctions. *)
+  Lemma check_exit_andb t b ib sb rho :
+    check_exit t b ib sb rho = check_exit_ref t b ib sb rho.
+  Proof.
+    reflexivity.
+  Qed.
 
   (** A local operand is visible without querying its home or the dominator tree. *)
   Lemma ssa_visible_orb tree homes b known x :
@@ -2640,7 +2683,7 @@ Module Validate (O : OPS)
     outcome_ready p s c (finish (term _ _ _ sb) ss) (finish (term _ _ _ ib) si).
   Proof.
     intros p s c b ib sb rho ss si Hib Hsb Hcheck Hagree Hdefined.
-    unfold check_exit in Hcheck.
+    rewrite check_exit_andb in Hcheck; unfold check_exit_ref in Hcheck.
     destruct (term _ _ _ ib) as [u ia|g xs u ua v va|xs] eqn:Hie;
       destruct (term _ _ _ sb) as [su sa|h ys su usa sv vsa|ys] eqn:Hse;
       try discriminate.
@@ -3739,7 +3782,7 @@ Module ValidateT (O : OPS)
     assert (Hubits : (N.of_nat (Pos.size_nat u) <= width)%N) by (unfold width; lia).
     clear Hcall Hmembers Hlength Hsize Htarget Hrho Huses Htargets Htable.
     clearbody budget width total; unfold PTrieT.c_trie in *.
-    destruct (Pos.eqb u target); time_simpl; lia.
+    destruct (Pos.eqb u target), (Pos.eqb u v); time_simpl; lia.
   Qed.
 
   Lemma edge_time : forall t b target rho ib sb w,
@@ -3887,7 +3930,7 @@ Module ValidateT (O : OPS)
       destruct (term _ _ _ sb) as [v ya|h ys su ya sv na|ys] eqn:Hse in Hargs |- *; try nia.
       pose proof (Hedges u ltac:(cbn; left; reflexivity)) as Hedge.
       pose proof (Htargets u ltac:(cbn; left; reflexivity)) as Hu.
-      pose proof (Pos.T_eqb_le u v) as Heq; time_simpl; nia.
+      pose proof (Pos.T_eqb_le u v) as Heq; destruct (Pos.eqb u v); time_simpl; nia.
     - destruct ua; [|nia]; destruct va; [|nia].
       destruct (term _ _ _ sb) as [su ya|h ys su ya sv na|ys] eqn:Hse in Hargs |- *; try nia.
       pose proof (Hedges u ltac:(cbn; left; reflexivity)) as Hyes.
@@ -3900,7 +3943,8 @@ Module ValidateT (O : OPS)
       pose proof (Hargs xs ys ltac:(intros x Hin; cbn; repeat rewrite in_app_iff; tauto)
         ltac:(intros y Hin; cbn; repeat rewrite in_app_iff; tauto)
         ltac:(cbn; rewrite !length_app; cbn; lia)) as Hguard.
-      time_simpl; nia.
+      destruct (G.eqb g h), (val_args (val_index rho) known xs ys),
+        (Pos.eqb u su), (Pos.eqb v sv), (check_edge t b u rho); time_simpl; nia.
     - destruct (term _ _ _ sb) as [su ya|h ys su ya sv na|ys] eqn:Hse in Hargs |- *; try nia.
       pose proof (Hargs xs ys ltac:(intros x Hin; exact Hin)
         ltac:(intros y Hin; exact Hin) ltac:(apply Nat.le_refl)) as Hreturn.

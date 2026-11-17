@@ -80,6 +80,46 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+(** An arm with a mismatched destination fails before checking its target arguments. *)
+Example mismatched_arm_rejected :
+  let t := V.tables imperative translated certificate in
+  (V.check_arm t 2 [(1, 11)] (val_set [1]) (Jump 2 []) (Jump 3 [11]) true,
+   V.check_arm t 2 [(1, 11)] (val_set [1]) (Jump 2 []) (Jump 2 [11]) true) =
+  (false, true).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition branch_source : Source.t :=
+  Func positive positive positive 1 [1]
+    [(1, Block positive positive positive [] [] (Branch 1 [1] 2 [] 3 []));
+     (2, Block positive positive positive [] [] (Return [1]));
+     (3, Block positive positive positive [] [] (Return [1]))].
+
+Definition branch_target : Source.t :=
+  Func positive positive positive 1 [10]
+    [(1, Block positive positive positive [] [] (Branch 1 [10] 2 [] 3 []));
+     (2, Block positive positive positive [] [] (Return [10]));
+     (3, Block positive positive positive [] [] (Return [10]))].
+
+Definition branch_certificate : cert :=
+  ([(1, [(1, 10)]); (2, [(1, 10)]); (3, [(1, 10)])],
+   [(1, [1]); (2, [1]); (3, [1])]).
+
+(** A branch exits early on a guard mismatch and keeps the accepted branch unchanged. *)
+Example branch_exit_checks_agree :
+  let t := V.tables branch_source branch_target branch_certificate in
+  let ib := Block positive positive positive [] [] (Branch 1 [1] 2 [] 3 []) in
+  let sb := Block positive positive positive [] [] (Branch 1 [10] 2 [] 3 []) in
+  let bad := Block positive positive positive [] [] (Branch 2 [10] 2 [] 3 []) in
+  (V.check branch_source branch_target branch_certificate,
+   V.check_exit t 1 ib sb [(1, 10)], V.check_exit t 1 ib bad [(1, 10)],
+   V.check_exit_ref t 1 ib sb [(1, 10)], V.check_exit_ref t 1 ib bad [(1, 10)]) =
+  (true, true, false, true, false).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Example rejects_clobbered_live_renaming :
   V.check_code [(1, 1, [1])] [(20, 1, [10])] [(1, 10); (2, 20)] [1; 2] = None.
 Proof.
