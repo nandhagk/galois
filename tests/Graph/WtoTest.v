@@ -205,6 +205,32 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Definition isolated_coverage_graph := fixture_graph [1; 2; 3] [].
+
+(** Repeated roots still produce a unique reachable inventory for the length test. *)
+Example length_coverage_accepts_repeated_roots :
+  WtoCode.check (DigraphCode.prepare isolated_coverage_graph) [1; 1; 2]
+    (WVertex 1 (WVertex 2 WNil)) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Equal lengths do not replace the reverse membership check. *)
+Example length_coverage_rejects_wrong_vertices :
+  WtoCode.check (DigraphCode.prepare isolated_coverage_graph) [1; 2]
+    (WVertex 1 (WVertex 3 WNil)) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A longer candidate fails even when it contains every reachable vertex. *)
+Example length_coverage_rejects_extra_vertex :
+  WtoCode.check (DigraphCode.prepare isolated_coverage_graph) [1; 2]
+    (WVertex 1 (WVertex 2 (WVertex 3 WNil))) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example accepts_alternative_roots :
   WtoCode.check (DigraphCode.prepare Diamond.graph) [2]
     (WVertex 2 (WVertex 4 WNil)) = true.

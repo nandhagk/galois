@@ -995,7 +995,7 @@ Definition wto_check_linear_spec (g : prepared) (roots : list positive) (w : wto
     end
   else false.
 
-(** Listed source keys suffice to bound every candidate that can pass the index. *)
+(** Listed keys bound candidate widths, and unique coverage lists are compared by length. *)
 Definition wto_check_linear (g : prepared) (roots : list positive) (w : wto) : bool :=
   let b := base g in
   let listed := listed_of g in
@@ -1007,10 +1007,10 @@ Definition wto_check_linear (g : prepared) (roots : list positive) (w : wto) : b
     | Some (ranks, intervals, vs) =>
       let ready := scc_graph g in
       let live := entered (prepared_search_trace ready roots) in
-      let reached := fold_left (fun acc v => PTrieCode.set v true acc) live Empty in
-      forallb (fun v => match trie_get v reached with Some _ => true | None => false end) vs &&
-      forallb (fun v => match trie_get v ranks with Some _ => true | None => false end) live &&
-      wto_edges_ok b ranks intervals vs
+      if Nat.leb (length vs) (length live) then
+        if forallb (fun v => match trie_get v ranks with Some _ => true | None => false end) live
+        then wto_edges_ok b ranks intervals vs else false
+      else false
     end
   else false.
 TimeFun wto_check_linear.
@@ -1947,12 +1947,58 @@ Proof.
 Qed.
 
 
-(** The smaller key-width guard preserves acceptance on every candidate. *)
+(** With reverse inclusion and unique lists, forward coverage is exactly a length bound. *)
+Lemma wto_coverage_length_agrees (test : positive -> bool) vs live :
+  NoDup vs -> NoDup live -> (forall v, test v = true <-> In v vs) ->
+  (Nat.leb (length vs) (length live) && forallb test live) =
+  (forallb (fun v => match trie_get v
+    (fold_left (fun acc u => PTrieCode.set u true acc) live Empty) with
+    | Some _ => true | None => false end) vs && forallb test live).
+Proof.
+  intros Hvs Hlive Hdomain.
+  destruct (forallb test live) eqn:Hreverse; [|now rewrite !andb_false_r].
+  rewrite !andb_true_r. apply eq_true_iff_eq.
+  rewrite Nat.leb_le, forallb_forall.
+  assert (Hincluded : incl live vs).
+  { intros v Hin. apply (proj1 (Hdomain v)).
+    rewrite forallb_forall in Hreverse. now apply Hreverse. }
+  split.
+  - intros Hlength v Hin. rewrite scc_listed_test. apply wto_member_spec.
+    exact (NoDup_length_incl Hlive Hlength Hincluded v Hin).
+  - intro Hforward. apply (NoDup_incl_length Hvs). intros v Hin.
+    specialize (Hforward v Hin). rewrite scc_listed_test in Hforward.
+    now apply wto_member_spec in Hforward.
+Qed.
+
+(** The width and coverage shortcuts preserve acceptance on every candidate. *)
 Lemma wto_check_linear_agrees g roots w :
   wto_check_linear g roots w = wto_check_linear_spec g roots w.
 Proof.
   unfold wto_check_linear, wto_check_linear_spec.
-  rewrite wto_check_index_vertices. reflexivity.
+  rewrite wto_check_index_vertices.
+  destruct (forallb (fun v => match trie_get v (listed_of g) with
+    Some _ => true | None => false end) roots); [|reflexivity].
+  destruct (wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+    [WtoCheckVisit w] 0 Empty Empty []) as [[[ranks intervals] vs]|] eqn:Hindex;
+    [|reflexivity].
+  destruct (wto_check_index_spec _ _ _ _ _ _ _ Hindex)
+    as [Hunique [Hvs [Hdomain _]]].
+  assert (Hvs_unique : NoDup vs) by (now rewrite Hvs).
+  assert (Htest : forall v,
+    (match trie_get v ranks with Some _ => true | None => false end) = true <-> In v vs).
+  { intro v. rewrite Hvs, <- (Hdomain v).
+    destruct (trie_get v ranks) as [rank|].
+    - split; [intro H; now exists rank|intro H; reflexivity].
+    - split; [discriminate|intros [rank Hrank]; discriminate]. }
+  cbn beta iota zeta.
+  set (live := entered (prepared_search_trace (scc_graph g) roots)).
+  pose proof (wto_coverage_length_agrees
+    (fun v => match trie_get v ranks with Some _ => true | None => false end) vs live
+    Hvs_unique (prepared_search_unique_raw (scc_graph g) roots) Htest) as Hcoverage.
+  rewrite <- Hcoverage.
+  destruct (Nat.leb (length vs) (length live));
+    destruct (forallb (fun v => match trie_get v ranks with Some _ => true | None => false end)
+      live); reflexivity.
 Qed.
 
 (** Distinct concatenated lists have no shared element. *)
@@ -3069,15 +3115,12 @@ Proof.
       assert (Hnodecount : length (nodes g) = graph_n (base g)).
       { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
       rewrite Hnodecount in Hvs_size.
-      assert (Hvs_width : Forall (fun v => Pos.size_nat v <= graph_width (base g)) vs).
-      { apply Forall_forall. intros v Hv. apply scc_node_width. now apply Hvs_incl. }
       pose proof (wto_entered_time (prepared_search_trace (scc_graph g) roots)) as Hentered0.
-      pose proof (wto_set_members_time (entered (prepared_search_trace (scc_graph g) roots))
-        (graph_width (base g)) Empty Hlive_width) as Htable0.
-      pose proof (wto_presence_time
-        (fold_left (fun acc v => PTrieCode.set v true acc)
-          (entered (prepared_search_trace (scc_graph g) roots)) Empty)
-        vs (graph_width (base g)) Hvs_width) as Hcover0.
+      pose proof (Datatypes.T_length_le vs) as Hcandidate_length.
+      pose proof (Datatypes.T_length_le (entered (prepared_search_trace (scc_graph g) roots)))
+        as Hlive_length.
+      pose proof (Nat.T_leb_le (length vs)
+        (length (entered (prepared_search_trace (scc_graph g) roots)))) as Hcomparison.
       pose proof (wto_presence_time ranks (entered (prepared_search_trace (scc_graph g) roots))
         (graph_width (base g)) Hlive_width) as Hreverse0.
       pose proof (wto_checked_edges_clock g w ranks intervals vs Hindex) as Hedges0.
@@ -3091,20 +3134,11 @@ Proof.
           8 * wto_check_work g roots)%N).
       { eapply N.le_trans; [exact Hentered0|]. clear - Htrace_size Hbase.
         rewrite !Nat2N.inj_add in *. nia. }
-      assert (Htable : (List.T_fold_left (fun acc v => PTrieCode.set v true acc)
-          (fun acc v => 1 + PTrieCode.T_set v true acc)%N
-          (entered (prepared_search_trace (scc_graph g) roots)) Empty <=
-          16 * (PTrieT.c_trie + 1) * wto_check_work g roots)%N).
-      { eapply N.le_trans; [exact Htable0|]. clear - Hlive_size Hbase.
-        rewrite !Nat2N.inj_add in *. nia. }
-      assert (Hcover : (List.T_forallb
-          (fun v => match trie_get v (fold_left (fun acc v => PTrieCode.set v true acc)
-            (entered (prepared_search_trace (scc_graph g) roots)) Empty)
-            with Some _ => true | None => false end)
-          (fun v => 1 + T_trie_get v (fold_left (fun acc v => PTrieCode.set v true acc)
-            (entered (prepared_search_trace (scc_graph g) roots)) Empty))%N vs <=
+      assert (Hcover : (Datatypes.T_length vs +
+          Datatypes.T_length (entered (prepared_search_trace (scc_graph g) roots)) +
+          Nat.T_leb (length vs) (length (entered (prepared_search_trace (scc_graph g) roots))) <=
           8 * wto_check_work g roots)%N).
-      { eapply N.le_trans; [exact Hcover0|]. clear - Hvs_size Hbase.
+      { clear - Hcandidate_length Hlive_length Hcomparison Hvs_size Hlive_size Hbase.
         rewrite !Nat2N.inj_add in *. nia. }
       assert (Hreverse : (List.T_forallb
           (fun v => match trie_get v ranks with Some _ => true | None => false end)
@@ -3118,15 +3152,13 @@ Proof.
       { eapply N.le_trans; [apply N.le_add_l|]. eapply N.le_trans; [exact Hedges0|].
         clear - Hbase. nia. }
       clear - g roots w ranks intervals vs Hpositive Henvelope Hlisted Hrootscan
-        Hfuel Hwidth Hindex_time Hready Hsearch Hentered Htable Hcover Hreverse Hedges.
+        Hfuel Hwidth Hindex_time Hready Hsearch Hentered Hcover Hreverse Hedges.
       time_cbn.
-      destruct (forallb (fun v => match trie_get v
-        (fold_left (fun acc v => PTrieCode.set v true acc)
-          (entered (prepared_search_trace (scc_graph g) roots)) Empty)
-        with Some _ => true | None => false end) vs);
+      destruct (Nat.leb (length vs)
+        (length (entered (prepared_search_trace (scc_graph g) roots))));
       destruct (forallb (fun v => match trie_get v ranks with Some _ => true | None => false end)
         (entered (prepared_search_trace (scc_graph g) roots)));
-        unfold Datatypes.T_andb; time_cbn; nia.
+        time_cbn; nia.
     + clear - Hpositive Henvelope Hlisted Hrootscan Hfuel Hwidth Hindex_time.
       time_cbn. nia.
   - clear - Hpositive Henvelope Hlisted Hrootscan. time_cbn. nia.
