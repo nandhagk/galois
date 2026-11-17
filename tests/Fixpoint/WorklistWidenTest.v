@@ -4,9 +4,8 @@
     For example, delay zero widens the first change.
 
     Groups:
-    - Fixtures: a pair lattice, a one-row system and a policy with a delayed head.
-    - Delay: the value at a head after the first change, for each delay.
-    - Output order: the stored value and the spent delay after one step.
+    - [DelayTests] The value at a head after the first change, for each delay.
+    - [OutputOrderTests] The stored value and the spent delay after one step.
 
     Builds on: Fixpoint.Worklist and Fixpoint.Policy. *)
 
