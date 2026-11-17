@@ -279,3 +279,20 @@ Example empty_candidate_boundary :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Counted rebuilding ignores stale caches and rows of unlisted source vertices. *)
+Definition stale_count_graph :=
+  Prepared (Digraph [1; 2] (PTrieCode.set 3 [4] (PTrieCode.set 1 [2] Empty)))
+    Empty BinNums.N0 BinNums.N0.
+
+Example counted_check_ignores_stale_caches :
+  WtoCode.check stale_count_graph [1] (WVertex 1 (WVertex 2 WNil)) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example counted_build_ignores_stale_caches :
+  WtoCode.build stale_count_graph [1] = WVertex 1 (WVertex 2 WNil).
+Proof.
+  vm_compute. reflexivity.
+Qed.

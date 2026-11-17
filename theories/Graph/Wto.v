@@ -63,13 +63,27 @@ Proof.
   rewrite Hmember. apply filter_ext. intro u. apply scc_listed_test.
 Qed.
 
-Definition wto_components g roots :=
+Definition wto_components_spec g roots :=
   let ready := scc_graph g in
   let listed_roots := filter (fun v =>
     match trie_get v (succ (base ready)) with Some _ => true | None => false end) roots in
   let s := TarjanSearch.dfs ready listed_roots tarjan_initial in
   Scc (tarjan_owners s) (rev_append (tarjan_emitted s) []).
+
+Definition wto_components g roots :=
+  let ready := scc_graph_counted g in
+  let listed_roots := filter (fun v =>
+    match trie_get v (succ (base ready)) with Some _ => true | None => false end) roots in
+  let s := TarjanSearch.dfs ready listed_roots tarjan_initial in
+  Scc (tarjan_owners s) (rev_append (tarjan_emitted s) []).
 TimeFun wto_components.
+
+(** Counting while rebuilding preserves component order and owner assignments. *)
+Lemma wto_components_agrees g roots :
+  wto_components g roots = wto_components_spec g roots.
+Proof.
+  unfold wto_components, wto_components_spec. now rewrite scc_graph_counted_agrees.
+Qed.
 
 (** A scoped search refreshes only its count caches, preserving its materialized rows. *)
 Definition wto_recount (g : prepared) : prepared :=
@@ -101,6 +115,16 @@ Proof.
   time_unfold @T_wto_recount. unfold T_base. lia.
 Qed.
 
+(** The count-only scoped shortcut also fits the counted preprocessing clock. *)
+Lemma wto_recount_counted_clock g vs :
+  (T_wto_recount (wto_scoped g (Some vs)) <=
+    T_scc_graph_counted (wto_scoped g (Some vs)))%N.
+Proof.
+  pose proof (scc_graph_counted_cache_clock (wto_scoped g (Some vs))
+    (wto_scoped_graph g vs)) as Hcache.
+  time_unfold @T_wto_recount. unfold T_base. lia.
+Qed.
+
 (** Component production on a materialized scope skips rebuilding its row tries. *)
 Definition wto_components_ready g roots :=
   let ready := wto_recount g in
@@ -115,17 +139,18 @@ Lemma wto_components_ready_agrees g vs roots :
   wto_components_ready (wto_scoped g (Some vs)) roots =
     wto_components (wto_scoped g (Some vs)) roots.
 Proof.
-  unfold wto_components_ready, wto_components. now rewrite wto_scoped_recount.
+  unfold wto_components_ready, wto_components.
+  now rewrite scc_graph_counted_agrees, wto_scoped_recount.
 Qed.
 
-(** The component shortcut fits the original component clock on every materialized scope. *)
+(** The component shortcut fits the public component clock on every materialized scope. *)
 Lemma wto_components_ready_clock g vs roots :
   (T_wto_components_ready (wto_scoped g (Some vs)) roots <=
     T_wto_components (wto_scoped g (Some vs)) roots)%N.
 Proof.
-  pose proof (wto_recount_clock g vs) as Hcache.
+  pose proof (wto_recount_counted_clock g vs) as Hcache.
   time_unfold @T_wto_components_ready. time_unfold @T_wto_components.
-  rewrite wto_scoped_recount. lia.
+  rewrite scc_graph_counted_agrees, wto_scoped_recount. lia.
 Qed.
 
 (** Reversing the component list preserves its multiset of vertices. *)
@@ -199,7 +224,8 @@ Qed.
 Lemma wto_components_listed : forall g roots v,
   In v (concat (comps (wto_components g roots))) -> In v (nodes g).
 Proof.
-  intros g roots v Hin. set (ready := scc_graph g).
+  intros g roots v Hin. rewrite wto_components_agrees in Hin.
+  set (ready := scc_graph g).
   set (listed_roots := filter (fun v =>
     match trie_get v (succ (base ready)) with Some _ => true | None => false end) roots).
   change (In v (concat (rev_append
@@ -210,7 +236,10 @@ Proof.
   eapply Permutation_in.
   - apply tarjan_bag_inventory.
   - unfold tarjan_bag. apply in_or_app. right.
-    eapply Permutation_in; [apply Permutation_sym, wto_components_reverse|exact Hin].
+    change (In v (concat (tarjan_emitted
+      (TarjanSearch.dfs ready listed_roots tarjan_initial)))).
+    exact (Permutation_in v (Permutation_sym (wto_components_reverse
+      (tarjan_emitted (TarjanSearch.dfs ready listed_roots tarjan_initial)))) Hin).
 Qed.
 
 (** Every listed key fits the raw graph's source-width envelope. *)
@@ -227,7 +256,8 @@ Lemma wto_components_owner_bound : forall g roots width,
   Forall (fun v => Pos.size_nat v <= width) (nodes g) -> forall v i,
   trie_get v (comp (wto_components g roots)) = Some i -> Pos.size_nat i <= width + 1.
 Proof.
-  intros g roots width Hwidth v i Howner. unfold wto_components in Howner. cbn [comp] in Howner.
+  intros g roots width Hwidth v i Howner. rewrite wto_components_agrees in Howner.
+  unfold wto_components_spec in Howner. cbn [comp] in Howner.
   set (es := prepared_search_trace (scc_graph g)
     (filter (fun r => match trie_get r (succ (base (scc_graph g))) with
       Some _ => true | None => false end) roots)).
@@ -254,7 +284,7 @@ Qed.
 Lemma wto_components_size : forall g roots,
   length (concat (comps (wto_components g roots))) <= length (nodes g).
 Proof.
-  intros g roots. set (ready := scc_graph g).
+  intros g roots. rewrite wto_components_agrees. set (ready := scc_graph g).
   set (listed_roots := filter (fun v =>
     match trie_get v (succ (base ready)) with Some _ => true | None => false end) roots).
   change (length (concat (rev_append
@@ -1005,7 +1035,7 @@ Definition wto_check_linear (g : prepared) (roots : list positive) (w : wto) : b
         [WtoCheckVisit w] 0%N Empty Empty [] with
     | None => false
     | Some (ranks, intervals, vs) =>
-      let ready := scc_graph g in
+      let ready := scc_graph_counted g in
       let live := entered (prepared_search_trace ready roots) in
       if Nat.leb (length vs) (length live) then
         if forallb (fun v => match trie_get v ranks with Some _ => true | None => false end) live
@@ -1975,7 +2005,7 @@ Lemma wto_check_linear_agrees g roots w :
   wto_check_linear g roots w = wto_check_linear_spec g roots w.
 Proof.
   unfold wto_check_linear, wto_check_linear_spec.
-  rewrite wto_check_index_vertices.
+  rewrite scc_graph_counted_agrees, wto_check_index_vertices.
   destruct (forallb (fun v => match trie_get v (listed_of g) with
     Some _ => true | None => false end) roots); [|reflexivity].
   destruct (wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
@@ -3047,7 +3077,7 @@ Proof.
   unfold search_trace_coefficient, wto_check_coefficient. nia.
 Qed.
 
-Local Opaque loopN scc_graph prepared_search_trace wto_check_work.
+Local Opaque loopN scc_graph scc_graph_counted prepared_search_trace wto_check_work.
 
 (** Every checker phase is bounded on arbitrary prepared values and candidate trees. *)
 Lemma wto_check_linear_time g roots w :
@@ -3067,7 +3097,7 @@ Proof.
       (fun v => 1 + T_trie_get v (listed_of g))%N roots <= 8 * wto_check_work g roots)%N).
   { eapply N.le_trans; [exact Hroots0|]. clear - Hrootwork. nia. }
   time_unfold @T_wto_check_linear. unfold T_nodes, T_base, T_verts.
-  rewrite wto_check_index_vertices.
+  rewrite scc_graph_counted_agrees, wto_check_index_vertices.
   destruct (forallb
     (fun v => match trie_get v (listed_of g) with Some _ => true | None => false end) roots)
     eqn:Hroot_test.
@@ -3096,7 +3126,7 @@ Proof.
       clear - Hbase. rewrite !Nat2N.inj_add in *. nia. }
     destruct (wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
       [WtoCheckVisit w] 0 Empty Empty []) as [[[ranks intervals] vs]|] eqn:Hindex.
-    + pose proof (scc_graph_time g) as Hready0.
+    + pose proof (scc_graph_counted_time g) as Hready0.
       pose proof (scc_search_time g roots Hroot_listed) as Hsearch0.
       destruct (scc_search_sizes g roots Hroot_listed) as [Hlive_size Hrow_size].
       pose proof (prepared_search_event_bound (scc_graph g) roots) as Hevents.
@@ -3124,7 +3154,7 @@ Proof.
       pose proof (wto_presence_time ranks (entered (prepared_search_trace (scc_graph g) roots))
         (graph_width (base g)) Hlive_width) as Hreverse0.
       pose proof (wto_checked_edges_clock g w ranks intervals vs Hindex) as Hedges0.
-      assert (Hready : (T_scc_graph g <= 16384 * wto_check_work g roots)%N).
+      assert (Hready : (T_scc_graph_counted g <= 16384 * wto_check_work g roots)%N).
       { eapply N.le_trans; [exact Hready0|]. clear - Hbase. nia. }
       assert (Hsearch : (T_prepared_search_trace (scc_graph g) roots <=
           2 * search_trace_coefficient * wto_check_work g roots)%N).
@@ -3164,7 +3194,7 @@ Proof.
   - clear - Hpositive Henvelope Hlisted Hrootscan. time_cbn. nia.
 Qed.
 
-Local Transparent loopN scc_graph prepared_search_trace wto_check_work.
+Local Transparent loopN scc_graph scc_graph_counted prepared_search_trace wto_check_work.
 
 
 (** Every enclosed vertex occurs in the structural order of its containing tree. *)
@@ -4214,7 +4244,7 @@ Module WtoT <: WTO_ALL.
     NoDup (nodes g) -> (forall v, In v (nodes g) -> In v roots) ->
     Permutation (concat (comps (wto_components g roots))) (nodes g).
   Proof.
-    intros Hunique Hcover.
+    intros Hunique Hcover. rewrite wto_components_agrees.
     set (ready := scc_graph g).
     set (chosen := filter (fun v => match trie_get v (succ (base ready)) with
       Some _ => true | None => false end) roots).
@@ -5320,7 +5350,7 @@ Module WtoT <: WTO_ALL.
       - rewrite wto_graph_max_nat. apply Nat.le_max_r. }
     pose proof (scope_root_filter_time g roots _ Hroot_width) as Hfilter.
     fold ready in Hfilter.
-    pose proof (scc_graph_time g) as Hprepare.
+    pose proof (scc_graph_counted_time g) as Hprepare.
     pose proof (scc_search_time g chosen Hchosen) as Hsearch. fold ready in Hsearch.
     destruct (scc_search_sizes g chosen Hchosen) as [Hvertices Hrows].
     fold ready in Hvertices, Hrows. fold events in Hvertices, Hrows.
@@ -5340,7 +5370,7 @@ Module WtoT <: WTO_ALL.
     change (length (tarjan_emitted state) <= length (entered events)) in Hemitted.
     set (count := graph_n (base g) + graph_e (base g) + length roots + 1) in *.
     set (width := graph_max (graph_width (base g)) (vertex_width roots)) in *.
-    assert (Hprepare_budget : (T_scc_graph g <=
+    assert (Hprepare_budget : (T_scc_graph_counted g <=
       16384 * N.of_nat count * N.of_nat (width + 1))%N).
     { eapply N.le_trans; [exact Hprepare|]. apply scope_phase_product.
       - unfold count. lia.
@@ -5371,6 +5401,7 @@ Module WtoT <: WTO_ALL.
     { apply (time_of_nat_le 1 (width + 1)). lia. }
     clearbody count width.
     time_unfold @T_wto_components. time_unfold @Galois.Graph.Wto.T_wto_components.
+    rewrite scc_graph_counted_agrees.
     fold ready. fold chosen. fold state.
     time_unfold @TarjanSearch.T_dfs. fold events.
     unfold T_tarjan_owners, T_tarjan_emitted. rewrite wto_rev_append_clock.
