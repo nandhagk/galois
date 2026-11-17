@@ -2,13 +2,21 @@
 
     Tarjan's visitor tracks discovery numbers and pending components.
     For example, closing a cycle root emits its pending vertices together.
+
+    Main results
+    - [comp_spec] Equal present owners characterize mutual reachability of listed vertices.
+    - [owners_spec] Owner indices are one-based positions in the component list.
+    - [run_complexity] SCC computation has the published linear bit-cost bound,
+      O((n + e + 1) (w + 1)).
+
     Builds on: depth-first search and the SCC signature. *)
 
 From Stdlib Require Import List NArith PArith Arith Lia Sorting.Permutation.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data Spec DigraphSig Digraph SearchSig Search SccSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module Pos.
   TimeFun Pos.min.
@@ -5596,9 +5604,9 @@ Module SccT <: SCC_ALL.
       N.of_nat (graph_width (base g) + 1))%N.
   Proof. exact T_run_plan_le. Qed.
 
-  Lemma run_complexity : bigO (fun _ => True)
-    (fun g => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1))) T_run.
+  Lemma run_complexity :
+    T_run g ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))) for g.
   Proof.
     exists c_scc. intros g _.
     eapply N.le_trans; [apply T_run_le|].
