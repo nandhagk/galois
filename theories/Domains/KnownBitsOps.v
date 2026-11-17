@@ -653,11 +653,45 @@ End KnownBitsForwardClockProof.
 Module ForwardClaims (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
   Module P := KnownBitsCode L C.
   Module F := KnownBitsOpsCode L C P.
+
+(** The concrete unary table retains the original arithmetic negation result. *)
+Lemma tnum_forward_neg_same : forall w a,
+  F.tnum_forward_raw bvneg [(w, a)] w = tnum_neg w a.
+Proof.
+  intros w a. unfold F.tnum_forward_raw, P.tnum_neg.
+  rewrite tnum_neg_flat_m_agrees. apply tnum_neg_m_eq.
+Qed.
+
+(** The concrete addition table retains the original transfer result. *)
+Lemma tnum_forward_add_same : forall w a b,
+  F.tnum_forward_raw bvadd [(w, a); (w, b)] w = tnum_add w a b.
+Proof.
+  intros w a b. unfold F.tnum_forward_raw, P.tnum_add.
+  rewrite tnum_add_flat_m_agrees. apply tnum_add_m_eq.
+Qed.
+
+(** The concrete subtraction table retains the original transfer result. *)
+Lemma tnum_forward_sub_same : forall w a b,
+  F.tnum_forward_raw bvsub [(w, a); (w, b)] w = tnum_sub w a b.
+Proof.
+  intros w a b. unfold F.tnum_forward_raw, P.tnum_sub.
+  rewrite tnum_sub_flat_m_agrees. apply tnum_sub_m_eq.
+Qed.
+
+(** The concrete XOR table retains the original transfer result. *)
+Lemma tnum_forward_xor_same : forall w a b,
+  F.tnum_forward_raw bvxor [(w, a); (w, b)] w = tnum_xor w a b.
+Proof.
+  intros w a b. unfold F.tnum_forward_raw, P.tnum_xor.
+  rewrite tnum_xor_flat_m_agrees. apply tnum_xor_m_eq.
+Qed.
+
 Lemma tnum_forward_mul_same : forall w a b,
   F.tnum_forward_raw bvmul [(w, a); (w, b)] w =
     tnum_mul_with (C.multiplier) w a b.
 Proof.
   intros w a b. unfold F.tnum_forward_raw. rewrite !Pos.eqb_refl.
+  change (tnum_mul_with_ctx C.multiplier w a b = tnum_mul_with C.multiplier w a b).
   rewrite tnum_mul_with_ctx_agrees. apply tnum_mul_with_fast_agrees.
 Qed.
 Lemma tnum_forward_one_sound : forall o w a x rw z,
@@ -668,7 +702,8 @@ Proof.
   - rewrite (eval_op_fun1 bvnot w x UNot eq_refl) in Heval.
     injection Heval as <- <-. now apply tnum_not_sound.
   - rewrite (eval_op_fun1 bvneg w x UNeg eq_refl) in Heval.
-    injection Heval as <- <-. now apply tnum_neg_sound.
+    injection Heval as <- <-. rewrite tnum_forward_neg_same.
+    now apply tnum_neg_sound.
   - rewrite (eval_op_fun1 bvclz w x UClz eq_refl) in Heval.
     injection Heval as <- <-. exact (tnum_count_sound bvclz w UClz x ltac:(tauto) eq_refl).
   - rewrite (eval_op_fun1 bvctz w x UCtz eq_refl) in Heval.
@@ -728,11 +763,12 @@ Lemma tnum_binary_transfer_sound : forall o w f a b x y,
 Proof.
   intros o w f a b x y Hf Hx Hy Ha Hb.
   destruct o; try discriminate Hf; injection Hf as <-;
-    first [now apply tnum_add_sound|now apply tnum_sub_sound|
+    first [rewrite tnum_forward_add_same; now apply tnum_add_sound|
+      rewrite tnum_forward_sub_same; now apply tnum_sub_sound|
       rewrite tnum_forward_mul_same; now apply tnum_mul_with_sound|
       now apply tnum_udiv_sound|now apply tnum_urem_sound|apply tnum_top_sound|
       now apply tnum_srem_sound|now apply tnum_and_sound|now apply tnum_or_sound|
-      now apply tnum_xor_sound|
+      rewrite tnum_forward_xor_same; now apply tnum_xor_sound|
       cbn [F.tnum_forward_raw P.tnum_variable]; rewrite tnum_variable_fast_agrees;
       eapply tnum_variable_sound; try eassumption; try reflexivity;
         unfold tnum_shift_op; tauto].

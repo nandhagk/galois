@@ -1378,12 +1378,12 @@ Module KnownBitsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG) <: KNOWN_BITS_OPS
   Definition pnarrow (_ : positive) (a _ : p) := a.
   Definition tnum_normalise w a := tnum_normalise_m (Z.ones (Zpos w)) a.
   Definition tnum_not w a := tnum_not_m (Z.ones (Zpos w)) a.
-  Definition tnum_neg w a := tnum_neg_m (Z.ones (Zpos w)) a.
-  Definition tnum_add w a b := tnum_add_m (Z.ones (Zpos w)) a b.
-  Definition tnum_sub w a b := tnum_sub_m (Z.ones (Zpos w)) a b.
+  Definition tnum_neg w a := tnum_neg_flat_m (Z.ones (Zpos w)) a.
+  Definition tnum_add w a b := tnum_add_flat_m (Z.ones (Zpos w)) a b.
+  Definition tnum_sub w a b := tnum_sub_flat_m (Z.ones (Zpos w)) a b.
   Definition tnum_and w a b := tnum_and_m (Z.ones (Zpos w)) a b.
   Definition tnum_or w a b := tnum_or_m (Z.ones (Zpos w)) a b.
-  Definition tnum_xor w a b := tnum_xor_m (Z.ones (Zpos w)) a b.
+  Definition tnum_xor w a b := tnum_xor_flat_m (Z.ones (Zpos w)) a b.
   Definition tnum_mul_with := tnum_mul_with_ctx.
   Definition tnum_mul := tnum_mul_with C.multiplier.
   Definition tnum_variable := tnum_variable_fast.
@@ -7651,7 +7651,8 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
     intros w a x z Hx Ha Heval.
     change (eval_op bvneg [(w, x)] = Some (w, z)) in Heval.
     rewrite (eval_op_fun1 bvneg w x UNeg eq_refl) in Heval.
-    injection Heval as <-. now apply tnum_neg_sound.
+    injection Heval as <-. unfold tnum_neg.
+    rewrite tnum_neg_flat_m_agrees, tnum_neg_m_eq. now apply tnum_neg_sound.
   Qed.
   (** Addition retains each concrete result. *)
   Lemma tnum_add_sound : forall w a b x y z,
@@ -7662,7 +7663,8 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
     intros w a b x y z Hx Hy Ha Hb Heval.
     change (eval_op bvadd [(w, x); (w, y)] = Some (w, z)) in Heval.
     rewrite (eval_op_fun2 bvadd w x y BAdd eq_refl) in Heval.
-    injection Heval as <-. now apply tnum_add_sound.
+    injection Heval as <-. unfold tnum_add.
+    rewrite tnum_add_flat_m_agrees, tnum_add_m_eq. now apply tnum_add_sound.
   Qed.
   (** Subtraction retains each concrete result. *)
   Lemma tnum_sub_sound : forall w a b x y z,
@@ -7673,7 +7675,8 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
     intros w a b x y z Hx Hy Ha Hb Heval.
     change (eval_op bvsub [(w, x); (w, y)] = Some (w, z)) in Heval.
     rewrite (eval_op_fun2 bvsub w x y BSub eq_refl) in Heval.
-    injection Heval as <-. now apply tnum_sub_sound.
+    injection Heval as <-. unfold tnum_sub.
+    rewrite tnum_sub_flat_m_agrees, tnum_sub_m_eq. now apply tnum_sub_sound.
   Qed.
   (** Conjunction retains each concrete result. *)
   Lemma tnum_and_sound : forall w a b x y z,
@@ -7706,7 +7709,8 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
     intros w a b x y z Hx Hy Ha Hb Heval.
     change (eval_op bvxor [(w, x); (w, y)] = Some (w, z)) in Heval.
     rewrite (eval_op_fun2 bvxor w x y BXor eq_refl) in Heval.
-    injection Heval as <-. now apply tnum_xor_sound.
+    injection Heval as <-. unfold tnum_xor.
+    rewrite tnum_xor_flat_m_agrees, tnum_xor_m_eq. now apply tnum_xor_sound.
   Qed.
   (** Every multiplier choice retains each concrete product. *)
   Lemma tnum_mul_with_sound : forall choice w a b x y z,
@@ -7919,7 +7923,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Lemma T_tnum_neg_le : forall w a,
     (T_tnum_neg w a <= c_tnum * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
   Proof.
-    intros w a. pose proof (tnum_neg_m_bound w a) as Htime.
+    intros w a. pose proof (tnum_neg_flat_m_bound w a) as Htime.
     pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_neg. cbn beta iota zeta. unfold c_tnum.
     rewrite ?Nat2N.inj_add in *. lia.
@@ -7928,7 +7932,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_tnum_add w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
   Proof.
-    intros w a b. pose proof (tnum_add_m_bound w a b) as Htime.
+    intros w a b. pose proof (tnum_add_flat_m_bound w a b) as Htime.
     pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_add. cbn beta iota zeta. unfold c_tnum.
     rewrite ?Nat2N.inj_add in *. lia.
@@ -7937,7 +7941,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_tnum_sub w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
   Proof.
-    intros w a b. pose proof (tnum_sub_m_bound w a b) as Htime.
+    intros w a b. pose proof (tnum_sub_flat_m_bound w a b) as Htime.
     pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_sub. cbn beta iota zeta. unfold c_tnum.
     rewrite ?Nat2N.inj_add in *. lia.
@@ -7964,7 +7968,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_tnum_xor w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
   Proof.
-    intros w a b. pose proof (tnum_xor_m_bound w a b) as Htime.
+    intros w a b. pose proof (tnum_xor_flat_m_bound w a b) as Htime.
     pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_xor. cbn beta iota zeta. unfold c_tnum.
     rewrite ?Nat2N.inj_add in *. lia.
@@ -8126,8 +8130,11 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (tnum_bits (tnum_neg w a) <= 2 * Pos.to_nat w)%nat /\
     (tnum_bits (tnum_normalise w a) <= 2 * Pos.to_nat w)%nat.
   Proof.
-    intros w a. repeat split;
-      first [apply tnum_not_bits|apply tnum_neg_bits|apply tnum_normalise_bits].
+    intros w a. repeat split.
+    - apply tnum_not_bits.
+    - unfold tnum_neg. rewrite tnum_neg_flat_m_agrees, tnum_neg_m_eq.
+      apply tnum_neg_bits.
+    - apply tnum_normalise_bits.
   Qed.
   (** Binary transfer results store no more than two masks of the width. *)
   Lemma tnum_binary_bits : forall w a b,
@@ -8138,11 +8145,15 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (tnum_bits (tnum_xor w a b) <= 2 * Pos.to_nat w)%nat /\
     (tnum_bits (tnum_mul w a b) <= 2 * Pos.to_nat w)%nat.
   Proof.
-    intros w a b. repeat split; first [apply tnum_add_bits|apply tnum_sub_bits|
-      apply tnum_and_bits|apply tnum_or_bits|apply tnum_xor_bits|
-      unfold tnum_mul, tnum_mul_with;
-      rewrite tnum_mul_with_ctx_agrees, tnum_mul_with_fast_agrees;
-        apply tnum_mul_with_bits].
+    intros w a b. repeat split.
+    - unfold tnum_add. rewrite tnum_add_flat_m_agrees, tnum_add_m_eq. apply tnum_add_bits.
+    - unfold tnum_sub. rewrite tnum_sub_flat_m_agrees, tnum_sub_m_eq. apply tnum_sub_bits.
+    - apply tnum_and_bits.
+    - apply tnum_or_bits.
+    - unfold tnum_xor. rewrite tnum_xor_flat_m_agrees, tnum_xor_m_eq. apply tnum_xor_bits.
+    - unfold tnum_mul, tnum_mul_with.
+      rewrite tnum_mul_with_ctx_agrees, tnum_mul_with_fast_agrees.
+      apply tnum_mul_with_bits.
   Qed.
   (** Configured stages and variable shifts keep masks within the width. *)
   Lemma tnum_stage_bits : forall choice o w a b,
