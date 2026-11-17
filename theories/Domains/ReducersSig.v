@@ -2,10 +2,17 @@
 
     Reductions exchange facts between two abstractions of the same concrete word.
     For example, an interval can discard endpoints outside a congruence class.
+
+    Main results
+    - [left_sound] The first exchange retains every value shared by the input pair.
+    - [right_sound] The second exchange retains every value shared by the input pair.
+    - [reduce_complexity] Reduction has the published combined-size asymptotic budget.
+
     Builds on: ProductSig and ValueSig. *)
 
 From Stdlib Require Import ZArith List.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
+Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig ProductSig BitsLang WordSig
   KnownBitsSig WrappedSig IntervalSig CongruenceSig.
@@ -140,8 +147,8 @@ Module Type REDUCTION_STEPS_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (N.of_nat (A.size a + B.size (snd (to_right (a, b)))) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
   (** Reduction has the published combined-size asymptotic budget. *)
-  Parameter reduce_complexity : bigO (fun _ => True)
-    (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
+  Parameter reduce_complexity :
+    T_reduce (a, b) ∈ 𝑂(N.of_nat (A.size a + B.size b + 1)) for (a, b).
 End REDUCTION_STEPS_TIME.
 
 Module Type REDUCTION_STEPS_T (L : LANG_T) (A B : VALUE_DOMAIN_T L) :=

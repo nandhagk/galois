@@ -2,10 +2,17 @@
 
     Reducers exchange facts between abstractions of the same concrete word.
     For example, a known-bit payload can refine an interval endpoint.
+
+    Main results
+    - [left_sound] The first exchange retains every value shared by the input pair.
+    - [right_sound] The second exchange retains every value shared by the input pair.
+    - [reduce_complexity] Reduction has the published combined-size asymptotic budget.
+
     Builds on: ReducersSig and Tagged. *)
 
 From Stdlib Require Import NArith ZArith Zpow_facts Lia Bool.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Bits Require Import Word Testbit.
 From Galois.Domains Require Import ValueSig BitsLang WordSig KnownBitsSig WrappedSig
   IntervalSig CongruenceSig ThresholdsSig ReducersSig Tagged.
@@ -1471,8 +1478,8 @@ Module WrappedBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   Proof.
     intro x; unfold k_exchange; time_step.
   Qed.
-  Lemma reduce_complexity : bigO (fun _ => True)
-    (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
+  Lemma reduce_complexity :
+    T_reduce (a, b) ∈ 𝑂(N.of_nat (A.size a + B.size b + 1)) for (a, b).
   Proof.
     exists c_reduce; intros [a b] _; cbn [fst snd].
     pose proof (T_reduce_le a b); nia.
@@ -1765,8 +1772,8 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intro x; unfold k_exchange; time_step.
   Qed.
-  Lemma reduce_complexity : bigO (fun _ => True)
-    (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
+  Lemma reduce_complexity :
+    T_reduce (a, b) ∈ 𝑂(N.of_nat (A.size a + B.size b + 1)) for (a, b).
   Proof.
     exists c_reduce; intros [a b] _; cbn [fst snd].
     pose proof (T_reduce_le a b); nia.
@@ -1901,8 +1908,8 @@ Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
   Proof.
     intro x; unfold k_exchange; time_step.
   Qed.
-  Lemma reduce_complexity : bigO (fun _ => True)
-    (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
+  Lemma reduce_complexity :
+    T_reduce (a, b) ∈ 𝑂(N.of_nat (A.size a + B.size b + 1)) for (a, b).
   Proof.
     exists c_reduce; intros [a b] _; cbn [fst snd].
     pose proof (T_reduce_le a b); nia.
