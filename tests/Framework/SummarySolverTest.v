@@ -80,24 +80,34 @@ Module RecursiveTests.
 
   (** The recursive pair gives true at its two functions and false at the third. *)
   Example recursive_pair_effect : observe 0 8%N [0; 1; 2] = Some [true; true; false].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** A caller of the recursive pair gives true, which it receives from the pair. *)
   Example caller_of_pair_inherits_effect : observe 1 8%N [0; 1; 2; 3] =
     Some [true; true; true; false].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** A single function at the boundary gives false at both of its keys. *)
   Example single_function_boundary_false : observe 2 2%N [0; 1] = Some [false; false].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** A program without functions gives false at its only key. *)
   Example empty_summary_false : observe 3 1%N [0] = Some [false].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** The check rejects the empty candidate for program 1. *)
   Example bottom_candidate_rejected : C.check 1 PTrieCode.empty = false.
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End RecursiveTests.
 
@@ -149,7 +159,9 @@ Module ChainTests.
     | Solved m => Some (map (CC.look m) [0; 1; 2; 3])
     | _ => None
     end = Some [13; 11; 7; 1].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End ChainTests.
 
@@ -195,7 +207,9 @@ Module ScheduleTests.
   (** The solution under each policy is a checked post-solution. *)
   Example both_schedules_checked :
     (anti_checked first_zero, anti_checked first_one) = (true, true).
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** The lookups of keys 0, 1 and 2 under the policy pol, if it is solved within fuel. *)
   Definition joining_observe pol := match A.analyze 0 pol 8%N with
@@ -207,6 +221,8 @@ Module ScheduleTests.
   Example joining_lookups_agree :
     (joining_observe first_zero, joining_observe first_one) =
       (Some [true; true; false], Some [true; true; false]).
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End ScheduleTests.
