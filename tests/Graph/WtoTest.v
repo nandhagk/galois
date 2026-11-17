@@ -42,6 +42,25 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Definition scoped_nested_graph := fixture_graph [1; 2; 3; 4; 5; 6]
+  [(1, 2); (2, 3); (3, 4); (4, 3); (4, 5); (5, 2); (5, 6)].
+
+(** Nested component expansion retains the order computed before the scoped shortcut. *)
+Example scoped_nested_order_agrees :
+  WtoCode.build (DigraphCode.prepare scoped_nested_graph) [1] =
+    WVertex 1 (WLoop 2 (WLoop 3 (WVertex 4 WNil) (WVertex 5 WNil)) (WVertex 6 WNil)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The independent checker accepts the nested order built by the scoped shortcut. *)
+Example scoped_nested_order_accepts :
+  let g := DigraphCode.prepare scoped_nested_graph in
+  WtoCode.check g [1] (WtoCode.build g [1]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example irreducible_order_agrees :
   WtoCode.build (DigraphCode.prepare Irreducible.graph) [1] = Irreducible.order.
 Proof.
@@ -110,6 +129,48 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example rejects_missing_edge_target_in_unreachable_graph :
+  WtoCode.check (DigraphCode.prepare Unreachable.graph) [1]
+    (WVertex 1 (WVertex 2 (WVertex 4 WNil))) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_ranked_source_without_its_successor :
+  WtoCode.check (DigraphCode.prepare Unreachable.graph) [2]
+    (WVertex 2 (WVertex 3 WNil)) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example edge_scan_accepts_an_unranked_sink :
+  wto_edges_ok Unreachable.graph Empty Empty [5] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example edge_scan_rejects_an_unranked_source :
+  wto_edges_ok Unreachable.graph Empty Empty [1] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition wide_unlisted_target := fixture_graph [1; 2] [(2, 1024)].
+
+Example accepts_narrow_candidate_with_wide_unreachable_edge :
+  WtoCode.check (DigraphCode.prepare wide_unlisted_target) [1]
+    (WVertex 1 WNil) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_wide_unlisted_candidate :
+  WtoCode.check (DigraphCode.prepare wide_unlisted_target) [1]
+    (WVertex 1 (WVertex 1024 WNil)) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example rejects_duplicate :
   WtoCode.check (DigraphCode.prepare Singleton.graph) [1]
     (WVertex 1 (WVertex 1 WNil)) = false.
@@ -140,6 +201,32 @@ Qed.
 Example rejects_unreachable_node :
   WtoCode.check (DigraphCode.prepare Unreachable.graph) [1]
     (WVertex 1 (WVertex 2 (WVertex 3 (WVertex 4 (WVertex 5 WNil))))) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition isolated_coverage_graph := fixture_graph [1; 2; 3] [].
+
+(** Repeated roots still produce a unique reachable inventory for the length test. *)
+Example length_coverage_accepts_repeated_roots :
+  WtoCode.check (DigraphCode.prepare isolated_coverage_graph) [1; 1; 2]
+    (WVertex 1 (WVertex 2 WNil)) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Equal lengths do not replace the reverse membership check. *)
+Example length_coverage_rejects_wrong_vertices :
+  WtoCode.check (DigraphCode.prepare isolated_coverage_graph) [1; 2]
+    (WVertex 1 (WVertex 3 WNil)) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A longer candidate fails even when it contains every reachable vertex. *)
+Example length_coverage_rejects_extra_vertex :
+  WtoCode.check (DigraphCode.prepare isolated_coverage_graph) [1; 2]
+    (WVertex 1 (WVertex 2 (WVertex 3 WNil))) = false.
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -189,6 +276,23 @@ Qed.
 
 Example empty_candidate_boundary :
   WtoCode.check (DigraphCode.prepare EmptyGraph.graph) [] WNil = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Counted rebuilding ignores stale caches and rows of unlisted source vertices. *)
+Definition stale_count_graph :=
+  Prepared (Digraph [1; 2] (PTrieCode.set 3 [4] (PTrieCode.set 1 [2] Empty)))
+    Empty BinNums.N0 BinNums.N0.
+
+Example counted_check_ignores_stale_caches :
+  WtoCode.check stale_count_graph [1] (WVertex 1 (WVertex 2 WNil)) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example counted_build_ignores_stale_caches :
+  WtoCode.build stale_count_graph [1] = WVertex 1 (WVertex 2 WNil).
 Proof.
   vm_compute. reflexivity.
 Qed.

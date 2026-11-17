@@ -6056,6 +6056,28 @@ Module LoopsT <: LOOPS_ALL.
     (fun '(g, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))
     (fun '(g, t, _) => T_reducible_b g t).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (k_reducible * (k_classify + k_trace + k_test + 1))%N.
+    intros [[g t] r] [Hgraph [Hprepared Htree]].
+    pose proof (T3_classify g t r Hgraph Hprepared Htree) as Hclassify.
+    pose proof (T9_retreat_test g t r Hgraph Hprepared Htree) as Htest.
+    pose proof (T10_reducible_wrapper g t) as Hwrapper.
+    clear Hgraph Hprepared Htree. rewrite Nat2N.inj_mul.
+    set (size := N.of_nat (graph_n (base g) + graph_e (base g) + 1)) in *.
+    set (width := N.of_nat (graph_width (base g) + 1)) in *.
+    assert (Hsize : (1 <= size)%N) by (unfold size; lia).
+    assert (Hwidth : (1 <= width)%N) by (unfold width; lia).
+    assert (Hpositive : (1 <= size * width)%N) by nia.
+    clearbody size width.
+    set (factor := (k_classify + k_trace + k_test + 1)%N).
+    assert (Hinside : (T_classify g t +
+      T_retreat_trace g (firstn 1 (loop_order (classify g t))) +
+      T_test_back (loop_back_rows (classify g t))
+        (retreat_trace g (firstn 1 (loop_order (classify g t)))) + 1 <=
+      factor * (size * width))%N).
+    { clear -Hclassify Htest Hpositive factor. unfold factor. nia. }
+    pose proof (N.mul_le_mono_l _ _ k_reducible Hinside) as Hscaled.
+    clear -Hwrapper Hscaled. nia.
+  Qed.
 
 End LoopsT.

@@ -19,6 +19,12 @@ Proof. vm_compute. reflexivity. Qed.
 Example diamond_components : components Diamond.graph = [[4]; [2]; [3]; [1]].
 Proof. vm_compute. reflexivity. Qed.
 
+Example cross_edge_into_finished_component :
+  components (fixture_graph [1; 2; 3] [(1, 2); (1, 3); (3, 2)]) = [[2]; [3]; [1]].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example self_loop_component : components SelfLoop.graph = [[1]].
 Proof. vm_compute. reflexivity. Qed.
 
@@ -39,6 +45,15 @@ Qed.
 
 Example filters_unlisted_successors_and_rows :
   comps (SccCode.run (Prepared (Digraph [1] (succ Line.graph)) Empty 0%N 0%N)) = [[1]].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Counting retains repeated listed rows while excluding unlisted successor occurrences. *)
+Example counted_rebuild_retains_repeated_rows :
+  let g := Prepared (Digraph [1; 1; 2] (PTrieCode.set 1 [2; 2; 99] Empty)) Empty 0%N 0%N in
+  (comps (SccCode.run g), nv (scc_graph_counted g), ne (scc_graph_counted g)) =
+    ([[2]; [1]], 3%N, 4%N).
 Proof.
   vm_compute. reflexivity.
 Qed.

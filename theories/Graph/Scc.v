@@ -131,13 +131,28 @@ Module TarjanVisitor <: VISITOR_OPS.
     end.
   TimeFun lower.
 
-  Definition edge (kind : edge_kind) (u v : positive) (s : state) : state :=
+  Definition tarjan_edge_spec (kind : edge_kind) (u v : positive) (s : state) : state :=
     match kind with
     | Tree => s
     | _ => match trie_get v (tarjan_active s), trie_get v (tarjan_disc s) with
            | Some true, Some n => lower u n s
            | _, _ => s
            end
+    end.
+  TimeFun tarjan_edge_spec.
+
+  Definition edge (kind : edge_kind) (u v : positive) (s : state) : state :=
+    match kind with
+    | Tree => s
+    | _ =>
+      match trie_get v (tarjan_active s) with
+      | Some true =>
+        match trie_get v (tarjan_disc s) with
+        | Some n => lower u n s
+        | None => s
+        end
+      | _ => s
+      end
     end.
   TimeFun edge.
 
@@ -159,6 +174,20 @@ Module TarjanVisitor <: VISITOR_OPS.
     end.
   TimeFun leave.
 End TarjanVisitor.
+
+(** Explicitly testing active membership preserves the original callback on every state. *)
+Lemma tarjan_edge_agrees kind u v s :
+  TarjanVisitor.edge kind u v s = TarjanVisitor.tarjan_edge_spec kind u v s.
+Proof.
+  reflexivity.
+Qed.
+
+(** The original multiple match already omits the discovery read on inactive edges. *)
+Lemma tarjan_edge_clock_agrees kind u v s :
+  TarjanVisitor.T_edge kind u v s = TarjanVisitor.T_tarjan_edge_spec kind u v s.
+Proof.
+  reflexivity.
+Qed.
 
 (** Present low-link entries always refer to pending vertices; emitted blocks are nonempty. *)
 Definition tarjan_nonempty_state (s : tarjan_state) : Prop :=
@@ -1077,11 +1106,125 @@ Proof.
   - apply Pos.eqb_refl.
 Qed.
 
+(** Building row tables preserves pointwise agreement at every listed key. *)
+Lemma scc_rows_agree {A} (first second : positive -> A) vs initial :
+  (forall v, In v vs -> first v = second v) ->
+  fold_left (fun acc v => PTrieCode.set v (first v) acc) vs initial =
+    fold_left (fun acc v => PTrieCode.set v (second v) acc) vs initial.
+Proof.
+  revert initial. induction vs as [|v vs IH]; intros initial Hrows; [reflexivity|].
+  cbn [fold_left]. rewrite (Hrows v (or_introl eq_refl)).
+  apply IH. intros u Hin. apply Hrows. now right.
+Qed.
+
+(** Repeating a membership filter retains exactly the already selected occurrences. *)
+Local Lemma scc_filter_twice {A} (test : A -> bool) vs :
+  filter test (filter test vs) = filter test vs.
+Proof.
+  induction vs as [|v vs IH]; cbn [filter]; [reflexivity|].
+  destruct (test v) eqn:Htest; cbn [filter]; rewrite ?Htest, ?IH; reflexivity.
+Qed.
+
+(** Rebuilding filtered listed rows changes only their untrusted count caches. *)
+Lemma scc_graph_filtered g vs n e :
+  let listed := fold_left (fun acc v => PTrieCode.set v true acc) vs Empty in
+  let rows := fold_left (fun acc v => PTrieCode.set v
+    (filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (succs g v)) acc) vs Empty in
+  let b := Digraph vs rows in
+  scc_graph (Prepared b Empty n e) =
+    Prepared b Empty (N.of_nat (graph_n b)) (N.of_nat (graph_e b)).
+Proof.
+  intros listed rows b.
+  assert (Hbase : base (scc_graph (Prepared b Empty n e)) = b).
+  { unfold b, rows, listed, scc_graph. cbn [base nodes]. f_equal.
+    apply scc_rows_agree. intros v Hin.
+    cbn [base succs]. rewrite scc_rows_lookup.
+    assert (Hmember : existsb (Pos.eqb v) vs = true).
+    { apply existsb_exists. exists v. split; [exact Hin|apply Pos.eqb_refl]. }
+    rewrite Hmember. apply scc_filter_twice. }
+  change (Prepared (base (scc_graph (Prepared b Empty n e))) Empty
+    (N.of_nat (graph_n (base (scc_graph (Prepared b Empty n e)))))
+    (N.of_nat (graph_e (base (scc_graph (Prepared b Empty n e))))) =
+    Prepared b Empty (N.of_nat (graph_n b)) (N.of_nat (graph_e b))).
+  now rewrite Hbase.
+Qed.
+
+(** Filtering callers can write each row and accumulate its binary count in one traversal. *)
+Fixpoint scc_count_rows (row : positive -> list positive) (vs : list positive)
+    (table : ptrie (list positive)) (count : N) : ptrie (list positive) * N :=
+  match vs with
+  | [] => (table, count)
+  | v :: rest =>
+    let successors := row v in
+    scc_count_rows row rest (PTrieCode.set v successors table)
+      (N.of_nat (length successors) + count)%N
+  end.
+TimeFun scc_count_rows.
+
+(** Counted row construction preserves the row fold and sums every listed occurrence. *)
+Lemma scc_count_rows_agrees row vs table count :
+  scc_count_rows row vs table count =
+    (fold_left (fun acc v => PTrieCode.set v (row v) acc) vs table,
+      (N.of_nat (fold_right (fun v n => (length (row v) + n)%nat) 0%nat vs) + count)%N).
+Proof.
+  revert table count. induction vs as [|v vs IH]; intros table count;
+    cbn [scc_count_rows fold_left fold_right]; [reflexivity|].
+  rewrite IH, Nat2N.inj_add. f_equal. lia.
+Qed.
+
+(** Repeated row keys contribute the same stored row at every listed occurrence. *)
+Local Lemma scc_rows_edge_count (row : positive -> list positive) vs :
+  graph_e (Digraph vs (fold_left (fun acc v => PTrieCode.set v (row v) acc) vs Empty)) =
+    fold_right (fun v n => (length (row v) + n)%nat) 0%nat vs.
+Proof.
+  set (b := Digraph vs (fold_left (fun acc v => PTrieCode.set v (row v) acc) vs Empty)).
+  assert (Hrows : Forall (fun v => succs b v = row v) vs).
+  { apply Forall_forall. intros v Hin. unfold b, succs. cbn [succ].
+    rewrite scc_rows_lookup, PTrie.get_empty.
+    assert (Hmember : existsb (Pos.eqb v) vs = true).
+    { apply existsb_exists. exists v. split; [exact Hin|apply Pos.eqb_refl]. }
+    now rewrite Hmember. }
+  change (fold_right (fun v n => (length (succs b v) + n)%nat) 0%nat vs =
+    fold_right (fun v n => (length (row v) + n)%nat) 0%nat vs).
+  clearbody b. induction Hrows as [|v rest Hv Hrows IH]; cbn [fold_right]; [reflexivity|].
+  now rewrite Hv, IH.
+Qed.
+
+(** Rebuild listed rows and accumulate filtered edge counts without reading those rows again. *)
+Definition scc_graph_counted (g : prepared) : prepared :=
+  let vs := nodes g in
+  let listed := fold_left (fun acc v => PTrieCode.set v true acc) vs Empty in
+  let summary := scc_count_rows (fun v =>
+    filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (succs (base g) v)) vs Empty 0%N in
+  Prepared (Digraph vs (fst summary)) Empty (N.of_nat (length vs)) (snd summary).
+TimeFun scc_graph_counted.
+
+(** Count accumulation preserves the complete rebuilt graph, including duplicate row counts. *)
+Lemma scc_graph_counted_agrees g : scc_graph_counted g = scc_graph g.
+Proof.
+  unfold scc_graph_counted. rewrite scc_count_rows_agrees.
+  cbn [fst snd]. rewrite N.add_0_r.
+  unfold scc_graph. rewrite scc_rows_edge_count. reflexivity.
+Qed.
+
 (** The filtered traversal reads neither predecessor nor count caches of its input. *)
-Definition scc_trace (g : prepared) : list event :=
+Definition scc_trace_spec (g : prepared) : list event :=
   let ready := scc_graph g in
   prepared_search_trace ready (nodes ready).
+
+(** The executable traversal uses the counts accumulated while rebuilding its rows. *)
+Definition scc_trace (g : prepared) : list event :=
+  let ready := scc_graph_counted g in
+  prepared_search_trace ready (nodes ready).
 TimeFun scc_trace.
+
+(** Counting during rebuilding leaves the complete depth-first trace unchanged. *)
+Lemma scc_trace_agrees g : scc_trace g = scc_trace_spec g.
+Proof.
+  unfold scc_trace, scc_trace_spec. now rewrite scc_graph_counted_agrees.
+Qed.
 
 Local Opaque prepared_search_trace.
 
@@ -1096,13 +1239,13 @@ Qed.
 (** Filtered traversal enters each key at most once, including duplicate input rows. *)
 Lemma scc_trace_unique g : NoDup (entered (scc_trace g)).
 Proof.
-  unfold scc_trace. apply prepared_search_unique_raw.
+  unfold scc_trace. rewrite scc_graph_counted_agrees. apply prepared_search_unique_raw.
 Qed.
 
 (** Recomputed counts complete the filtered traversal and close its active stack. *)
 Lemma scc_trace_nested g : trace_stack [] (scc_trace g) [].
 Proof.
-  unfold scc_trace. apply prepared_search_nested_closed.
+  unfold scc_trace. rewrite scc_graph_counted_agrees. apply prepared_search_nested_closed.
   - apply scc_graph_counts.
   - apply scc_search_closed.
   - auto.
@@ -1111,7 +1254,7 @@ Qed.
 (** Every listed vertex is a root, and filtering prevents any unlisted entry. *)
 Lemma scc_trace_entered g v : In v (entered (scc_trace g)) <-> In v (nodes g).
 Proof.
-  unfold scc_trace.
+  unfold scc_trace. rewrite scc_graph_counted_agrees.
   rewrite (prepared_search_reach_closed (scc_graph g) (nodes (scc_graph g))
     (scc_graph_counts g) (scc_search_closed g) (fun r Hin => Hin) v).
   split.
@@ -1128,6 +1271,7 @@ Lemma scc_trace_length g :
     fold_right (fun v n => length (succs (base (scc_graph g)) v) + n) 0
       (entered (scc_trace g)).
 Proof.
+  unfold scc_trace. rewrite scc_graph_counted_agrees.
   pose proof (prepared_search_event_exact (scc_graph g) (nodes (scc_graph g))
     (scc_graph_counts g) (scc_search_closed g) (fun r Hin => Hin)) as Hlength.
   rewrite search_event_supply_entered in Hlength. exact Hlength.
@@ -1272,7 +1416,7 @@ Qed.
 (** Completed filtered traversal retains exactly the filtered successor rows. *)
 Lemma scc_trace_rows g : search_trace_rows (base (scc_graph g)) (scc_trace g).
 Proof.
-  unfold scc_trace. apply prepared_search_rows_closed.
+  unfold scc_trace. rewrite scc_graph_counted_agrees. apply prepared_search_rows_closed.
   - apply scc_graph_counts.
   - apply scc_search_closed.
   - auto.
@@ -1601,16 +1745,17 @@ Proof.
   pose proof (scc_trace_size g) as Hsize.
   pose proof (scc_trace_length g) as Hlength.
   pose proof (scc_trace_run_width g) as Hwidth.
+  rewrite scc_trace_agrees in Hsize, Hlength, Hwidth.
   destruct (scc_graph_size g) as [Hvertices Hedges].
   assert (Hnodes : length (nodes g) = graph_n (base g)).
   { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
   assert (Hmass : search_trace_mass (scc_graph g) (nodes (scc_graph g)) <=
       3 * graph_n (base g) + graph_e (base g) + 1).
-  { unfold search_trace_mass. fold (scc_trace g). rewrite scc_graph_nodes, Hnodes. lia. }
+  { unfold search_trace_mass. fold (scc_trace_spec g). rewrite scc_graph_nodes, Hnodes. lia. }
   destruct (scc_graph_counts g) as [Hnv Hne].
   pose proof (scc_cache_size (graph_n (base (scc_graph g)))) as Hvertex_bits.
   pose proof (scc_cache_size (graph_e (base (scc_graph g)))) as Hedge_bits.
-  unfold search_trace_raw_work. fold (scc_trace g). rewrite Hnv, Hne.
+  unfold search_trace_raw_work. fold (scc_trace_spec g). rewrite Hnv, Hne.
   assert (Hpositive : (1 <= N.of_nat (graph_width (base g) + 1))%N) by lia.
   nia.
 Qed.
@@ -1817,6 +1962,43 @@ Proof.
     rewrite !Nat2N.inj_add, ?time_of_nat_succ in *. clear - IH Hhead. nia.
 Qed.
 
+(** Row construction pays count carries from the accumulated counter's one-bit credit. *)
+Local Lemma scc_count_rows_time row T_row work vs table count w :
+  Forall (fun v => Pos.size_nat v <= w /\ length (row v) <= work v /\
+    (T_row v <= 2048 * N.of_nat (work v + 1) * N.of_nat (w + 1))%N) vs ->
+  (T_scc_count_rows row T_row vs table count +
+    graph_counter_ones (snd (scc_count_rows row vs table count)) <=
+    graph_counter_ones count +
+      8192 * N.of_nat (length vs + fold_right (fun v n => (work v + n)%nat) 0%nat vs + 1) *
+        N.of_nat (w + 1))%N.
+Proof.
+  intros Hwidth. revert table count.
+  induction Hwidth as [|v vs [Hv [Hlength Hrow]] Hwidth IH]; intros table count.
+  - time_unfold @T_scc_count_rows. cbn [scc_count_rows snd length fold_right].
+    rewrite !Nat2N.inj_add. nia.
+  - pose proof (PTrieT.T_set_le (list positive) v (row v) table) as Hset.
+    change (PTrieCode.T_set v (row v) table <=
+      1024 * N.of_nat (Pos.size_nat v + 1))%N in Hset.
+    pose proof (Datatypes.T_length_le (row v)) as Hrowlength.
+    pose proof (graph_of_nat_time (length (row v))) as Hconvert.
+    pose proof (graph_add_count_credit (length (row v)) count) as Hadd.
+    specialize (IH (PTrieCode.set v (row v) table) (N.of_nat (length (row v)) + count)%N).
+    time_unfold @T_scc_count_rows. cbn [scc_count_rows length fold_right].
+    rewrite !Nat2N.inj_add, ?time_of_nat_succ in *.
+    nia.
+Qed.
+
+(** Rebuilding pays for its final count caches in addition to filtering the graph. *)
+Lemma scc_graph_cache_clock g :
+  (T_graph_n (base (scc_graph g)) +
+    TimeHelpers.N.T_of_nat (graph_n (base (scc_graph g))) +
+    T_graph_e (base (scc_graph g)) +
+    TimeHelpers.N.T_of_nat (graph_e (base (scc_graph g))) + 2 <= T_scc_graph g)%N.
+Proof.
+  time_unfold @T_scc_graph. unfold scc_graph. cbn [base].
+  unfold T_nodes, T_base. cbn beta iota zeta. lia.
+Qed.
+
 (** Rebuilding membership, filtered rows, and both count caches has the input size cost. *)
 Lemma scc_graph_time g :
   (T_scc_graph g <= 16384 * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
@@ -1894,13 +2076,223 @@ Proof.
   lia.
 Qed.
 
+(** Counting during filtering retains the original graph-size and key-width envelope. *)
+Lemma scc_graph_counted_time g :
+  (T_scc_graph_counted g <=
+    16384 * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  set (listed := fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty).
+  set (row := fun v => filter
+    (fun u => match trie_get u listed with Some _ => true | None => false end)
+    (succs (base g) v)).
+  set (row_clock := fun v => (1 + ((1 + T_succs (base g) v) +
+    List.T_filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (fun u => 1 + T_trie_get u listed)%N (succs (base g) v)))%N).
+  assert (Hkeys : Forall (fun v => Pos.size_nat v <= graph_width (base g)) (nodes g)).
+  { apply Forall_forall. intros v Hin. now apply scc_node_width. }
+  assert (Hrows : Forall (fun v => Pos.size_nat v <= graph_width (base g) /\
+    length (row v) <= length (succs (base g) v) /\
+    (row_clock v <= 2048 * N.of_nat (length (succs (base g) v) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N) (nodes g)).
+  { apply Forall_forall. intros v Hin. split; [now apply scc_node_width|]. split.
+    - unfold row. apply filter_length_le.
+    - pose proof (scc_row_time (base g) (graph_width (base g)) listed v Empty
+        (scc_node_width g v Hin) (scc_input_row_width g v Hin)) as Hclock.
+      unfold row_clock. nia. }
+  pose proof (scc_count_rows_time row row_clock (fun v => length (succs (base g) v))
+    (nodes g) Empty 0 (graph_width (base g)) Hrows) as Hcount.
+  pose proof (scc_listed_fold_time (graph_width (base g)) (nodes g) Empty Hkeys) as Hlisted.
+  pose proof (Datatypes.T_length_le (nodes g)) as Hlength.
+  pose proof (graph_of_nat_time (length (nodes g))) as Hvertices.
+  pose proof (Datatypes.T_fst_le (scc_count_rows row (nodes g) Empty 0)) as Hfst.
+  pose proof (Datatypes.T_snd_le (scc_count_rows row (nodes g) Empty 0)) as Hsnd.
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hedges : fold_right (fun v n => length (succs (base g) v) + n) 0 (nodes g) =
+    graph_e (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  rewrite Hnodes, Hedges in Hcount. rewrite Hnodes in Hlisted, Hlength, Hvertices.
+  rewrite graph_counter_ones_zero in Hcount.
+  time_unfold @T_scc_graph_counted. unfold T_nodes, T_base.
+  cbn beta iota zeta. fold listed row row_clock.
+  rewrite Hnodes. rewrite !Nat2N.inj_add in *.
+  clear - Hcount Hlisted Hlength Hvertices Hfst Hsnd. nia.
+Qed.
+
+(** Every binary increment pays at least its initial call. *)
+Local Lemma scc_succ_clock_positive p : (1 <= Std.Pos.T_succ p)%N.
+Proof.
+  destruct p; time_unfold Std.Pos.T_succ; lia.
+Qed.
+
+(** Each unary successor pays a conversion call and a binary increment. *)
+Local Lemma scc_of_succ_nat_clock_lower n :
+  (2 * N.of_nat n + 1 <= Key.Pos.T_of_succ_nat n)%N.
+Proof.
+  induction n as [|n IH].
+  - time_unfold Key.Pos.T_of_succ_nat. reflexivity.
+  - pose proof (scc_succ_clock_positive (Pos.of_succ_nat n)) as Hsucc.
+    time_unfold Key.Pos.T_of_succ_nat.
+    cbn [Pos.of_succ_nat]. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** Converting a unary count pays at least twice its value. *)
+Local Lemma scc_of_nat_clock_lower n :
+  (2 * N.of_nat n <= TimeHelpers.N.T_of_nat n)%N.
+Proof.
+  destruct n as [|n].
+  - time_unfold TimeHelpers.N.T_of_nat. cbn. lia.
+  - pose proof (scc_of_succ_nat_clock_lower n) as Hcount.
+    time_unfold TimeHelpers.N.T_of_nat. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** The length traversal pays once for every constructor, including the empty list. *)
+Local Lemma scc_length_clock_lower {A} (xs : list A) :
+  (N.of_nat (length xs) + 1 <= Datatypes.T_length xs)%N.
+Proof.
+  induction xs as [|x xs IH]; time_unfold @Datatypes.T_length;
+    cbn [length]; rewrite ?Nat2N.inj_succ; lia.
+Qed.
+
+(** A filter pays a traversal call and its predicate call for every occurrence. *)
+Local Lemma scc_filter_clock_lower {A} (test : A -> bool) T_test xs :
+  (forall x, (1 <= T_test x)%N) ->
+  (2 * N.of_nat (length xs) + 1 <= List.T_filter test T_test xs)%N.
+Proof.
+  intros Htest. induction xs as [|x xs IH].
+  - time_unfold @List.T_filter. cbn [length]. lia.
+  - pose proof (Htest x). time_unfold @List.T_filter.
+    destruct (test x); cbn [length]; rewrite Nat2N.inj_succ; lia.
+Qed.
+
+(** The membership fold pays its traversal and callback without any trie lower bound. *)
+Local Lemma scc_listed_clock_lower vs listed :
+  (2 * N.of_nat (length vs) + 1 <=
+    List.T_fold_left (fun acc v => PTrieCode.set v true acc)
+      (fun acc v => 1 + PTrieCode.T_set v true acc)%N vs listed)%N.
+Proof.
+  revert listed. induction vs as [|v vs IH]; intro listed.
+  - time_unfold @List.T_fold_left. cbn [length]. lia.
+  - specialize (IH (PTrieCode.set v true listed)).
+    time_unfold @List.T_fold_left. cbn beta. cbn [length].
+    rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** Counted rows retain enough filtering and conversion work to pay a cache recount. *)
+Local Lemma scc_count_rows_clock_lower row T_row read vs table count :
+  Forall (fun v =>
+    (read v + 2 * N.of_nat (length (row v)) + 3 <= T_row v)%N) vs ->
+  (fold_right (fun v n => (read v + n)%N) 0%N vs +
+    5 * N.of_nat (fold_right (fun v n => (length (row v) + n)%nat) 0%nat vs) +
+    5 * N.of_nat (length vs) + 1 <= T_scc_count_rows row T_row vs table count)%N.
+Proof.
+  intros Hrows. revert table count.
+  induction Hrows as [|v vs Hv Hrows IH]; intros table count.
+  - time_unfold @T_scc_count_rows. cbn [fold_right length]. lia.
+  - pose proof (scc_length_clock_lower (row v)) as Hlength.
+    pose proof (scc_of_nat_clock_lower (length (row v))) as Hconvert.
+    specialize (IH (PTrieCode.set v (row v) table) (N.of_nat (length (row v)) + count)%N).
+    time_unfold @T_scc_count_rows. cbn [fold_right length].
+    rewrite Nat2N.inj_add, Nat2N.inj_succ. lia.
+Qed.
+
+(** The unary edge sum shares each row read and adds twice the row length in list work. *)
+Local Lemma scc_cache_fold_clock_upper b vs :
+  (List.T_fold_right (fun v n => (length (succs b v) + n)%nat)
+    (fun v n => 1 + ((T_succs b v + Datatypes.T_length (succs b v)) +
+      Nat.T_add (length (succs b v)) n))%N 0%nat vs <=
+    fold_right (fun v n => (T_succs b v + n)%N) 0%N vs +
+    2 * N.of_nat (fold_right (fun v n => (length (succs b v) + n)%nat) 0%nat vs) +
+    4 * N.of_nat (length vs) + 1)%N.
+Proof.
+  induction vs as [|v vs IH].
+  - time_unfold @List.T_fold_right. cbn [fold_right length]. lia.
+  - pose proof (Datatypes.T_length_le (succs b v)) as Hlength.
+    pose proof (Nat.T_add_le (length (succs b v))
+      (fold_right (fun u n => (length (succs b u) + n)%nat) 0%nat vs)) as Hadd.
+    time_unfold @List.T_fold_right. cbn beta. cbn [fold_right length].
+    rewrite Nat2N.inj_add, Nat2N.inj_succ. lia.
+Qed.
+
+(** On an already rebuilt base, counted filtering pays for refreshing both count caches. *)
+Lemma scc_graph_counted_cache_clock g :
+  base (scc_graph g) = base g ->
+  (T_graph_n (base g) + TimeHelpers.N.T_of_nat (graph_n (base g)) +
+    T_graph_e (base g) + TimeHelpers.N.T_of_nat (graph_e (base g)) + 2 <=
+    T_scc_graph_counted g)%N.
+Proof.
+  intro Hbase.
+  set (listed := fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty).
+  set (row := fun v => filter
+    (fun u => match trie_get u listed with Some _ => true | None => false end)
+    (succs (base g) v)).
+  set (row_clock := fun v => (1 + ((1 + T_succs (base g) v) +
+    List.T_filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (fun u => 1 + T_trie_get u listed)%N (succs (base g) v)))%N).
+  assert (Hrows : Forall (fun v => row v = succs (base g) v) (nodes g)).
+  { apply Forall_forall. intros v Hin.
+    pose proof (scc_graph_succs_listed g v Hin) as Hrow.
+    rewrite Hbase in Hrow. unfold row.
+    rewrite Hrow at 2. apply filter_ext. intro u. unfold listed. apply scc_listed_test. }
+  assert (Hcost : Forall (fun v =>
+    (T_succs (base g) v + 2 * N.of_nat (length (row v)) + 3 <= row_clock v)%N)
+    (nodes g)).
+  { apply Forall_forall. intros v Hin. rewrite Forall_forall in Hrows.
+    rewrite (Hrows v Hin). unfold row_clock.
+    pose proof (scc_filter_clock_lower
+      (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (fun u => 1 + T_trie_get u listed)%N (succs (base g) v)
+      ltac:(intro u; change (1 <= 1 + T_trie_get u listed)%N; lia)) as Hfilter.
+    lia. }
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hedges : fold_right (fun v n => (length (succs (base g) v) + n)%nat)
+      0%nat (nodes g) = graph_e (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hmass : fold_right (fun v n => (length (row v) + n)%nat) 0%nat (nodes g) =
+      graph_e (base g)).
+  { rewrite <- Hedges. clearbody row. clear - Hrows. induction Hrows as [|v vs Hv Hrows IH];
+      cbn [fold_right]; [reflexivity|]. now rewrite Hv, IH. }
+  pose proof (scc_count_rows_clock_lower row row_clock (fun v => T_succs (base g) v)
+    (nodes g) Empty 0 Hcost) as Hcount.
+  pose proof (scc_cache_fold_clock_upper (base g) (nodes g)) as Hfold.
+  pose proof (scc_listed_clock_lower (nodes g) Empty) as Hlisted.
+  pose proof (graph_of_nat_time (graph_e (base g))) as Hconvert.
+  rewrite Hmass in Hcount. rewrite Hedges in Hfold.
+  assert (Hcache :
+    (List.T_fold_right (fun v n => (length (succs (base g) v) + n)%nat)
+      (fun v n => 1 + ((T_succs (base g) v + Datatypes.T_length (succs (base g) v)) +
+        Nat.T_add (length (succs (base g) v)) n))%N 0%nat (nodes g) +
+      TimeHelpers.N.T_of_nat (graph_e (base g)) <=
+      List.T_fold_left (fun acc v => PTrieCode.set v true acc)
+        (fun acc v => 1 + PTrieCode.T_set v true acc)%N (nodes g) Empty +
+      T_scc_count_rows row row_clock (nodes g) Empty 0)%N).
+  { destruct (nodes g) as [|v vs] eqn:Hvertices.
+    - rewrite ?Hvertices in Hedges. cbn [fold_right] in Hedges. rewrite <- Hedges.
+      time_unfold @List.T_fold_right. time_unfold @List.T_fold_left.
+      time_unfold @T_scc_count_rows. time_unfold TimeHelpers.N.T_of_nat. lia.
+    - rewrite ?Hvertices in Hcount, Hfold, Hlisted. cbn [length] in *.
+      rewrite Nat2N.inj_succ in *. lia. }
+  assert (Hvertices : verts (base g) = nodes g).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hfst : (1 <= Datatypes.T_fst (scc_count_rows row (nodes g) Empty 0))%N).
+  { destruct (scc_count_rows row (nodes g) Empty 0). reflexivity. }
+  assert (Hsnd : (1 <= Datatypes.T_snd (scc_count_rows row (nodes g) Empty 0))%N).
+  { destruct (scc_count_rows row (nodes g) Empty 0). reflexivity. }
+  rewrite graph_n_clock, graph_e_clock, Hvertices, <- Hnodes.
+  time_unfold @T_scc_graph_counted. unfold T_nodes, T_base.
+  cbn beta iota zeta. fold listed row row_clock.
+  clear - Hcache Hfst Hsnd. lia.
+Qed.
+
 (** Filtered trace construction includes preprocessing, root access, and the raw search clock. *)
 Lemma scc_trace_time g :
   (1 + T_scc_trace g <= (8 * (search_trace_coefficient + 4096)) *
     N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
 Proof.
-  pose proof (scc_graph_time g) as Hgraph.
+  pose proof (scc_graph_counted_time g) as Hgraph.
   pose proof (prepared_search_time (scc_graph g) (nodes (scc_graph g))) as Hsearch.
   pose proof (scc_trace_raw_work g) as Hwork.
   assert (Hscaled : (search_trace_coefficient *
@@ -1909,7 +2301,8 @@ Proof.
         N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
         N.of_nat (graph_width (base g) + 1)))%N).
   { apply N.mul_le_mono_l. exact Hwork. }
-  clear Hwork. time_unfold @T_scc_trace. unfold T_nodes. cbn beta iota zeta. nia.
+  clear Hwork. time_unfold @T_scc_trace. rewrite scc_graph_counted_agrees.
+  unfold T_nodes. cbn beta iota zeta. nia.
 Qed.
 
 
@@ -3174,7 +3567,7 @@ Proof.
   - intros u v Huv. unfold edge in *. rewrite scc_graph_succs in Huv.
     destruct (existsb (Pos.eqb u) (nodes g)); [|contradiction].
     apply filter_In in Huv. tauto.
-  - unfold scc_trace.
+  - unfold scc_trace. rewrite scc_graph_counted_agrees.
     destruct (prepared_search_depth_first_closed (scc_graph g) (nodes g)
       (scc_graph_counts g) (scc_search_closed g)
       ltac:(intros r Hr; now rewrite scc_graph_nodes)) as [final Hdfs].
@@ -3476,6 +3869,7 @@ Qed.
 
 Lemma scc_trace_tree_pairs g : tarjan_tree_pairs (scc_trace g).
 Proof.
+  unfold scc_trace. rewrite scc_graph_counted_agrees, scc_graph_nodes.
   destruct (prepared_search_depth_first_closed (scc_graph g) (nodes g)
     (scc_graph_counts g) (scc_search_closed g)
     ltac:(intros r Hr; now rewrite scc_graph_nodes)) as [final Hdfs].

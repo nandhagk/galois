@@ -13,14 +13,44 @@ Module DigraphCode <: DIGRAPH_OPS.
   Definition add_pred (u v : positive) (p : ptrie (list positive)) :=
     PTrieCode.set v (u :: match trie_get v p with Some vs => vs | None => nil end) p.
 
-  Definition prepare (g : digraph) : prepared :=
+  Definition prepare_spec (g : digraph) : prepared :=
     let predecessors :=
       fold_right (fun u p => fold_right (add_pred u) p (succs g u)) Empty (verts g) in
     Prepared g predecessors (N.of_nat (length (verts g))) (N.of_nat (graph_e g)).
+
+  Fixpoint prepare_rows (g : digraph) (vs : list positive)
+      : ptrie (list positive) * N :=
+    match vs with
+    | nil => (Empty, 0%N)
+    | u :: rest =>
+      let '(predecessors, edges) := prepare_rows g rest in
+      let row := succs g u in
+      (fold_right (add_pred u) predecessors row, (N.of_nat (length row) + edges)%N)
+    end.
+
+  Definition prepare (g : digraph) : prepared :=
+    let summary := prepare_rows g (verts g) in
+    Prepared g (fst summary) (N.of_nat (length (verts g))) (snd summary).
 End DigraphCode.
 
 Module Digraph <: DIGRAPH.
   Include DigraphCode.
+
+  (** The shared row traversal preserves predecessor order and counts every occurrence. *)
+  Lemma prepare_rows_agrees g vs :
+    prepare_rows g vs =
+      (fold_right (fun u p => fold_right (add_pred u) p (succs g u)) Empty vs,
+        N.of_nat (fold_right (fun u n => length (succs g u) + n) 0 vs)).
+  Proof.
+    induction vs as [|u vs IH]; cbn [prepare_rows fold_right]; [reflexivity|].
+    rewrite IH, Nat2N.inj_add. reflexivity.
+  Qed.
+
+  (** Counting while indexing returns the same prepared record as the separate passes. *)
+  Lemma prepare_agrees g : prepare g = prepare_spec g.
+  Proof.
+    destruct g. unfold prepare, prepare_spec. rewrite prepare_rows_agrees. reflexivity.
+  Qed.
 
   (** Inserting one predecessor changes exactly the row selected by its target. *)
   Local Lemma add_pred_lookup u v w p :
@@ -68,7 +98,8 @@ Module Digraph <: DIGRAPH.
   (** Preparation counts and indexes every source occurrence without a well-formedness premise. *)
   Lemma prepare_correct : forall g, prepared_ok (prepare g).
   Proof.
-    intros [vs rows]. unfold prepared_ok, prepare.
+    intros g. rewrite prepare_agrees. destruct g as [vs rows].
+    unfold prepared_ok, prepare_spec.
     cbn [nv ne base graph_n verts nodes]. split; [reflexivity|].
     split; [reflexivity|]. intro v. unfold preds.
     rewrite predecessor_rows, PTrie.get_empty, app_nil_r. reflexivity.
@@ -89,6 +120,79 @@ Lemma graph_succ_time p :
 Proof.
   induction p as [p IH|p IH|]; time_unfold Std.Pos.T_succ;
     cbn [Pos.succ graph_ones]; time_cbn_all; nia.
+Qed.
+
+(** A binary counter has at most one unit of carry credit per representation bit. *)
+Lemma graph_ones_width p : (graph_ones p <= N.of_nat (Pos.size_nat p))%N.
+Proof.
+  induction p as [p IH|p IH|]; cbn [graph_ones Pos.size_nat];
+    rewrite ?Nat2N.inj_succ; lia.
+Qed.
+
+(** Adding a small increment charges its digits and releases the accumulator's carry credit. *)
+Lemma graph_add_credit p q :
+  (Std.Pos.T_add p q + graph_ones (Pos.add p q) <=
+     graph_ones q + 4 * N.of_nat (Pos.size_nat p))%N /\
+  (Std.Pos.T_add_carry p q + graph_ones (Pos.add_carry p q) <=
+     graph_ones q + 4 * N.of_nat (Pos.size_nat p))%N.
+Proof.
+  revert q. induction p as [p IH|p IH|]; intros [q|q|].
+  all: try pose proof (graph_succ_time p) as Hsuccp.
+  all: try pose proof (graph_succ_time q) as Hsuccq.
+  all: try pose proof (graph_ones_width p) as Honesp.
+  all: try specialize (IH q).
+  all: try destruct IH as [IHadd IHcarry].
+  all: time_unfold Std.Pos.T_add; time_unfold Std.Pos.T_add_carry;
+    cbn [Pos.add Pos.add_carry Pos.size_nat graph_ones];
+    rewrite ?Nat2N.inj_succ; split; lia.
+Qed.
+
+(** Zero carries no credit; positive counters retain their one-bit credit. *)
+Definition graph_counter_ones (n : N) : N :=
+  match n with
+  | 0%N => 0%N
+  | N.pos p => graph_ones p
+  end.
+
+(** An empty accumulator starts without any carry credit. *)
+Lemma graph_counter_ones_zero : graph_counter_ones 0 = 0%N.
+Proof.
+  reflexivity.
+Qed.
+
+(** Binary addition does not charge the full width of the growing accumulator. *)
+Lemma graph_counter_add_credit n m :
+  (Std.N.T_add n m + graph_counter_ones (n + m) <=
+    graph_counter_ones m + 4 * N.of_nat (N.size_nat n) + 2)%N.
+Proof.
+  destruct n as [|p], m as [|q]; time_unfold Std.N.T_add.
+  - change (1 <= 2)%N. lia.
+  - change (1 + graph_ones q <= graph_ones q + 0 + 2)%N. rewrite N.add_0_r. lia.
+  - change (1 + graph_ones p <= 4 * N.of_nat (Pos.size_nat p) + 2)%N.
+    pose proof (graph_ones_width p). lia.
+  - change (1 + Std.Pos.T_add p q + graph_ones (Pos.add p q) <=
+      graph_ones q + 4 * N.of_nat (Pos.size_nat p) + 2)%N.
+    pose proof (proj1 (graph_add_credit p q)). lia.
+Qed.
+
+(** A nonnegative counter's bit length never exceeds its unary value. *)
+Lemma graph_counter_size n : N.size_nat n <= N.to_nat n.
+Proof.
+  destruct n as [|p]; [reflexivity|].
+  change (Pos.size_nat p <= Pos.to_nat p).
+  induction p; cbn [Pos.size_nat];
+    [rewrite Pos2Nat.inj_xI|rewrite Pos2Nat.inj_xO|reflexivity];
+    pose proof (Pos2Nat.is_pos p); lia.
+Qed.
+
+(** Adding a row count charges its length and the change in accumulator credit. *)
+Lemma graph_add_count_credit n m :
+  (Std.N.T_add (N.of_nat n) m + graph_counter_ones (N.of_nat n + m) <=
+    graph_counter_ones m + 4 * N.of_nat n + 2)%N.
+Proof.
+  pose proof (graph_counter_add_credit (N.of_nat n) m) as Hclock.
+  pose proof (graph_counter_size (N.of_nat n)) as Hsize.
+  rewrite Nat2N.id in Hsize. lia.
 Qed.
 
 (** Unary-to-positive conversion has linear amortised cost. *)
@@ -209,9 +313,27 @@ Proof.
   time_unfold @T_graph_n. cbn [graph_n]. rewrite Nat2N.inj_add. lia.
 Qed.
 
+(** Counting source occurrences pays one call and their list traversal. *)
+Lemma graph_n_clock g :
+  T_graph_n g = (1 + Datatypes.T_length (verts g))%N.
+Proof.
+  destruct g. time_unfold @T_graph_n. reflexivity.
+Qed.
+
+(** Counting edge occurrences exposes the shared row reads and unary additions. *)
+Lemma graph_e_clock g :
+  T_graph_e g =
+    (1 + List.T_fold_right (fun v n => (length (succs g v) + n)%nat)
+      (fun v n => 1 + ((T_succs g v + Datatypes.T_length (succs g v)) +
+        Nat.T_add (length (succs g v)) n))%N 0%nat (verts g))%N.
+Proof.
+  destruct g. time_unfold @T_graph_e. reflexivity.
+Qed.
+
 Module DigraphT <: DIGRAPH_T.
   Include Digraph.
   TimeFun add_pred.
+  TimeFun prepare_rows.
   TimeFun prepare.
   Definition c_prepare : N := (128 * (PTrieT.c_trie + 1))%N.
 
@@ -267,26 +389,51 @@ Module DigraphT <: DIGRAPH_T.
       clear - IH Hread Hhead. nia.
   Qed.
 
+  (** The shared traversal pays binary carries from its final count's one-bit credit. *)
+  Local Lemma prepare_rows_time g vs w :
+    Forall (fun u => Pos.size_nat u <= w /\
+      Forall (fun v => Pos.size_nat v <= w) (succs g u)) vs ->
+    (T_prepare_rows g vs + graph_counter_ones (snd (prepare_rows g vs)) <=
+      64 * (PTrieT.c_trie + 1) *
+        N.of_nat (length vs +
+          fold_right (fun u n => (length (succs g u) + n)%nat) 0%nat vs + 1) *
+        N.of_nat (w + 1))%N.
+  Proof.
+    induction vs as [|u vs IH]; intro Hwidth.
+    - time_unfold @T_prepare_rows.
+      cbn [prepare_rows snd graph_counter_ones length fold_right]. nia.
+    - inversion Hwidth as [|u0 vs0 [Hu Hrow] Hvs]; subst u0 vs0.
+      specialize (IH Hvs).
+      pose proof (digraph_succs_time g u w Hu) as Hread.
+      destruct (prepare_rows g vs) as [predecessors edges] eqn:Hrows.
+      cbn [snd] in IH.
+      pose proof (predecessor_row_time u (succs g u) predecessors w Hrow) as Hpred.
+      pose proof (graph_add_count_credit (length (succs g u)) edges) as Hadd.
+      pose proof (graph_of_nat_time (length (succs g u))) as Hconvert.
+      pose proof (Datatypes.T_length_le (succs g u)) as Hlength.
+      time_unfold @T_prepare_rows. rewrite Hrows.
+      cbn [prepare_rows]. rewrite Hrows. cbn [snd].
+      cbn [length fold_right]. rewrite !Nat2N.inj_add, ?time_of_nat_succ in *.
+      clear - IH Hpred Hadd Hconvert Hlength Hread. nia.
+  Qed.
+
   Lemma T_prepare_le : forall g,
     (T_prepare g <= c_prepare * N.of_nat (graph_n g + graph_e g + 1) *
       N.of_nat (graph_width g + 1))%N.
   Proof.
     intros [vs rows].
-    pose proof (predecessor_rows_time (Digraph vs rows) vs Empty
+    pose proof (prepare_rows_time (Digraph vs rows) vs
       (graph_width (Digraph vs rows)) (digraph_width_occurrences (Digraph vs rows))) as Hpred.
-    pose proof (digraph_edge_count_time (Digraph vs rows)) as Hedges.
     pose proof (Datatypes.T_length_le vs) as Hlength.
-    pose proof (graph_of_nat_time (length vs)) as Hnv.
-    pose proof (graph_of_nat_time (graph_e (Digraph vs rows))) as Hne.
+    pose proof (graph_of_nat_time (length vs)) as Hvertices.
+    pose proof (Datatypes.T_fst_le (prepare_rows (Digraph vs rows) vs)) as Hfst.
+    pose proof (Datatypes.T_snd_le (prepare_rows (Digraph vs rows) vs)) as Hsnd.
     unfold c_prepare. time_unfold @T_prepare. unfold T_verts.
     cbn [verts graph_n] in *. rewrite !Nat2N.inj_add in *.
-    change (List.T_fold_right (fun u acc => fold_right (add_pred u) acc
-        (succs (Digraph vs rows) u))
-      (fun u acc => 1 + (T_succs (Digraph vs rows) u +
-        List.T_fold_right (add_pred u) (fun v row => T_add_pred u v row)
-          acc (succs (Digraph vs rows) u)))%N Empty vs <=
-      32 * (PTrieT.c_trie + 1) * (N.of_nat (length vs) +
-        N.of_nat (graph_e (Digraph vs rows)) + 1) *
+    change (T_prepare_rows (Digraph vs rows) vs +
+      graph_counter_ones (snd (prepare_rows (Digraph vs rows) vs)) <=
+      64 * (PTrieT.c_trie + 1) *
+        (N.of_nat (length vs) + N.of_nat (graph_e (Digraph vs rows)) + 1) *
         (N.of_nat (graph_width (Digraph vs rows)) + 1))%N in Hpred.
     nia.
   Qed.
