@@ -2,13 +2,13 @@
 
     These examples check comparison refinement and half-infinite arithmetic.
     For example, x < 10 bounds x above by 9.
+    Builds on: Interval, ZLang and Thresholds.
 
     Groups:
     - [GuardTests] Comparisons narrow or empty their operands.
     - [ArithmeticTests] Adding or subtracting a constant shifts a half-infinite range.
     - [ShiftTests] Left shifts below and beyond the shift cutoff.
-    - [SignedSplitTests] Splitting an interval at the sign boundary.
-    Builds on: Interval, ZLang and Thresholds. *)
+    - [SignedSplitTests] Splitting an interval at the sign boundary. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Domains Require Import ValueSig IntervalSig Thresholds ZLang Interval.
@@ -31,7 +31,7 @@ Module GuardTests.
     vm_compute; reflexivity.
   Qed.
 
-  (** A strict comparison with an interval entirely above it leaves no value. *)
+  (** A strict greater-than of a range that does not exceed ten, against ten, leaves no value. *)
   Example strict_greater_than_disjoint_is_empty :
     IV.guard (ZGuardCmp Gt) [I (Fin 0) (Fin 10); IV.abst 10] =
       [IBot; IBot].
@@ -113,7 +113,7 @@ End ShiftTests.
 
 Module SignedSplitTests.
 
-  (** Sharing the half-width power keeps a wholly nonnegative interval in the first part. *)
+  (** A wholly nonnegative range stays in the first part, and the second part is bottom. *)
   Example nonnegative_range_stays_in_first_part :
     IV.signed_split 64%positive (I (Fin 1) (Fin 4)) = [I (Fin 1) (Fin 4); IBot].
   Proof.

@@ -2,14 +2,14 @@
 
     These examples exercise annihilators, inverses and numeric expressions.
     For example, assuming x + 3 = 7 refines x to 4.
+    Builds on: Const and Tagged.
 
     Groups:
     - [RawPayloadTests] A raw constant payload keeps its integer outside the width.
     - [ForwardTests] Forward transfers on constant operands.
     - [AnnihilatorTests] Zero and maximum operands fix the result of an operation.
     - [TaggedTests] Tagged operands of mismatched widths.
-    - [InverseTests] Backward transfers from a known result.
-    Builds on: Const and Tagged. *)
+    - [InverseTests] Backward transfers from a known result. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op Expr.
@@ -103,10 +103,10 @@ Module ForwardTests.
 
   (** Every forward operation rejects a bottom operand alongside a top operand. *)
   Example bottom_operand_rejected_by_forward_ops :
-    map (fun o => forward_payload o [(w8, FBot); (w8, FTop)] w8)
-      const_forward_ops = repeat FBot 7.
+    Forall (fun p => p = FBot)
+      (map (fun o => forward_payload o [(w8, FBot); (w8, FTop)] w8) const_forward_ops).
   Proof.
-    vm_compute. reflexivity.
+    vm_compute. repeat constructor.
   Qed.
 
   (** A maximum constant gives the maximum for or and top for the other forward operations. *)
@@ -123,17 +123,22 @@ End ForwardTests.
 
 Module AnnihilatorTests.
 
-  (** A zero operand fixes each forward operation's result, and a maximum operand fixes or. *)
+  (** Each forward operation with an operand list that has a known result and that result. A
+      zero operand fixes every operation but or, and a maximum operand fixes or. *)
+  Definition annihilator_cases :
+    list ((op * list (tagged (flat Z))) * tagged (flat Z)) :=
+    [((bvmul, [const_constants w8 0; top_constants w8]), TVal w8 (FVal 0));
+     ((bvand, [top_constants w8; const_constants w8 0]), TVal w8 (FVal 0));
+     ((bvor, [top_constants w8; const_constants w8 255]), TVal w8 (FVal 255));
+     ((bvshl, [const_constants w8 0; top_constants w8]), TVal w8 (FVal 0));
+     ((bvlshr, [const_constants w8 0; top_constants w8]), TVal w8 (FVal 0));
+     ((bvashr, [const_constants w8 0; top_constants w8]), TVal w8 (FVal 0));
+     ((bvurem, [const_constants w8 0; top_constants w8]), TVal w8 (FVal 0))].
+
+  (** Every forward operation gives the result that its annihilator fixes. *)
   Example annihilators_of_forward_ops :
-    [forward_constants bvmul [const_constants w8 0; top_constants w8];
-     forward_constants bvand [top_constants w8; const_constants w8 0];
-     forward_constants bvor [top_constants w8; const_constants w8 255];
-     forward_constants bvshl [const_constants w8 0; top_constants w8];
-     forward_constants bvlshr [const_constants w8 0; top_constants w8];
-     forward_constants bvashr [const_constants w8 0; top_constants w8];
-     forward_constants bvurem [const_constants w8 0; top_constants w8]] =
-    [TVal w8 (FVal 0); TVal w8 (FVal 0); TVal w8 (FVal 255); TVal w8 (FVal 0);
-     TVal w8 (FVal 0); TVal w8 (FVal 0); TVal w8 (FVal 0)].
+    map (fun c => forward_constants (fst (fst c)) (snd (fst c))) annihilator_cases =
+      map snd annihilator_cases.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -149,16 +154,6 @@ Module AnnihilatorTests.
   Qed.
 
 End AnnihilatorTests.
-
-(* Old meet returned TBot; Base.meet now returns TVal w8 FBot.
-Example tagged_payload_bottom :
-  forward_constants bvadd [TVal w8 FBot; TAny] = TBot /\
-  Base.meet (TVal w8 FBot) TAny = TBot.
-Proof.
-  vm_compute. split; reflexivity.
-Qed.
-
-*)
 
 (** * Tagged operands *)
 
@@ -180,17 +175,6 @@ Module TaggedTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End TaggedTests.
-
-(* Old backward returned [TBot; TBot]; current result is [TVal w8 FTop; TVal w16 FTop].
-Example incompatible_widths :
-  Base.join (TVal w8 (FVal 0)) (TVal w16 (FVal 0)) = TAny /\
-  forward_constants bvadd [TVal w8 (FVal 0); TVal w16 (FVal 0)] = TBot /\
-  assume_constants bvadd (TVal w8 (FVal 0)) [TVal w8 FTop; TVal w16 FTop] = [TBot; TBot].
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
-
-*)
 
 (** * Inverses *)
 
@@ -317,35 +301,3 @@ Module InverseTests.
   Qed.
 
 End InverseTests.
-
-(* The old numeric expression assumption returned TVal w8 (FVal 4).
-Example nested_expression_refinement :
-  num_assume constants (fun _ => top_constants w8)
-    (App bvadd [Var 0; Const w8 3]) (TVal w8 (FVal 7)) 0%nat = TVal w8 (FVal 4).
-Proof.
-  vm_compute. reflexivity.
-Qed.
-
-*)
-(* Old bottom-result backward returned [TBot; TBot]; current result is [TAny; TVal w8 FTop].
-   The old mismatched-result-width case also returned [TBot; TBot]; current result is
-   [TVal w8 FTop; TVal w8 FTop].
-Example impossible_result_refines_every_operand :
-  assume_constants bvadd TBot [TAny; TVal w8 FTop] = [TBot; TBot] /\
-  assume_constants bvadd (TVal w1 (FVal 1)) [TVal w8 FTop; TVal w8 FTop] = [TBot; TBot].
-Proof.
-  vm_compute. split; reflexivity.
-Qed.
-
-*)
-(* The old numeric expression evaluator returned TVal w8 (FVal 9).
-Example nested_abstract_evaluation :
-  num_eval constants (fun _ => const_constants w8 5)
-    (App bvadd [App bvmul [Var 0; Const w8 3]; Const w8 250]) = TVal w8 (FVal 9).
-Proof.
-  vm_compute. reflexivity.
-Qed.
-
-
-
-*)

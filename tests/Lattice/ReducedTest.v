@@ -119,21 +119,6 @@ Module JoinTests.
 
 End JoinTests.
 
-(* LatticeReducedTest.reduced_operations expects
-   ((false, false), (false, true), (true, true)) from join, widen and narrow.
-   JoinWideningCode gives ((false, false), (false, false), (true, true)) because
-   its widening uses ReducedBool.join. The join and narrow coordinates are
-   checked by reduced_join_second_slot_is_false and reduced_narrow_keeps_true_true above.
-   The reducer interface has no round count. reduce_zero_rounds expects (false, true).
-   reduce_unequal_rounds expects (1, 2, (false, false), (true, false)). These retire
-   with the rounds/step reducer dictionary. ClearSecond and ClearTwice supply the
-   completed reductions used by reduce_positive.
-   costly_zero_rounds and costly_nonzero_count_once combine round-count observations
-   with Cost.ticks. costed_measure_retains_count_work and reducer_ticks observe Cost.
-   These retire with rounds_of_measure and Cost. The dictionary proof clients
-   reduced_variable_laws, reduced_variable_gamma, reduced_identity_lub and
-   reduced_twice_lub use the deleted slots and concretisation interfaces. *)
-
 (** * Height *)
 
 Module HeightTests.

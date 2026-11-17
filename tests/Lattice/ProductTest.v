@@ -177,22 +177,3 @@ Module MeasureTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End MeasureTests.
-
-(* LatticeProductTest.product_leb_ticks, product_join_ticks and
-   product_callback_charges retire with Cost.ticks and its costed callbacks.
-   LatticeKitTest.pair_equal, pair_ordered, pair_rejected and pair_incomparable
-   keep their value coordinates through Product above. Their tick coordinates
-   retire with Cost. family_measures has the same ranks and bounds in
-   family_full_product_measures.
-   family_empty_boundary expects a supported predicate and (rank, bound) = (0, 0).
-   family_duplicate_boundary expects (2, 3) because its inventory repeats true.
-   These require the deleted family_height inventory parameter. ProductHeight
-   counts the two actual coordinates once and exports no inventory parameter.
-   subtype_unordered_narrow expects (3, 0), subtype_ordered_narrow expects 1,
-   and subtype_join_boundary expects (1, false) after dropping Cost coordinates.
-   They test the guarded sub_lattice adapter on the invariant n <= 2.
-   subtype_bool_measures expects (0, 1, 1, 0) on proof-carrying booleans.
-   Sub, Kit and KitFamily retire under core section 4. BoundedSet restricts sets
-   to a universe and supplies no general sub_lattice operation on nat or bool.
-   The indexed gamma and agreement clients and all pilot/family/subtype law
-   clients depend on those deleted dictionary adapters. *)

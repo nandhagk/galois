@@ -87,7 +87,6 @@ Module JoinTests.
   (** The join of the two clipped sets lists its keys in trie order. *)
   Example join_lists_keys :
     PosSet.elements (proj1_sig (Bound.join b1 b12)) = [2%positive; 1%positive].
-
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -111,13 +110,3 @@ Module ClipTests.
   Qed.
 
 End ClipTests.
-
-(* LatticeBoundedTest.outside_value_has_no_bounded_representative is a symbolic
-   proof of the old within_set predicate. The new carrier carries S.subset = true.
-   Bound.clip removes outside keys before constructing that carrier.
-   bounded_environment_height_and_cost expects value coordinates (0, 1, 2).
-   bounded_top_does_not_claim_an_unbounded_top expects (true, false). Both use
-   bounded_env, env_height and bounded_env_top. Those constructors do not occur in
-   the public Bounded API, which restricts sets. States.Env is a value-domain state
-   functor and supplies neither an invariant-restricted map carrier nor map height.
-   Their Cost.ticks coordinates retire with Cost. *)

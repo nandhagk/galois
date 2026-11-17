@@ -10,8 +10,9 @@
     - [ModulusTests] The modulus of a width, and its logarithm.
     - [SymbolicTests] General facts about wrapping and signed values, for any width. *)
 
-From Stdlib Require Import ZArith.
+From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Word.
+Import List.ListNotations.
 
 Open Scope Z_scope.
 
@@ -19,81 +20,34 @@ Open Scope Z_scope.
 
 Module WrapTests.
 
-  (** Zero wraps to zero at width one. *)
-  Example width1_zero_stays_zero : wrap 1%positive 0 = 0.
+  (** Wrapping at width one, as (raw integer, result). Every result is the low bit. *)
+  Definition width1_cases : list (Z * Z) :=
+    [(0, 0); (-1, 1); (2 ^ 64, 0); (2 ^ 64 + 5, 1); (- (2 ^ 64) - 1, 1); (2 ^ 200 + 3, 1)].
+
+  (** Wrapping at width eight, as (raw integer, result). Every result is the residue modulo 256. *)
+  Definition width8_cases : list (Z * Z) :=
+    [(0, 0); (-1, 255); (256, 0); (2 ^ 64, 0); (2 ^ 64 + 5, 5); (- (2 ^ 64) - 1, 255);
+     (2 ^ 200 + 3, 3)].
+
+  (** Wrapping at width sixty-four, as (raw integer, result). Every result is the residue
+      modulo 2 ^ 64. *)
+  Definition width64_cases : list (Z * Z) :=
+    [(0, 0); (-1, 2 ^ 64 - 1); (2 ^ 64, 0); (2 ^ 64 + 5, 5); (- (2 ^ 64) - 1, 2 ^ 64 - 1);
+     (2 ^ 200 + 3, 3)].
+
+  (** Width one wraps every raw integer to its low bit. *)
+  Example width1_wraps_to_low_bit :
+    forallb (fun c => Z.eqb (wrap 1%positive (fst c)) (snd c)) width1_cases = true.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Negative one wraps to one at width one. *)
-  Example width1_negative_one_wraps_to_one : wrap 1%positive (-1) = 1.
+  (** Width eight wraps every raw integer to its residue modulo 256. *)
+  Example width8_wraps_modulo_256 :
+    forallb (fun c => Z.eqb (wrap 8%positive (fst c)) (snd c)) width8_cases = true.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Two to the sixty-fourth wraps to zero at width one. *)
-  Example width1_power_of_two_wraps_to_zero : wrap 1%positive (2 ^ 64) = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A large odd value keeps its low bit at width one. *)
-  Example width1_large_odd_keeps_low_bit : wrap 1%positive (2 ^ 64 + 5) = 1.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A large negative value keeps its low bit at width one. *)
-  Example width1_large_negative_keeps_low_bit : wrap 1%positive (- (2 ^ 64) - 1) = 1.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A huge value keeps its low bit at width one. *)
-  Example width1_huge_value_keeps_low_bit : wrap 1%positive (2 ^ 200 + 3) = 1.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Zero wraps to zero at width eight. *)
-  Example width8_zero_stays_zero : wrap 8%positive 0 = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Negative one wraps to 255 at width eight. *)
-  Example width8_negative_one_wraps_to_255 : wrap 8%positive (-1) = 255.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Two to the sixty-fourth wraps to zero at width eight. *)
-  Example width8_power_of_two_wraps_to_zero : wrap 8%positive (2 ^ 64) = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A large value wraps to its residue modulo 256 at width eight. *)
-  Example width8_large_value_wraps_to_five : wrap 8%positive (2 ^ 64 + 5) = 5.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A large negative value wraps to 255 at width eight. *)
-  Example width8_large_negative_wraps_to_255 : wrap 8%positive (- (2 ^ 64) - 1) = 255.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A huge value wraps to its residue modulo 256 at width eight. *)
-  Example width8_huge_value_wraps_to_three : wrap 8%positive (2 ^ 200 + 3) = 3.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Zero wraps to zero at width sixty-four. *)
-  Example width64_zero_stays_zero : wrap 64%positive 0 = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Negative one wraps to the all-ones word at width sixty-four. *)
-  Example width64_negative_one_is_all_ones : wrap 64%positive (-1) = 2 ^ 64 - 1.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Two to the sixty-fourth wraps to zero at width sixty-four. *)
-  Example width64_power_of_two_wraps_to_zero : wrap 64%positive (2 ^ 64) = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A large value keeps its low bits at width sixty-four. *)
-  Example width64_large_value_wraps_to_five : wrap 64%positive (2 ^ 64 + 5) = 5.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A large negative value wraps to the all-ones word at width sixty-four. *)
-  Example width64_large_negative_is_all_ones :
-    wrap 64%positive (- (2 ^ 64) - 1) = 2 ^ 64 - 1.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A huge value keeps its low bits at width sixty-four. *)
-  Example width64_huge_value_wraps_to_three : wrap 64%positive (2 ^ 200 + 3) = 3.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Eight-bit wrapping maps 256 to zero. *)
-  Example width8_256_wraps_to_zero : wrap 8%positive 256 = 0.
+  (** Width sixty-four wraps every raw integer to its residue modulo 2 ^ 64. *)
+  Example width64_wraps_modulo_two_to_the_64 :
+    forallb (fun c => Z.eqb (wrap 64%positive (fst c)) (snd c)) width64_cases = true.
   Proof. vm_compute. reflexivity. Qed.
 
 End WrapTests.
@@ -243,4 +197,3 @@ Module SymbolicTests.
   Qed.
 
 End SymbolicTests.
-

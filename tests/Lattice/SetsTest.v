@@ -173,18 +173,3 @@ Module EnumerationTests.
   Qed.
 
 End EnumerationTests.
-
-(* LatticeSetTest.raw_enumeration_comparison_not_reflexive expects false from its
-   local list model. TrieSet.subset compares stored codes and returns true on the
-   corresponding mismatched_raw_set compared with itself. The list-model fixture
-   retires because it is not an operation of the replacement set implementation.
-   may_height_reaches_bound is bounded_chain_reaches_bound in BoundedTest. It uses
-   BoundedHeight on clipped values of the public restricted carrier.
-   must_height_fresh_bottom_overhead expects ([0; 1; 2; 3; 4], 4), and
-   must_empty_universe_still_has_a_step expects (0, 1, 1). MustSet has an unrestricted
-   option carrier and no HEIGHT adapter. Its elements can exceed any fixed finite
-   universe, so a total HEIGHT cannot reuse the old invariant-guarded measure.
-   may_cost_observations, nonunit_encoder_and_duplicate_cells_are_charged,
-   empty_conversion_does_not_call_nonunit_encoder and empty_union_retains_backend_overhead
-   retire with Cost.ticks. nonempty_union_retains_members_and_charges keeps its
-   elements coordinate in MayTests. Its tick predicate retires with Cost. *)

@@ -7,9 +7,7 @@
     Groups:
     - [MembershipTests] Members, non-members and the listing of a set.
     - [OperationTests] Union, intersection and difference, including the empty sets.
-    - [EqualityTests] Equality of sets with shared and one-sided members.
-    - [CollisionTests] Sets whose keys share one encoded code, or whose storage is malformed.
-    - [RawTests] A set over a unit key, read back through its raw code. *)
+    - [EqualityTests] Equality of sets with shared and one-sided members. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key TrieSet Trie.
@@ -214,7 +212,3 @@ Module EqualityTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End EqualityTests.
-
-(* BaseSetTest.set_ticks retires with Cost.ticks. raw_add_client and
-   malformed_set_control are symbolic law clients. colliding_membership_client
-   uses a constant encoder through the operations layer, which needs no laws. *)

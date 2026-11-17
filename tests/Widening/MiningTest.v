@@ -83,18 +83,29 @@ End NeighborTests.
 
 Module BoundTests.
 
+  (** The terms that the bound example mines. *)
+  Definition bound_terms := [timed_nested].
+
+  (** The extra seeds that the bound example adds. *)
+  Definition bound_extra : list Z := [10].
+
+  (** The thresholds that mining expands from the terms and the extra seeds. *)
+  Definition bound_expanded := TimedMining.expanded bound_terms bound_extra.
+
+  (** The work measure of the bound, the sum of three parts. The first is the size of the terms,
+      the second the bit length of the seeds, and the third the cost of building a threshold
+      structure over the expanded thresholds. *)
+  Definition bound_work : nat :=
+    (fold_right Nat.add 0%nat (map tsize bound_terms) +
+     fold_right Nat.add 0%nat
+       (map (fun z => (Z.size_nat z + 1)%nat) (TimedMining.seeds bound_terms bound_extra)) +
+     ((length bound_expanded * (Nat.log2 (length bound_expanded) + 1) + 1) *
+      (ThresholdsT.zb bound_expanded + 1)))%nat.
+
   (** Mining fits the composed traversal, seed and threshold-construction bound. *)
   Example mining_bigO_bound :
-    let es := [timed_nested] in
-    let extra := [10] in
-    let work := (fold_right Nat.add 0%nat (map tsize es) +
-      fold_right Nat.add 0%nat
-        (map (fun z => (Z.size_nat z + 1)%nat) (TimedMining.seeds es extra)) +
-      ((length (TimedMining.expanded es extra) *
-        (Nat.log2 (length (TimedMining.expanded es extra)) + 1) + 1) *
-        (ThresholdsT.zb (TimedMining.expanded es extra) + 1)))%nat in
-    (TimedMining.T_mine es extra <=
-      (TimedMining.c_mining * (ThresholdsT.c_thresholds + 1)) * (N.of_nat work + 1))%N.
+    (TimedMining.T_mine bound_terms bound_extra <=
+      (TimedMining.c_mining * (ThresholdsT.c_thresholds + 1)) * (N.of_nat bound_work + 1))%N.
   Proof.
     vm_compute. discriminate.
   Qed.

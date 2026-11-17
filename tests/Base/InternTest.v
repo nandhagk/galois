@@ -163,9 +163,3 @@ Module AgreementTests.
   Qed.
 
 End AgreementTests.
-
-(* BaseInternTest.intern_ticks retires with Cost.ticks. The size observations use
-   N.to_nat where the old size was nat. intern_symbolic_size_client is replaced
-   by the public find_range, dense and intern_new laws. intern_symbolic_index_client,
-   intern_fresh_last_client and intern_first_allocation_client use the old of_list
-   laws. List construction now composes intern through fold_left, as above. *)

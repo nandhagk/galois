@@ -147,7 +147,7 @@ Module BoundTests.
     apply N.leb_le. vm_compute. reflexivity.
   Qed.
 
-  (** Joining singleton alternatives exercises clipping at cap one. *)
+  (** Joining two singleton disjunctions fits the size bound, and the join clips at cap one. *)
   Example disjunction_join_bigO_bound :
     let a := TimedDisjunction.clip [false] in
     let b := TimedDisjunction.clip [true] in
@@ -176,16 +176,3 @@ Module BoundTests.
   Qed.
 
 End BoundTests.
-
-(* At cap zero the old raw join [FVal false] [] returned [FVal false].
-   That input is outside the bounded carrier, and clipping it now returns [].
-   The old cap-one nonleast counterexample was
-   (D1.leb [FVal false] [FVal false; FVal true],
-    D1.leb [FVal true] [FVal false; FVal true],
-    D1.leb (D1.join [FVal false] [FVal true]) [FVal false; FVal true]) =
-     (true, true, false). Its two-element target lies outside the carrier.
-   The old raw widening examples are deferred to the D1 state-disjunction component.
-   Their expected results were [FTop] for widening [FVal false] by [FVal true],
-   [FTop; FVal true] for widening [FTop; FVal true] by [FVal false], and []
-   for widening [] by [] at cap zero. The old rank client expected (3, 3, 0)
-   on [false; false] and its widening by [true]. Cost.ticks examples are retired. *)

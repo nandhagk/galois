@@ -2,13 +2,13 @@
 
     These fixtures compare the first-order CRT loop with the standard library.
     For example, signed inputs keep the same ordered Bezout coefficients.
+    Builds on: Congruence and BitsLang.
 
     Groups:
     - [ExtgcdTests] The extended gcd agrees with the standard library.
     - [CombineTests] The CRT combination agrees with the standard library.
     - [MeetTests] Meet and narrow agree with a reference on congruence classes.
-    - [DivisionTests] Aligned division agrees with Euclidean division.
-    Builds on: Congruence and BitsLang. *)
+    - [DivisionTests] Aligned division agrees with Euclidean division. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Domains Require Import Congruence CongruenceSig BitsLang.
@@ -54,6 +54,10 @@ Definition congr_eqb (a b : congr) : bool :=
 Definition div_pair_eqb (a b : Z * Z) : bool :=
   (fst a =? fst b) && (snd a =? snd b).
 
+(** Two large coprime moduli, both above 2 ^ 43, for the checks on large inputs. *)
+Definition large_modulus_a : Z := 17167680177565.
+Definition large_modulus_b : Z := 27777890035288.
+
 (** * Extended gcd *)
 
 Module ExtgcdTests.
@@ -69,8 +73,8 @@ Module ExtgcdTests.
 
   (** The extended gcd matches the standard library on a pair of large inputs. *)
   Example matches_standard_on_large_inputs :
-    CongruenceCRT.extgcd 17167680177565 27777890035288 =
-      Z.extgcd 17167680177565 27777890035288.
+    CongruenceCRT.extgcd large_modulus_a large_modulus_b =
+      Z.extgcd large_modulus_a large_modulus_b.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -99,8 +103,8 @@ Module MeetTests.
 
   (** The meet of two large classes equals the reference meet at width 46. *)
   Example pmeet_matches_reference_on_large_moduli :
-    Payload.pmeet 46%positive (C 17167680177565 0) (C 27777890035288 0) =
-      reference_pmeet 46%positive (C 17167680177565 0) (C 27777890035288 0).
+    Payload.pmeet 46%positive (C large_modulus_a 0) (C large_modulus_b 0) =
+      reference_pmeet 46%positive (C large_modulus_a 0) (C large_modulus_b 0).
   Proof.
     vm_compute. reflexivity.
   Qed.

@@ -42,6 +42,3 @@ Module GroupTests.
   Qed.
 
 End GroupTests.
-
-(* BaseIndexTest.index_ticks and index_singleton_ticks retire with Cost.ticks.
-   Their expected values were 0%N and 16%N. Grouping values use group_by above. *)

@@ -2,6 +2,7 @@
 
     These examples exercise transfers, numeric refinement, intersection and finite height.
     For example, incompatible sign classes intersect to bottom.
+    Builds on: Sign.
 
     Groups:
     - [MeetTests] Intersection of sign classes.
@@ -11,8 +12,7 @@
     - [ExtensionTests] Extensions and selection.
     - [ConstantTests] Constants and tagged abstraction at width sixty-four.
     - [RefinementTests] Tagged meet refines a sign.
-    - [EmptyOperandTests] Empty operands give empty signs.
-    Builds on: Sign. *)
+    - [EmptyOperandTests] Empty operands give empty signs. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op Expr.
@@ -89,14 +89,6 @@ Module MeetTests.
     vm_compute. reflexivity.
   Qed.
 
-(* The former height bound was 3%nat; the current interface exposes a widening rank.
-Example sign_height_bound : bound sign_height_on = 3%nat.
-Proof.
-  vm_compute. reflexivity.
-Qed.
-
-*)
-
 End MeetTests.
 
 (** * One-bit operands *)
@@ -118,14 +110,17 @@ Module OneBitTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** The binary operations on two one-bit negatives give their sign table. *)
+  (** Each binary operation with the sign it gives on two one-bit negatives. *)
+  Definition one_bit_binary_cases : list (op * sgn) :=
+    [(bvand, Sgn true false false); (bvor, Sgn true false false); (bvxor, Sgn false true true);
+     (bveq, Sgn true false false); (bvne, Sgn false true false); (bvult, Sgn false true false);
+     (bvule, Sgn true false false); (bvslt, Sgn false true false); (bvsle, Sgn true false false)].
+
+  (** Every binary operation on two one-bit negatives gives the sign of its table row. *)
   Example one_bit_binary_entries :
-    map (fun o => forward_payload o
-      [(w1, Sgn true false false); (w1, Sgn true false false)] w1)
-      [bvand; bvor; bvxor; bveq; bvne; bvult; bvule; bvslt; bvsle] =
-      [Sgn true false false; Sgn true false false; Sgn false true true;
-       Sgn true false false; Sgn false true false; Sgn false true false;
-       Sgn true false false; Sgn false true false; Sgn true false false].
+    map (fun c => forward_payload (fst c)
+      [(w1, Sgn true false false); (w1, Sgn true false false)] w1) one_bit_binary_cases =
+      map snd one_bit_binary_cases.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -368,13 +363,6 @@ Module RefinementTests.
     vm_compute. reflexivity.
   Qed.
 
-(* The old leaf assumption used num_assume and returned the zero sign.
-Example sign_refinement :
-  num_assume signs (fun _ => TVal w8 (Sign false true true)) (Var 0)
-    (TVal w8 (Sign true true false)) 0%nat = TVal w8 (Sign false true false).
-Proof. vm_compute. reflexivity. Qed.
-*)
-
 End RefinementTests.
 
 (** * Empty operands *)
@@ -383,11 +371,11 @@ Module EmptyOperandTests.
 
   (** Every entry of the operand table gives the empty sign when its operands are empty. *)
   Example empty_operands_give_empty_signs :
-    map (fun '(o, xs, rw) => forward_payload o
-      (map (fun wp => (fst wp, Sgn false false false)) xs) rw) sign_entry_cases =
-      repeat (Sgn false false false) 14.
+    Forall (fun s => s = Sgn false false false)
+      (map (fun '(o, xs, rw) => forward_payload o
+        (map (fun wp => (fst wp, Sgn false false false)) xs) rw) sign_entry_cases).
   Proof.
-    vm_compute. reflexivity.
+    vm_compute. repeat constructor.
   Qed.
 
 End EmptyOperandTests.
