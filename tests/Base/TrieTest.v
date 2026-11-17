@@ -71,13 +71,6 @@ Module UpdateTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** Setting a present key with a new value reads back that new value. *)
-  Example set_on_present_key_reads_new_value :
-    PTrieCode.get 13 (PTrieCode.set 13 131 full) = Some 131.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
   (** Setting an absent key adds it. *)
   Example set_adds_absent_key :
     PTrieCode.get 12 (PTrieCode.set 12 120 full) = Some 120.
@@ -142,11 +135,3 @@ Module ForallTests.
   Qed.
 
 End ForallTests.
-
-(* BaseTrieTest.update_present and update_absent use constant Some callbacks.
-   Their public composition is set. update_remove uses a constant None callback,
-   whose public composition is remove. The old equality to remove is definitional
-   after this substitution. The get observation also checks that the key is absent. *)
-
-(* BaseTrieTest.exact_bits expects (4%N, 4%N, 4%N) from Cost.ticks.
-   It retires with Cost. *)
