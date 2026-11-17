@@ -4,9 +4,9 @@
     For example, joining top-default maps drops a binding present on one side.
 
     Main results
-    - [leb_complexity] Inclusion is linear in both map sizes.
-    - [join_complexity] Joining is linear in both map sizes.
-    - [is_bot_complexity] Bottom testing is linear in the map size.
+    - [leb_complexity] Inclusion is linear in both map sizes, O(size x + size y).
+    - [join_complexity] Joining is linear in both map sizes, O(size x + size y).
+    - [is_bot_complexity] Bottom testing is linear in the map size, O(size a).
 
     Builds on: LatticeSig and MapSig. *)
 
