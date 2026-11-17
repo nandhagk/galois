@@ -120,6 +120,15 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+(** Reused exit tables preserve both branch and return blocks. *)
+Example shared_exit_tables_agree :
+  let t := V.tables branch_source branch_target branch_certificate in
+  (map (V.check_block t) [1; 2; 3], map (V.check_block_ref t) [1; 2; 3]) =
+  ([true; true; true], [true; true; true]).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Example rejects_clobbered_live_renaming :
   V.check_code [(1, 1, [1])] [(20, 1, [10])] [(1, 10); (2, 20)] [1; 2] = None.
 Proof.

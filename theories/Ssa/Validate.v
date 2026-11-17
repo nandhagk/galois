@@ -2084,6 +2084,13 @@ Proof.
   apply N.add_le_mono; [apply N.add_le_mono|]; apply N.mul_le_mono_r; assumption.
 Qed.
 
+(** A block exit shares the renaming indexes and its available source variables. *)
+Record exit_tables := ExitTables {
+  exit_forward : ptrie positive;
+  exit_inverse : ptrie positive;
+  exit_known : ptrie unit
+}.
+
 Module ValidateCode (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
     (P : TYPE with Definition t := func positive O.K O.G)
@@ -2237,7 +2244,64 @@ Module ValidateCode (O : OPS)
     | _, _ => false
     end.
 
-  Definition check_block (t : check_tables O.K O.G) (b : positive) : bool :=
+  Definition check_target_with (t : check_tables O.K O.G) (target : positive)
+      (tables : exit_tables) (args : list positive) : bool :=
+    let '(ExitTables forward inverse known) := tables in
+    match trie_get target (source_bodies t), trie_get target (target_bodies t) with
+    | Some ib, Some sb =>
+      match params _ _ _ ib, val_bind_symbols (params _ _ _ sb) args Empty with
+      | [], Some bound =>
+        let next := val_index (index_row (cert_envs t) target) in
+        forallb (available_target forward inverse known) args &&
+        forallb (fun x => val_mem known x &&
+          match trie_get x next, trie_get x forward with
+          | Some y, Some z => Pos.eqb (val_symbol bound y) z
+          | _, _ => false
+          end) (index_row (cert_rows t) target)
+      | _, _ => false
+      end
+    | _, _ => false
+    end.
+
+  Definition check_arm_with (t : check_tables O.K O.G) (target : positive)
+      (tables : exit_tables) (ie se : exit positive O.G) (choice : bool) : bool :=
+    match edge_choice ie choice, edge_choice se choice with
+    | Some (u, []), Some (v, args) =>
+      if Pos.eqb u target then
+        if Pos.eqb u v then check_target_with t target tables args else false
+      else true
+    | None, None => true
+    | _, _ => false
+    end.
+
+  Definition check_edge_with (t : check_tables O.K O.G) (target : positive)
+      (tables : exit_tables) (ib sb : block positive O.K O.G) : bool :=
+    if check_arm_with t target tables (term _ _ _ ib) (term _ _ _ sb) true then
+      check_arm_with t target tables (term _ _ _ ib) (term _ _ _ sb) false
+    else false.
+
+  Definition check_exit_with (t : check_tables O.K O.G)
+      (ib sb : block positive O.K O.G) (tables : exit_tables) : bool :=
+    let '(ExitTables forward inverse known) := tables in
+    match term _ _ _ ib, term _ _ _ sb with
+    | Return xs, Return ys => val_args forward known xs ys
+    | Jump u [], Jump v _ =>
+      if Pos.eqb u v then check_edge_with t u tables ib sb else false
+    | Branch g xs u [] v [], Branch h ys su _ sv _ =>
+      let guards := if G.eqb g h then val_args forward known xs ys else false in
+      let yes_target := if guards then Pos.eqb u su else false in
+      let no_target := if yes_target then Pos.eqb v sv else false in
+      let yes_edge := if no_target then check_edge_with t u tables ib sb else false in
+      if yes_edge then check_edge_with t v tables ib sb else false
+    | _, _ => false
+    end.
+
+  Definition prepare_exit_tables (t : check_tables O.K O.G) (b : positive)
+      (ib : block positive O.K O.G) (rho : renaming) : exit_tables :=
+    ExitTables (val_index rho) (val_inverse rho)
+      (val_set (map (fun i => fst (fst i)) (code _ _ _ ib) ++ index_row (cert_rows t) b)).
+
+  Definition check_block_ref (t : check_tables O.K O.G) (b : positive) : bool :=
     match trie_get b (source_bodies t), trie_get b (target_bodies t) with
     | Some ib, Some sb =>
       match params _ _ _ ib with
@@ -2245,6 +2309,21 @@ Module ValidateCode (O : OPS)
         match check_code (code _ _ _ ib) (code _ _ _ sb)
           (index_row (cert_envs t) b) (index_row (cert_rows t) b) with
         | Some rho => check_exit t b ib sb rho
+        | None => false
+        end
+      | _ => false
+      end
+    | _, _ => false
+    end.
+
+  Definition check_block (t : check_tables O.K O.G) (b : positive) : bool :=
+    match trie_get b (source_bodies t), trie_get b (target_bodies t) with
+    | Some ib, Some sb =>
+      match params _ _ _ ib with
+      | [] =>
+        match check_code (code _ _ _ ib) (code _ _ _ sb)
+          (index_row (cert_envs t) b) (index_row (cert_rows t) b) with
+        | Some rho => check_exit_with t ib sb (prepare_exit_tables t b ib rho)
         | None => false
         end
       | _ => false
@@ -2349,6 +2428,53 @@ Module Validate (O : OPS)
     <: VALIDATE O K G P Q R E C S DG D B.
   Include ValidateCode O K G P Q R E C S DG D.
   Include VALIDATE_SPEC O K G P Q R E C S DG D.
+
+  (** Passing the prepared renaming indexes preserves every target check. *)
+  Lemma check_target_with_agrees t target rho known args :
+    check_target_with t target (ExitTables (val_index rho) (val_inverse rho) known) args =
+      check_target t target rho known args.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Each arm reads the same renaming and availability tables. *)
+  Lemma check_arm_with_agrees t target rho known ie se choice :
+    check_arm_with t target (ExitTables (val_index rho) (val_inverse rho) known) ie se choice =
+      check_arm t target rho known ie se choice.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Reusing bodies already found in the tables preserves the edge check. *)
+  Lemma check_edge_with_agrees t b target rho ib sb :
+    trie_get b (source_bodies t) = Some ib -> trie_get b (target_bodies t) = Some sb ->
+    check_edge_with t target (prepare_exit_tables t b ib rho) ib sb = check_edge t b target rho.
+  Proof.
+    intros Hib Hsb; unfold check_edge_with, prepare_exit_tables, check_edge.
+    rewrite Hib, Hsb; reflexivity.
+  Qed.
+
+  (** Exit tables agree with the specification for the bodies found by the block check. *)
+  Lemma check_exit_with_agrees t b ib sb rho :
+    trie_get b (source_bodies t) = Some ib -> trie_get b (target_bodies t) = Some sb ->
+    check_exit_with t ib sb (prepare_exit_tables t b ib rho) = check_exit t b ib sb rho.
+  Proof.
+    intros Hib Hsb.
+    unfold check_exit_with, check_exit, check_edge_with, check_edge, prepare_exit_tables.
+    rewrite Hib, Hsb; reflexivity.
+  Qed.
+
+  (** A block builds its exit tables once and returns the original checker result. *)
+  Lemma check_block_agrees t b : check_block t b = check_block_ref t b.
+  Proof.
+    unfold check_block, check_block_ref.
+    destruct (trie_get b (source_bodies t)) as [ib|] eqn:Hib; [|reflexivity].
+    destruct (trie_get b (target_bodies t)) as [sb|] eqn:Hsb; [|reflexivity].
+    destruct (params _ _ _ ib); [|reflexivity].
+    destruct (check_code (code _ _ _ ib) (code _ _ _ sb)
+      (index_row (cert_envs t) b) (index_row (cert_rows t) b)); [|reflexivity].
+    apply check_exit_with_agrees; assumption.
+  Qed.
 
   (** Short-circuiting an arm preserves its original conjunction. *)
   Lemma check_arm_andb t target rho known ie se choice :
@@ -2739,7 +2865,7 @@ Module Validate (O : OPS)
     destruct (find_block bi (blocks _ _ _ p)) as [ib|] eqn:Hib; [|contradiction].
     destruct Hready as [entered_s [entered_i [Hbinds [Hbindi [Hagree Hdefined]]]]].
     pose proof (check_block_found p s c bi ib Hcheck Hib) as Hblock.
-    unfold check_block in Hblock.
+    rewrite check_block_agrees in Hblock; unfold check_block_ref in Hblock.
     pose proof (tables_agree p s c bi) as [Hsource [Htarget _]].
     rewrite Hsource, Htarget, Hib, Hsb in Hblock.
     destruct (params _ _ _ ib) as [|ip ips] eqn:Hip; [|discriminate].
@@ -2951,6 +3077,11 @@ Module ValidateT (O : OPS)
   TimeFun check_arm.
   TimeFun check_edge.
   TimeFun check_exit.
+  TimeFun check_target_with.
+  TimeFun check_arm_with.
+  TimeFun check_edge_with.
+  TimeFun check_exit_with.
+  TimeFun prepare_exit_tables.
   TimeFun check_block.
   TimeFun check.
   TimeFun dom_cert.
@@ -3951,6 +4082,76 @@ Module ValidateT (O : OPS)
       time_simpl; nia.
   Qed.
 
+  Lemma check_target_with_clock t target rho known args :
+    (T_check_target_with t target (ExitTables (val_index rho) (val_inverse rho) known) args <=
+      T_check_target t target rho known args)%N.
+  Proof.
+    time_unfold T_check_target_with; time_unfold T_check_target; time_simpl.
+    destruct (trie_get target (source_bodies t)) as [ib|]; [|lia].
+    destruct (trie_get target (target_bodies t)) as [sb|]; [|lia].
+    destruct (params _ _ _ ib); [|lia].
+    destruct (val_bind_symbols (params _ _ _ sb) args Empty); lia.
+  Qed.
+
+  Lemma check_arm_with_clock t target rho known ie se choice :
+    (T_check_arm_with t target (ExitTables (val_index rho) (val_inverse rho) known)
+      ie se choice <= T_check_arm t target rho known ie se choice)%N.
+  Proof.
+    time_unfold T_check_arm_with; time_unfold T_check_arm; time_simpl.
+    destruct (edge_choice ie choice) as [[u xs]|];
+      destruct (edge_choice se choice) as [[v ys]|]; [|destruct xs; lia|lia|lia].
+    destruct xs; [|lia].
+    pose proof (check_target_with_clock t target rho known ys) as Htarget.
+    destruct (Pos.eqb u target), (Pos.eqb u v); lia.
+  Qed.
+
+  Lemma check_edge_with_clock t b target rho ib sb :
+    trie_get b (source_bodies t) = Some ib -> trie_get b (target_bodies t) = Some sb ->
+    (T_check_edge_with t target (prepare_exit_tables t b ib rho) ib sb <=
+      T_check_edge t b target rho)%N.
+  Proof.
+    intros Hib Hsb.
+    set (known := val_set (map (fun i => fst (fst i)) (code _ _ _ ib) ++
+      index_row (cert_rows t) b)).
+    pose proof (check_arm_with_clock t target rho known
+      (term _ _ _ ib) (term _ _ _ sb) true) as Hyes.
+    pose proof (check_arm_with_clock t target rho known
+      (term _ _ _ ib) (term _ _ _ sb) false) as Hno.
+    time_unfold T_check_edge_with; time_unfold T_check_edge; rewrite Hib, Hsb.
+    unfold prepare_exit_tables; time_simpl; fold known.
+    destruct (check_arm_with t target (ExitTables (val_index rho) (val_inverse rho) known)
+      (term _ _ _ ib) (term _ _ _ sb) true); lia.
+  Qed.
+
+  (** Preparing an inverse once is the only additional work on a return or rejected exit. *)
+  Lemma check_exit_prepared_clock t b ib sb rho :
+    trie_get b (source_bodies t) = Some ib -> trie_get b (target_bodies t) = Some sb ->
+    (T_prepare_exit_tables t b ib rho +
+      T_check_exit_with t ib sb (prepare_exit_tables t b ib rho) <=
+      T_check_exit t b ib sb rho + T_val_inverse rho + 1)%N.
+  Proof.
+    intros Hib Hsb.
+    assert (Hedge : forall target,
+      (T_check_edge_with t target (prepare_exit_tables t b ib rho) ib sb <=
+        T_check_edge t b target rho)%N).
+    { intro target; apply check_edge_with_clock; assumption. }
+    set (known := val_set (map (fun i => fst (fst i)) (code _ _ _ ib) ++
+      index_row (cert_rows t) b)).
+    time_unfold T_prepare_exit_tables; time_unfold T_check_exit_with; time_unfold T_check_exit.
+    unfold prepare_exit_tables in *; time_simpl; fold known in Hedge |- *.
+    destruct (term _ _ _ ib) as [u ua|g xs u ua v va|xs];
+      destruct (term _ _ _ sb) as [su ya|h ys su ya sv na|ys]; try lia.
+    - destruct ua; [|lia]; pose proof (Hedge u) as Hu.
+      destruct (Pos.eqb u su); time_simpl; lia.
+    - destruct ua; [|lia]; destruct va; [|lia].
+      pose proof (Hedge u) as Hu; pose proof (Hedge v) as Hv.
+      change (check_edge_with t u (ExitTables (val_index rho) (val_inverse rho) known) ib sb)
+        with (check_edge_with t u (prepare_exit_tables t b ib rho) ib sb).
+      rewrite (check_edge_with_agrees t b u rho ib sb Hib Hsb).
+      destruct (G.eqb g h), (val_args (val_index rho) known xs ys),
+        (Pos.eqb u su), (Pos.eqb v sv), (check_edge t b u rho); time_simpl; lia.
+  Qed.
+
   Definition val_body_bits (body : block positive O.K O.G) : nat :=
     fold_right (fun i n => K.bits (snd (fst i)) + n) 0 (code _ _ _ body) +
       val_exit_bits (term _ _ _ body).
@@ -4020,17 +4221,29 @@ Module ValidateT (O : OPS)
       replace ((512 * PTrieT.c_trie + 8 * G.c_key + 32768) * N.of_nat charge * width)%N
         with ((512 * PTrieT.c_trie + 8 * G.c_key + 32768) * budget)%N in Hexit
         by (unfold budget; ring).
+      assert (Hrhosize : length rho <= charge).
+      { pose proof (val_body_counts ib) as Hbody.
+        unfold charge, val_block_charge; rewrite Hib, Hsb; lia. }
+      pose proof (val_inverse_time rho w Hrhowidth) as Hinverse.
+      pose proof (val_exact_cost _ _ charge _ _ width Hinverse Hrhosize Hcharge Hwidth)
+        as Hinverse'; fold budget in Hinverse'.
+      pose proof (check_exit_prepared_clock t b ib sb rho Hib Hsb) as Hprepared.
+      assert (Hexit' : (T_prepare_exit_tables t b ib rho +
+        T_check_exit_with t ib sb (prepare_exit_tables t b ib rho) <=
+        (520 * PTrieT.c_trie + 8 * G.c_key + 33024) * budget +
+          G.c_key * N.of_nat (val_exit_bits (term _ _ _ ib)))%N) by nia.
       clearbody budget width charge.
-      clear - Hwidth Hbudget Hbits Henvrow Hliverow Hscan' Hexit.
+      clear - Hwidth Hbudget Hbits Henvrow Hliverow Hscan' Hexit'.
       PTrieT.trie_get_le.
       unfold val_body_bits; rewrite Nat2N.inj_add in Hscan' |- *.
       change (N.of_nat 1) with 1%N in Hscan'.
       eapply N.le_trans with (m :=
         (T_check_code (code _ _ _ ib) (code _ _ _ sb)
           (index_row (cert_envs t) b) (index_row (cert_rows t) b) +
-          T_check_exit t b ib sb rho + 32 * budget)%N).
+          (T_prepare_exit_tables t b ib rho +
+            T_check_exit_with t ib sb (prepare_exit_tables t b ib rho)) + 32 * budget)%N).
       { lia. }
-      eapply val_pair_clock_charge; [lia|exact Hscan'|exact Hexit| | |];
+      eapply val_pair_clock_charge; [lia|exact Hscan'|exact Hexit'| | |];
         unfold val_block_cost; lia.
     - clearbody budget width charge.
       clear - Hwidth Hbudget Hbits Henvrow Hliverow Hscan'.
