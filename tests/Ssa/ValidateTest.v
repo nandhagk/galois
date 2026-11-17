@@ -2,6 +2,17 @@
 
     These examples check renamed instructions and a join parameter, including rejected copies.
     For example, a target edge may pass the renamed value just defined in its source block.
+
+    Groups:
+    - CheckTests: the checker on renamed instructions, arguments and arms.
+    - FuelTests: the observations of the renamed program at each fuel.
+    - BranchTests: the exit checks of a branch.
+    - ScanTests: the scan of bindings, with shadowed and overwritten locals.
+    - ExitTests: the exit tables after a local is overwritten.
+    - SsaTests: the strict SSA check and the local operands.
+    - WeakTests: a weakly related state pair.
+    - PaddingTests: padded certificates and the row budget.
+
     Builds on: Ssa.Validate and Ssa.Present. *)
 
 From Stdlib Require Import List PArith NArith.
@@ -12,6 +23,9 @@ From Galois.Ssa Require Import Lang LiveSig ValidateSig Validate Present.
 Import List.ListNotations.
 Open Scope positive_scope.
 
+(** * Fixtures *)
+
+(** The test operations on positive values: an evaluation that returns the first operand. *)
 Module Ops <: OPS.
   Definition K := positive.
   Definition G := positive.
@@ -22,295 +36,564 @@ Module Ops <: OPS.
   Definition mov := 1.
 End Ops.
 
+(** The source functions of the examples. *)
 Module Source.
   Definition t := func positive positive positive.
 End Source.
+
+(** The presentation of the source functions. *)
 Module View := PresentT Ops PosKeyT PosKeyT.
+
+(** The validator of the source functions. *)
 Module V := ValidateCode Ops PosKeyCode PosKeyCode Source View.Q View.R BlockEdge
   View.BC View.S DigraphCode DomCode.
 
+(** A function that defines the variable 1 with an imperative move in block 1. *)
 Definition imperative : Source.t :=
   Func positive positive positive 1 [1]
     [(1, Block positive positive positive [] [(1, 1, [1])] (Jump 2 []));
      (2, Block positive positive positive [] [] (Return [1]))].
 
+(** The renamed form of the imperative function, with a join parameter 12 in block 2. *)
 Definition translated : Source.t :=
   Func positive positive positive 1 [10]
     [(1, Block positive positive positive [] [(11, 1, [10])] (Jump 2 [11]));
      (2, Block positive positive positive [12] [] (Return [12]))].
 
+(** The certificate that maps the imperative variables to the renamed ones. *)
 Definition certificate : cert :=
   ([(1, [(1, 10)]); (2, [(1, 12)])], [(1, [1]); (2, [1])]).
 
-Example accepts_instruction_and_parameter_renaming :
-  V.check imperative translated certificate = true.
-Proof.
-  vm_compute; reflexivity.
-Qed.
-
-Example preserves_fuel_and_arity_observations :
-  (run_with Ops.eval Ops.test 0 translated [7],
-   run_with Ops.eval Ops.test 1 translated [7],
-   run_with Ops.eval Ops.test 2 translated [7],
-   run_with Ops.eval Ops.test 2 imperative [7],
-   run_with Ops.eval Ops.test 2 translated []) =
-  (Timeout, Timeout, Returned [7], Returned [7], Wrong).
-Proof.
-  vm_compute; reflexivity.
-Qed.
-
-Definition wrong_return : Source.t :=
-  Func positive positive positive 1 [10]
-    [(1, Block positive positive positive [] [(11, 1, [10])] (Jump 2 [11]));
-     (2, Block positive positive positive [12] [] (Return [10]))].
-
-Example rejects_stale_return_value : V.check imperative wrong_return certificate = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
-
-Definition wrong_argument : Source.t :=
-  Func positive positive positive 1 [10]
-    [(1, Block positive positive positive [] [(11, 1, [10])] (Jump 2 [99]));
-     (2, Block positive positive positive [12] [] (Return [12]))].
-
-Example rejects_unavailable_edge_argument :
-  V.check imperative wrong_argument certificate = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
-
-(** An arm with a mismatched destination fails before checking its target arguments. *)
-Example mismatched_arm_rejected :
-  let t := V.tables imperative translated certificate in
-  (V.check_arm t 2 [(1, 11)] (val_set [1]) (Jump 2 []) (Jump 3 [11]) true,
-   V.check_arm t 2 [(1, 11)] (val_set [1]) (Jump 2 []) (Jump 2 [11]) true) =
-  (false, true).
-Proof.
-  vm_compute; reflexivity.
-Qed.
-
-Definition branch_source : Source.t :=
-  Func positive positive positive 1 [1]
-    [(1, Block positive positive positive [] [] (Branch 1 [1] 2 [] 3 []));
-     (2, Block positive positive positive [] [] (Return [1]));
-     (3, Block positive positive positive [] [] (Return [1]))].
-
-Definition branch_target : Source.t :=
-  Func positive positive positive 1 [10]
-    [(1, Block positive positive positive [] [] (Branch 1 [10] 2 [] 3 []));
-     (2, Block positive positive positive [] [] (Return [10]));
-     (3, Block positive positive positive [] [] (Return [10]))].
-
-Definition branch_certificate : cert :=
-  ([(1, [(1, 10)]); (2, [(1, 10)]); (3, [(1, 10)])],
-   [(1, [1]); (2, [1]); (3, [1])]).
-
-(** A branch exits early on a guard mismatch and keeps the accepted branch unchanged. *)
-Example branch_exit_checks_agree :
-  let t := V.tables branch_source branch_target branch_certificate in
-  let ib := Block positive positive positive [] [] (Branch 1 [1] 2 [] 3 []) in
-  let sb := Block positive positive positive [] [] (Branch 1 [10] 2 [] 3 []) in
-  let bad := Block positive positive positive [] [] (Branch 2 [10] 2 [] 3 []) in
-  (V.check branch_source branch_target branch_certificate,
-   V.check_exit t 1 ib sb [(1, 10)], V.check_exit t 1 ib bad [(1, 10)],
-   V.check_exit_ref t 1 ib sb [(1, 10)], V.check_exit_ref t 1 ib bad [(1, 10)]) =
-  (true, true, false, true, false).
-Proof.
-  vm_compute; reflexivity.
-Qed.
-
-(** Reused exit tables preserve both branch and return blocks. *)
-Example shared_exit_tables_agree :
-  let t := V.tables branch_source branch_target branch_certificate in
-  (map (V.check_block t) [1; 2; 3], map (V.check_block_ref t) [1; 2; 3]) =
-  ([true; true; true], [true; true; true]).
-Proof.
-  vm_compute; reflexivity.
-Qed.
-
-(** Repeated and shadowed input bindings retain their first-binding behavior. *)
-Example cached_scan_keeps_shadowed_history :
-  let rho := [(1, 10); (1, 9); (1, 10)] in
-  let result := [(1, 12); (1, 11); (1, 10); (1, 9); (1, 10)] in
-  (V.check_code [(1, 1, [1]); (1, 1, [1])]
-     [(11, 1, [10]); (12, 1, [11])] rho [1; 1],
-   V.check_code_tables [(1, 1, [1]); (1, 1, [1])]
-     [(11, 1, [10]); (12, 1, [11])] rho [1; 1]) =
-  (Some result, Some (result,
-    ExitTables (val_index result) (val_inverse result) (val_set [1]))).
-Proof.
-  vm_compute; reflexivity.
-Qed.
-
+(** Source code of the overwrite example, whose block 2 defines a local twice. *)
 Definition cache_source_code : list (positive * positive * list positive) :=
   [(2, 1, [1]); (3, 1, [2]); (2, 1, [3])].
 
+(** Target code of the overwrite example. *)
 Definition cache_target_code : list (positive * positive * list positive) :=
   [(20, 1, [10]); (30, 1, [20]); (21, 1, [30])].
 
-(** Local overwrites update the forward table while preserving inverse history and membership. *)
-Example cached_scan_keeps_overwrite_tables :
-  let result := [(2, 21); (3, 30); (2, 20); (1, 10)] in
-  V.check_code_tables cache_source_code cache_target_code [(1, 10)] [1; 1] =
-  Some (result, ExitTables (val_index result) (val_inverse result)
-    (val_set [2; 3; 2; 1; 1])).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+(** * Checks *)
 
-(** Different owners of one target remain rejected before scanning. *)
-Example cached_scan_rejects_conflicting_owners :
-  (V.check_code_tables [] [] [(1, 10); (2, 10)] [1; 2],
-   V.check_code [] [] [(1, 10); (2, 10)] [1; 2],
-   V.check_code_ref [] [] [(1, 10); (2, 10)] [1; 2]) = (None, None, None).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+Module CheckTests.
 
-Definition cache_source : Source.t :=
-  Func positive positive positive 1 [1]
-    [(1, Block positive positive positive [] cache_source_code (Return [2; 3]))].
+  Local Open Scope positive_scope.
 
-Definition cache_target : Source.t :=
-  Func positive positive positive 1 [10]
-    [(1, Block positive positive positive [] cache_target_code (Return [21; 30]))].
+  (** The renamed function is accepted under the certificate. *)
+  Example renamed_instruction_and_parameter_are_accepted :
+    V.check imperative translated certificate = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Definition cache_certificate : cert := ([(1, [(1, 10)])], [(1, [1])]).
+  (** A return of a stale value is rejected. *)
+  Definition wrong_return : Source.t :=
+    Func positive positive positive 1 [10]
+      [(1, Block positive positive positive [] [(11, 1, [10])] (Jump 2 [11]));
+       (2, Block positive positive positive [12] [] (Return [10]))].
 
-(** The exit consumes the final scan tables after an imperative local is overwritten. *)
-Example cached_exit_accepts_local_overwrite :
-  let t := V.tables cache_source cache_target cache_certificate in
-  (V.check cache_source cache_target cache_certificate,
-   V.check_block t 1, V.check_block_ref t 1, V.check_ssa cache_target) =
-  (true, true, true, true).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  Example stale_return_value_is_rejected :
+    V.check imperative wrong_return certificate = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Example rejects_clobbered_live_renaming :
-  V.check_code [(1, 1, [1])] [(20, 1, [10])] [(1, 10); (2, 20)] [1; 2] = None.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** A jump argument that no block makes available is rejected. *)
+  Definition wrong_argument : Source.t :=
+    Func positive positive positive 1 [10]
+      [(1, Block positive positive positive [] [(11, 1, [10])] (Jump 2 [99]));
+       (2, Block positive positive positive [12] [] (Return [12]))].
 
-Example accepts_strict_ssa : V.check_ssa translated = true.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  Example unavailable_edge_argument_is_rejected :
+    V.check imperative wrong_argument certificate = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Definition cross_block : Source.t :=
-  Func positive positive positive 1 [10]
-    [(1, Block positive positive positive [] [(11, 1, [10])] (Jump 2 []));
-     (2, Block positive positive positive [] [] (Return [11]))].
+  (** The tables of the imperative and renamed functions under the certificate. *)
+  Definition translated_tables := V.tables imperative translated certificate.
 
-Example accepts_dominating_definition : V.check_ssa cross_block = true.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** An arm whose destination does not match its jump fails before its arguments are checked. *)
+  Example mismatched_destination_arm_is_rejected :
+    V.check_arm translated_tables 2 [(1, 11)] (val_set [1]) (Jump 2 []) (Jump 3 [11]) true
+      = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Definition use_before_definition : Source.t :=
-  Func positive positive positive 1 []
-    [(1, Block positive positive positive [] [(11, 1, [11])] (Return [11]))].
+  (** An arm whose destination matches its jump is accepted. *)
+  Example matching_destination_arm_is_accepted :
+    V.check_arm translated_tables 2 [(1, 11)] (val_set [1]) (Jump 2 []) (Jump 2 [11]) true
+      = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Example rejects_self_use : V.check_ssa use_before_definition = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+End CheckTests.
 
-Example rejects_duplicate_definition : V.check_ssa imperative = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+(** * Fuel *)
 
-(** Sharing preparation preserves both an accepted and a rejected SSA check. *)
-Example shared_preparation_agrees :
-  (V.check_ssa translated, V.check_ssa use_before_definition) =
-  (V.check_ssa_ref translated, V.check_ssa_ref use_before_definition).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+Module FuelTests.
 
-(** Locally available operands need no entries in the home or dominance tables. *)
-Example local_operands_are_visible :
-  let tree := DomTree Empty Empty Empty Empty in
-  (V.ssa_local tree Empty 1 (val_set [10])
-     [(11, 1, [10]); (12, 1, [11])] [12],
-   V.ssa_local tree Empty 1 (val_set [10]) [(11, 1, [99])] [11]) =
-  (true, false).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  Local Open Scope positive_scope.
 
-Module W := Validate Ops PosKey PosKey Source View.Q View.R BlockEdge
-  View.BC View.S Digraph Dom View.Link.
+  (** With no fuel the renamed function times out. *)
+  Example zero_fuel_times_out :
+    run_with Ops.eval Ops.test 0 translated [7] = Timeout.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Definition weak_source : Source.t :=
-  Func positive positive positive 1 [1]
-    [(1, Block positive positive positive [] [] (Jump 2 []));
-     (2, Block positive positive positive [] [] (Return [1]))].
+  (** With one unit of fuel the renamed function still times out. *)
+  Example one_fuel_times_out :
+    run_with Ops.eval Ops.test 1 translated [7] = Timeout.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Definition weak_target : Source.t :=
-  Func positive positive positive 1 [10]
-    [(1, Block positive positive positive [] [] (Jump 2 [10]));
-     (2, Block positive positive positive [12] [] (Return [12]))].
+  (** With two units of fuel the renamed function returns 7. *)
+  Example two_fuel_returns_seven :
+    run_with Ops.eval Ops.test 2 translated [7] = Returned [7].
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Example weak_state_translation_accepted : W.check weak_source weak_target certificate = true.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** The imperative function returns 7 as well, with two units of fuel. *)
+  Example imperative_returns_seven :
+    run_with Ops.eval Ops.test 2 imperative [7] = Returned [7].
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-(** The frozen state relation admits two environments in which a live value is absent. *)
-Lemma weak_state_relation :
-  W.state_sim weak_source weak_target certificate (1, [], []) (1, [], []).
-Proof.
-  split; [reflexivity|]; intros x Hin.
-  change (1 = x \/ False) in Hin; destruct Hin as [Heq|Hfalse]; [subst x|contradiction].
-  exists 10; split; reflexivity.
-Qed.
+  (** Running the renamed function without its input is wrong. *)
+  Example missing_input_is_wrong :
+    run_with Ops.eval Ops.test 2 translated [] = Wrong.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-(** One step and one unit of fuel separate these weakly related states, which the ready
-    relation of F4 and F7 excludes. *)
-Example weak_state_distinct_outcomes :
-  (step Ops.eval Ops.test weak_target (1, [], []),
-   step Ops.eval Ops.test weak_source (1, [], []),
-   loop_fuel (step Ops.eval Ops.test weak_target) 1 (1, [], []),
-   loop_fuel (step Ops.eval Ops.test weak_source) 1 (1, [], [])) =
-  (inr Wrong, inl (2, [], []), inr Wrong, inl (2, [], [])).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+End FuelTests.
 
-Definition empty_program : Source.t :=
-  Func positive positive positive 1 []
-    [(1, Block positive positive positive [] [] (Return []))].
+(** * Branch *)
 
-Definition padded_entry (n : nat) : cert := ([(1, repeat (1, 1) n)], []).
+Module BranchTests.
 
-(** Unused repeated mappings preserve the accepted empty-block behavior. *)
-Example padded_entry_checker_family :
-  (V.check empty_program empty_program (padded_entry 1),
-   V.check empty_program empty_program (padded_entry 8)) = (true, true).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  Local Open Scope positive_scope.
 
-Definition padded_unused (n : nat) : cert := ([(2, repeat (1, 1) n)], []).
+  (** A branch on variable 1 whose arms go to blocks 2 and 3. *)
+  Definition branch_source : Source.t :=
+    Func positive positive positive 1 [1]
+      [(1, Block positive positive positive [] [] (Branch 1 [1] 2 [] 3 []));
+       (2, Block positive positive positive [] [] (Return [1]));
+       (3, Block positive positive positive [] [] (Return [1]))].
 
-Definition empty_edge_program : Source.t :=
-  Func positive positive positive 1 []
-    [(1, Block positive positive positive [] [] (Jump 2 []));
-     (2, Block positive positive positive [] [] (Return []))].
+  (** The renamed branch, whose guard reads the renamed variable 10. *)
+  Definition branch_target : Source.t :=
+    Func positive positive positive 1 [10]
+      [(1, Block positive positive positive [] [] (Branch 1 [10] 2 [] 3 []));
+       (2, Block positive positive positive [] [] (Return [10]));
+       (3, Block positive positive positive [] [] (Return [10]))].
 
-(** Padding the certificate environment row of the edge target keeps the edge check
-    accepting, and the row budget rejects the larger padding. *)
-Example padded_edge_checker_and_budget_family :
-  let a := padded_unused 1 in let b := padded_unused 8 in
-  let ta := V.tables empty_edge_program empty_edge_program a in
-  let tb := V.tables empty_edge_program empty_edge_program b in
-  (V.check_edge ta 1 2 [], V.check_edge tb 1 2 [],
-   V.row_budget empty_edge_program a, V.row_budget empty_edge_program b) =
-  (true, true, true, false).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  Definition branch_certificate : cert :=
+    ([(1, [(1, 10)]); (2, [(1, 10)]); (3, [(1, 10)])],
+     [(1, [1]); (2, [1]); (3, [1])]).
+
+  Definition branch_tables := V.tables branch_source branch_target branch_certificate.
+
+  (** The source branch block, with its guard on variable 1. *)
+  Definition branch_in_block := Block positive positive positive [] [] (Branch 1 [1] 2 [] 3 []).
+
+  (** The target branch block, with its guard on variable 10. *)
+  Definition branch_out_block := Block positive positive positive [] [] (Branch 1 [10] 2 [] 3 []).
+
+  (** A target branch block whose guard names a different test. *)
+  Definition bad_guard_block := Block positive positive positive [] [] (Branch 2 [10] 2 [] 3 []).
+
+  (** The whole branch function passes the checker. *)
+  Example branch_function_is_accepted :
+    V.check branch_source branch_target branch_certificate = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A branch exit accepts a matching guard. *)
+  Example branch_exit_accepts_matching_guard :
+    V.check_exit branch_tables 1 branch_in_block branch_out_block [(1, 10)] = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A branch exit rejects a mismatched guard. *)
+  Example branch_exit_rejects_mismatched_guard :
+    V.check_exit branch_tables 1 branch_in_block bad_guard_block [(1, 10)] = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The reference exit check also accepts a matching guard. *)
+  Example branch_exit_ref_accepts_matching_guard :
+    V.check_exit_ref branch_tables 1 branch_in_block branch_out_block [(1, 10)] = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The reference exit check also rejects a mismatched guard. *)
+  Example branch_exit_ref_rejects_mismatched_guard :
+    V.check_exit_ref branch_tables 1 branch_in_block bad_guard_block [(1, 10)] = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The checks of the three blocks pass on the shared exit tables. *)
+  Example block_checks_pass_on_shared_tables :
+    map (V.check_block branch_tables) [1; 2; 3] = [true; true; true].
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The reference checks of the three blocks also pass on the shared exit tables. *)
+  Example block_ref_checks_pass_on_shared_tables :
+    map (V.check_block_ref branch_tables) [1; 2; 3] = [true; true; true].
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End BranchTests.
+
+(** * Scan *)
+
+Module ScanTests.
+
+  Local Open Scope positive_scope.
+
+  (** Two bindings of variable 1 shadow one another, and the scan keeps the first. *)
+  Definition shadowed_bindings := [(1, 10); (1, 9); (1, 10)].
+
+  (** The scan result of the shadowed bindings, in order. *)
+  Definition shadowed_result := [(1, 12); (1, 11); (1, 10); (1, 9); (1, 10)].
+
+  (** Repeated bindings of the same variable check to the shadowed result. *)
+  Example repeated_bindings_check_to_result :
+    V.check_code [(1, 1, [1]); (1, 1, [1])]
+      [(11, 1, [10]); (12, 1, [11])] shadowed_bindings [1; 1] = Some shadowed_result.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The exit tables of the shadowed scan keep the inverse history of its result. *)
+  Example shadowed_history_keeps_exit_tables :
+    V.check_code_tables [(1, 1, [1]); (1, 1, [1])]
+      [(11, 1, [10]); (12, 1, [11])] shadowed_bindings [1; 1] =
+      Some (shadowed_result,
+        ExitTables (val_index shadowed_result) (val_inverse shadowed_result) (val_set [1])).
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The result of the overwrite example, in scan order. *)
+  Definition overwrite_result := [(2, 21); (3, 30); (2, 20); (1, 10)].
+
+  (** A local overwrite updates the forward table and keeps the inverse history and membership. *)
+  Example local_overwrite_keeps_inverse_history :
+    V.check_code_tables cache_source_code cache_target_code [(1, 10)] [1; 1] =
+      Some (overwrite_result, ExitTables (val_index overwrite_result)
+        (val_inverse overwrite_result) (val_set [2; 3; 2; 1; 1])).
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** Two sources that map to one target are rejected by the tables scan. *)
+  Example conflicting_owners_rejected_by_tables :
+    V.check_code_tables [] [] [(1, 10); (2, 10)] [1; 2] = None.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** Two sources that map to one target are rejected by the code scan. *)
+  Example conflicting_owners_rejected_by_code :
+    V.check_code [] [] [(1, 10); (2, 10)] [1; 2] = None.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** Two sources that map to one target are rejected by the reference scan. *)
+  Example conflicting_owners_rejected_by_reference :
+    V.check_code_ref [] [] [(1, 10); (2, 10)] [1; 2] = None.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A renaming that overwrites a live value is rejected. *)
+  Example clobbered_live_renaming_is_rejected :
+    V.check_code [(1, 1, [1])] [(20, 1, [10])] [(1, 10); (2, 20)] [1; 2] = None.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End ScanTests.
+
+(** * Exit *)
+
+Module ExitTests.
+
+  Local Open Scope positive_scope.
+
+  (** A function whose block 1 overwrites a local, with a return of the final values. *)
+  Definition cache_source : Source.t :=
+    Func positive positive positive 1 [1]
+      [(1, Block positive positive positive [] cache_source_code (Return [2; 3]))].
+
+  (** The renamed function whose block 1 returns its final renamed values. *)
+  Definition cache_target : Source.t :=
+    Func positive positive positive 1 [10]
+      [(1, Block positive positive positive [] cache_target_code (Return [21; 30]))].
+
+  Definition cache_certificate : cert := ([(1, [(1, 10)])], [(1, [1])]).
+
+  Definition cache_tables := V.tables cache_source cache_target cache_certificate.
+
+  (** The exit consumes the final scan tables after an imperative local is overwritten. *)
+  Example overwritten_local_check_passes :
+    V.check cache_source cache_target cache_certificate = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The block check accepts the exit of the overwritten local. *)
+  Example overwritten_local_block_check_passes :
+    V.check_block cache_tables 1 = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The reference block check accepts the exit of the overwritten local. *)
+  Example overwritten_local_block_ref_check_passes :
+    V.check_block_ref cache_tables 1 = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The renamed function passes the strict SSA check. *)
+  Example overwritten_target_is_ssa :
+    V.check_ssa cache_target = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End ExitTests.
+
+(** * SSA *)
+
+Module SsaTests.
+
+  Local Open Scope positive_scope.
+
+  (** The renamed function is strict SSA. *)
+  Example translated_is_strict_ssa :
+    V.check_ssa translated = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A variable defined in block 1 is accepted in block 2, which block 1 dominates. *)
+  Definition cross_block : Source.t :=
+    Func positive positive positive 1 [10]
+      [(1, Block positive positive positive [] [(11, 1, [10])] (Jump 2 []));
+       (2, Block positive positive positive [] [] (Return [11]))].
+
+  Example dominating_definition_is_accepted :
+    V.check_ssa cross_block = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A definition that uses its own variable is rejected. *)
+  Definition use_before_definition : Source.t :=
+    Func positive positive positive 1 []
+      [(1, Block positive positive positive [] [(11, 1, [11])] (Return [11]))].
+
+  Example self_use_is_rejected :
+    V.check_ssa use_before_definition = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A variable defined twice is rejected by the SSA check. *)
+  Example duplicate_definition_is_rejected :
+    V.check_ssa imperative = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The shared preparation gives the same SSA verdict on the renamed function. *)
+  Example shared_preparation_agrees_on_translated :
+    V.check_ssa translated = V.check_ssa_ref translated.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The shared preparation gives the same SSA verdict on the function with a self use. *)
+  Example shared_preparation_agrees_on_self_use :
+    V.check_ssa use_before_definition = V.check_ssa_ref use_before_definition.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** An empty dominance tree, with the local operands of block 1 in the given rows. *)
+  Definition empty_tree := DomTree Empty Empty Empty Empty.
+
+  (** A local operand that an earlier definition in its block provides is visible. *)
+  Example local_operand_is_visible :
+    V.ssa_local empty_tree Empty 1 (val_set [10])
+      [(11, 1, [10]); (12, 1, [11])] [12] = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** An operand that no definition provides is not visible locally. *)
+  Example undefined_local_operand_is_not_visible :
+    V.ssa_local empty_tree Empty 1 (val_set [10]) [(11, 1, [99])] [11] = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End SsaTests.
+
+(** * Weak state *)
+
+Module WeakTests.
+
+  Local Open Scope positive_scope.
+
+  (** The weak validator, which shares the presentation and the tables of the strict one. *)
+  Module W := Validate Ops PosKey PosKey Source View.Q View.R BlockEdge
+    View.BC View.S Digraph Dom View.Link.
+
+  (** A source that returns the variable 1 after a jump. *)
+  Definition weak_source : Source.t :=
+    Func positive positive positive 1 [1]
+      [(1, Block positive positive positive [] [] (Jump 2 []));
+       (2, Block positive positive positive [] [] (Return [1]))].
+
+  (** A target that passes the variable 10 through a join parameter 12. *)
+  Definition weak_target : Source.t :=
+    Func positive positive positive 1 [10]
+      [(1, Block positive positive positive [] [] (Jump 2 [10]));
+       (2, Block positive positive positive [12] [] (Return [12]))].
+
+  Example weak_state_translation_is_accepted :
+    W.check weak_source weak_target certificate = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The frozen state relation admits two environments in which a live value is absent. *)
+  Lemma weak_state_relation :
+    W.state_sim weak_source weak_target certificate (1, [], []) (1, [], []).
+  Proof.
+    split; [reflexivity|]; intros x Hin.
+    change (1 = x \/ False) in Hin; destruct Hin as [Heq|Hfalse]; [subst x|contradiction].
+    exists 10; split; reflexivity.
+  Qed.
+
+  (** The target takes one step to a wrong state, because it cannot run the join. *)
+  Example weak_target_step_is_wrong :
+    step Ops.eval Ops.test weak_target (1, [], []) = inr Wrong.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The source takes one step to block 2. *)
+  Example weak_source_step_reaches_block_two :
+    step Ops.eval Ops.test weak_source (1, [], []) = inl (2, [], []).
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The target is wrong after one unit of fuel, so the two weakly related states differ. *)
+  Example weak_target_fuel_is_wrong :
+    loop_fuel (step Ops.eval Ops.test weak_target) 1 (1, [], []) = inr Wrong.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The source reaches block 2 after one unit of fuel. *)
+  Example weak_source_fuel_reaches_block_two :
+    loop_fuel (step Ops.eval Ops.test weak_source) 1 (1, [], []) = inl (2, [], []).
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End WeakTests.
+
+(** * Padding *)
+
+Module PaddingTests.
+
+  Local Open Scope positive_scope.
+
+  (** A function with one empty block and no parameters. *)
+  Definition empty_program : Source.t :=
+    Func positive positive positive 1 []
+      [(1, Block positive positive positive [] [] (Return []))].
+
+  (** A certificate with n copies of the same mapping for the entry block. *)
+  Definition padded_entry (n : nat) : cert := ([(1, repeat (1, 1) n)], []).
+
+  (** One copy of the padding is accepted for the empty block. *)
+  Example one_padding_entry_is_accepted :
+    V.check empty_program empty_program (padded_entry 1) = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** Eight copies of the padding are also accepted for the empty block. *)
+  Example eight_padding_entries_are_accepted :
+    V.check empty_program empty_program (padded_entry 8) = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A certificate with n copies of the same mapping for block 2, which is the edge target. *)
+  Definition padded_unused (n : nat) : cert := ([(2, repeat (1, 1) n)], []).
+
+  (** A function with an edge from block 1 to block 2. *)
+  Definition empty_edge_program : Source.t :=
+    Func positive positive positive 1 []
+      [(1, Block positive positive positive [] [] (Jump 2 []));
+       (2, Block positive positive positive [] [] (Return []))].
+
+  Definition small_padding_tables :=
+    V.tables empty_edge_program empty_edge_program (padded_unused 1).
+
+  Definition large_padding_tables :=
+    V.tables empty_edge_program empty_edge_program (padded_unused 8).
+
+  (** Padding the target row with one copy keeps the edge check accepting. *)
+  Example small_padding_passes_edge_check :
+    V.check_edge small_padding_tables 1 2 [] = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** Padding the target row with eight copies also keeps the edge check accepting. *)
+  Example large_padding_passes_edge_check :
+    V.check_edge large_padding_tables 1 2 [] = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** One copy of the padding is within the row budget. *)
+  Example small_padding_is_within_row_budget :
+    V.row_budget empty_edge_program (padded_unused 1) = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** Eight copies of the padding exceed the row budget. *)
+  Example large_padding_exceeds_row_budget :
+    V.row_budget empty_edge_program (padded_unused 8) = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End PaddingTests.
