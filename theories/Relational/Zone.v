@@ -5393,6 +5393,56 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       (M.nodes m + sum_weight M.nodes (rows m))). cbn [Nat.pow]. nia.
   Qed.
 
+  (** Stored entry counts bound the payload work independently of the sparse skeleton. *)
+  Lemma code_work_entries : forall m,
+    code_work (code_work Z.size_nat) m <=
+      (skel m + entries (Reached m)) * (ell m + 1).
+  Proof.
+    intro m.
+    assert (Hrows : Forall (fun row => code_work Z.size_nat row <=
+      M.nodes row + length (M.codes row) * (ell m + 1)) (rows m)).
+    { apply Forall_forall. intros row Hin.
+      apply rows_find in Hin. destruct Hin as [p Hrow].
+      pose proof (stored_row_bits_bound m p row Hrow) as Hbits.
+      unfold code_work. nia. }
+    assert (Hsum : sum_weight (code_work Z.size_nat) (rows m) <=
+      sum_weight M.nodes (rows m) +
+        sum_weight (fun row => length (M.codes row)) (rows m) * (ell m + 1)).
+    { induction Hrows as [|row rs Hrow Hrows IH].
+      - change (0 <= 0 + 0 * (ell m + 1)). lia.
+      - change (code_work Z.size_nat row + sum_weight (code_work Z.size_nat) rs <=
+          M.nodes row + sum_weight M.nodes rs +
+            (length (M.codes row) + sum_weight (fun r => length (M.codes r)) rs) *
+              (ell m + 1)). nia. }
+    unfold code_work at 1. rewrite stored_weight_rows.
+    change (M.nodes m + length (M.codes m) +
+      sum_weight (code_work Z.size_nat) (rows m) <=
+      (M.nodes m + sum_weight M.nodes (rows m) +
+        (length (M.codes m) + sum_weight (fun row => length (M.codes row)) (rows m))) *
+        (ell m + 1)). nia.
+  Qed.
+
+  (** Two nested code budgets fit their combined skeleton, entry, and bit measures. *)
+  Lemma code_work_entries_pair : forall ma mb,
+    code_work (code_work Z.size_nat) ma + code_work (code_work Z.size_nat) mb + 1 <=
+      (skel ma + skel mb + entries (Reached ma) + entries (Reached mb) + 1) *
+        (b ma + b mb + ell ma + ell mb + 1).
+  Proof.
+    intros ma mb.
+    pose proof (code_work_entries ma) as Ha.
+    pose proof (code_work_entries mb) as Hb.
+    set (bits := b ma + b mb + ell ma + ell mb + 1).
+    assert (Hba : ell ma + 1 <= bits) by (unfold bits; lia).
+    assert (Hbb : ell mb + 1 <= bits) by (unfold bits; lia).
+    pose proof (Nat.mul_le_mono_l _ _ (skel ma + entries (Reached ma)) Hba) as Hma.
+    pose proof (Nat.mul_le_mono_l _ _ (skel mb + entries (Reached mb)) Hbb) as Hmb.
+    assert (Hpositive : 1 <= bits) by (unfold bits; lia).
+    replace ((skel ma + skel mb + entries (Reached ma) + entries (Reached mb) + 1) * bits)
+      with ((skel ma + entries (Reached ma)) * bits +
+        (skel mb + entries (Reached mb)) * bits + bits) by ring.
+    lia.
+  Qed.
+
   (** A matrix traversal adds one outer sparse-map pass to the row bound. *)
   Definition matrix_time_factor : N := (M.c_map * (row_time_factor + 1) * 2 + 8)%N.
 
@@ -10067,24 +10117,91 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     cbn [fst snd]. rewrite Nat2N.inj_mul. nia.
   Qed.
 
+  (** Inclusion scans the sparse skeletons and stored entries at their bit costs. *)
   Lemma leb_bigO : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
     (fun x => T_leb (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ matrix_time_factor). intros [a b] _.
+    cbn [fst snd].
+    set (work := N.of_nat
+      ((skels a + skels b + entries a + entries b + 1) *
+        (bs a + bs b + ells a + ells b + 1))).
+    destruct a as [|ma], b as [|mb].
+    - pose proof matrix_time_factor_pos as Hfactor.
+      unfold T_leb. cbn beta iota zeta. nia.
+    - pose proof matrix_time_factor_pos as Hfactor.
+      unfold T_leb. cbn beta iota zeta. nia.
+    - pose proof matrix_time_factor_pos as Hfactor.
+      unfold T_leb. cbn beta iota zeta. nia.
+    - assert (Hcodes : (N.of_nat
+        (code_work (code_work Z.size_nat) ma + code_work (code_work Z.size_nat) mb + 1) <=
+        work)%N).
+      { unfold work. apply time_of_nat_le, code_work_entries_pair. }
+      eapply N.le_trans; [apply T_leb_matrix_le|].
+      eapply N.le_trans; [apply N.mul_le_mono_l; exact Hcodes|]. lia.
+  Qed.
 
+  (** Join scans the sparse skeletons and stored entries at their bit costs. *)
   Lemma join_bigO : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
     (fun x => T_join (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ matrix_time_factor). intros [a b] _.
+    cbn [fst snd].
+    set (work := N.of_nat
+      ((skels a + skels b + entries a + entries b + 1) *
+        (bs a + bs b + ells a + ells b + 1))).
+    destruct a as [|ma], b as [|mb].
+    - pose proof matrix_time_factor_pos as Hfactor.
+      unfold T_join. cbn beta iota zeta. nia.
+    - pose proof matrix_time_factor_pos as Hfactor.
+      unfold T_join. cbn beta iota zeta. nia.
+    - pose proof matrix_time_factor_pos as Hfactor.
+      unfold T_join. cbn beta iota zeta. nia.
+    - assert (Hcodes : (N.of_nat
+        (code_work (code_work Z.size_nat) ma + code_work (code_work Z.size_nat) mb + 1) <=
+        work)%N).
+      { unfold work. apply time_of_nat_le, code_work_entries_pair. }
+      eapply N.le_trans; [apply T_join_matrix_le|].
+      eapply N.le_trans; [apply N.mul_le_mono_l; exact Hcodes|]. lia.
+  Qed.
 
+  (** Widening pays for inclusion and at most one sparse merge. *)
   Lemma widen_bigO : bigO (fun _ : wparam * t * t => True)
     (fun x => N.of_nat ((skels (snd (fst x)) + skels (snd x) +
         entries (snd (fst x)) + entries (snd x) + 1) *
       (bs (snd (fst x)) + bs (snd x) + ells (snd (fst x)) + ells (snd x) + 1)))
     (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    destruct leb_bigO as [compare_factor Hcompare].
+    apply (bigO_intro _ _ _ (compare_factor + matrix_time_factor + 8)%N).
+    intros [[p a] b] _. cbn [fst snd].
+    specialize (Hcompare (b, a) I). cbn [fst snd] in Hcompare.
+    replace ((skels b + skels a + entries b + entries a + 1) *
+      (bs b + bs a + ells b + ells a + 1)) with
+      ((skels a + skels b + entries a + entries b + 1) *
+        (bs a + bs b + ells a + ells b + 1)) in Hcompare by ring.
+    set (work := N.of_nat
+      ((skels a + skels b + entries a + entries b + 1) *
+        (bs a + bs b + ells a + ells b + 1))) in *.
+    assert (Hmerge : forall ma mb, a = Reached ma -> b = Reached mb ->
+      (M.T_merge row_widen (fun x y => T_row_widen x y) ma mb <=
+        matrix_time_factor * work)%N).
+    { intros ma mb Ha Hb. subst a b. unfold work.
+      eapply N.le_trans; [apply T_widen_merge_le|].
+      apply N.mul_le_mono_l, time_of_nat_le, code_work_entries_pair. }
+    clearbody work. unfold T_widen. cbn beta iota zeta.
+    destruct (leb b a); cbn beta iota zeta.
+    - nia.
+    - destruct a as [|ma], b as [|mb]; cbn beta iota zeta.
+      + nia.
+      + nia.
+      + nia.
+      + specialize (Hmerge ma mb eq_refl eq_refl). nia.
+  Qed.
 
   Lemma assign_fast_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => (N.of_nat (skels (snd x) +
