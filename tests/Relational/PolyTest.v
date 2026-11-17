@@ -312,3 +312,69 @@ Example assignment_uses_the_prepared_zero_form :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** A present or weaker inequality is found before the elimination engine runs. *)
+Example syntactic_present_and_dominated :
+  (match FixturePoly.poly_fast [upper_x 3] (upper_x 3),
+      FixturePoly.poly_fast [upper_x 3] (upper_x 5) with
+   | Some _, Some _ => true
+   | _, _ => false
+   end) = true /\
+  FixturePoly.leb (Reached [upper_x 3]) (Reached [upper_x 5]) = true /\
+  FixturePoly.leb (Reached [upper_x 5]) (Reached [upper_x 3]) = false.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** An equality supplies both inequality directions and its exact equality conclusion. *)
+Example syntactic_equality_directions :
+  map (FixturePoly.entails_row [equal_x 2])
+    [upper_x 2; lower_x 2; equal_x 2] = [true; true; true] /\
+  (match FixturePoly.poly_fast [equal_x 2] (lower_x 2) with
+   | Some _ => true
+   | None => false
+   end) = true.
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** A sum consequence still falls through to certified elimination. *)
+Example syntactic_sum_uses_engine :
+  (let P := [upper_x 3; LCons _ [(2%positive, 1)] RLe 4] in
+   let c := LCons _ [(1%positive, 1); (2%positive, 1)] RLe 7 in
+   match FixturePoly.poly_fast P c with
+   | None => FixturePoly.entails_row P c
+   | Some _ => false
+   end) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Raw repeated keys retain their meaning when their identical source is selected. *)
+Example syntactic_repeated_row_checked :
+  (let c := LCons _ [(1%positive, 1); (1%positive, 2)] RLe 9 in
+   match FixturePoly.poly_fast [c] c with
+   | Some k => FixtureCertificate.check_entails [c] c k
+   | None => false
+   end) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Inclusion and widening keep shared rows through the direct certificate path. *)
+Example syntactic_subset_and_widening :
+  (let y := LCons _ [(2%positive, 1)] RLe 4 in
+   FixturePoly.leb (Reached [upper_x 3; y]) (Reached [y])) = true /\
+  FixturePoly.widen tt (Reached [upper_x 3]) (Reached [upper_x 3]) =
+    Reached [upper_x 3].
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** A failed first equality direction stops before checking the other direction. *)
+Example syntactic_equality_first_direction_fails :
+  FixturePoly.entails_row [lower_x 3] (upper_x 3) = false /\
+  FixturePoly.keep_row [lower_x 3] (equal_x 3) = false.
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
