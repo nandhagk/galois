@@ -68,7 +68,9 @@ Module IntervalPayloadCode (L : WORD_LANGUAGE_OPS) (T : THRESHOLDS_OPS)
   Definition pbot (_ : positive) := IBot.
   Definition ptop w := interval_top w.
   Definition pis_bot w a := Scalar.interval_is_bot (interval_clip w a).
-  Definition pconst w z := I (Fin (Word.wrap w z)) (Fin (Word.wrap w z)).
+  Definition pconst_ref w z := I (Fin (Word.wrap w z)) (Fin (Word.wrap w z)).
+  Definition pconst w z :=
+    let v := Word.wrap w z in I (Fin v) (Fin v).
   Definition ppoint w a := Scalar.interval_singleton (interval_clip w a).
   Definition pwparam := ttree.
   Definition pwiden ts w a b :=
@@ -853,6 +855,11 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   Qed.
   (** Payload constants are wrapped singleton intervals. *)
   Lemma F_pconst : forall w z, pconst w z = I (Fin (L.wrap w z)) (Fin (L.wrap w z)).
+  Proof.
+    reflexivity.
+  Qed.
+  (** Sharing the wrapped value preserves both endpoints of a constant. *)
+  Lemma pconst_agrees : forall w z, pconst w z = pconst_ref w z.
   Proof.
     reflexivity.
   Qed.

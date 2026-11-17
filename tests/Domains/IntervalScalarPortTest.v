@@ -39,6 +39,18 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example interval_payload_constant_wraps_once :
+  Payload.pconst 64%positive (2 ^ 64 + 5) = I (Fin 5) (Fin 5).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_payload_constant_in_range :
+  Payload.pconst 64%positive 5 = I (Fin 5) (Fin 5).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example interval_add_in_range :
   interval_add 8%positive (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 5)) =
   I (Fin 3) (Fin 9).
