@@ -11,12 +11,13 @@
     - [existsb_spec] Checking finds a stored value exactly when some stored value satisfies
       the predicate.
     - [codes_spec] The codes are exactly the keys that have a binding.
-    - [get_complexity] Lookup is linear in the encoded key length.
-    - [set_complexity] Insertion is linear in the encoded key length.
-    - [remove_complexity] Removal is linear in the encoded key length.
-    - [merge_complexity] Merging is linear in both skeletons for bounded callbacks.
+    - [get_complexity] Lookup is linear in the encoded key length, O(bits k).
+    - [set_complexity] Insertion is linear in the encoded key length, O(bits k).
+    - [remove_complexity] Removal is linear in the encoded key length, O(bits k).
+    - [merge_complexity] Merging is linear in both skeletons for bounded callbacks,
+      O((k + 1) (nodes m1 + nodes m2 + 1)) for callbacks that cost at most k.
     - [forall2b_complexity] Relational checking is linear in both skeletons for bounded
-      callbacks.
+      callbacks, O((k + 1) (nodes m1 + nodes m2 + 1)).
 
     Builds on: KeySig, TrieSig and Argent time interfaces. *)
 
