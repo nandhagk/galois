@@ -1,13 +1,8 @@
 (** * Reachability semantic interface clients
 
-    The old Boolean reachability transfers can be supplied to current product laws.
-    For example, product forward soundness follows from the current product interface.
+    The Boolean reachability transfers can be supplied to the product laws.
+    For example, product forward soundness follows from the product interface.
     Builds on: ValueOpenTest, Product and Translate. *)
-
-(* Groups:
-   - Interface: the extra parameters that the Boolean reachability domain needs.
-   - Certified: the reachability domain, packaged as a value domain.
-   - Clients: product and translated laws over the certified domain. *)
 
 From Stdlib Require Import List Bool.
 From Galois.Lattice Require Import Simple.
@@ -59,8 +54,10 @@ Module ReachCertified (Extra : REACH_EXTRA) <: VALUE_DOMAIN UnitLanguage.
   Definition wrank_widen_le := Extra.wrank_widen_le.
   Definition narrow_between := Extra.narrow_between.
   Definition gamma_mono := ValueOpenTest.LawTests.gamma_mono.
+  (** The bottom value describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
   Proof. intros c Hbot. discriminate Hbot. Qed.
+  (** The top value describes every concrete value. *)
   Lemma gamma_top : forall c, gamma top c.
   Proof. intros c. reflexivity. Qed.
   Definition gamma_meet := Extra.gamma_meet.
