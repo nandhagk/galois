@@ -4544,13 +4544,19 @@ Module PolyClockLinearize (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma lin_of_bigO : bigO (fun _ : term L.op X.t => True)
     (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
     (fun e => T_lin_of e).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := 1%N). intros e _.
+    time_unfold T_lin_of. lia.
+  Qed.
   (** Guard linearization is linear in the operand sizes and bit measure. *)
   Lemma atoms_of_bigO : bigO (fun _ : L.guard * list (term L.op X.t) => True)
     (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
       (bits_es (fst x) (snd x) + 1))%nat))
     (fun x => T_atoms_of (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := 1%N). intros [g es] _.
+    time_unfold T_atoms_of. lia.
+  Qed.
 End PolyClockLinearize.
 
 
@@ -18251,28 +18257,48 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [[x e] s] _.
+    pose proof (T_assign_le x e s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
+  Qed.
   (** Havoc is linear in its stated numeric work. *)
   Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x)))
     (fun x => T_havoc (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [x s] _.
+    pose proof (T_havoc_le x s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
+  Qed.
   (** Assumption is linear in its stated numeric work. *)
   Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [[g es] s] _.
+    pose proof (T_assume_le g es s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
+  Qed.
   (** A range query is linear in its stated numeric work. *)
   Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
     (fun x => T_range (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [e s] _.
+    pose proof (T_range_le e s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
+  Qed.
   (** One elimination is quadratic in the rows. *)
   Lemma fm_elim_bigO : bigO (fun x : X.t * list (lcons X.t) => normal (snd x))
     (fun x => N.of_nat (((length (snd x) + 1)^2 * (n (snd x) + length (snd x) + 1) *
       (ell (snd x) + 1)^2)%nat))
     (fun x => T_fm_elim (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_poly). intros [x P] Hnormal.
+    pose proof (T_fm_elim_le x P Hnormal) as Htime.
+    cbn [fst snd]. rewrite !Nat2N.inj_mul. nia.
+  Qed.
   (** Certificate production follows the Fourier-Motzkin recurrence. *)
   Lemma entail_cert_bigO : bigO
     (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
@@ -18280,20 +18306,32 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (n (fst x) + length (lhs (snd x))) (length (fst x) + 1)
       (ell (fst x) + C.row_bits (snd x) + C.row_key_bits (snd x))))
     (fun x => T_entail_cert (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_poly). intros [P c] [HP Hc].
+    pose proof (T_entail_cert_le P c HP Hc) as Htime. cbn [fst snd]. nia.
+  Qed.
   (** Inclusion is one certified check per conclusion. *)
   Lemma leb_bigO : bigO (fun _ : t * t => True)
     (fun x => N.of_nat (lat (mu (fst x) + mu (snd x))))
     (fun x => T_leb (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := k_poly). intros [a b] _.
+    pose proof (T1_leb a b) as Htime. cbn [fst snd]. lia.
+  Qed.
   (** Join is two filters of certified checks. *)
   Lemma join_bigO : bigO (fun _ : t * t => True)
     (fun x => N.of_nat (lat (mu (fst x) + mu (snd x))))
     (fun x => T_join (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := k_poly). intros [a b] _.
+    pose proof (T1_join a b) as Htime. cbn [fst snd]. lia.
+  Qed.
   (** Widening is one filter of certified checks. *)
   Lemma widen_bigO : bigO (fun _ : wparam * t * t => True)
     (fun x => N.of_nat (lat (mu (snd (fst x)) + mu (snd x))))
     (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := k_poly). intros [[p a] b] _.
+    pose proof (T1_widen p a b) as Htime. cbn [fst snd]. lia.
+  Qed.
 End PolyT.
