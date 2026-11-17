@@ -265,6 +265,16 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** Finite ranges ensure the closed fixture is reached and constrains all three variables. *)
+Example assignment_fixture_ranges :
+  (Zones.range (Leaf 1%positive) assignment_closed_state,
+   Zones.range (Leaf 2%positive) assignment_closed_state,
+   Zones.range (Leaf 3%positive) assignment_closed_state) =
+    ((Fin 0%Z, Fin 10%Z), (Fin 0%Z, Fin 4%Z), (Fin (-1)%Z, Fin 6%Z)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Row and column copying agrees with the old two refinements on a closed state. *)
 Example assign_closed_copy_same_entries :
   same_entries
@@ -295,6 +305,18 @@ Definition assignment_widened_state : Zones.t :=
   let earlier := Zones.assume (ZGuardCmp Lt)
     [Leaf 3%positive; Node (ZConst 2%Z) []] later in
   Zones.widen 0%nat earlier later.
+
+(** The widened fixture retains a two-edge path while its composed entry is absent. *)
+Example assignment_widened_fixture :
+  match assignment_widened_state with
+  | Reached m =>
+    (Zones.entry m None y, Zones.entry m y (Some 3%positive),
+     Zones.entry m None (Some 3%positive))
+  | Unreached => (None, None, None)
+  end = (Some 1%Z, Some 1%Z, None).
+Proof.
+  vm_compute. reflexivity.
+Qed.
 
 (** Assignment remains sound after widening without closing unrelated entries. *)
 Example assign_widened_range :
