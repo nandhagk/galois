@@ -15,9 +15,11 @@ Local Open Scope Z_scope.
 Module BoolMap := TrieMap BoolKey.
 Module IntValues := Interval ZLang Thresholds.
 Module IntEnv := Env BoolKey BoolMap ZLang IntValues.
-Definition two_points : IntEnv.t :=
-  Reached (BoolMap.set true (I (Fin 2) (Fin 2))
-    (BoolMap.set false (I (Fin 1) (Fin 1)) BoolMap.empty)).
+Definition two_points_map :=
+  BoolMap.set true (I (Fin 2) (Fin 2))
+    (BoolMap.set false (I (Fin 1) (Fin 1)) BoolMap.empty).
+
+Definition two_points : IntEnv.t := Reached two_points_map.
 
 Definition two_ranges : IntEnv.t :=
   Reached (BoolMap.set true (I (Fin 1) (Fin 4))
@@ -26,6 +28,10 @@ Definition two_ranges : IntEnv.t :=
 Definition bottom_binding : IntEnv.t :=
   Reached (BoolMap.set true (I (Fin 2) (Fin 2))
     (BoolMap.set false IBot BoolMap.empty)).
+
+Definition bottom_mismatch_map :=
+  BoolMap.set true (I (Fin 3) (Fin 3))
+    (BoolMap.set false IBot BoolMap.empty).
 
 Definition raised_point : IntEnv.t :=
   Reached (BoolMap.set true (I (Fin 2) (Fin 2))
@@ -50,8 +56,10 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
-(** A bottom binding on the left makes the fallback accept inclusion. *)
-Example inclusion_left_bottom_only : IntEnv.leb bottom_binding two_points = true.
+(** A live mismatch fails the fused test, then the left bottom makes the fallback accept. *)
+Example inclusion_left_bottom_only :
+  (BoolMap.forall2b IntEnv.leb_entry bottom_mismatch_map two_points_map,
+   IntEnv.leb (Reached bottom_mismatch_map) two_points) = (false, true).
 Proof.
   vm_compute; reflexivity.
 Qed.
