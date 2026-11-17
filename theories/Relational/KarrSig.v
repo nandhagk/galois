@@ -201,7 +201,8 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter leb_sound_span : forall a b, leb (Reached a) (Reached b) = true ->
     Forall (in_span a) b \/ in_span a false_row.
   (** An infeasible equality system is below every equality system. *)
-  Parameter leb_false_row_in_span : forall a b, in_span a false_row -> leb (Reached a) (Reached b) = true.
+  Parameter leb_false_row_in_span : forall a b,
+    in_span a false_row -> leb (Reached a) (Reached b) = true.
   (** Join rows lie in both input spans. *)
   Parameter join_span : forall a b P, join (Reached a) (Reached b) = Reached P ->
     Forall (in_span a) P /\ Forall (in_span b) P.
@@ -223,7 +224,8 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (forall v : X.t -> Q, Forall (satQ v) a -> Forall (satQ v) b) ->
     leb (Reached a) (Reached b) = true.
   (** Every fraction-free intermediate entry is an input minor. *)
-  Parameter bareiss_entries_are_minors : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
+  Parameter bareiss_entries_are_minors : forall P z,
+    In z (bareiss_entries P) -> In z (input_minors P).
   (** Widening uses affine hull join. *)
   Parameter widen_def : forall p a b, widen p a b = if leb b a then a else join a b.
   (** Every successful entailment certificate is accepted. *)

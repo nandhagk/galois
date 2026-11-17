@@ -8736,7 +8736,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
 
-  (** The retained K1 operation agrees with the original reference order. *)
+  (** The shared inclusion operation agrees with the reference inclusion test. *)
   Lemma leb_shared_eq : forall a b, leb_shared_spec a b = leb_spec a b.
   Proof.
     intros [|P] [|Q]; try reflexivity.
@@ -9853,7 +9853,8 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
         now apply target_certificate_equality.
   Qed.
   (** An infeasible equality system is below every equality system. *)
-  Lemma leb_false_row_in_span : forall a b, in_span a false_row -> leb (Reached a) (Reached b) = true.
+  Lemma leb_false_row_in_span : forall a b,
+    in_span a false_row -> leb (Reached a) (Reached b) = true.
   Proof.
     intros a b Hfalse. destruct (span_false_contradiction a Hfalse) as [ms Hempty].
     rewrite leb_eq. unfold leb_spec. now rewrite Hempty.
