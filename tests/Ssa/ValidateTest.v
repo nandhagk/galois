@@ -6,8 +6,8 @@
 
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Loop.
-From Galois.Base Require Import Key.
-From Galois.Graph Require Import Digraph Dom.
+From Galois.Base Require Import Key Trie.
+From Galois.Graph Require Import Data Digraph Dom.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig Validate Present.
 Import List.ListNotations.
 Open Scope positive_scope.
@@ -119,6 +119,17 @@ Qed.
 Example shared_preparation_agrees :
   (V.check_ssa translated, V.check_ssa use_before_definition) =
   (V.check_ssa_ref translated, V.check_ssa_ref use_before_definition).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Locally available operands need no entries in the home or dominance tables. *)
+Example local_operands_are_visible :
+  let tree := DomTree Empty Empty Empty Empty in
+  (V.ssa_local tree Empty 1 (val_set [10])
+     [(11, 1, [10]); (12, 1, [11])] [12],
+   V.ssa_local tree Empty 1 (val_set [10]) [(11, 1, [99])] [11]) =
+  (true, false).
 Proof.
   vm_compute; reflexivity.
 Qed.

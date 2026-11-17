@@ -2262,13 +2262,17 @@ Module ValidateCode (O : OPS)
     | None => false
     end.
 
+  Definition ssa_visible (tree : domtree) (homes : ptrie positive) (b : positive)
+      (known : ptrie unit) (x : positive) : bool :=
+    if val_mem known x then true else ssa_cross tree homes b x.
+
   Fixpoint ssa_local (tree : domtree) (homes : ptrie positive) (b : positive)
       (known : ptrie unit) (ic : list (positive * O.K * list positive))
       (out : list positive) : bool :=
     match ic with
-    | [] => forallb (fun x => val_mem known x || ssa_cross tree homes b x) out
+    | [] => forallb (ssa_visible tree homes b known) out
     | (dst, _, args) :: rest =>
-      if forallb (fun x => val_mem known x || ssa_cross tree homes b x) args then
+      if forallb (ssa_visible tree homes b known) args then
         ssa_local tree homes b (PTrieCode.set dst tt known) rest out
       else false
     end.
@@ -2316,6 +2320,13 @@ Module Validate (O : OPS)
     <: VALIDATE O K G P Q R E C S DG D B.
   Include ValidateCode O K G P Q R E C S DG D.
   Include VALIDATE_SPEC O K G P Q R E C S DG D.
+
+  (** A local operand is visible without querying its home or the dominator tree. *)
+  Lemma ssa_visible_orb tree homes b known x :
+    ssa_visible tree homes b known x = (val_mem known x || ssa_cross tree homes b x).
+  Proof.
+    reflexivity.
+  Qed.
 
   (** Sharing the prepared program and graph preserves the original SSA check. *)
   Lemma check_ssa_agrees s : check_ssa s = check_ssa_ref s.
@@ -2823,14 +2834,15 @@ Module Validate (O : OPS)
     - cbn [ssa_local] in Hcheck; rewrite forallb_forall in Hcheck.
       destruct Huse as [[k [ys [v [Hnth _]]]]|[Hi Hin]].
       + destruct i; discriminate.
-      + specialize (Hcheck x Hin); apply orb_true_iff in Hcheck; tauto.
+      + specialize (Hcheck x Hin); rewrite ssa_visible_orb in Hcheck;
+          apply orb_true_iff in Hcheck; tauto.
     - cbn [ssa_local] in Hcheck.
-      destruct (forallb (fun x => val_mem known x || ssa_cross tree homes b x) args)
+      destruct (forallb (ssa_visible tree homes b known) args)
         eqn:Hargs; [|discriminate].
       destruct i as [|i].
       + destruct Huse as [[k [ys [v [Hnth Hin]]]]|[Hi _]]; [|cbn in Hi; lia].
         cbn in Hnth; injection Hnth as Hv Hk Hys; subst v k ys.
-        rewrite forallb_forall in Hargs; specialize (Hargs x Hin);
+        rewrite forallb_forall in Hargs; specialize (Hargs x Hin); rewrite ssa_visible_orb in Hargs;
           apply orb_true_iff in Hargs; tauto.
       + assert (Htail : val_use rest out x i).
         { destruct Huse as [[k [ys [v [Hnth Hin]]]]|[Hi Hin]].
@@ -2903,6 +2915,7 @@ Module ValidateT (O : OPS)
   TimeFun ssa_exit_shape.
   TimeFun ssa_precheck.
   TimeFun ssa_cross.
+  TimeFun ssa_visible.
   TimeFun ssa_local.
   TimeFun check_ssa_graph.
   TimeFun check_ssa.
@@ -3106,6 +3119,20 @@ Module ValidateT (O : OPS)
     time_unfold T_ssa_operand. time_simpl. rewrite Nat2N.inj_add in *; nia.
   Qed.
 
+  Lemma ssa_visible_clock (s : P.t) g m order b known x w :
+    D.check g (entry _ _ _ s) m order = true -> graph_width (base g) <= w ->
+    function_width s <= w -> Pos.size_nat b <= w -> Pos.size_nat x <= w ->
+    (T_ssa_visible (D.tree g (entry _ _ _ s) m order)
+      (val_index (val_home_rows (blocks _ _ _ s))) b known x <=
+      (D.c_dom + 16) * N.of_nat (w + 1))%N.
+  Proof.
+    intros Hcheck Hgraph Hsyntax Hb Hx.
+    pose proof (ssa_cross_clock s g m order b x w Hcheck Hgraph Hsyntax Hb Hx) as Hcross.
+    pose proof (val_mem_time known x w Hx) as Hmem.
+    time_unfold T_ssa_visible; destruct (val_mem known x);
+      rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
   Lemma ssa_edge_shape_clock bodies target args w : Pos.size_nat target <= w ->
     (T_ssa_edge_shape bodies target args <=
       8 * N.of_nat (length args + 1) * N.of_nat (w + 1))%N.
@@ -3155,10 +3182,10 @@ Module ValidateT (O : OPS)
       | |- context [List.T_forallb ?f ?Tf ?xs] =>
         pose proof (val_forallb_uniform f Tf xs
           ((D.c_dom + 16) * N.of_nat (w + 1))%N
-          ltac:(intros x Hin; change (T_ssa_operand (D.tree g (entry _ _ _ s) m order)
+          ltac:(intros x Hin; change (T_ssa_visible (D.tree g (entry _ _ _ s) m order)
             (val_index (val_home_rows (blocks _ _ _ s))) b known x <=
             (D.c_dom + 16) * N.of_nat (w + 1))%N;
-            apply ssa_operand_clock; try assumption; now apply Hout)) as Hscan
+            apply ssa_visible_clock; try assumption; now apply Hout)) as Hscan
       end.
       cbn [length fold_right]; rewrite !Nat2N.inj_add in *; nia.
     - destruct (Hcode (dst, op, args) ltac:(now left)) as [Hdst Hargs].
@@ -3171,14 +3198,13 @@ Module ValidateT (O : OPS)
       | |- context [List.T_forallb ?f ?Tf args] =>
         pose proof (val_forallb_uniform f Tf args
           ((D.c_dom + 16) * N.of_nat (w + 1))%N
-          ltac:(intros x Hin; change (T_ssa_operand (D.tree g (entry _ _ _ s) m order)
+          ltac:(intros x Hin; change (T_ssa_visible (D.tree g (entry _ _ _ s) m order)
             (val_index (val_home_rows (blocks _ _ _ s))) b known x <=
             (D.c_dom + 16) * N.of_nat (w + 1))%N;
-            apply ssa_operand_clock; try assumption; now apply Hargs)) as Hscan
+            apply ssa_visible_clock; try assumption; now apply Hargs)) as Hscan
       end.
-      destruct (forallb (fun x => val_mem known x ||
-        ssa_cross (D.tree g (entry _ _ _ s) m order)
-          (val_index (val_home_rows (blocks _ _ _ s))) b x) args).
+      destruct (forallb (ssa_visible (D.tree g (entry _ _ _ s) m order)
+        (val_index (val_home_rows (blocks _ _ _ s))) b known) args).
       all: cbn [length fold_right snd]; rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
   Qed.
 
