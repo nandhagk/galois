@@ -883,6 +883,7 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     rewrite !Nat2N.inj_add in Hpoints |- *; nia.
   Qed.
 
+  (** Solving composes the seed and fixed-program plan with the engine's trace cost. *)
   Lemma solve_bigO : bigO
     (fun x : N * nat * pointer_input * limits =>
       let '(B, U, q, lim) := x in
@@ -894,7 +895,31 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
         (R.size_program (compile q) + 1)) +
       R.run_cost B U (compile q) (R.plan (compile q)) lim (seed q))%N)
     (fun x => let '(_, _, q, lim) := x in T_solve q lim).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    destruct seed_bigO as [cseed Hseed].
+    destruct R.plan_bigO as [cplan Hplan].
+    destruct R.run_bigO as [crun Hrun].
+    apply (bigO_intro _ _ _ (2 * c_steensgaard + cseed + cplan + crun)%N).
+    intros [[[B U] q] lim] [Hids Hunit].
+    specialize (Hseed q I).
+    specialize (Hplan (compile q) I).
+    specialize (Hrun (B, U, compile q, R.plan (compile q), lim, seed q)).
+    cbn beta iota zeta in Hrun.
+    assert (Hready : R.plans_ok (compile q) (R.plan (compile q)) /\
+      D.wf (seed q) /\ R.loaded (compile q) (R.plan (compile q)) (seed q) /\
+      (D.ids (snd (R.run (compile q) (R.plan (compile q)) lim (seed q))) <= B)%N /\
+      D.unit (snd (R.run (compile q) (R.plan (compile q)) lim (seed q))) <= U).
+    { split; [apply R.plan_checked; apply program_sorted |].
+      split; [exact (proj1 (seed_wf q)) |].
+      split; [apply seed_loaded |].
+      rewrite <- solve_run; split; assumption. }
+    specialize (Hrun Hready).
+    pose proof (T_solve_le q lim) as Hsolve.
+    pose proof (T_compile_le q) as Hcompile.
+    cbn beta iota zeta in Hseed, Hplan, Hsolve |- *.
+    clear Hready Hids Hunit.
+    nia.
+  Qed.
 
   Lemma F1_source_closed : forall q,
     pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
