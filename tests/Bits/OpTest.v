@@ -9,7 +9,8 @@
     - [NormalizationTests] Normalization of in-range and out-of-range words.
     - [ArithmeticTests] Overflow and zero divisors.
     - [ComparisonTests] Unsigned, signed and equality comparisons, and their width checks.
-    - [WidthTests] Width changes, concatenation, truncation and selection, with their bad operands.
+    - [WidthTests] Width changes, concatenation, truncation and selection on valid operands.
+    - [RejectionTests] Operand lists of the wrong length or with widths that do not fit.
     - [CountTests] Leading zeros, trailing zeros and population counts.
     - [CodeTests] The operator encodings and the distinctness of their tags.
     - [SymbolicTests] Width checks and value formulas for any operand width. *)
@@ -314,11 +315,6 @@ Module WidthTests.
     eval_op (bvtrunc 1%positive) [(8%positive, 2)] = Some (1%positive, 0).
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Truncating to a width wider than the source is rejected. *)
-  Example trunc_to_wider_width_is_rejected :
-    eval_op (bvtrunc 9%positive) [(8%positive, -1)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
   (** Concatenating four-bit ten with eight-bit five gives 2565. *)
   Example concat_normalizes_each_operand :
     eval_op bvconcat [(4%positive, 10); (8%positive, 5)] = Some (12%positive, 2565).
@@ -349,108 +345,14 @@ Module WidthTests.
     eval_op bvconcat [(1%positive, 0); (1%positive, 0)] = Some (2%positive, 0).
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Zero extension with no operand is rejected. *)
-  Example zext_without_operand_is_rejected :
-    eval_op (bvzext 1%positive) [] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Zero extension with two operands is rejected. *)
-  Example zext_with_two_operands_is_rejected :
-    eval_op (bvzext 1%positive) [(1%positive, -1); (1%positive, 2)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Sign extension with no operand is rejected. *)
-  Example sext_without_operand_is_rejected :
-    eval_op (bvsext 1%positive) [] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Sign extension with two operands is rejected. *)
-  Example sext_with_two_operands_is_rejected :
-    eval_op (bvsext 1%positive) [(1%positive, -1); (1%positive, 2)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Truncation with no operand is rejected. *)
-  Example trunc_without_operand_is_rejected :
-    eval_op (bvtrunc 1%positive) [] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Truncation with two operands is rejected. *)
-  Example trunc_with_two_operands_is_rejected :
-    eval_op (bvtrunc 1%positive) [(1%positive, -1); (1%positive, 2)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Concatenation with no operand is rejected. *)
-  Example concat_without_operands_is_rejected :
-    eval_op bvconcat [] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Concatenation with one operand is rejected. *)
-  Example concat_with_one_operand_is_rejected :
-    eval_op bvconcat [(1%positive, -1)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Concatenation with three operands is rejected. *)
-  Example concat_with_three_operands_is_rejected :
-    eval_op bvconcat [(1%positive, -1); (1%positive, 2); (1%positive, 0)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Bitwise not with no operand is rejected. *)
-  Example not_without_operand_is_rejected : eval_op bvnot [] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Bitwise not with two operands is rejected. *)
-  Example not_with_two_operands_is_rejected :
-    eval_op bvnot [(8%positive, 0); (8%positive, 0)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Addition of operands of different widths is rejected. *)
-  Example add_of_unequal_widths_is_rejected :
-    eval_op bvadd [(8%positive, 0); (4%positive, 0)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A selection with a two-bit condition is rejected. *)
-  Example ite_with_two_bit_condition_is_rejected :
-    eval_op bvite [(2%positive, 1); (8%positive, 1); (8%positive, 2)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A selection with branches of unequal widths is rejected. *)
-  Example ite_with_unequal_branches_is_rejected :
-    eval_op bvite [(1%positive, 1); (8%positive, 1); (4%positive, 2)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Truncation to a width wider than the operand is rejected for a byte operand. *)
-  Example trunc_to_nine_bits_is_rejected :
-    eval_op (bvtrunc 9%positive) [(8%positive, 1)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Extracting bits two to three of an eight-bit operand is rejected. *)
-  Example extract_with_reversed_bounds_is_rejected :
-    eval_op (bvextract 2 3) [(8%positive, 1)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Extracting with an upper bound beyond the operand is rejected. *)
-  Example extract_beyond_operand_is_rejected :
-    eval_op (bvextract 8 0) [(8%positive, 1)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
   (** Addition of a negative and an above-modulus operand at width eight normalizes both. *)
   Example width8_add_normalizes_both_operands :
     eval_op bvadd [(8%positive, -1); (8%positive, 257)] = Some (8%positive, 0).
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Addition with a mismatched second operand width is rejected. *)
-  Example add_with_mismatched_second_width_is_rejected :
-    eval_op bvadd [(8%positive, -1); (4%positive, 257)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
   (** Left shift of one by one at width eight gives two. *)
   Example width8_shl_by_one :
     eval_op bvshl [(8%positive, 1); (8%positive, 1)] = Some (8%positive, 2).
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A left shift whose amount has a different width is rejected. *)
-  Example shl_with_mismatched_amount_width_is_rejected :
-    eval_op bvshl [(8%positive, 1); (1%positive, 1)] = None.
   Proof. vm_compute. reflexivity. Qed.
 
   (** Addition of width-one operands wraps one plus three to zero. *)
@@ -468,37 +370,69 @@ Module WidthTests.
     eval_op bvite [(1%positive, 2); (8%positive, -1); (8%positive, 257)] = Some (8%positive, 1).
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A selection with a width-four else branch is rejected. *)
-  Example ite_with_width_four_branch_is_rejected :
-    eval_op bvite [(1%positive, 1); (8%positive, 7); (4%positive, 7)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A selection with a width-four else branch under condition zero is rejected. *)
-  Example ite_zero_condition_width_four_branch_is_rejected :
-    eval_op bvite [(1%positive, 0); (8%positive, 7); (4%positive, 7)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A selection with a two-bit condition is rejected even when both branches match. *)
-  Example ite_two_bit_condition_is_rejected_one :
-    eval_op bvite [(2%positive, 1); (8%positive, 7); (8%positive, 7)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A selection with a two-bit condition of zero is rejected. *)
-  Example ite_two_bit_zero_condition_is_rejected :
-    eval_op bvite [(2%positive, 0); (8%positive, 7); (8%positive, 7)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A selection with a width-one branch of unequal width is rejected. *)
-  Example ite_with_width_one_branches_and_wide_condition_is_rejected :
-    eval_op bvite [(2%positive, 1); (1%positive, 1); (1%positive, 0)] = None.
-  Proof. vm_compute. reflexivity. Qed.
-
   (** A selection with width-one branches and a negative condition chooses the first branch. *)
   Example width1_ite_negative_condition_takes_then :
     eval_op bvite [(1%positive, -1); (1%positive, 3); (1%positive, 0)] = Some (1%positive, 1).
   Proof. vm_compute. reflexivity. Qed.
 
 End WidthTests.
+
+(** * Rejected operands *)
+
+Module RejectionTests.
+
+  (** An operator and the operands that it rejects. *)
+  Definition rejected_case := (op * list word)%type.
+
+  (** The result [None] marks a rejected operand list. *)
+  Definition is_rejected (c : rejected_case) : bool :=
+    match eval_op (fst c) (snd c) with
+    | None => true
+    | Some _ => false
+    end.
+
+  (** Operand lists of the wrong length, each with the operator that expects another count. *)
+  Definition bad_arity_cases : list rejected_case :=
+    [(bvzext 1%positive, []);
+     (bvzext 1%positive, [(1%positive, -1); (1%positive, 2)]);
+     (bvsext 1%positive, []);
+     (bvsext 1%positive, [(1%positive, -1); (1%positive, 2)]);
+     (bvtrunc 1%positive, []);
+     (bvtrunc 1%positive, [(1%positive, -1); (1%positive, 2)]);
+     (bvconcat, []);
+     (bvconcat, [(1%positive, -1)]);
+     (bvconcat, [(1%positive, -1); (1%positive, 2); (1%positive, 0)]);
+     (bvnot, []);
+     (bvnot, [(8%positive, 0); (8%positive, 0)])].
+
+  (** Operands whose widths do not fit the operator. They cover unequal operand widths, a shift
+      amount of another width, truncation to a wider width, extraction bounds that are reversed
+      or beyond the word, and selections with a wide condition or unequal branches. *)
+  Definition bad_width_cases : list rejected_case :=
+    [(bvadd, [(8%positive, 0); (4%positive, 0)]);
+     (bvadd, [(8%positive, -1); (4%positive, 257)]);
+     (bvshl, [(8%positive, 1); (1%positive, 1)]);
+     (bvtrunc 9%positive, [(8%positive, -1)]);
+     (bvtrunc 9%positive, [(8%positive, 1)]);
+     (bvextract 2 3, [(8%positive, 1)]);
+     (bvextract 8 0, [(8%positive, 1)]);
+     (bvite, [(2%positive, 1); (8%positive, 1); (8%positive, 2)]);
+     (bvite, [(1%positive, 1); (8%positive, 1); (4%positive, 2)]);
+     (bvite, [(1%positive, 1); (8%positive, 7); (4%positive, 7)]);
+     (bvite, [(1%positive, 0); (8%positive, 7); (4%positive, 7)]);
+     (bvite, [(2%positive, 1); (8%positive, 7); (8%positive, 7)]);
+     (bvite, [(2%positive, 0); (8%positive, 7); (8%positive, 7)]);
+     (bvite, [(2%positive, 1); (1%positive, 1); (1%positive, 0)])].
+
+  (** Every operand list of the arity table is rejected. *)
+  Example wrong_operand_counts_are_rejected : forallb is_rejected bad_arity_cases = true.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** Every operand list of the width table is rejected. *)
+  Example mismatched_widths_are_rejected : forallb is_rejected bad_width_cases = true.
+  Proof. vm_compute. reflexivity. Qed.
+
+End RejectionTests.
 
 (** * Counts *)
 
@@ -566,24 +500,48 @@ End CodeTests.
 
 Module SymbolicTests.
 
-  (** Resizing a symbolic concatenation gives the value that its public equations predict. *)
-  Example resize_concat_symbolic_client : forall extra target wa wb x y,
-    (match eval_op bvconcat [(wa, x); (wb, y)] with
-     | Some (w, z) =>
-       (eval_op (bvzext extra) [(w, z)],
-        eval_op (bvsext extra) [(w, z)],
-        eval_op (bvtrunc target) [(w, z)])
-     | None => (None, None, None)
-     end) =
-    let w := (wa + wb)%positive in
-    let z := wrap w (wrap wa x * modulus wb + wrap wb y) in
-    (Some ((w + extra)%positive, wrap (w + extra)%positive (wrap w z)),
-     Some ((w + extra)%positive, wrap (w + extra)%positive (signed w z)),
-     if Pos.leb target w then Some (target, wrap target (wrap w z)) else None).
+  (** The concatenation of a word of width [wa] and a word of width [wb], then resized by [o]. *)
+  Definition resize_concat (o : op) (wa wb : positive) (x y : Z) : option word :=
+    match eval_op bvconcat [(wa, x); (wb, y)] with
+    | Some r => eval_op o [r]
+    | None => None
+    end.
+
+  (** The value of that concatenation, from the equations of the operators. *)
+  Definition concat_value (wa wb : positive) (x y : Z) : Z :=
+    wrap (wa + wb)%positive (wrap wa x * modulus wb + wrap wb y).
+
+  (** Zero extension of a symbolic concatenation keeps its value in the wider word. *)
+  Example zext_of_concat_symbolic : forall extra wa wb x y,
+    resize_concat (bvzext extra) wa wb x y =
+      Some ((wa + wb + extra)%positive,
+            wrap (wa + wb + extra)%positive (wrap (wa + wb)%positive (concat_value wa wb x y))).
   Proof.
-    intros extra target wa wb x y.
-    rewrite eval_op_concat.
-    rewrite eval_op_zext, eval_op_sext, eval_op_trunc.
+    intros extra wa wb x y.
+    unfold resize_concat. rewrite eval_op_concat, eval_op_zext.
+    reflexivity.
+  Qed.
+
+  (** Sign extension of a symbolic concatenation extends the signed value of the word. *)
+  Example sext_of_concat_symbolic : forall extra wa wb x y,
+    resize_concat (bvsext extra) wa wb x y =
+      Some ((wa + wb + extra)%positive,
+            wrap (wa + wb + extra)%positive (signed (wa + wb)%positive (concat_value wa wb x y))).
+  Proof.
+    intros extra wa wb x y.
+    unfold resize_concat. rewrite eval_op_concat, eval_op_sext.
+    reflexivity.
+  Qed.
+
+  (** Truncation of a symbolic concatenation succeeds exactly when the target is not wider. *)
+  Example trunc_of_concat_symbolic : forall target wa wb x y,
+    resize_concat (bvtrunc target) wa wb x y =
+      if Pos.leb target (wa + wb)%positive
+      then Some (target, wrap target (wrap (wa + wb)%positive (concat_value wa wb x y)))
+      else None.
+  Proof.
+    intros target wa wb x y.
+    unfold resize_concat. rewrite eval_op_concat, eval_op_trunc.
     reflexivity.
   Qed.
 
