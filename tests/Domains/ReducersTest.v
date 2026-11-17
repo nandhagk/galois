@@ -5,12 +5,9 @@
     Builds on: Reducers and the concrete word domains.
 
     Groups:
-    - Fixtures: the word, known-bit, congruence and interval modules and their tables.
-    - Reduction: pairwise reduction of wrapped, congruence and known-bit payloads.
-    - Certified: the certified wrapped-bits factory and the pins that check it.
-    - Clipping: the clipped interval reduced against a congruence.
-    - Time fixtures: the clock modules of the reducer tables.
-    - Reducer proofs: the size and shape lemmas of the interval reducer. *)
+    - [ReductionTests] Pairwise reduction of wrapped, congruence and known-bit payloads.
+    - [CertifiedTests] The certified wrapped-bits factory and the pins that check it.
+    - [ClippingTests] The clipped interval reduced against a congruence. *)
 
 From Stdlib Require Import NArith ZArith Lia Bool List.
 From Argent Require Import Time Tactics Std.
