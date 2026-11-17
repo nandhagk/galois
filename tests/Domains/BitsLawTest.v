@@ -4,10 +4,6 @@
     For example, a wrapped constant is described by its singleton payload.
     Builds on: Const and BitsLang. *)
 
-(* Groups:
-   - Fixtures: the constant word domain over the word language.
-   - Laws: the constant, meet, monotonicity and singleton laws that the domain exports. *)
-
 From Stdlib Require Import ZArith.
 From Galois.Domains Require Import BitsLang Const.
 
