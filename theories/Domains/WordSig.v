@@ -2,10 +2,29 @@
 
     Payloads describe integers at an explicit positive width.
     For example, tagging a singleton payload at width eight describes one eight-bit word.
+
+    Main results
+    - [pbot_least] Bottom is below every payload.
+    - [pis_bot_least] Recognized bottoms are below every payload.
+    - [pis_bot_sound] Recognized bottoms contain no integer.
+    - [pconst_sound] A constant payload contains the wrapped integer.
+    - [ppoint_sound] A recognized point identifies all represented integers.
+    - [wfwd_sound] A forward word entry retains each concrete result at its checked width.
+    - [wbwd_sound] A backward word entry retains each concrete operand in its original position.
+    - [eval_op_complexity] Concrete word evaluation has the published quadratic class.
+
+    Glossary
+    - [pgamma] The integers that a payload describes at a given width.
+    - [pwrank] The widening rank of a payload at a width, which every unstable widening strictly
+      lowers.
+    - [psize] The size of a payload at a width, which bounds the time of operations on it.
+    - [pwsize] The size of a payload widening parameter, such as a threshold tree.
+
     Builds on: LangSig and HarnessSig. *)
 
 From Stdlib Require Import ZArith List.
-From Argent Require Import Std BigO.
+From Argent Require Import Std Complexity.
+Import ComplexityNotations.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import LangSig HarnessSig.
 
@@ -50,11 +69,11 @@ Module Type WORD_LANGUAGE_TIME (Import L : WORD_LANGUAGE).
         (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) cs) + 1) ^
     2)%nat))%N.
   (** Concrete word evaluation has the published quadratic class. *)
-  Parameter eval_op_complexity : bigO (X := op * list (positive * Z)) (fun _ => True)
-    (fun x => N.of_nat (((Op.op_widths (fst x) +
+  Parameter eval_op_complexity :
+    T_eval_op o cs ∈ 𝑂(N.of_nat (((Op.op_widths o +
       fold_right Nat.add 0
-        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) (snd x)) + 1) ^ 2)%nat))
-    (fun x => T_eval_op (fst x) (snd x)).
+        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) cs) + 1) ^ 2)%nat))
+    for (o, cs).
 End WORD_LANGUAGE_TIME.
 
 Module Type WORD_LANGUAGE_T := WORD_LANGUAGE <+ WORD_LANGUAGE_TIME.
