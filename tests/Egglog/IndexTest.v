@@ -5,6 +5,7 @@
     Builds on: Index, Syntax and the operations-only value interface. *)
 
 From Stdlib Require Import List PArith NArith.
+From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax Index.
 
 Import List.ListNotations.
@@ -107,6 +108,73 @@ Example unallocated_node_queries :
   (RuntimeIndex.child shared_index 4096 (Val 2)%positive,
    RuntimeIndex.children shared_index 4096%positive,
    RuntimeIndex.degree shared_index 4096%positive) = (None, [], 0%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Inserting a second triple follows the shared prefix and allocates only its fresh suffix. *)
+Example insert_shared_prefix_fresh_suffix :
+  let first := [Val 2; Val 3; Val 7]%positive in
+  let second := [Val 2; Val 5; Val 11]%positive in
+  let ix := RuntimeIndex.insert second (RuntimeIndex.insert first RuntimeIndex.empty) in
+  (RuntimeIndex.contains first ix, RuntimeIndex.contains second ix,
+   RuntimeIndex.child ix 1 (Val 2)%positive,
+   RuntimeIndex.child ix 2 (Val 5)%positive,
+   RuntimeIndex.child ix 5 (Val 11)%positive, RuntimeIndex.next ix) =
+    (true, true, Some 2%positive, Some 5%positive, Some 6%positive, 6%positive).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A missing middle cell makes removal retain the entire original triple index. *)
+Example absent_removal_after_shared_prefix :
+  let ix := RuntimeIndex.insert [Val 2; Val 3; Val 7]%positive RuntimeIndex.empty in
+  RuntimeIndex.remove [Val 2; Val 5; Val 11]%positive ix = ix.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Removing shared tuples drops their empty nodes while preserving the allocation counter. *)
+Example removing_shared_tuples_drops_empty_nodes :
+  let one := RuntimeIndex.remove first_tuple shared_index in
+  let none := RuntimeIndex.remove second_tuple one in
+  (length (PTrieCode.elements (index_nodes shared_index)),
+   length (PTrieCode.elements (index_nodes one)),
+   length (PTrieCode.elements (index_nodes none)), RuntimeIndex.next none) =
+    (4%nat, 3%nat, 0%nat, 4%positive).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A nonzero cached degree prevents an edgeless node from being discarded. *)
+Example empty_edges_with_degree_survive_write :
+  let nd : index_node (cell IndexFixtureValue.t) := IndexNode PTrieCode.empty 5%N false in
+  RuntimeIndex.read_node
+    (RuntimeIndex.write_node RuntimeIndex.empty 1%positive nd 1%positive) 1%positive = nd.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Clearing the last root terminal removes its table entry. *)
+Example empty_tuple_terminal_prunes_table :
+  let present := RuntimeIndex.insert [] RuntimeIndex.empty in
+  let absent := RuntimeIndex.remove [] present in
+  (length (PTrieCode.elements (index_nodes present)),
+   length (PTrieCode.elements (index_nodes absent)),
+   RuntimeIndex.contains [] present, RuntimeIndex.contains [] absent) =
+    (1%nat, 0%nat, true, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A fresh two-cell suffix preserves the entire state produced by the specified step walk. *)
+Example fresh_insertion_matches_step_reference :
+  let first := [Val 2; Val 3; Val 7]%positive in
+  let second := [Val 2; Val 5; Val 11]%positive in
+  let ix := RuntimeIndex.insert first RuntimeIndex.empty in
+  RuntimeIndex.insert second ix =
+    RuntimeIndex.insert_finish second ix
+      (fold_left RuntimeIndex.insert_step_st second (RuntimeIndex.start ix)).
 Proof.
   vm_compute. reflexivity.
 Qed.
