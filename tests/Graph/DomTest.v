@@ -27,6 +27,47 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Definition dense_join_graph := fixture_graph [1; 2; 3; 4; 5; 6; 7]
+  [(1, 2); (1, 3); (1, 4); (2, 5); (2, 6); (3, 5); (3, 6); (4, 5); (4, 6);
+    (5, 7); (6, 7)].
+
+Example accepts_dense_join_edges :
+  DomCode.check (DigraphCode.prepare dense_join_graph) 1
+    (parent_map [(2, 1); (3, 1); (4, 1); (5, 1); (6, 1); (7, 1)])
+    [1; 2; 5; 7; 6; 3; 4] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example accepts_order_omitting_unreachable_source :
+  DomCode.check (DigraphCode.prepare Unreachable.graph) 1
+    (parent_map Unreachable.parents) [1; 2; 3; 4] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example empty_row_without_source_keeps_flags :
+  dom_edges_from_fast (DigraphCode.prepare Unreachable.graph) 1
+    (parent_map Unreachable.parents) (dom_positions [1; 2; 3; 4]) Empty (Some Empty) 5 =
+    Some Empty.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example nonempty_row_without_source_rejects :
+  dom_edges_from_fast (DigraphCode.prepare Unreachable.graph) 1
+    (parent_map Unreachable.parents) Empty Empty (Some Empty) 1 = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejected_edge_row_stays_rejected :
+  dom_edges_from_fast (DigraphCode.prepare Diamond.graph) 1
+    (parent_map Diamond.parents) (dom_positions [1; 2; 4; 3]) Empty None 1 = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example rejects_wrong_line_parent :
   DomCode.check (DigraphCode.prepare Line.graph) 1
     (parent_map [(2, 1); (3, 1); (4, 3)]) [1; 2; 3; 4] = false.

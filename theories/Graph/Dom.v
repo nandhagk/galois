@@ -353,6 +353,67 @@ Definition dom_edges_from (g : prepared) (r : positive) (m : ptrie positive)
   fold_left (dom_edge_update r m pos sizes u) (succs (base g) u) acc.
 TimeFun dom_edges_from.
 
+(** A row reuses the source interval while looking up each destination's parent. *)
+Definition dom_interval_from (pos sizes : ptrie N) (p : positive) (pu su : N) : bool :=
+  match trie_get p pos with
+  | Some pp =>
+    if N.leb pp pu then N.leb (N.add pu su) (N.add pp (dom_size_get sizes p)) else false
+  | None => false
+  end.
+TimeFun dom_interval_from.
+
+(** Cached source observations leave an interval comparison unchanged. *)
+Local Lemma dom_interval_from_eq pos sizes p u pu :
+  trie_get u pos = Some pu ->
+  dom_interval pos sizes p u = dom_interval_from pos sizes p pu (dom_size_get sizes u).
+Proof.
+  intro Hsource. unfold dom_interval, dom_interval_from. rewrite Hsource.
+  destruct (trie_get p pos) as [pp|]; [destruct (N.leb pp pu)|]; reflexivity.
+Qed.
+
+(** A rejected row skips all subsequent edge lookups, and an accepted row shares its source. *)
+Definition dom_edge_update_from (r : positive) (m : ptrie positive) (pos sizes : ptrie N)
+    (u : positive) (pu su : N) (acc : option (ptrie (bool * N * N))) (v : positive)
+    : option (ptrie (bool * N * N)) :=
+  match acc with
+  | None => None
+  | Some flags =>
+    match trie_get v pos with
+    | None => None
+    | Some _ =>
+      if Pos.eqb v r then Some flags else
+        match trie_get v m with
+        | None => None
+        | Some p =>
+          if dom_interval_from pos sizes p pu su then
+            let '(direct, lo, hi) := match trie_get v flags with
+              | None => (false, pu, pu)
+              | Some info => info
+              end in
+            Some (PTrieCode.set v
+              (if direct then true else Pos.eqb u p, N.min lo pu, N.max hi pu) flags)
+          else None
+        end
+    end
+  end.
+TimeFun dom_edge_update_from.
+
+(** The source is read once per live row, including the empty unpositioned-row case. *)
+Definition dom_edges_from_fast (g : prepared) (r : positive) (m : ptrie positive)
+    (pos sizes : ptrie N) (acc : option (ptrie (bool * N * N))) (u : positive)
+    : option (ptrie (bool * N * N)) :=
+  match acc with
+  | None => None
+  | Some _ =>
+    match trie_get u pos with
+    | Some pu => fold_left
+      (dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u))
+      (succs (base g) u) acc
+    | None => match succs (base g) u with [] => acc | _ => None end
+    end
+  end.
+TimeFun dom_edges_from_fast.
+
 Definition dom_low_high (r : positive) (pos sizes : ptrie N)
     (flags : ptrie (bool * N * N)) (v : positive) : bool :=
   if Pos.eqb v r then true else
@@ -363,9 +424,16 @@ Definition dom_low_high (r : positive) (pos sizes : ptrie N)
     end.
 TimeFun dom_low_high.
 
-Definition dom_edges (g : prepared) (r : positive) (m : ptrie positive)
+Local Definition dom_edges_spec (g : prepared) (r : positive) (m : ptrie positive)
     (o : list positive) (pos sizes : ptrie N) : bool :=
   match fold_left (dom_edges_from g r m pos sizes) o (Some Empty) with
+  | None => false
+  | Some flags => forallb (dom_low_high r pos sizes flags) o
+  end.
+
+Definition dom_edges (g : prepared) (r : positive) (m : ptrie positive)
+    (o : list positive) (pos sizes : ptrie N) : bool :=
+  match fold_left (dom_edges_from_fast g r m pos sizes) o (Some Empty) with
   | None => false
   | Some flags => forallb (dom_low_high r pos sizes flags) o
   end.
@@ -1091,6 +1159,55 @@ Proof.
   apply dom_optional_fold_none. intro v. reflexivity.
 Qed.
 
+(** A source lookup supplies exactly the observations used by every original edge update. *)
+Local Lemma dom_edge_update_from_eq r m pos sizes u pu acc v :
+  trie_get u pos = Some pu ->
+  dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u) acc v =
+    dom_edge_update r m pos sizes u acc v.
+Proof.
+  intro Hsource. unfold dom_edge_update_from, dom_edge_update.
+  destruct acc as [flags|]; [|reflexivity]. rewrite Hsource.
+  destruct (trie_get v pos) as [pv|]; [|reflexivity].
+  destruct (Pos.eqb v r); [reflexivity|].
+  destruct (trie_get v m) as [p|]; [|reflexivity].
+  rewrite (dom_interval_from_eq pos sizes p u pu Hsource).
+  destruct (dom_interval_from pos sizes p pu (dom_size_get sizes u)); [|reflexivity].
+  destruct (trie_get v flags) as [[[direct lo] hi]|];
+    [destruct direct|]; reflexivity.
+Qed.
+
+(** Hoisting a source preserves every successor-row result, even for malformed candidates. *)
+Local Lemma dom_edges_from_fast_eq g r m pos sizes acc u :
+  dom_edges_from_fast g r m pos sizes acc u = dom_edges_from g r m pos sizes acc u.
+Proof.
+  unfold dom_edges_from_fast. destruct acc as [flags|].
+  - destruct (trie_get u pos) as [pu|] eqn:Hsource.
+    + unfold dom_edges_from. generalize (Some flags) as acc.
+      induction (succs (base g) u) as [|v rest IH]; intro acc; cbn [fold_left].
+      * reflexivity.
+      * rewrite dom_edge_update_from_eq by exact Hsource. apply IH.
+    + unfold dom_edges_from. destruct (succs (base g) u) as [|v rest].
+      * reflexivity.
+      * cbn [fold_left].
+        assert (Hstep : dom_edge_update r m pos sizes u (Some flags) v = None).
+        { unfold dom_edge_update. rewrite Hsource. destruct (trie_get v pos); reflexivity. }
+        rewrite Hstep. symmetry. apply dom_optional_fold_none. intro x. reflexivity.
+  - symmetry. apply dom_edges_from_none.
+Qed.
+
+(** The optimized edge phase returns the original low-high decision on every input. *)
+Local Lemma dom_edges_agrees g r m o pos sizes :
+  dom_edges g r m o pos sizes = dom_edges_spec g r m o pos sizes.
+Proof.
+  unfold dom_edges, dom_edges_spec.
+  assert (Hfold : forall acc,
+    fold_left (dom_edges_from_fast g r m pos sizes) o acc =
+    fold_left (dom_edges_from g r m pos sizes) o acc).
+  { induction o as [|u rest IH]; intro acc; cbn [fold_left]; [reflexivity|].
+    rewrite dom_edges_from_fast_eq. apply IH. }
+  now rewrite Hfold.
+Qed.
+
 Local Lemma dom_edges_from_flags : forall g r m pos sizes o u flags result,
   In u o -> dom_flags_valid g m pos o flags ->
   dom_edges_from g r m pos sizes (Some flags) u = Some result ->
@@ -1189,7 +1306,7 @@ Local Lemma dom_edges_certificate : forall g r m o sizes,
   cert_parent (base g) m o /\ cert_low_high (base g) m o.
 Proof.
   intros g r m o sizes Hunique Hroot Hdomain Hpositive Hsizes Hreflect Hedges.
-  unfold dom_edges in Hedges.
+  rewrite dom_edges_agrees in Hedges. unfold dom_edges_spec in Hedges.
   destruct (fold_left (dom_edges_from g r m (dom_positions o) sizes) o (Some Empty))
     as [flags |] eqn:Hrun; [| discriminate Hedges].
   pose proof (dom_edges_flags g r m (dom_positions o) sizes o flags Hrun) as Hflags.
@@ -3888,6 +4005,27 @@ Proof.
   - PTrieT.trie_get_le. time_simpl. rewrite Nat2N.inj_add. nia.
 Qed.
 
+(** Cached source intervals pay only for the parent lookup and bounded binary comparisons. *)
+Local Lemma dom_time_interval_from pos sizes p pu su width :
+  Pos.size_nat p <= width -> N.size_nat pu <= width -> N.size_nat su <= width + 1 ->
+  (forall x n, trie_get x pos = Some n -> N.size_nat n <= width) ->
+  (forall x, N.size_nat (dom_size_get sizes x) <= width + 1) ->
+  (T_dom_interval_from pos sizes p pu su <= 64 * N.of_nat (width + 1))%N.
+Proof.
+  intros Hp Hpu Hsu Hpositions Hsizes. unfold T_dom_interval_from.
+  destruct (trie_get p pos) as [pp|] eqn:Hparent.
+  - pose proof (Hpositions p pp Hparent) as Hpp.
+    pose proof (Hsizes p) as Hsp.
+    pose proof (N.T_leb_le pp pu) as Hstarts.
+    pose proof (N.T_add_le pu su) as Hsource_end.
+    pose proof (N.T_add_le pp (dom_size_get sizes p)) as Hparent_end.
+    pose proof (dom_add_width pu su) as Hsum.
+    pose proof (N.T_leb_le (N.add pu su) (N.add pp (dom_size_get sizes p))) as Hends.
+    destruct (N.leb pp pu); unfold T_dom_size_get; PTrieT.trie_get_le;
+      time_simpl; rewrite !Nat2N.inj_add in *; nia.
+  - PTrieT.trie_get_le. time_simpl. rewrite Nat2N.inj_add. nia.
+Qed.
+
 (** Containment checks spend one bounded parent lookup and interval test per entry. *)
 Local Lemma dom_time_sizes_ok m pos sizes o width :
   (forall v, In v o -> Pos.size_nat v <= width) ->
@@ -4248,6 +4386,55 @@ Proof.
       PTrieT.trie_get_le. time_simpl. rewrite !Nat2N.inj_add in *. lia.
 Qed.
 
+(** Each cached edge reads bounded destination and parent keys and preserves the flag budget. *)
+Local Lemma dom_time_edge_update_from width r m pos sizes u pu su acc v :
+  Pos.size_nat u <= width -> Pos.size_nat v <= width ->
+  N.size_nat pu <= width -> N.size_nat su <= width + 1 ->
+  (forall x i, trie_get x pos = Some i -> N.size_nat i <= width) ->
+  (forall x p i, trie_get x pos = Some i -> trie_get x m = Some p ->
+    Pos.size_nat p <= width) ->
+  (forall x, N.size_nat (dom_size_get sizes x) <= width + 1) ->
+  dom_flags_width width acc ->
+  (T_dom_edge_update_from r m pos sizes u pu su acc v <=
+    (PTrieT.c_trie + 128) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hu Hv Hpu Hsu Hpositions Hparents Hsizes Hflags.
+  unfold T_dom_edge_update_from. destruct acc as [flags|].
+  2: { time_simpl. rewrite Nat2N.inj_add. nia. }
+  destruct (trie_get v pos) as [pv|] eqn:Hpv.
+  2: { PTrieT.trie_get_le; time_simpl; rewrite Nat2N.inj_add; nia. }
+  pose proof (Pos.T_eqb_le v r) as Hroot.
+  destruct (Pos.eqb v r).
+  - PTrieT.trie_get_le; time_simpl; rewrite Nat2N.inj_add; nia.
+  - destruct (trie_get v m) as [p|] eqn:Hparent.
+    2: { PTrieT.trie_get_le; time_simpl; rewrite Nat2N.inj_add; nia. }
+    pose proof (Hparents v p pv Hpv Hparent) as Hp.
+    pose proof (dom_time_interval_from pos sizes p pu su width
+      Hp Hpu Hsu Hpositions Hsizes) as Hinterval.
+    destruct (dom_interval_from pos sizes p pu su).
+    2: { PTrieT.trie_get_le; time_simpl; rewrite Nat2N.inj_add in *; nia. }
+    pose proof (Pos.T_eqb_le u p) as Hdirect.
+    assert (Hset_width : (PTrieT.c_trie * N.of_nat (Pos.size_nat v) <=
+      PTrieT.c_trie * N.of_nat width)%N) by (apply N.mul_le_mono_l; lia).
+    destruct (trie_get v flags) as [[[direct lo] hi]|] eqn:Hrecord.
+    + destruct (Hflags v direct lo hi Hrecord) as [Hlo Hhi].
+      pose proof (dom_time_min lo pu) as Hmin.
+      pose proof (dom_time_max hi pu) as Hmax.
+      pose proof (PTrieT.T_set_le (bool * N * N) v
+        (if direct then true else Pos.eqb u p, N.min lo pu, N.max hi pu) flags) as Hset.
+      change (PTrieCode.T_set v
+        (if direct then true else Pos.eqb u p, N.min lo pu, N.max hi pu) flags <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
+      destruct direct; PTrieT.trie_get_le; time_simpl; rewrite !Nat2N.inj_add in *; lia.
+    + pose proof (dom_time_min pu pu) as Hmin.
+      pose proof (dom_time_max pu pu) as Hmax.
+      pose proof (PTrieT.T_set_le (bool * N * N) v
+        (Pos.eqb u p, N.min pu pu, N.max pu pu) flags) as Hset.
+      change (PTrieCode.T_set v (Pos.eqb u p, N.min pu pu, N.max pu pu) flags <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
+      PTrieT.trie_get_le. time_simpl. rewrite !Nat2N.inj_add in *. lia.
+Qed.
+
 (** Low-high final checks compare only stored extrema and bounded interval endpoints. *)
 Local Lemma dom_time_low_high width r pos sizes flags v :
   Pos.size_nat v <= width ->
@@ -4315,6 +4502,61 @@ Proof.
   clear -Hu Hfold_time Hlookup. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
+(** A live row pays for the source once and then for the cached edge callback. *)
+Local Lemma dom_time_edges_from_fast width g r m pos sizes acc u :
+  Pos.size_nat u <= width ->
+  (forall v, In v (succs (base g) u) -> Pos.size_nat v <= width) ->
+  (forall x i, trie_get x pos = Some i -> N.size_nat i <= width) ->
+  (forall x p i, trie_get x pos = Some i -> trie_get x m = Some p ->
+    Pos.size_nat p <= width) ->
+  (forall x, N.size_nat (dom_size_get sizes x) <= width + 1) ->
+  dom_flags_width width acc ->
+  dom_flags_width width (dom_edges_from_fast g r m pos sizes acc u) /\
+  (T_dom_edges_from_fast g r m pos sizes acc u <=
+    (PTrieT.c_trie + 256) * N.of_nat (width + 1) *
+      N.of_nat (length (succs (base g) u) + 1))%N.
+Proof.
+  intros Hu Hrow Hpositions Hparents Hsizes Hflags.
+  split.
+  - rewrite dom_edges_from_fast_eq.
+    exact (proj1 (dom_time_edges_from width g r m pos sizes acc u
+      Hu Hrow Hpositions Hparents Hsizes Hflags)).
+  - unfold T_dom_edges_from_fast. destruct acc as [flags|].
+    2: { time_simpl. rewrite !Nat2N.inj_add. nia. }
+    pose proof (dom_time_succs (base g) u) as Hlookup.
+    destruct (trie_get u pos) as [pu|] eqn:Hsource.
+    + pose proof (Hpositions u pu Hsource) as Hpu.
+      pose proof (Hsizes u) as Hsu.
+      pose proof (dom_time_size_get sizes u) as Hsize_time.
+      pose proof (@dom_time_fold_left_state (option (ptrie (bool * N * N))) positive
+        (dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u))
+        (T_dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u))
+        (dom_flags_width width) (fun _ => 0%nat)
+        ((PTrieT.c_trie + 128) * N.of_nat (width + 1))%N
+        (succs (base g) u) (Some flags) Hflags
+        ltac:(intros v Hv before Hbounded; split;
+          [rewrite dom_edge_update_from_eq by exact Hsource;
+           now apply dom_edge_update_width|
+           rewrite N.mul_1_r; apply dom_time_edge_update_from;
+           try assumption; now apply Hrow])) as [_ Hfold_time].
+      assert (Hzero : fold_right (fun (_ : positive) total => (0 + total)%nat)
+        0 (succs (base g) u) = 0).
+      { generalize (succs (base g) u). intro row.
+        induction row as [|x xs IH]; cbn [fold_right]; [reflexivity|now rewrite IH]. }
+      rewrite Hzero, Nat.add_0_l in Hfold_time.
+      time_simpl.
+      change (fun (before : option (ptrie (bool * N * N))) (v : positive) =>
+        T_dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u) before v)
+        with (T_dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u)).
+      set (running := List.T_fold_left
+        (dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u))
+        (T_dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u))
+        (succs (base g) u) (Some flags)) in *; clearbody running.
+      PTrieT.trie_get_le. rewrite !Nat2N.inj_add in *. nia.
+    + destruct (succs (base g) u); PTrieT.trie_get_le; time_simpl;
+        rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
 (** The edge phase visits each selected row once and checks its bounded flag summary. *)
 Local Lemma dom_time_edges width g r m o pos sizes :
   (forall u, In u o -> Pos.size_nat u <= width) ->
@@ -4330,15 +4572,15 @@ Local Lemma dom_time_edges width g r m o pos sizes :
 Proof.
   intros Hkeys Hrows Hpositions Hparents Hsizes.
   pose proof (@dom_time_fold_left_state (option (ptrie (bool * N * N))) positive
-    (dom_edges_from g r m pos sizes) (T_dom_edges_from g r m pos sizes)
+    (dom_edges_from_fast g r m pos sizes) (T_dom_edges_from_fast g r m pos sizes)
     (dom_flags_width width) (fun u => length (succs (base g) u))
     ((PTrieT.c_trie + 256) * N.of_nat (width + 1))%N o (Some Empty)
     (dom_flags_width_empty width)
-    ltac:(intros u Hu acc Hflags; apply dom_time_edges_from;
+    ltac:(intros u Hu acc Hflags; apply dom_time_edges_from_fast;
       [now apply Hkeys|intros v Hv; now apply (Hrows u)|exact Hpositions|
        exact Hparents|exact Hsizes|exact Hflags])) as [Hfinal Hfold_time].
   unfold T_dom_edges.
-  destruct (fold_left (dom_edges_from g r m pos sizes) o (Some Empty))
+  destruct (fold_left (dom_edges_from_fast g r m pos sizes) o (Some Empty))
     as [flags|] eqn:Hresult; cbn [dom_flags_width] in Hfinal.
   - pose proof (@dom_time_forallb positive (dom_low_high r pos sizes flags)
       (T_dom_low_high r pos sizes flags) (64 * N.of_nat (width + 1))%N o
@@ -4346,19 +4588,19 @@ Proof.
         [now apply Hkeys|exact Hpositions|exact Hsizes|exact Hfinal])) as Hchecks.
     time_simpl.
     change (fun (H : option (ptrie (bool * N * N))) (H0 : positive) =>
-      T_dom_edges_from g r m pos sizes H H0) with (T_dom_edges_from g r m pos sizes).
+      T_dom_edges_from_fast g r m pos sizes H H0) with (T_dom_edges_from_fast g r m pos sizes).
     change (fun H : positive => T_dom_low_high r pos sizes flags H)
       with (T_dom_low_high r pos sizes flags).
-    set (running := List.T_fold_left (dom_edges_from g r m pos sizes)
-      (T_dom_edges_from g r m pos sizes) o (Some Empty)) in *; clearbody running.
+    set (running := List.T_fold_left (dom_edges_from_fast g r m pos sizes)
+      (T_dom_edges_from_fast g r m pos sizes) o (Some Empty)) in *; clearbody running.
     set (checking := List.T_forallb (dom_low_high r pos sizes flags)
       (T_dom_low_high r pos sizes flags) o) in *; clearbody checking.
     clear -Hfold_time Hchecks. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
   - time_simpl.
     change (fun (H : option (ptrie (bool * N * N))) (H0 : positive) =>
-      T_dom_edges_from g r m pos sizes H H0) with (T_dom_edges_from g r m pos sizes).
-    set (running := List.T_fold_left (dom_edges_from g r m pos sizes)
-      (T_dom_edges_from g r m pos sizes) o (Some Empty)) in *; clearbody running.
+      T_dom_edges_from_fast g r m pos sizes H H0) with (T_dom_edges_from_fast g r m pos sizes).
+    set (running := List.T_fold_left (dom_edges_from_fast g r m pos sizes)
+      (T_dom_edges_from_fast g r m pos sizes) o (Some Empty)) in *; clearbody running.
     clear -Hfold_time. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
 Qed.
 
