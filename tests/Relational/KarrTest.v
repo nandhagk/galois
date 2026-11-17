@@ -395,3 +395,20 @@ Example wide_query_of_a_rational_source_has_an_exact_endpoint :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** The shared basis rejects a contradictory source before producing a finite endpoint. *)
+Example range_rejects_a_contradictory_source :
+  Equalities.range_linear
+    [LCons _ [(1%positive, 1)] REq 0; LCons _ [(1%positive, 1)] REq 1]
+    (Lin _ [(1%positive, 1)] 0) = (NegInf, PosInf).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A rational endpoint without an exact integer quotient remains unbounded. *)
+Example range_rejects_an_inexact_integer_endpoint :
+  Equalities.range_linear [LCons _ [(1%positive, 2)] REq 3]
+    (Lin _ [(1%positive, 1)] 0) = (NegInf, PosInf).
+Proof.
+  vm_compute. reflexivity.
+Qed.
