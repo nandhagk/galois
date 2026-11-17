@@ -166,3 +166,15 @@ Example empty_tuple_terminal_prunes_table :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** A fresh two-cell suffix preserves the entire state produced by the specified step walk. *)
+Example fresh_insertion_matches_step_reference :
+  let first := [Val 2; Val 3; Val 7]%positive in
+  let second := [Val 2; Val 5; Val 11]%positive in
+  let ix := RuntimeIndex.insert first RuntimeIndex.empty in
+  RuntimeIndex.insert second ix =
+    RuntimeIndex.insert_finish second ix
+      (fold_left RuntimeIndex.insert_step_st second (RuntimeIndex.start ix)).
+Proof.
+  vm_compute. reflexivity.
+Qed.

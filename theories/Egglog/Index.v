@@ -418,6 +418,44 @@ Module IndexCode (V : VALUE_OPS) <: INDEX_OPS V.
   Definition insert_step (ix : t) (n : positive) (c : cell V.t) : t :=
     fst (insert_step_st (ix, n) c).
 
+  (** A fresh suffix writes singleton nodes without looking up their empty contents. *)
+  Fixpoint fresh_path (ix : t) (n : positive) (cs : list (cell V.t)) : walk_state :=
+    match cs with
+    | [] => (ix, n)
+    | c :: rest =>
+      let m := Pos.succ (next ix) in
+      let nd := IndexNode
+        (PTrieCode.set (encode_cell c) (IndexEdge c m 1%N) PTrieCode.empty) 1%N false in
+      fresh_path (write_node ix n nd m) m rest
+    end.
+
+  (** Insertion follows existing edges, then builds the remaining fresh suffix directly. *)
+  Fixpoint insert_walk (ix : t) (n : positive) (cs : list (cell V.t)) : walk_state :=
+    match cs with
+    | [] => (ix, n)
+    | c :: rest =>
+      if Pos.ltb (next ix) n then (ix, n) else
+        let nd := read_node ix n in
+        let code := encode_cell c in
+        match PTrieCode.get code (node_edges nd) with
+        | Some edge =>
+          let updated := IndexEdge c (edge_child edge)
+            (bounded_succ (next ix) (edge_count edge)) in
+          insert_walk
+            (write_node ix n
+              (IndexNode (PTrieCode.set code updated (node_edges nd))
+                (node_degree nd) (node_terminal nd)) (next ix))
+            (edge_child edge) rest
+        | None =>
+          let m := Pos.succ (next ix) in
+          fresh_path
+            (write_node ix n
+              (IndexNode (PTrieCode.set code (IndexEdge c m 1%N) (node_edges nd))
+                (bounded_succ (next ix) (node_degree nd)) (node_terminal nd)) m)
+            m rest
+        end
+    end.
+
   Definition remove_step_st (st : walk_state) (c : cell V.t) : walk_state :=
     let '(ix, n) := st in
     if Pos.ltb (next ix) n then st else
@@ -453,7 +491,7 @@ Module IndexCode (V : VALUE_OPS) <: INDEX_OPS V.
 
   Definition insert (r : list (cell V.t)) (ix : t) : t :=
     if contains r ix then ix else
-      let st := fold_left insert_step_st r (start ix) in
+      let st := insert_walk ix (root ix) r in
       mark_terminal (fst st) (snd st) true (Nat.max (index_cell_width ix) (tuple_bits r)).
 
   Definition remove (r : list (cell V.t)) (ix : t) : t :=
@@ -495,13 +533,6 @@ Module Index (V : VALUE) <: INDEX V.
     parents_unique ix /\ counted_edges ix.
   Definition wf (a : nat) (ix : t) : Prop :=
     valid ix /\ (forall r, mem ix r -> length r = a).
-
-  (** Checking membership before insertion preserves the specified walk result. *)
-  Lemma insert_agrees : forall r ix,
-    insert r ix = insert_finish r ix (fold_left insert_step_st r (start ix)).
-  Proof.
-    intros r ix. unfold insert, insert_finish. destruct (contains r ix); reflexivity.
-  Qed.
 
   (** Checking membership before removal preserves the specified walk result. *)
   Lemma remove_agrees : forall r ix,
@@ -622,6 +653,85 @@ Module Index (V : VALUE) <: INDEX V.
       cbn [fst]; apply table_ok_write; try assumption; try apply Pos.le_refl.
     - eapply Pos.le_trans; [exact Hguard | apply Pos.lt_le_incl, Pos.lt_succ_diag_r].
     - apply Pos.lt_le_incl, Pos.lt_succ_diag_r.
+  Qed.
+
+  (** The next fresh identifier still reads as empty after writing an earlier node. *)
+  Lemma read_node_write_fresh : forall ix n nd, table_ok ix ->
+    (n <= next ix)%positive ->
+    read_node (write_node ix n nd (Pos.succ (next ix))) (Pos.succ (next ix)) = empty_node.
+  Proof.
+    intros ix n nd Htable Hbound.
+    rewrite read_node_write_other by lia.
+    apply read_node_above_counter; [exact Htable | apply Pos.lt_succ_diag_r].
+  Qed.
+
+  (** At an empty bounded cursor the ordinary step writes exactly one singleton node. *)
+  Lemma insert_step_empty : forall ix n c, (n <= next ix)%positive ->
+    read_node ix n = empty_node ->
+    insert_step_st (ix, n) c =
+      (write_node ix n
+        (IndexNode (PTrieCode.set (encode_cell c)
+          (IndexEdge c (Pos.succ (next ix)) 1%N) PTrieCode.empty) 1%N false)
+        (Pos.succ (next ix)), Pos.succ (next ix)).
+  Proof.
+    intros ix n c Hbound Hempty.
+    assert (Hguard : Pos.ltb (next ix) n = false) by now apply Pos.ltb_ge.
+    unfold insert_step_st. rewrite Hguard, Hempty.
+    cbn [empty_node node_edges node_degree node_terminal].
+    rewrite PTrie.get_empty. reflexivity.
+  Qed.
+
+  (** Direct fresh-path construction agrees with ordinary steps on an empty cursor. *)
+  Lemma fresh_path_agrees : forall cs ix n, table_ok ix ->
+    (n <= next ix)%positive -> read_node ix n = empty_node ->
+    fresh_path ix n cs = fold_left insert_step_st cs (ix, n).
+  Proof.
+    induction cs as [| c rest IH]; intros ix n Htable Hbound Hempty;
+      cbn [fresh_path fold_left]; [reflexivity |].
+    rewrite (insert_step_empty ix n c Hbound Hempty).
+    apply IH.
+    - apply table_ok_write; [exact Htable | lia | apply Pos.lt_le_incl, Pos.lt_succ_diag_r].
+    - apply Pos.le_refl.
+    - now apply read_node_write_fresh.
+  Qed.
+
+  (** An oversized cursor causes every ordinary insertion step to return unchanged. *)
+  Lemma insert_fold_above_counter : forall cs ix n, Pos.ltb (next ix) n = true ->
+    fold_left insert_step_st cs (ix, n) = (ix, n).
+  Proof.
+    induction cs as [| c rest IH]; intros ix n Hguard; cbn [fold_left]; [reflexivity |].
+    assert (Hstep : insert_step_st (ix, n) c = (ix, n)).
+    { unfold insert_step_st. now rewrite Hguard. }
+    rewrite Hstep. now apply IH.
+  Qed.
+
+  (** Switching to the fresh builder at the first missing edge preserves the whole walk. *)
+  Lemma insert_walk_agrees : forall cs ix n, table_ok ix ->
+    insert_walk ix n cs = fold_left insert_step_st cs (ix, n).
+  Proof.
+    induction cs as [| c rest IH]; intros ix n Htable;
+      cbn [insert_walk fold_left]; [reflexivity |].
+    unfold insert_step_st at 2.
+    destruct (Pos.ltb (next ix) n) eqn:Hguard.
+    - symmetry. now apply insert_fold_above_counter.
+    - apply Pos.ltb_ge in Hguard.
+      destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+        as [edge |] eqn:Hget.
+      + apply IH. apply table_ok_write; [exact Htable | exact Hguard | apply Pos.le_refl].
+      + apply fresh_path_agrees.
+        * apply table_ok_write;
+            [exact Htable | lia | apply Pos.lt_le_incl, Pos.lt_succ_diag_r].
+        * apply Pos.le_refl.
+        * now apply read_node_write_fresh.
+  Qed.
+
+  (** The guarded insertion with a direct fresh suffix keeps the specified walk result. *)
+  Lemma insert_agrees : forall r ix, table_ok ix ->
+    insert r ix = insert_finish r ix (fold_left insert_step_st r (start ix)).
+  Proof.
+    intros r ix Htable. unfold insert, insert_finish.
+    destruct (contains r ix); [reflexivity |].
+    rewrite insert_walk_agrees by exact Htable. reflexivity.
   Qed.
 
   (** Writing one edge exposes exactly that binding and retains every other binding. *)
@@ -945,11 +1055,13 @@ Module Index (V : VALUE) <: INDEX V.
   Lemma next_insert : forall a r ix, wf a ix ->
     (next (insert r ix) <= next ix + Pos.of_nat (length r))%positive.
   Proof.
-    intros a r ix _. apply Pos2Nat.inj_le.
+    intros a r ix [Hvalid _].
+    rewrite insert_agrees by exact (proj1 (proj2 (proj2 Hvalid))).
+    apply Pos2Nat.inj_le.
     rewrite Pos2Nat.inj_add, Nat2Pos.id_max.
     pose proof (insert_walk_counter r (start ix)) as Hcounter.
     cbn [start fst] in Hcounter.
-    unfold insert, insert_finish. destruct (contains r ix).
+    unfold insert_finish. destruct (contains r ix).
     - lia.
     - cbn [mark_terminal next index_counter]. lia.
   Qed.
@@ -1569,7 +1681,8 @@ Module Index (V : VALUE) <: INDEX V.
   Lemma insert_membership : forall ix r u, shape ix ->
     (mem (insert r ix) u <-> u = r \/ mem ix u).
   Proof.
-    intros ix r u Hshape. unfold insert, insert_finish.
+    intros ix r u Hshape.
+    rewrite insert_agrees by exact (proj1 (proj2 Hshape)). unfold insert_finish.
     destruct (contains r ix) eqn:Hpresent.
     - split; [now right |]. intros [-> | Hmem]; [exact Hpresent | exact Hmem].
     - set (st := fold_left insert_step_st r (start ix)).
@@ -1665,7 +1778,8 @@ Module Index (V : VALUE) <: INDEX V.
 
   Lemma shape_insert : forall ix r, shape ix -> shape (insert r ix).
   Proof.
-    intros ix r Hshape. unfold insert, insert_finish.
+    intros ix r Hshape.
+    rewrite insert_agrees by exact (proj1 (proj2 Hshape)). unfold insert_finish.
     destruct (contains r ix); [exact Hshape |].
     apply shape_mark_terminal.
     - apply shape_insert_walk. exact Hshape.
@@ -1684,9 +1798,11 @@ Module Index (V : VALUE) <: INDEX V.
     - apply remove_walk_point_bound; [exact Hshape | apply Pos.le_1_l].
   Qed.
 
-  Lemma degrees_ok_insert : forall ix r, degrees_ok ix -> degrees_ok (insert r ix).
+  Lemma degrees_ok_insert : forall ix r, table_ok ix ->
+    degrees_ok ix -> degrees_ok (insert r ix).
   Proof.
-    intros ix r Hdegrees. unfold insert, insert_finish.
+    intros ix r Htable Hdegrees.
+    rewrite insert_agrees by exact Htable. unfold insert_finish.
     destruct (contains r ix); [exact Hdegrees |].
     apply degrees_ok_mark_terminal, degrees_ok_insert_walk. exact Hdegrees.
   Qed.
@@ -2556,7 +2672,8 @@ Module Index (V : VALUE) <: INDEX V.
   Lemma counted_edges_insert : forall ix r, shape ix -> counted_edges ix ->
     counted_edges (insert r ix).
   Proof.
-    intros ix r Hshape Hcounts. unfold insert, insert_finish.
+    intros ix r Hshape Hcounts.
+    rewrite insert_agrees by exact (proj1 (proj2 Hshape)). unfold insert_finish.
     destruct (contains r ix) eqn:Hpresent; [exact Hcounts |].
     set (st := fold_left insert_step_st r (start ix)).
     assert (Hshape' : shape (fst st)) by (apply shape_insert_walk; exact Hshape).
@@ -2630,7 +2747,8 @@ Module Index (V : VALUE) <: INDEX V.
   Lemma positive_insert : forall ix r, shape ix -> counted_edges ix ->
     edge_counts_positive ix -> edge_counts_positive (insert r ix).
   Proof.
-    intros ix r Hshape Hcounts Hpositive. unfold insert, insert_finish.
+    intros ix r Hshape Hcounts Hpositive.
+    rewrite insert_agrees by exact (proj1 (proj2 Hshape)). unfold insert_finish.
     destruct (contains r ix); [exact Hpositive |].
     apply positive_mark_terminal, positive_insert_walk;
       [exact Hshape | | apply Pos.le_1_l | exact Hpositive].
@@ -2669,10 +2787,12 @@ Module Index (V : VALUE) <: INDEX V.
     unfold stored_edge in Hget. rewrite mark_node_edges in Hget. now apply Hcells in Hget.
   Qed.
 
-  Lemma stored_cell_width_insert : forall ix r, edge_cells_bounded ix (index_cell_width ix) ->
+  Lemma stored_cell_width_insert : forall ix r, table_ok ix ->
+    edge_cells_bounded ix (index_cell_width ix) ->
     edge_cells_bounded (insert r ix) (index_cell_width (insert r ix)).
   Proof.
-    intros ix r Hcells. unfold insert, insert_finish.
+    intros ix r Htable Hcells.
+    rewrite insert_agrees by exact Htable. unfold insert_finish.
     destruct (contains r ix); [exact Hcells |].
     set (st := fold_left insert_step_st r (start ix)).
     set (bound := Nat.max (index_cell_width ix) (tuple_bits r)).
@@ -2695,7 +2815,7 @@ Module Index (V : VALUE) <: INDEX V.
     pose proof (shape_insert ix r Hshape) as Hshape'.
     pose proof (counted_edges_insert ix r Hshape Hcounts) as Hcounts'.
     pose proof (positive_insert ix r Hshape Hcounts Hpositive) as Hpositive'.
-    pose proof (stored_cell_width_insert ix r Hcells) as Hcells'.
+    pose proof (stored_cell_width_insert ix r (proj1 (proj2 Hshape)) Hcells) as Hcells'.
     intros n code edge Hget. destruct ((proj1 Hshape') n code edge Hget) as [Hcode Hbounds].
     split; [exact Hcode |]. split; [exact Hbounds |]. split; [now apply Hcells' in Hget |].
     split; [now apply Hpositive' in Hget |]. eapply counted_edges_upper; eassumption.
@@ -2707,7 +2827,8 @@ Module Index (V : VALUE) <: INDEX V.
     destruct Hfields as [_ [Hdegrees [_ [_ [_ Hcounts]]]]].
     pose proof (valid_shape ix Hvalid) as Hshape.
     pose proof (shape_insert ix r Hshape) as Hshape'.
-    split; [now apply edges_ok_insert |]. split; [now apply degrees_ok_insert |].
+    split; [now apply edges_ok_insert |].
+    split; [apply degrees_ok_insert; [exact (proj1 (proj2 Hshape)) | exact Hdegrees] |].
     split; [exact (proj1 (proj2 Hshape')) |]. split; [now apply shape_paths_unique |].
     split; [exact (proj2 (proj2 Hshape')) |]. now apply counted_edges_insert.
   Qed.
@@ -3175,12 +3296,99 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   TimeFun start.
   TimeFun insert_step_st.
   TimeFun insert_step.
+  TimeFun fresh_path.
+  TimeFun insert_walk.
   TimeFun remove_step_st.
   TimeFun mark_terminal.
   TimeFun insert_finish.
   TimeFun remove_finish.
   TimeFun insert.
   TimeFun remove.
+
+  (** A direct fresh suffix performs no more work than its ordinary insertion steps. *)
+  Lemma T_fresh_path_le_fold : forall cs ix n, table_ok ix ->
+    (n <= next ix)%positive -> read_node ix n = empty_node ->
+    (T_fresh_path ix n cs <=
+      List.T_fold_left insert_step_st T_insert_step_st cs (ix, n))%N.
+  Proof.
+    induction cs as [| c rest IH]; intros ix n Htable Hbound Hempty.
+    - time_unfold T_fresh_path. time_unfold List.T_fold_left. time_cbn. lia.
+    - set (ix' := write_node ix n
+        (IndexNode (PTrieCode.set (encode_cell c)
+          (IndexEdge c (Pos.succ (next ix)) 1%N) PTrieCode.empty) 1%N false)
+        (Pos.succ (next ix))).
+      assert (Htable' : table_ok ix').
+      { unfold ix'. apply table_ok_write;
+          [exact Htable | lia | apply Pos.lt_le_incl, Pos.lt_succ_diag_r]. }
+      assert (Hbound' : (Pos.succ (next ix) <= next ix')%positive) by apply Pos.le_refl.
+      assert (Hempty' : read_node ix' (Pos.succ (next ix)) = empty_node).
+      { unfold ix'. now apply read_node_write_fresh. }
+      pose proof (IH ix' (Pos.succ (next ix)) Htable' Hbound' Hempty') as Htail.
+      assert (Hguard : Pos.ltb (next ix) n = false) by now apply Pos.ltb_ge.
+      time_unfold T_fresh_path. time_unfold List.T_fold_left.
+      rewrite (insert_step_empty ix n c Hbound Hempty).
+      time_unfold T_insert_step_st. cbn beta iota zeta.
+      rewrite Hguard, Hempty. cbn [empty_node node_edges node_degree node_terminal].
+      rewrite PTrie.get_empty. time_simpl. time_cbn. fold ix'.
+      match goal with
+      | |- context [List.T_fold_left insert_step_st ?clock rest ?st] =>
+        change clock with T_insert_step_st
+      end.
+      cbn [N.succ].
+      lia.
+  Qed.
+
+  (** The combined insertion walk is bounded by the clock of its specified step fold. *)
+  Lemma T_insert_walk_le_fold : forall cs ix n, table_ok ix ->
+    (T_insert_walk ix n cs <=
+      List.T_fold_left insert_step_st T_insert_step_st cs (ix, n))%N.
+  Proof.
+    induction cs as [| c rest IH]; intros ix n Htable.
+    - time_unfold T_insert_walk. time_unfold List.T_fold_left. time_cbn. lia.
+    - time_unfold T_insert_walk. time_unfold List.T_fold_left.
+      unfold insert_step_st at 2.
+      time_unfold T_insert_step_st. cbn beta iota zeta.
+      destruct (Pos.ltb (next ix) n) eqn:Hguard.
+      + time_simpl. time_cbn. lia.
+      + apply Pos.ltb_ge in Hguard.
+        destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+          as [edge |] eqn:Hget.
+        * set (ix' := write_node ix n
+            (IndexNode (PTrieCode.set (encode_cell c)
+              (IndexEdge c (edge_child edge) (bounded_succ (next ix) (edge_count edge)))
+              (node_edges (read_node ix n)))
+              (node_degree (read_node ix n)) (node_terminal (read_node ix n))) (next ix)).
+          assert (Htable' : table_ok ix').
+          { unfold ix'. apply table_ok_write;
+              [exact Htable | exact Hguard | apply Pos.le_refl]. }
+          pose proof (IH ix' (edge_child edge) Htable') as Htail.
+          fold ix'. time_simpl. time_cbn.
+          match goal with
+          | |- context [List.T_fold_left insert_step_st ?clock rest ?st] =>
+            change clock with T_insert_step_st
+          end.
+          lia.
+        * set (ix' := write_node ix n
+            (IndexNode (PTrieCode.set (encode_cell c)
+              (IndexEdge c (Pos.succ (next ix)) 1%N) (node_edges (read_node ix n)))
+              (bounded_succ (next ix) (node_degree (read_node ix n)))
+              (node_terminal (read_node ix n))) (Pos.succ (next ix))).
+          assert (Htable' : table_ok ix').
+          { unfold ix'. apply table_ok_write;
+              [exact Htable | lia | apply Pos.lt_le_incl, Pos.lt_succ_diag_r]. }
+          assert (Hbound' : (Pos.succ (next ix) <= next ix')%positive) by apply Pos.le_refl.
+          assert (Hempty' : read_node ix' (Pos.succ (next ix)) = empty_node).
+          { unfold ix'. now apply read_node_write_fresh. }
+          pose proof (T_fresh_path_le_fold rest ix' (Pos.succ (next ix))
+            Htable' Hbound' Hempty') as Htail.
+          fold ix'. time_simpl. time_cbn.
+          match goal with
+          | |- context [List.T_fold_left insert_step_st ?clock rest ?st] =>
+            change clock with T_insert_step_st
+          end.
+          lia.
+  Qed.
+
   Definition max_cell_bits (ix : t) : nat := index_cell_width ix.
   Definition width (ix : t) (r : list (cell V.t)) : nat :=
     Pos.size_nat (next ix + Pos.of_nat (length r)) + tuple_bits r + max_cell_bits ix.
@@ -4141,16 +4349,18 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     lia.
   Qed.
 
-  (** Guarding insertion avoids the discarded walk and the finishing wrapper call. *)
-  Lemma T_insert_fold_finish_le : forall r ix,
+  (** Guarding insertion and building fresh suffixes fit the original walk and wrapper clock. *)
+  Lemma T_insert_fold_finish_le : forall r ix, table_ok ix ->
     (T_insert r ix <= 1 + (T_start ix +
       List.T_fold_left insert_step_st T_insert_step_st r (start ix) +
       T_insert_finish r ix (fold_left insert_step_st r (start ix))))%N.
   Proof.
-    intros r ix. time_unfold T_insert. time_unfold T_insert_finish.
-    change (fun (st : walk_state) (c : cell V.t) => T_insert_step_st st c)
-      with T_insert_step_st.
-    destruct (contains r ix); time_cbn; lia.
+    intros r ix Htable.
+    pose proof (T_insert_walk_le_fold r ix (root ix) Htable) as Hwalk.
+    pose proof (insert_walk_agrees r ix (root ix) Htable) as Hagree.
+    time_unfold T_insert. time_unfold T_insert_finish. time_unfold T_start.
+    destruct (contains r ix); [time_cbn; lia |].
+    rewrite Hagree. time_simpl. time_cbn. unfold start in Hwalk |- *. lia.
   Qed.
 
   (** Guarding removal avoids the discarded walk and the finishing wrapper call. *)
@@ -4181,11 +4391,13 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     rewrite Hlength in Hfinish |- *.
     set (amount := N.of_nat (length r)) in *.
     pose proof (mutation_total_budget cost bits amount Hcost Hbits) as Hbudget.
-    eapply N.le_trans; [apply T_insert_fold_finish_le |]. rewrite T_start_exact.
-    change (1 + (2 + List.T_fold_left insert_step_st T_insert_step_st r (start ix) +
-      T_insert_finish r ix (fold_left insert_step_st r (start ix))) <=
-      512 * cost * (amount + 1) * bits)%N.
-    clear Hvalid. clearbody cost bits amount. lia.
+    eapply N.le_trans.
+    - apply T_insert_fold_finish_le. exact (proj1 (proj2 (proj2 Hvalid))).
+    - rewrite T_start_exact.
+      change (1 + (2 + List.T_fold_left insert_step_st T_insert_step_st r (start ix) +
+        T_insert_finish r ix (fold_left insert_step_st r (start ix))) <=
+        512 * cost * (amount + 1) * bits)%N.
+      clear Hvalid. clearbody cost bits amount. lia.
   Qed.
 
   (** Removal's complete clock uses only preserved edge and degree bounds. *)
@@ -4315,7 +4527,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Lemma F_insert_steps : forall r ix, inv ix ->
     insert r ix = insert_finish r ix (fold_left insert_step_st r (start ix)).
   Proof.
-    intros r ix _. apply insert_agrees.
+    intros r ix Hvalid. apply insert_agrees. exact (proj1 (proj2 (proj2 Hvalid))).
   Qed.
 
   (** Removal follows its named state walk. *)
