@@ -716,6 +716,7 @@ Proof.
       now apply tnum_udiv_sound|now apply tnum_urem_sound|apply tnum_top_sound|
       now apply tnum_srem_sound|now apply tnum_and_sound|now apply tnum_or_sound|
       now apply tnum_xor_sound|
+      cbn [F.tnum_forward_raw P.tnum_variable]; rewrite tnum_variable_fast_agrees;
       eapply tnum_variable_sound; try eassumption; try reflexivity;
         unfold tnum_shift_op; tauto].
 Qed.

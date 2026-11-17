@@ -117,6 +117,348 @@ Fixpoint tnum_refine (wps : list (width * tnum)) (qs : list tnum) : list tnum :=
   end.
 TimeFun tnum_refine.
 
+(** Backward helpers share the masks built by their table entry. *)
+Definition tnum_project_m (sm rm : Z) (g : Z -> Z) (q : tnum) : tnum :=
+  Tnum (tnum_wrap_m sm (g (tnum_wrap_m rm (zeros q))))
+    (tnum_wrap_m sm (g (tnum_wrap_m rm (ones q)))).
+TimeFun tnum_project_m.
+
+(** Sharing both width masks preserves projection exactly. *)
+Lemma tnum_project_m_eq : forall sw rw g q,
+  tnum_project_m (Z.ones (Zpos sw)) (Z.ones (Zpos rw)) g q = tnum_project sw rw g q.
+Proof.
+  reflexivity.
+Qed.
+
+(** A supplied pair of masks removes their repeated construction from projection. *)
+Lemma tnum_project_m_time : forall sw rw g Tg q,
+  (T_tnum_project_m (Z.ones (Zpos sw)) (Z.ones (Zpos rw)) g Tg q <=
+    T_tnum_project sw rw g Tg q)%N.
+Proof.
+  intros sw rw g Tg q.
+  time_unfold T_tnum_project_m. time_unfold T_tnum_project. time_cbn.
+  rewrite ?tnum_wrap_m_eq.
+  time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn. lia.
+Qed.
+TimeBound tnum_project_m_time.
+
+Definition tnum_and_back_m (mask : Z) (q b : tnum) : tnum :=
+  Tnum (tnum_wand_m mask (zeros q) (ones b)) (tnum_wrap_m mask (ones q)).
+TimeFun tnum_and_back_m.
+
+(** Sharing the width mask preserves backward conjunction. *)
+Lemma tnum_and_back_m_eq : forall w q b,
+  tnum_and_back_m (Z.ones (Zpos w)) q b = tnum_and_back w q b.
+Proof.
+  reflexivity.
+Qed.
+
+(** A supplied mask cannot increase backward conjunction's clock. *)
+Lemma tnum_and_back_m_time : forall w q b,
+  (T_tnum_and_back_m (Z.ones (Zpos w)) q b <= T_tnum_and_back w q b)%N.
+Proof.
+  intros w q b. time_unfold T_tnum_and_back_m. time_unfold T_tnum_and_back. time_cbn.
+  time_unfold T_tnum_wand_m. time_unfold T_tnum_wand. time_cbn.
+  time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn. lia.
+Qed.
+TimeBound tnum_and_back_m_time.
+
+Definition tnum_or_back_m (mask : Z) (q b : tnum) : tnum :=
+  Tnum (tnum_wrap_m mask (zeros q)) (tnum_wand_m mask (ones q) (zeros b)).
+TimeFun tnum_or_back_m.
+
+(** Sharing the width mask preserves backward disjunction. *)
+Lemma tnum_or_back_m_eq : forall w q b,
+  tnum_or_back_m (Z.ones (Zpos w)) q b = tnum_or_back w q b.
+Proof.
+  reflexivity.
+Qed.
+
+(** A supplied mask cannot increase backward disjunction's clock. *)
+Lemma tnum_or_back_m_time : forall w q b,
+  (T_tnum_or_back_m (Z.ones (Zpos w)) q b <= T_tnum_or_back w q b)%N.
+Proof.
+  intros w q b. time_unfold T_tnum_or_back_m. time_unfold T_tnum_or_back. time_cbn.
+  time_unfold T_tnum_wand_m. time_unfold T_tnum_wand. time_cbn.
+  time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn. lia.
+Qed.
+TimeBound tnum_or_back_m_time.
+
+Definition tnum_sign_project_m (rm : Z) (sw : width) (n : Z) (q : tnum) : tnum :=
+  Tnum (if Z.shiftr (tnum_wrap_m rm (zeros q)) n =? 0 then 0 else half sw)
+    (if Z.shiftr (tnum_wrap_m rm (ones q)) n =? 0 then 0 else half sw).
+TimeFun tnum_sign_project_m.
+
+(** Sharing the result mask preserves sign-bit projection. *)
+Lemma tnum_sign_project_m_eq : forall sw rw n q,
+  tnum_sign_project_m (Z.ones (Zpos rw)) sw n q = tnum_sign_project sw rw n q.
+Proof.
+  reflexivity.
+Qed.
+
+(** A supplied result mask cannot increase sign-bit projection's clock. *)
+Lemma tnum_sign_project_m_time : forall sw rw n q,
+  (T_tnum_sign_project_m (Z.ones (Zpos rw)) sw n q <= T_tnum_sign_project sw rw n q)%N.
+Proof.
+  intros sw rw n q.
+  time_unfold T_tnum_sign_project_m. time_unfold T_tnum_sign_project. time_cbn.
+  rewrite ?tnum_wrap_m_eq.
+  time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn. lia.
+Qed.
+TimeBound tnum_sign_project_m_time.
+
+Definition tnum_back_shift_m (mask : Z) (o : op) (w : width) (k : Z) (q : tnum) : tnum :=
+  let copied := tnum_project_m mask mask (tnum_scalar_value (tnum_inverse_shift o) w k) q in
+  match o with
+  | bvashr => tnum_meet_m mask copied
+      (tnum_sign_project_m mask w (Z.max 0 (Zpos w - 1 - k)) q)
+  | _ => copied
+  end.
+TimeFun tnum_back_shift_m.
+
+(** Sharing the width mask preserves backward scalar shifts. *)
+Lemma tnum_back_shift_m_eq : forall o w k q,
+  tnum_back_shift_m (Z.ones (Zpos w)) o w k q = tnum_back_shift o w k q.
+Proof.
+  reflexivity.
+Qed.
+
+(** A supplied mask cannot increase backward scalar-shift work. *)
+Lemma tnum_back_shift_m_time : forall o w k q,
+  (T_tnum_back_shift_m (Z.ones (Zpos w)) o w k q <= T_tnum_back_shift o w k q)%N.
+Proof.
+  intros o w k q. destruct o; time_unfold T_tnum_back_shift_m;
+    time_unfold T_tnum_back_shift; time_cbn;
+    try solve [time_pose; lia].
+  rewrite ?tnum_project_m_eq, ?tnum_sign_project_m_eq.
+  time_unfold T_tnum_meet_m. time_unfold T_tnum_meet. time_cbn.
+  time_unfold T_tnum_wor_m. time_unfold T_tnum_wor. time_cbn.
+  time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn.
+  time_pose. lia.
+Qed.
+TimeBound tnum_back_shift_m_time.
+
+Definition tnum_back_sext_m (sm rm : Z) (sw : width) (q : tnum) : tnum :=
+  tnum_meet_m sm (tnum_project_m sm rm (fun m => m) q)
+    (tnum_sign_project_m rm sw (Zpos sw - 1) q).
+TimeFun tnum_back_sext_m.
+
+(** Sharing both masks preserves backward sign extension. *)
+Lemma tnum_back_sext_m_eq : forall sw rw q,
+  tnum_back_sext_m (Z.ones (Zpos sw)) (Z.ones (Zpos rw)) sw q = tnum_back_sext sw rw q.
+Proof.
+  reflexivity.
+Qed.
+
+(** Sharing both masks cannot increase backward sign-extension work. *)
+Lemma tnum_back_sext_m_time : forall sw rw q,
+  (T_tnum_back_sext_m (Z.ones (Zpos sw)) (Z.ones (Zpos rw)) sw q <=
+    T_tnum_back_sext sw rw q)%N.
+Proof.
+  intros sw rw q. time_unfold T_tnum_back_sext_m. time_unfold T_tnum_back_sext. time_cbn.
+  rewrite ?tnum_project_m_eq, ?tnum_sign_project_m_eq.
+  time_unfold T_tnum_meet_m. time_unfold T_tnum_meet. time_cbn.
+  time_unfold T_tnum_wor_m. time_unfold T_tnum_wor. time_cbn.
+  time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn.
+  time_pose. lia.
+Qed.
+TimeBound tnum_back_sext_m_time.
+
+Definition tnum_lower_m (mask : Z) (w : width) (l : Z) : tnum :=
+  tnum_not_m mask (tnum_upper w (tnum_wnot_m mask l)).
+TimeFun tnum_lower_m.
+
+(** Sharing the width mask preserves the lower-endpoint approximation. *)
+Lemma tnum_lower_m_eq : forall w l,
+  tnum_lower_m (Z.ones (Zpos w)) w l = tnum_lower w l.
+Proof.
+  reflexivity.
+Qed.
+
+(** A supplied mask cannot increase lower-endpoint work. *)
+Lemma tnum_lower_m_time : forall w l,
+  (T_tnum_lower_m (Z.ones (Zpos w)) w l <= T_tnum_lower w l)%N.
+Proof.
+  intros w l. time_unfold T_tnum_lower_m. time_unfold T_tnum_lower. time_cbn.
+  rewrite ?tnum_wnot_m_eq.
+  time_unfold T_tnum_not_m. time_unfold T_tnum_not. time_cbn.
+  time_unfold T_tnum_wnot_m. time_unfold T_tnum_wnot. time_cbn.
+  time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn. lia.
+Qed.
+TimeBound tnum_lower_m_time.
+
+Definition tnum_order_back_m (mask : Z) (strict : bool) (w : width) (q a b : tnum)
+    : tnum * tnum :=
+  let d := if strict then 1 else 0 in
+  if Z.testbit (ones q) 0 then
+    (tnum_upper w (tnum_max_m mask b - d), tnum_lower_m mask w (tnum_min_m mask a + d))
+  else if Z.testbit (zeros q) 0 then
+    (tnum_lower_m mask w (tnum_min_m mask b + (1 - d)),
+      tnum_upper w (tnum_max_m mask a - (1 - d)))
+  else (tnum_top, tnum_top).
+TimeFun tnum_order_back_m.
+
+(** Sharing the width mask preserves backward order refinement. *)
+Lemma tnum_order_back_m_eq : forall strict w q a b,
+  tnum_order_back_m (Z.ones (Zpos w)) strict w q a b = tnum_order_back strict w q a b.
+Proof.
+  reflexivity.
+Qed.
+
+(** A supplied mask cannot increase backward order-refinement work. *)
+Lemma tnum_order_back_m_time : forall strict w q a b,
+  (T_tnum_order_back_m (Z.ones (Zpos w)) strict w q a b <=
+    T_tnum_order_back strict w q a b)%N.
+Proof.
+  intros strict w q a b. time_unfold T_tnum_order_back_m.
+  time_unfold T_tnum_order_back. time_cbn.
+  rewrite ?tnum_min_m_eq, ?tnum_max_m_eq, ?tnum_lower_m_eq.
+  destruct (Z.odd (ones q)), (Z.odd (zeros q)); time_cbn;
+    try solve [lia].
+  all: time_unfold T_tnum_min_m; time_unfold T_tnum_min;
+    time_unfold T_tnum_max_m; time_unfold T_tnum_max; time_cbn;
+    time_unfold T_tnum_wnot_m; time_unfold T_tnum_wnot; time_cbn;
+    time_unfold T_tnum_wrap_m; time_unfold T_tnum_wrap; time_cbn;
+    time_pose; lia.
+Qed.
+TimeBound tnum_order_back_m_time.
+
+Definition tnum_back_variable_shift_m (mask : Z) (o : op) (w : width) (b q : tnum) : tnum :=
+  let copied := tnum_project_variable o w b q in
+  match o with
+  | bvashr => tnum_meet_m mask copied
+      (tnum_sign_project_m mask w (Z.max 0 (Zpos w - 1 - tnum_min_m mask b)) q)
+  | _ => copied
+  end.
+TimeFun tnum_back_variable_shift_m.
+
+(** Sharing the width mask preserves backward unknown shifts. *)
+Lemma tnum_back_variable_shift_m_eq : forall o w b q,
+  tnum_back_variable_shift_m (Z.ones (Zpos w)) o w b q = tnum_back_variable_shift o w b q.
+Proof.
+  reflexivity.
+Qed.
+
+(** A supplied mask cannot increase backward unknown-shift work. *)
+Lemma tnum_back_variable_shift_m_time : forall o w b q,
+  (T_tnum_back_variable_shift_m (Z.ones (Zpos w)) o w b q <=
+    T_tnum_back_variable_shift o w b q)%N.
+Proof.
+  intros o w b q. destruct o; time_unfold T_tnum_back_variable_shift_m;
+    time_unfold T_tnum_back_variable_shift; time_cbn; try solve [lia].
+  rewrite ?tnum_min_m_eq, ?tnum_sign_project_m_eq.
+  time_unfold T_tnum_meet_m. time_unfold T_tnum_meet. time_cbn.
+  time_unfold T_tnum_wor_m. time_unfold T_tnum_wor. time_cbn.
+  time_unfold T_tnum_min_m. time_unfold T_tnum_min. time_cbn.
+  time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn.
+  time_pose. lia.
+Qed.
+TimeBound tnum_back_variable_shift_m_time.
+
+Definition tnum_backward_raw_fast (o : op) (wps : list (width * tnum))
+    (rw : width) (q : tnum) : list tnum :=
+  match o, wps with
+  | bvnot, [(w, _)] => [tnum_not_m (Z.ones (Zpos w)) q]
+  | (bvzext _ | bvtrunc _), [(w, _)] =>
+    [tnum_project_m (Z.ones (Zpos w)) (Z.ones (Zpos rw)) (fun m => m) q]
+  | bvsext _, [(w, _)] =>
+    [tnum_back_sext_m (Z.ones (Zpos w)) (Z.ones (Zpos rw)) w q]
+  | bvextract _ lo, [(w, _)] =>
+    [tnum_project_m (Z.ones (Zpos w)) (Z.ones (Zpos rw))
+      (fun m => Z.shiftl m (Z.of_nat lo)) q]
+  | bvand, [(w, a); (v, b)] =>
+    [tnum_and_back_m (Z.ones (Zpos w)) q b; tnum_and_back_m (Z.ones (Zpos v)) q a]
+  | bvor, [(w, a); (v, b)] =>
+    [tnum_or_back_m (Z.ones (Zpos w)) q b; tnum_or_back_m (Z.ones (Zpos v)) q a]
+  | bvxor, [(w, a); (v, b)] =>
+    [tnum_xor_m (Z.ones (Zpos w)) q b; tnum_xor_m (Z.ones (Zpos v)) q a]
+  | bvadd, [(w, a); (v, b)] =>
+    [tnum_sub_m (Z.ones (Zpos w)) q b; tnum_sub_m (Z.ones (Zpos v)) q a]
+  | bvsub, [(w, a); (v, b)] =>
+    [tnum_add_m (Z.ones (Zpos w)) q b; tnum_sub_m (Z.ones (Zpos v)) a q]
+  | (bvshl | bvlshr | bvashr | bvrotl | bvrotr), [(w, _); (v, b)] =>
+    let mask := Z.ones (Zpos w) in
+    match tnum_constant_m (Z.ones (Zpos v)) b with
+    | Some k => [tnum_back_shift_m mask o w k q; b]
+    | None => [tnum_back_variable_shift_m mask o w b q; b]
+    end
+  | bveq, [(_, a); (_, b)] => if Z.testbit (ones q) 0 then [b; a] else [a; b]
+  | bvult, [(w, a); (_, b)] =>
+    let p := tnum_order_back_m (Z.ones (Zpos w)) true w q a b in [fst p; snd p]
+  | bvule, [(w, a); (_, b)] =>
+    let p := tnum_order_back_m (Z.ones (Zpos w)) false w q a b in [fst p; snd p]
+  | bvconcat, [(w, _); (v, _)] =>
+    let rm := Z.ones (Zpos rw) in
+    [tnum_project_m (Z.ones (Zpos w)) rm (fun m => Z.shiftr m (Zpos v)) q;
+      tnum_project_m (Z.ones (Zpos v)) rm (fun m => m) q]
+  | _, _ => map snd wps
+  end.
+TimeFun tnum_backward_raw_fast.
+
+(** Shared masks preserve every raw backward result, including unchecked shapes. *)
+Lemma tnum_backward_raw_fast_agrees : forall o wps rw q,
+  tnum_backward_raw_fast o wps rw q = tnum_backward_raw o wps rw q.
+Proof.
+  reflexivity.
+Qed.
+
+Fixpoint tnum_refine_fast (wps : list (width * tnum)) (qs : list tnum) : list tnum :=
+  match wps, qs with
+  | [], _ => []
+  | (w, a) :: rest, q :: tail =>
+    tnum_meet_m (Z.ones (Zpos w)) a q :: tnum_refine_fast rest tail
+  | (_, a) :: rest, [] => a :: tnum_refine_fast rest []
+  end.
+TimeFun tnum_refine_fast.
+
+(** Sharing the mask for each meet preserves every refinement list. *)
+Lemma tnum_refine_fast_agrees : forall wps qs, tnum_refine_fast wps qs = tnum_refine wps qs.
+Proof.
+  reflexivity.
+Qed.
+
+(** Each refinement builds its mask once and uses it twice, so the complete scan is cheaper. *)
+Lemma tnum_refine_fast_time : forall wps qs,
+  (T_tnum_refine_fast wps qs <= T_tnum_refine wps qs)%N.
+Proof.
+  induction wps as [|[w a] rest IH]; intros [|q tail];
+    time_unfold T_tnum_refine_fast; time_unfold T_tnum_refine; time_cbn; try lia.
+  - specialize (IH []). lia.
+  - specialize (IH tail).
+    time_unfold T_tnum_meet_m. time_unfold T_tnum_meet. time_cbn.
+    time_unfold T_tnum_wor_m. time_unfold T_tnum_wor. time_cbn.
+    time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn. lia.
+Qed.
+TimeBound tnum_refine_fast_time.
+
+(** Raw dispatch adds at most one shared mask per relevant width to the old helper budget. *)
+Lemma tnum_backward_raw_fast_time : forall o rw q xs,
+  (T_tnum_backward_raw_fast o xs rw q <= T_tnum_backward_raw o xs rw q +
+    64 * N.of_nat (Pos.to_nat rw +
+      fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) + 1))%N.
+Proof.
+  intros o rw q xs.
+  pose proof (tnum_ones_time (Zpos rw) ltac:(lia)) as Hrw.
+  destruct xs as [|[w a] [|[v b] [|wp rest]]];
+    cbn [map fold_right fst].
+  - destruct o; time_unfold T_tnum_backward_raw_fast;
+      time_unfold T_tnum_backward_raw; time_cbn; lia.
+  - pose proof (tnum_ones_time (Zpos w) ltac:(lia)) as Hw.
+    destruct o; time_unfold T_tnum_backward_raw_fast;
+      time_unfold T_tnum_backward_raw; time_cbn;
+      time_pose; cbn [Z.to_nat] in *; rewrite ?Nat2N.inj_add in *; nia.
+  - pose proof (tnum_ones_time (Zpos w) ltac:(lia)) as Hw.
+    pose proof (tnum_ones_time (Zpos v) ltac:(lia)) as Hv.
+    destruct o; time_unfold T_tnum_backward_raw_fast;
+      time_unfold T_tnum_backward_raw; time_cbn;
+      rewrite ?tnum_constant_m_eq;
+      try (destruct (tnum_constant v b));
+      time_pose; cbn [Z.to_nat] in *; rewrite ?Nat2N.inj_add in *; nia.
+  - destruct o; time_unfold T_tnum_backward_raw_fast;
+      time_unfold T_tnum_backward_raw; time_cbn; lia.
+Qed.
+TimeBound tnum_backward_raw_fast_time.
+
 (** Reject an extraction offset before converting it or constructing its power.
     Every well-typed extraction passes this width-bounded check. *)
 Definition tnum_table_bounded (o : op) (xs : list (width * tnum)) : bool :=
@@ -137,7 +479,8 @@ Module KnownBitsTableCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
   Definition wbwd (o : L.op) (rw : positive) (q : K.p)
       (xs : list (positive * K.p)) : option (list K.p) :=
     if Nat.eqb (length xs) (arity o) then
-      if tnum_table_bounded o xs then Some (tnum_refine xs (tnum_backward_raw o xs rw q))
+      if tnum_table_bounded o xs then
+        Some (tnum_refine_fast xs (tnum_backward_raw_fast o xs rw q))
       else None
     else None.
 End KnownBitsTableCode.
@@ -840,6 +1183,7 @@ Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
   Proof.
     intros o rw q wps ys cs z Hback Hgamma Heval Hq.
     unfold wbwd in Hback.
+    rewrite tnum_refine_fast_agrees, tnum_backward_raw_fast_agrees in Hback.
     destruct (Nat.eqb (length wps) (arity o)); [|discriminate].
     destruct (tnum_table_bounded o wps); [|discriminate].
     injection Hback as <-.
@@ -1855,6 +2199,10 @@ Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BI
     { unfold budget. apply time_of_nat_le. lia. }
     assert (Hpositive : (1 <= budget)%N).
     { rewrite ?Nat2N.inj_add in Hlinear. lia. }
+    assert (Hmaskwidth : (N.of_nat (Pos.to_nat rw + widths + 1) <= budget)%N).
+    { pose proof (WordTime.time_square_floor (Pos.to_nat rw + widths + 1)
+        (Pos.to_nat rw + widths + 1) ltac:(lia) ltac:(lia)) as Hfloor.
+      unfold budget. rewrite ?Nat2N.inj_add in *. lia. }
     clearbody budget.
     assert (HcountN : (N.of_nat (length xs) <= N.of_nat widths)%N).
     { apply time_of_nat_le. exact Hcount. }
@@ -1880,8 +2228,14 @@ Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BI
       apply time_of_nat_le in Hinput.
       rewrite ?Nat2N.inj_mul, ?Nat2N.inj_add in Hinput, Htime, Hlinear.
       try change (N.of_nat 8) with 8%N in Hinput. lia. }
+    assert (Hsharedrefine : (T_tnum_refine_fast xs raw <= 8192 * budget)%N).
+    { eapply N.le_trans; [apply tnum_refine_fast_time|exact Hrefine]. }
+    pose proof (tnum_backward_raw_fast_time o rw q xs) as Hsharedraw.
+    change (T_tnum_backward_raw_fast o xs rw q <= T_tnum_backward_raw o xs rw q +
+      64 * N.of_nat (Pos.to_nat rw + widths + 1))%N in Hsharedraw.
     pose proof (back_arity_time o) as Harity.
-    time_unfold T_wbwd; cbn beta iota zeta. fold raw.
+    time_unfold T_wbwd; cbn beta iota zeta.
+    rewrite tnum_backward_raw_fast_agrees. fold raw.
     destruct (Nat.eqb (length xs) (arity o)); cbn beta iota zeta.
     - destruct (tnum_table_bounded o xs) eqn:Hguard; cbn beta iota zeta.
       + pose proof (back_raw_time o rw q xs Hguard) as Hraw.
@@ -1925,6 +2279,7 @@ Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BI
             (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
   Proof.
     intros o rw q xs ys Hback. unfold wbwd in Hback.
+    rewrite tnum_refine_fast_agrees, tnum_backward_raw_fast_agrees in Hback.
     destruct (Nat.eqb (length xs) (arity o)); [|discriminate].
     destruct (tnum_table_bounded o xs); [|discriminate].
     injection Hback as <-.
