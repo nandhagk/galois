@@ -96,6 +96,44 @@ Definition poly_add_rows {X} (encode : X -> positive)
 
 TimeFun poly_add_rows.
 
+(** Every stored integer participates in exact gcd normalization. *)
+Definition poly_gcd_entries {A} (r : poly_row A) : list Z :=
+  rhs (poly_constraint r) ::
+    map snd (lhs (poly_constraint r)) ++ poly_multipliers r.
+
+TimeFun poly_gcd_entries.
+
+Fixpoint poly_gcd_values (values : list Z) : Z :=
+  match values with
+  | nil => 0%Z
+  | z :: values => Z.gcd z (poly_gcd_values values)
+  end.
+
+TimeFun poly_gcd_values.
+
+Definition poly_gcd_divide_row {A} (d : Z) (r : poly_row A) : poly_row A :=
+  PolyRow A
+    (LCons A
+      (map (fun p => (fst p, (snd p / d)%Z)) (lhs (poly_constraint r)))
+      (lrel (poly_constraint r)) (rhs (poly_constraint r) / d)%Z)
+    (map (fun m => (m / d)%Z) (poly_multipliers r)) (poly_strict r).
+
+TimeFun poly_gcd_divide_row.
+
+(** Trivial gcds leave the row exactly unchanged, including all-zero strict rows. *)
+Definition poly_gcd_normalize {A} (r : poly_row A) : poly_row A :=
+  let d := poly_gcd_values (poly_gcd_entries r) in
+  if (1 <? d)%Z then poly_gcd_divide_row d r else r.
+
+TimeFun poly_gcd_normalize.
+
+(** Only newly produced combinations receive exact common-divisor normalization. *)
+Definition poly_gcd_add_rows {A} (encode : A -> positive)
+    (a : Z) (p : poly_row A) (b : Z) (q : poly_row A) : poly_row A :=
+  poly_gcd_normalize (poly_add_rows encode a p b q).
+
+TimeFun poly_gcd_add_rows.
+
 Definition poly_pad_row {X} (r : poly_row X) : poly_row X :=
   PolyRow X (poly_constraint r) (0%Z :: poly_multipliers r) (poly_strict r).
 
@@ -122,14 +160,40 @@ Definition poly_pivot {X} (eqb : X -> X -> bool) (x : X) (r : poly_row X) : bool
 
 TimeFun poly_pivot.
 
-Definition poly_cancel {X} (encode : X -> positive) (eqb : X -> X -> bool)
+(** The raw equality combination specifies cancellation before exact division. *)
+Definition poly_cancel_spec {X} (encode : X -> positive) (eqb : X -> X -> bool)
     (x : X) (p r : poly_row X) : poly_row X :=
   let a := poly_coefficient eqb x (poly_constraint p) in
   let b := poly_coefficient eqb x (poly_constraint r) in
   if Z.eqb b 0 then r
   else poly_add_rows encode (- Z.sgn a * b)%Z p (Z.abs a) r.
 
+TimeFun poly_cancel_spec.
+
+Definition poly_cancel {X} (encode : X -> positive) (eqb : X -> X -> bool)
+    (x : X) (p r : poly_row X) : poly_row X :=
+  let a := poly_coefficient eqb x (poly_constraint p) in
+  let b := poly_coefficient eqb x (poly_constraint r) in
+  if Z.eqb b 0 then r
+  else poly_gcd_add_rows encode (- Z.sgn a * b)%Z p (Z.abs a) r.
+
 TimeFun poly_cancel.
+
+(** The raw pair traversal specifies the stage before common-divisor normalization. *)
+Definition poly_step_spec {X} (encode : X -> positive) (eqb : X -> X -> bool)
+    (x : X) (P : list (poly_row X)) : list (poly_row X) :=
+  match find (poly_pivot eqb x) P with
+  | Some p => map (poly_cancel_spec encode eqb x p) P
+  | None =>
+    let pos := filter (fun r => (0 <? poly_coefficient eqb x (poly_constraint r))%Z) P in
+    let neg := filter (fun r => (poly_coefficient eqb x (poly_constraint r) <? 0)%Z) P in
+    filter (fun r => Z.eqb (poly_coefficient eqb x (poly_constraint r)) 0) P ++
+      flat_map (fun p => map (fun q =>
+        poly_add_rows encode (- poly_coefficient eqb x (poly_constraint q))%Z p
+          (poly_coefficient eqb x (poly_constraint p)) q) neg) pos
+  end.
+
+TimeFun poly_step_spec.
 
 (** An equality pivot eliminates directly; otherwise every opposite-sign pair is combined. *)
 Definition poly_step {X} (encode : X -> positive) (eqb : X -> X -> bool)
@@ -141,7 +205,7 @@ Definition poly_step {X} (encode : X -> positive) (eqb : X -> X -> bool)
     let neg := filter (fun r => (poly_coefficient eqb x (poly_constraint r) <? 0)%Z) P in
     filter (fun r => Z.eqb (poly_coefficient eqb x (poly_constraint r)) 0) P ++
       flat_map (fun p => map (fun q =>
-        poly_add_rows encode (- poly_coefficient eqb x (poly_constraint q))%Z p
+        poly_gcd_add_rows encode (- poly_coefficient eqb x (poly_constraint q))%Z p
           (poly_coefficient eqb x (poly_constraint p)) q) neg) pos
   end.
 
@@ -867,9 +931,396 @@ Proof.
 Qed.
 
 
+(** The original row and certificate are one common positive multiple of the result. *)
+Definition poly_gcd_scaled {A} (d : Z) (before after : poly_row A) : Prop :=
+  (0 < d)%Z /\
+  lhs (poly_constraint before) = poly_scale_coef d (lhs (poly_constraint after)) /\
+  rhs (poly_constraint before) = (d * rhs (poly_constraint after))%Z /\
+  poly_multipliers before = map (fun m => (d * m)%Z) (poly_multipliers after) /\
+  lrel (poly_constraint after) = lrel (poly_constraint before) /\
+  poly_strict after = poly_strict before.
+
+(** The folded common divisor is always nonnegative. *)
+Lemma poly_gcd_values_nonnegative : forall values, (0 <= poly_gcd_values values)%Z.
+Proof.
+  intros [|z values]; cbn [poly_gcd_values]; [lia|apply Z.gcd_nonneg].
+Qed.
+
+(** The folded divisor divides every integer it traversed. *)
+Lemma poly_gcd_values_divides : forall values z,
+  In z values -> (poly_gcd_values values | z)%Z.
+Proof.
+  intro values. induction values as [|a values IH]; intros z Hin; [contradiction|].
+  cbn [poly_gcd_values]. destruct Hin as [->|Hin].
+  - apply Z.gcd_divide_l.
+  - eapply Z.divide_trans; [apply Z.gcd_divide_r|]. now apply IH.
+Qed.
+
+(** Exact division restores its numerator after multiplication by the divisor. *)
+Lemma poly_gcd_exact_quotient : forall d z,
+  d <> 0%Z -> (d | z)%Z -> (d * (z / d) = z)%Z.
+Proof.
+  intros d z Hd [q Hq]. rewrite Hq, Z.div_mul by exact Hd. ring.
+Qed.
+
+(** Scaling exact coefficient quotients restores the complete ordered coefficient list. *)
+Lemma poly_gcd_coefficients_restore : forall A (xs : list (A * Z)) d,
+  d <> 0%Z -> Forall (fun p => (d | snd p)%Z) xs ->
+  poly_scale_coef d (map (fun p => (fst p, (snd p / d)%Z)) xs) = xs.
+Proof.
+  intros A xs. induction xs as [|[x a] xs IH]; intros d Hd Hdivides; [reflexivity|].
+  inversion Hdivides as [|p ps Ha Htail]; subst p ps.
+  cbn [poly_scale_coef map fst snd].
+  rewrite (poly_gcd_exact_quotient d a Hd Ha).
+  f_equal. now apply IH.
+Qed.
+
+(** Scaling exact multiplier quotients restores the certificate vector. *)
+Lemma poly_gcd_multipliers_restore : forall values d,
+  d <> 0%Z -> Forall (fun z => (d | z)%Z) values ->
+  map (fun z => (d * z)%Z) (map (fun z => (z / d)%Z) values) = values.
+Proof.
+  intro values. induction values as [|a values IH]; intros d Hd Hdivides;
+    [reflexivity|].
+  inversion Hdivides as [|z zs Ha Htail]; subst z zs.
+  cbn [map]. rewrite (poly_gcd_exact_quotient d a Hd Ha).
+  f_equal. now apply IH.
+Qed.
+
+(** Dividing all fields by one positive common divisor yields a scaling witness. *)
+Lemma poly_gcd_divide_scaled : forall A (r : poly_row A) d,
+  (0 < d)%Z -> (forall z, In z (poly_gcd_entries r) -> (d | z)%Z) ->
+  poly_gcd_scaled d r (poly_gcd_divide_row d r).
+Proof.
+  intros A r d Hpositive Hdivides.
+  assert (Hnonzero : d <> 0%Z) by lia.
+  assert (Hrhs : (d | rhs (poly_constraint r))%Z).
+  { apply Hdivides. now left. }
+  assert (Hcoef : Forall (fun p => (d | snd p)%Z) (lhs (poly_constraint r))).
+  { apply Forall_forall. intros p Hp. apply Hdivides. right.
+    apply in_or_app. left. now apply in_map. }
+  assert (Hmult : Forall (fun z => (d | z)%Z) (poly_multipliers r)).
+  { apply Forall_forall. intros z Hz. apply Hdivides. right.
+    apply in_or_app. now right. }
+  unfold poly_gcd_scaled, poly_gcd_divide_row.
+  cbn [poly_constraint poly_multipliers poly_strict lhs rhs lrel].
+  split; [exact Hpositive|]. split.
+  - symmetry. now apply poly_gcd_coefficients_restore.
+  - split.
+    + symmetry. now apply poly_gcd_exact_quotient.
+    + split; [symmetry; now apply poly_gcd_multipliers_restore|].
+      split; reflexivity.
+Qed.
+
+(** An unchanged row has the positive scaling witness one. *)
+Lemma poly_gcd_scaled_identity : forall A (r : poly_row A), poly_gcd_scaled 1 r r.
+Proof.
+  intros A r. unfold poly_gcd_scaled. split; [lia|]. split.
+  - unfold poly_scale_coef.
+    rewrite <- (map_id (lhs (poly_constraint r))) at 1.
+    apply map_ext. intros [x a]. cbn [fst snd]. now rewrite Z.mul_1_l.
+  - rewrite Z.mul_1_l. split; [reflexivity|]. split.
+    + rewrite <- (map_id (poly_multipliers r)) at 1.
+      apply map_ext. intro z. now rewrite Z.mul_1_l.
+    + split; reflexivity.
+Qed.
+
+(** Every normalized row retains one common positive scaling witness. *)
+Lemma poly_gcd_normalize_scaled : forall A (r : poly_row A),
+  exists d, poly_gcd_scaled d r (poly_gcd_normalize r).
+Proof.
+  intros A r. unfold poly_gcd_normalize.
+  destruct (1 <? poly_gcd_values (poly_gcd_entries r))%Z eqn:Huse.
+  - exists (poly_gcd_values (poly_gcd_entries r)).
+    apply poly_gcd_divide_scaled.
+    + apply Z.ltb_lt in Huse. lia.
+    + intros z Hz. now apply poly_gcd_values_divides.
+  - exists 1%Z. apply poly_gcd_scaled_identity.
+Qed.
+
+(** Positive scaling changes coefficients while retaining each ordered key. *)
+Lemma poly_gcd_scaled_keys : forall A d (before after : poly_row A),
+  poly_gcd_scaled d before after ->
+  map fst (lhs (poly_constraint after)) = map fst (lhs (poly_constraint before)).
+Proof.
+  intros A d before after [_ [Hcoef _]]. rewrite Hcoef.
+  unfold poly_scale_coef. rewrite map_map.
+  apply map_ext. intros [x a]. reflexivity.
+Qed.
+
+(** A common scaling witness preserves coefficient and certificate lengths. *)
+Lemma poly_gcd_scaled_lengths : forall A d (before after : poly_row A),
+  poly_gcd_scaled d before after ->
+  length (lhs (poly_constraint after)) = length (lhs (poly_constraint before)) /\
+  length (poly_multipliers after) = length (poly_multipliers before).
+Proof.
+  intros A d before after Hscaled.
+  pose proof (poly_gcd_scaled_keys A d before after Hscaled) as Hkeys.
+  apply (f_equal (@length A)) in Hkeys. rewrite !length_map in Hkeys.
+  destruct Hscaled as [_ [_ [_ [Hmult _]]]]. split; [exact Hkeys|].
+  rewrite Hmult, length_map. reflexivity.
+Qed.
+
+(** Common-divisor normalization retains the ordered list of keys. *)
+Lemma poly_gcd_normalize_keys : forall A (r : poly_row A),
+  map fst (lhs (poly_constraint (poly_gcd_normalize r))) =
+    map fst (lhs (poly_constraint r)).
+Proof.
+  intros A r. destruct (poly_gcd_normalize_scaled A r) as [d Hscaled].
+  now apply poly_gcd_scaled_keys with (d := d).
+Qed.
+
+(** Coefficients and multiplier vectors retain their exact lengths. *)
+Lemma poly_gcd_normalize_lengths : forall A (r : poly_row A),
+  length (lhs (poly_constraint (poly_gcd_normalize r))) = length (lhs (poly_constraint r)) /\
+  length (poly_multipliers (poly_gcd_normalize r)) = length (poly_multipliers r).
+Proof.
+  intros A r. destruct (poly_gcd_normalize_scaled A r) as [d Hscaled].
+  now apply poly_gcd_scaled_lengths with (d := d).
+Qed.
+
+(** Exact division never changes the relation or the strictness flag. *)
+Lemma poly_gcd_normalize_metadata : forall A (r : poly_row A),
+  lrel (poly_constraint (poly_gcd_normalize r)) = lrel (poly_constraint r) /\
+  poly_strict (poly_gcd_normalize r) = poly_strict r.
+Proof.
+  intros A r. destruct (poly_gcd_normalize_scaled A r) as [d [_ [_ [_ [_ Hmetadata]]]]].
+  exact Hmetadata.
+Qed.
+
+(** A zero right-hand side remains zero under exact positive division. *)
+Lemma poly_gcd_normalize_rhs_zero : forall A (r : poly_row A),
+  rhs (poly_constraint r) = 0%Z -> rhs (poly_constraint (poly_gcd_normalize r)) = 0%Z.
+Proof.
+  intros A r Hzero.
+  destruct (poly_gcd_normalize_scaled A r) as [d [Hd [_ [Hrhs _]]]].
+  rewrite Hzero in Hrhs. nia.
+Qed.
+
+(** A positive common factor preserves strict positivity. *)
+Lemma poly_gcd_positive_test : forall d z, (0 < d)%Z ->
+  (0 <? d * z)%Z = (0 <? z)%Z.
+Proof.
+  intros d z Hd. destruct (Z.ltb_spec 0 (d * z)%Z), (Z.ltb_spec 0 z);
+    try reflexivity; exfalso; nia.
+Qed.
+
+(** The target multiplier keeps the sign recorded by the strictness flag. *)
+Lemma poly_gcd_scaled_target_flag : forall A d (before after : poly_row A),
+  poly_gcd_scaled d before after ->
+  (forall sc ms, poly_multipliers before = sc :: ms ->
+    poly_strict before = (0 <? sc)%Z) ->
+  forall sc ms, poly_multipliers after = sc :: ms ->
+    poly_strict after = (0 <? sc)%Z.
+Proof.
+  intros A d before after [Hd [_ [_ [Hmult [_ Hflag]]]]] Hstrict sc ms Hms.
+  assert (Hbefore : poly_multipliers before =
+    (d * sc)%Z :: map (fun m => (d * m)%Z) ms).
+  { now rewrite Hmult, Hms. }
+  rewrite Hflag, (Hstrict _ _ Hbefore). now apply poly_gcd_positive_test.
+Qed.
+
+(** Dividing an exact positive multiple never increases binary width. *)
+Lemma poly_gcd_size_unscale : forall d z, (0 < d)%Z ->
+  Z.size_nat z <= Z.size_nat (d * z).
+Proof.
+  intros d z Hd.
+  rewrite <- (poly_size_abs z), <- (poly_size_abs (d * z)%Z).
+  apply Z.size_nat_mono. split; [apply Z.abs_nonneg|].
+  rewrite Z.abs_mul, (Z.abs_eq d) by lia.
+  pose proof (Z.abs_nonneg z). nia.
+Qed.
+
+(** Every exact quotient multiplier fits the width of its original multiple. *)
+Lemma poly_gcd_normalize_mult_bits : forall A (r : poly_row A) bits,
+  Forall (fun z => Z.size_nat z <= bits) (poly_multipliers r) ->
+  Forall (fun z => Z.size_nat z <= bits) (poly_multipliers (poly_gcd_normalize r)).
+Proof.
+  intros A r bits Hbits.
+  destruct (poly_gcd_normalize_scaled A r) as [d [Hd [_ [_ [Hmult _]]]]].
+  rewrite Hmult, Forall_map in Hbits. eapply Forall_impl; [|exact Hbits].
+  intros z Hz. eapply Nat.le_trans; [apply (poly_gcd_size_unscale d z Hd)|exact Hz].
+Qed.
+
+(** Exact division preserves a fixed multiplier length and every entry-width bound. *)
+Lemma poly_gcd_normalize_mult_bounds : forall A (r : poly_row A) count bits,
+  length (poly_multipliers r) = count /\
+    Forall (fun z => Z.size_nat z <= bits) (poly_multipliers r) ->
+  length (poly_multipliers (poly_gcd_normalize r)) = count /\
+    Forall (fun z => Z.size_nat z <= bits) (poly_multipliers (poly_gcd_normalize r)).
+Proof.
+  intros A r count bits [Hlength Hbits]. split.
+  - now rewrite (proj2 (poly_gcd_normalize_lengths A r)).
+  - now apply poly_gcd_normalize_mult_bits.
+Qed.
+
+(** Exact division preserves an upper multiplier-length envelope as well. *)
+Lemma poly_gcd_normalize_mult_growth : forall A (r : poly_row A) count bits,
+  length (poly_multipliers r) <= count /\
+    Forall (fun z => Z.size_nat z <= bits) (poly_multipliers r) ->
+  length (poly_multipliers (poly_gcd_normalize r)) <= count /\
+    Forall (fun z => Z.size_nat z <= bits) (poly_multipliers (poly_gcd_normalize r)).
+Proof.
+  intros A r count bits [Hlength Hbits]. split.
+  - now rewrite (proj2 (poly_gcd_normalize_lengths A r)).
+  - now apply poly_gcd_normalize_mult_bits.
+Qed.
+
+(** A fresh weighted vector keeps its length bound and has at most one carry bit. *)
+Lemma poly_gcd_weighted_bounds : forall a ms b ns bits,
+  Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+  Forall (fun m => Z.size_nat m <= bits + 1) ms ->
+  Forall (fun m => Z.size_nat m <= bits + 1) ns ->
+  length (poly_weighted a ms b ns) <= length ms /\
+  Forall (fun m => Z.size_nat m <= 2 * bits + 2) (poly_weighted a ms b ns).
+Proof.
+  intros a ms. induction ms as [|m ms IH]; intros b [|n ns] bits Ha Hb Hms Hns;
+    cbn [poly_weighted length]; try (split; [lia|constructor]).
+  inversion Hms as [|m' ms' Hm Htail_m]; subst m' ms'.
+  inversion Hns as [|n' ns' Hn Htail_n]; subst n' ns'.
+  destruct (IH b ns bits Ha Hb Htail_m Htail_n) as [Hlength Hbits].
+  split; [lia|]. constructor; [|exact Hbits].
+  pose proof (poly_size_mul a m) as Hleft. pose proof (poly_size_mul b n) as Hright.
+  pose proof (poly_size_add (a * m) (b * n)) as Hsum. lia.
+Qed.
+
+(** A gcd stays within the width of the entries from which it was formed. *)
+Lemma poly_gcd_width : forall a b bits,
+  Z.size_nat a <= bits -> Z.size_nat b <= bits -> Z.size_nat (Z.gcd a b) <= bits.
+Proof.
+  intros a b bits Ha Hb. destruct (Z.eq_dec b 0) as [->|Hnonzero].
+  - now rewrite Z.gcd_0_r, poly_size_abs.
+  - eapply Nat.le_trans with (m := Z.size_nat (Z.abs b)).
+    + apply Z.size_nat_mono. split; [apply Z.gcd_nonneg|].
+      apply Z.divide_pos_le; [now apply Z.abs_pos|].
+      apply (proj2 (Z.divide_abs_r (Z.gcd a b) b)). apply Z.gcd_divide_r.
+    + now rewrite poly_size_abs.
+Qed.
+
+(** The common divisor fits the uniform width of its input integers. *)
+Lemma poly_gcd_values_bits : forall values bits,
+  Forall (fun z => Z.size_nat z <= bits) values ->
+  Z.size_nat (poly_gcd_values values) <= bits.
+Proof.
+  intro values. induction values as [|a values IH]; intros bits Hvalues.
+  - cbn [poly_gcd_values Z.size_nat]. lia.
+  - inversion Hvalues as [|z zs Ha Htail]; subst z zs.
+    cbn [poly_gcd_values]. apply poly_gcd_width; [exact Ha|now apply IH].
+Qed.
+
+(** The public gcd clock is quadratic in one common operand-width bound. *)
+Lemma T_poly_gcd_width : forall a b bits,
+  Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+  (Z.T_gcd a b <= 16 * N.of_nat (bits + 1)^2)%N.
+Proof.
+  intros a b bits Ha Hb. pose proof (Z.T_gcd_le a b) as Hclock.
+  apply time_of_nat_le in Ha, Hb.
+  rewrite Nat2N.inj_add in Hclock.
+  rewrite Nat2N.inj_add, N.pow_2_r. change (N.of_nat 1) with 1%N.
+  clear -Ha Hb Hclock. nia.
+Qed.
+
+(** One gcd fold charges one quadratic operation per integer. *)
+Lemma T_poly_gcd_values_bounded : forall values bits,
+  Forall (fun z => Z.size_nat z <= bits) values ->
+  (T_poly_gcd_values values <=
+    32 * N.of_nat (length values + 1) * N.of_nat (bits + 1)^2)%N.
+Proof.
+  intro values. induction values as [|a values IH]; intros bits Hvalues.
+  - time_unfold T_poly_gcd_values. time_simpl. nia.
+  - inversion Hvalues as [|z zs Ha Htail]; subst z zs.
+    pose proof (IH bits Htail) as Hrest.
+    pose proof (T_poly_gcd_width a (poly_gcd_values values) bits Ha
+      (poly_gcd_values_bits values bits Htail)) as Hstep.
+    time_unfold T_poly_gcd_values. time_simpl. cbn [length].
+    rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *.
+    change (N.of_nat 1) with 1%N in *. clear -Hrest Hstep. nia.
+Qed.
+
+(** Collecting numeric fields traverses only the coefficient list. *)
+Lemma T_poly_gcd_entries_bounded : forall A (r : poly_row A),
+  (T_poly_gcd_entries r <= 16 * N.of_nat (length (lhs (poly_constraint r)) + 1))%N.
+Proof.
+  intros A r.
+  pose proof (ListDef.T_map_le (@snd A Z) (@Datatypes.T_snd A Z) 1
+    (lhs (poly_constraint r)) ltac:(intros [x a]; time_simpl; lia)) as Hmap.
+  pose proof (Datatypes.T_app_le (map snd (lhs (poly_constraint r)))
+    (poly_multipliers r)) as Happ.
+  rewrite length_map in Happ. time_unfold (@T_poly_gcd_entries). time_simpl.
+  lazymatch goal with
+  | |- context [ListDef.T_map ?f ?Tf ?xs] =>
+      pose proof (ListDef.T_map_le f Tf 1 xs
+        ltac:(intros [x a]; time_simpl; lia)) as Hactual
+  end.
+  nia.
+Qed.
+
+(** Bounded-width exact division is quadratic even without a nonzero-divisor premise. *)
+Lemma T_poly_gcd_div_width : forall a d bits,
+  Z.size_nat a <= bits -> Z.size_nat d <= bits ->
+  (Z.T_div a d <= 64 * N.of_nat (bits + 1)^2)%N.
+Proof.
+  intros a d bits Ha Hd. pose proof (Z.T_div_le a d) as Hdiv.
+  apply time_of_nat_le in Ha, Hd.
+  rewrite Nat2N.inj_add in Hdiv.
+  rewrite Nat2N.inj_add, N.pow_2_r. change (N.of_nat 1) with 1%N.
+  clear -Ha Hd Hdiv. nia.
+Qed.
+
+(** Cancellation either preserves its row literally or divides its raw sum exactly. *)
+Lemma poly_cancel_scaled : forall A encode eqb x (p r : poly_row A),
+  exists d, poly_gcd_scaled d (poly_cancel_spec encode eqb x p r)
+    (poly_cancel encode eqb x p r).
+Proof.
+  intros A encode eqb x p r. unfold poly_cancel_spec, poly_cancel.
+  destruct (Z.eqb (poly_coefficient eqb x (poly_constraint r)) 0).
+  - exists 1%Z. apply poly_gcd_scaled_identity.
+  - unfold poly_gcd_add_rows. apply poly_gcd_normalize_scaled.
+Qed.
+
+(** A stage preserves row order and pairs each result with one raw positive multiple. *)
+Lemma poly_step_scaled : forall A encode eqb x (rows : list (poly_row A)),
+  Forall2 (fun before after => exists d, poly_gcd_scaled d before after)
+    (poly_step_spec encode eqb x rows) (poly_step encode eqb x rows).
+Proof.
+  intros A encode eqb x rows. unfold poly_step_spec, poly_step.
+  destruct (find (poly_pivot eqb x) rows) as [pivot|].
+  - induction rows as [|r rows IH]; cbn [map]; constructor; [|exact IH].
+    apply poly_cancel_scaled.
+  - apply Forall2_app.
+    + induction (filter (fun r => Z.eqb (poly_coefficient eqb x (poly_constraint r)) 0)
+        rows) as [|r zero IH]; constructor; [|exact IH].
+      exists 1%Z. apply poly_gcd_scaled_identity.
+    + induction (filter (fun r => (0 <? poly_coefficient eqb x (poly_constraint r))%Z)
+        rows) as [|p pos IH]; cbn [flat_map]; [constructor|].
+      apply Forall2_app; [|exact IH]. clear IH.
+      induction (filter (fun r => (poly_coefficient eqb x (poly_constraint r) <? 0)%Z)
+        rows) as [|q neg IHneg]; cbn [map].
+      * constructor.
+      * constructor; [|exact IHneg].
+        unfold poly_gcd_add_rows. apply poly_gcd_normalize_scaled.
+Qed.
+
+(** Exact division changes no stage cardinality. *)
+Lemma poly_step_scaled_length : forall A encode eqb x (rows : list (poly_row A)),
+  length (poly_step encode eqb x rows) = length (poly_step_spec encode eqb x rows).
+Proof.
+  intros A encode eqb x rows.
+  pose proof (poly_step_scaled A encode eqb x rows) as Hscaled.
+  induction Hscaled; cbn [length]; congruence.
+Qed.
+
 (** A tracked row has no repeated stored key. *)
 Definition poly_row_unique {A} (r : poly_row A) : Prop :=
   NoDup (map fst (lhs (poly_constraint r))).
+
+(** The coefficient key invariant survives exact common division. *)
+Lemma poly_gcd_normalize_unique : forall A (r : poly_row A),
+  poly_row_unique r -> poly_row_unique (poly_gcd_normalize r).
+Proof.
+  intros A r Hunique. unfold poly_row_unique in *.
+  now rewrite poly_gcd_normalize_keys.
+Qed.
 
 Lemma poly_add_rows_unique : forall A (encode : A -> positive) a (p : poly_row A) b q,
   poly_row_unique (poly_add_rows encode a p b q).
@@ -893,7 +1344,7 @@ Lemma poly_cancel_unique : forall A (encode : A -> positive) eqb x p r,
 Proof.
   intros A encode eqb x p r Hunique. unfold poly_cancel.
   destruct (Z.eqb (poly_coefficient eqb x (poly_constraint r)) 0); [exact Hunique|].
-  apply poly_add_rows_unique.
+  unfold poly_gcd_add_rows. apply poly_gcd_normalize_unique. apply poly_add_rows_unique.
 Qed.
 
 Lemma poly_step_unique : forall A (encode : A -> positive) eqb x rows,
@@ -907,7 +1358,8 @@ Proof.
     + apply filter_In in Hin as [Hin _].
       exact (proj1 (Forall_forall _ _) Hunique r Hin).
     + apply in_flat_map in Hin as [p [Hp Hin]].
-      apply in_map_iff in Hin as [q [Hsame Hq]]. subst r. apply poly_add_rows_unique.
+      apply in_map_iff in Hin as [q [Hsame Hq]]. subst r.
+      unfold poly_gcd_add_rows. apply poly_gcd_normalize_unique. apply poly_add_rows_unique.
 Qed.
 
 (** The original key accompanies its two nonnegative coefficient sums. *)
@@ -2647,12 +3099,76 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
       exact (proj1 (Forall_forall _ _) IH r Hin).
   Qed.
 
+  (** Positive exact division preserves admissible signs and multiplier lengths. *)
+  Lemma poly_gcd_admissible_unscale : forall P ms d,
+    (0 < d)%Z -> C.admissible P (map (fun m => (d * m)%Z) ms) ->
+    C.admissible P ms.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] d Hd Hweights;
+      cbn [map] in Hweights;
+      try (destruct Hweights as [Hlength _]; cbn [length] in Hlength; discriminate).
+    - split; [reflexivity|constructor].
+    - apply poly_admissible_cons in Hweights as [Hhead Htail].
+      apply poly_admissible_cons. split.
+      + intro Hrel. specialize (Hhead Hrel). nia.
+      + now apply IH with (d := d).
+  Qed.
+
+  (** A common multiplier factor scales every certificate coefficient. *)
+  Lemma poly_gcd_comb_coef_scale : forall P ms d x,
+    C.comb_coef P (map (fun m => (d * m)%Z) ms) x =
+      (d * C.comb_coef P ms x)%Z.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] d x;
+      try (change (0 = d * 0)%Z; ring).
+    cbn [map]. rewrite !poly_comb_coef_cons, IH. ring.
+  Qed.
+
+  (** A common multiplier factor scales the certificate right-hand side. *)
+  Lemma poly_gcd_comb_rhs_scale : forall P ms d,
+    C.comb_rhs P (map (fun m => (d * m)%Z) ms) = (d * C.comb_rhs P ms)%Z.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] d;
+      try (change (0 = d * 0)%Z; ring).
+    cbn [map]. rewrite !poly_comb_rhs_cons, IH. ring.
+  Qed.
+
+  (** A positive scaling witness transports all exact certificate tracking equations. *)
+  Lemma poly_gcd_scaled_tracks : forall P d before after,
+    poly_gcd_scaled d before after -> poly_tracks P before -> poly_tracks P after.
+  Proof.
+    intros P d before after [Hd [Hcoef [Hrhs [Hmult [Hrel Hflag]]]]]
+      [Hweights [Hcoefs [Hright Hrelation]]].
+    unfold poly_tracks. split.
+    - apply poly_gcd_admissible_unscale with (d := d); [exact Hd|].
+      now rewrite <- Hmult.
+    - split.
+      + intro x. specialize (Hcoefs x).
+        rewrite Hcoef, coef_of_scale, Hmult, poly_gcd_comb_coef_scale in Hcoefs.
+        clear -Hd Hcoefs. nia.
+      + split.
+        * rewrite Hrhs, Hmult, poly_gcd_comb_rhs_scale in Hright.
+          clear -Hd Hright. nia.
+        * rewrite Hrel, Hrelation, Hmult, poly_comb_eq_scale.
+          assert (Hzero : Z.eqb d 0 = false) by (apply Z.eqb_neq; lia).
+          now rewrite Hzero.
+  Qed.
+
+  (** Common-divisor normalization retains an admissible exact certificate. *)
+  Lemma poly_gcd_normalize_tracks : forall P r,
+    poly_tracks P r -> poly_tracks P (poly_gcd_normalize r).
+  Proof.
+    intros P r Htracks. destruct (poly_gcd_normalize_scaled X.t r) as [d Hscaled].
+    now apply poly_gcd_scaled_tracks with (before := r) (d := d).
+  Qed.
+
   Lemma poly_cancel_tracks : forall P x p r,
     poly_tracks P p -> poly_tracks P r -> lrel (poly_constraint p) = REq ->
     poly_tracks P (poly_cancel X.encode X.eqb x p r).
   Proof.
     intros P x p r Hp Hr Heq. unfold poly_cancel.
     destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0); [exact Hr|].
+    unfold poly_gcd_add_rows. apply poly_gcd_normalize_tracks.
     apply poly_add_rows_tracks; [exact Hp|exact Hr| |].
     - intro Hfalse. congruence.
     - intros _. apply Z.abs_nonneg.
@@ -2680,7 +3196,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
         apply in_map_iff in Hin as [q [Hsame Hq]]. subst r.
         apply filter_In in Hp as [Hp Hpositive]. apply Z.ltb_lt in Hpositive.
         apply filter_In in Hq as [Hq Hnegative]. apply Z.ltb_lt in Hnegative.
-        apply poly_add_rows_tracks.
+        unfold poly_gcd_add_rows. apply poly_gcd_normalize_tracks. apply poly_add_rows_tracks.
         * exact (proj1 (Forall_forall _ _) Htracks p Hp).
         * exact (proj1 (Forall_forall _ _) Htracks q Hq).
         * intros _. lia.
@@ -2769,6 +3285,22 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - apply Z.ltb_ge. lia.
   Qed.
 
+  (** Positive scaling preserves the target multiplier strictness invariant. *)
+  Lemma poly_gcd_scaled_strict : forall d before after,
+    poly_gcd_scaled d before after -> poly_target_strict before -> poly_target_strict after.
+  Proof.
+    intros d before after Hscaled Hstrict.
+    exact (poly_gcd_scaled_target_flag X.t d before after Hscaled Hstrict).
+  Qed.
+
+  (** Exact normalization retains the strictness flag required by the target weight. *)
+  Lemma poly_gcd_normalize_strict : forall r,
+    poly_target_strict r -> poly_target_strict (poly_gcd_normalize r).
+  Proof.
+    intros r Hstrict. destruct (poly_gcd_normalize_scaled X.t r) as [d Hscaled].
+    now apply poly_gcd_scaled_strict with (before := r) (d := d).
+  Qed.
+
   Lemma poly_add_rows_target_strict : forall target P p q a b,
     lrel target = RLe -> poly_tracks (target :: P) p -> poly_tracks (target :: P) q ->
     poly_target_strict p -> poly_target_strict q ->
@@ -2833,6 +3365,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof.
     intros target P x p r Htarget Hp Hr Hps Hrs Heq. unfold poly_cancel.
     destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0); [exact Hrs|].
+    unfold poly_gcd_add_rows. apply poly_gcd_normalize_strict.
     apply poly_add_rows_target_strict with (target := target) (P := P);
       try assumption.
     - intro Hfalse. congruence.
@@ -2864,7 +3397,8 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
         apply in_map_iff in Hin as [q [Hsame Hq]]. subst r.
         apply filter_In in Hp as [Hp Hpositive]. apply Z.ltb_lt in Hpositive.
         apply filter_In in Hq as [Hq Hnegative]. apply Z.ltb_lt in Hnegative.
-        apply poly_add_rows_target_strict with (target := target) (P := P);
+        unfold poly_gcd_add_rows. apply poly_gcd_normalize_strict.
+    apply poly_add_rows_target_strict with (target := target) (P := P);
           [exact Htarget| | | | | |].
         * exact (proj1 (Forall_forall _ _) Htracks p Hp).
         * exact (proj1 (Forall_forall _ _) Htracks q Hq).
@@ -3799,6 +4333,26 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     intros [|a|a]; cbn; ring.
   Qed.
 
+  (** A scaling witness relates the total coefficient at every key. *)
+  Lemma poly_gcd_scaled_coefficient : forall x d before after,
+    poly_gcd_scaled d before after ->
+    poly_coefficient X.eqb x (poly_constraint before) =
+      (d * poly_coefficient X.eqb x (poly_constraint after))%Z.
+  Proof.
+    intros x d before after [_ [Hcoef _]].
+    rewrite <- !coef_of_poly_coefficient, Hcoef, coef_of_scale. reflexivity.
+  Qed.
+
+  (** An eliminated coordinate remains zero after exact division. *)
+  Lemma poly_gcd_normalize_zero : forall x r,
+    poly_coefficient X.eqb x (poly_constraint r) = 0%Z ->
+    poly_coefficient X.eqb x (poly_constraint (poly_gcd_normalize r)) = 0%Z.
+  Proof.
+    intros x r Hzero. destruct (poly_gcd_normalize_scaled X.t r) as [d Hscaled].
+    pose proof (poly_gcd_scaled_coefficient x d r _ Hscaled) as Hcoefficient.
+    destruct Hscaled as [Hd _]. clear -Hd Hzero Hcoefficient. nia.
+  Qed.
+
   (** The cancellation formula always removes its selected coefficient. *)
   Lemma poly_cancel_zero : forall x p r,
     poly_coefficient X.eqb x
@@ -3807,7 +4361,8 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     intros x p r. unfold poly_cancel.
     destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0) eqn:Hzero.
     - now apply Z.eqb_eq in Hzero.
-    - rewrite poly_add_rows_coefficient, <- poly_sgn_abs. ring.
+    - unfold poly_gcd_add_rows. apply poly_gcd_normalize_zero.
+    rewrite poly_add_rows_coefficient, <- poly_sgn_abs. ring.
   Qed.
 
   (** A coordinate zero in both inputs stays zero after cancellation. *)
@@ -3819,6 +4374,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof.
     intros x y p r Hp Hr. unfold poly_cancel.
     destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0); [exact Hr|].
+    unfold poly_gcd_add_rows. apply poly_gcd_normalize_zero.
     rewrite poly_add_rows_coefficient, Hp, Hr. ring.
   Qed.
 
@@ -3834,7 +4390,8 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
       + apply filter_In in Hin as [_ Hzero]. now apply Z.eqb_eq in Hzero.
       + apply in_flat_map in Hin as [p [_ Hin]].
         apply in_map_iff in Hin as [q [Hsame _]]. subst r.
-        rewrite poly_add_rows_coefficient. ring.
+        unfold poly_gcd_add_rows. apply poly_gcd_normalize_zero.
+    rewrite poly_add_rows_coefficient. ring.
   Qed.
 
   (** Elimination preserves every coefficient already zero in all input rows. *)
@@ -3856,7 +4413,8 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
       + apply in_flat_map in Hin as [p [Hp Hin]].
         apply in_map_iff in Hin as [q [Hsame Hq]]. subst r.
         apply filter_In in Hp as [Hp _]. apply filter_In in Hq as [Hq _].
-        rewrite poly_add_rows_coefficient,
+        unfold poly_gcd_add_rows. apply poly_gcd_normalize_zero.
+    rewrite poly_add_rows_coefficient,
           (proj1 (Forall_forall _ _) Hzero p Hp),
           (proj1 (Forall_forall _ _) Hzero q Hq). ring.
   Qed.
@@ -4036,6 +4594,30 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
         exact (proj2 (proj1 (Forall_forall _ _) Hq s Hs)).
   Qed.
 
+  (** Positive scaling preserves unique, nonzero coefficients on the same support. *)
+  Lemma poly_gcd_scaled_reduced : forall vars d before after,
+    poly_gcd_scaled d before after -> poly_reduced_row vars before ->
+    poly_reduced_row vars after.
+  Proof.
+    intros vars d before after Hscaled [Hunique Hentries].
+    pose proof (poly_gcd_scaled_keys X.t d before after Hscaled) as Hkeys.
+    destruct Hscaled as [_ [Hcoef _]]. unfold poly_reduced_row. split.
+    - now rewrite Hkeys.
+    - rewrite Hcoef in Hentries. unfold poly_scale_coef in Hentries.
+      rewrite Forall_map in Hentries. eapply Forall_impl; [|exact Hentries].
+      intros [x a] [Hnonzero Hin]. cbn [fst snd] in *.
+      split; [|exact Hin]. intro Hzero. rewrite Hzero, Z.mul_0_r in Hnonzero.
+      contradiction.
+  Qed.
+
+  (** Exact division preserves the reduced-row support invariant. *)
+  Lemma poly_gcd_normalize_reduced : forall vars r,
+    poly_reduced_row vars r -> poly_reduced_row vars (poly_gcd_normalize r).
+  Proof.
+    intros vars r Hreduced. destruct (poly_gcd_normalize_scaled X.t r) as [d Hscaled].
+    now apply poly_gcd_scaled_reduced with (before := r) (d := d).
+  Qed.
+
   (** Cancelling against a prepared pivot preserves the prepared-row invariant. *)
   Lemma poly_cancel_reduced : forall xs x p r,
     poly_reduced_row xs p -> poly_reduced_row xs r ->
@@ -4043,6 +4625,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof.
     intros xs x p r Hp Hr. unfold poly_cancel.
     destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0); [exact Hr|].
+    unfold poly_gcd_add_rows. apply poly_gcd_normalize_reduced.
     now apply poly_add_rows_reduced.
   Qed.
 
@@ -4064,6 +4647,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
       + apply in_flat_map in Hin as [p [Hp Hin]].
         apply in_map_iff in Hin as [q [Hsame Hq]]. subst r.
         apply filter_In in Hp as [Hp _]. apply filter_In in Hq as [Hq _].
+        unfold poly_gcd_add_rows. apply poly_gcd_normalize_reduced.
         apply poly_add_rows_reduced.
         * exact (proj1 (Forall_forall _ _) Hrows p Hp).
         * exact (proj1 (Forall_forall _ _) Hrows q Hq).
@@ -4331,6 +4915,41 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     split; [reflexivity|]. now apply negb_true_iff, Z.eqb_neq in Hpivot.
   Qed.
 
+  (** The rational residual scales by the same positive integer as the row. *)
+  Lemma poly_gcd_scaled_residual_Q : forall v d before after,
+    poly_gcd_scaled d before after ->
+    (poly_residual_Q v (poly_constraint before) ==
+      inject_Z d * poly_residual_Q v (poly_constraint after))%Q.
+  Proof.
+    intros v d before after [_ [Hcoef [Hrhs _]]].
+    unfold poly_residual_Q. rewrite Hcoef, Hrhs.
+    setoid_rewrite eval_coef_scale_Q. rewrite inject_Z_mult. ring.
+  Qed.
+
+  (** Rows related by positive scaling have exactly the same rational models. *)
+  Lemma poly_gcd_scaled_satQ : forall v d before after,
+    poly_gcd_scaled d before after -> (poly_satQ v after <-> poly_satQ v before).
+  Proof.
+    intros v d before after Hscaled.
+    pose proof (poly_gcd_scaled_residual_Q v d before after Hscaled) as Hresidual.
+    destruct Hscaled as [Hd [_ [_ [_ [Hrel Hflag]]]]].
+    pose proof (poly_inject_positive d Hd) as Hpositive.
+    rewrite !poly_satQ_residual, Hrel, Hflag.
+    destruct (lrel (poly_constraint before)); [|destruct (poly_strict before)];
+      setoid_rewrite Hresidual; symmetry.
+    - now apply poly_Q_scale_eq_zero.
+    - now apply poly_Q_scale_lt_zero.
+    - now apply poly_Q_scale_le_zero.
+  Qed.
+
+  (** Exact common-divisor normalization preserves rational satisfaction in both directions. *)
+  Lemma poly_gcd_normalize_satQ : forall v r,
+    poly_satQ v (poly_gcd_normalize r) <-> poly_satQ v r.
+  Proof.
+    intros v r. destruct (poly_gcd_normalize_scaled X.t r) as [d Hscaled].
+    now apply poly_gcd_scaled_satQ with (d := d).
+  Qed.
+
   Lemma poly_cancel_satQ : forall v x p r,
     poly_pivot X.eqb x p = true -> poly_eq_nonstrict p -> poly_satQ v p ->
     (poly_satQ v (poly_cancel X.encode X.eqb x p r) <-> poly_satQ v r).
@@ -4339,6 +4958,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     destruct (poly_pivot_info x p Hpivot) as [Hpeq Hnonzero].
     unfold poly_cancel. destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0);
       [reflexivity|].
+    unfold poly_gcd_add_rows. rewrite poly_gcd_normalize_satQ.
     apply poly_add_equality_positive_satQ; try assumption. now apply Z.abs_pos.
   Qed.
 
@@ -4423,12 +5043,29 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     reflexivity.
   Qed.
 
+  (** Scaling retains the non-strict status required of equality rows. *)
+  Lemma poly_gcd_scaled_eq_nonstrict : forall d before after,
+    poly_gcd_scaled d before after -> poly_eq_nonstrict before -> poly_eq_nonstrict after.
+  Proof.
+    intros d before after [_ [_ [_ [_ [Hrel Hflag]]]]] Hnonstrict Heq.
+    rewrite Hflag. apply Hnonstrict. now rewrite <- Hrel.
+  Qed.
+
+  (** Normalized equality rows retain their non-strict status. *)
+  Lemma poly_gcd_normalize_eq_nonstrict : forall r,
+    poly_eq_nonstrict r -> poly_eq_nonstrict (poly_gcd_normalize r).
+  Proof.
+    intros r Hnonstrict. destruct (poly_gcd_normalize_scaled X.t r) as [d Hscaled].
+    now apply poly_gcd_scaled_eq_nonstrict with (before := r) (d := d).
+  Qed.
+
   Lemma poly_cancel_eq_nonstrict : forall x p r,
     poly_eq_nonstrict p -> poly_eq_nonstrict r ->
     poly_eq_nonstrict (poly_cancel X.encode X.eqb x p r).
   Proof.
     intros x p r Hp Hr. unfold poly_cancel.
     destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0); [exact Hr|].
+    unfold poly_gcd_add_rows. apply poly_gcd_normalize_eq_nonstrict.
     now apply poly_add_rows_eq_nonstrict.
   Qed.
 
@@ -4449,6 +5086,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
       + apply in_flat_map in Hin as [p [Hp Hin]].
         apply in_map_iff in Hin as [q [Hsame Hq]]. subst r.
         apply filter_In in Hp as [Hp _]. apply filter_In in Hq as [Hq _].
+        unfold poly_gcd_add_rows. apply poly_gcd_normalize_eq_nonstrict.
         apply poly_add_rows_eq_nonstrict.
         * exact (proj1 (Forall_forall _ _) Hflags p Hp).
         * exact (proj1 (Forall_forall _ _) Hflags q Hq).
@@ -4626,7 +5264,8 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
         - apply poly_no_pivot_inequality with (x := x) (rows := rows); try assumption; lia.
         - exact Hpositive.
         - exact Hnegative.
-        - apply (proj1 (Forall_forall _ _) Hmodels).
+        - apply (proj1 (poly_gcd_normalize_satQ v _)).
+          apply (proj1 (Forall_forall _ _) Hmodels).
           apply in_or_app. right. apply in_flat_map. exists upper. split.
           + unfold pos. apply filter_In. split; [exact Hupper|now apply Z.ltb_lt].
           + apply in_map_iff. exists lower. split; [reflexivity|].
@@ -5484,7 +6123,8 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros x p r count bits Hlp Hlr Hup Hur Hp Hr. unfold poly_cancel.
     destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0).
     - apply poly_unit_row_bits; assumption.
-    - apply poly_add_rows_multiplier_bits; try assumption.
+    - unfold poly_gcd_add_rows. apply poly_gcd_normalize_mult_bounds.
+        apply poly_add_rows_multiplier_bits; try assumption.
       + eapply Nat.le_trans; [apply poly_size_sign_mul|exact Hr].
       + now rewrite poly_size_abs.
   Qed.
@@ -5514,6 +6154,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         apply filter_In in Hq as [Hq _]. subst r.
         destruct (Hrows p Hp) as [Hlp [Hup Hbp]].
         destruct (Hrows q Hq) as [Hlq [Huq Hbq]].
+        unfold poly_gcd_add_rows. apply poly_gcd_normalize_mult_bounds.
         apply poly_add_rows_multiplier_bits; try assumption. now rewrite poly_size_opp.
   Qed.
 
@@ -5523,12 +6164,64 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intro r. unfold C.row_bits. apply poly_max_base.
   Qed.
 
+  (** Every stored coefficient is bounded by its row's maximum coefficient width. *)
+  Lemma poly_row_entry_bits : forall r p, In p (lhs r) ->
+    Z.size_nat (snd p) <= C.row_bits r.
+  Proof.
+    intros r p Hin. unfold C.row_bits.
+    exact (poly_max_member _ (fun p => Z.size_nat (snd p))
+      (Z.size_nat (rhs r)) (lhs r) p Hin).
+  Qed.
+
   (** Every stored key fits the row's declared key width. *)
   Lemma poly_row_key_member : forall r p, In p (lhs r) ->
     Pos.size_nat (X.encode (fst p)) <= C.row_key_bits r.
   Proof.
     intros r p Hin. unfold C.row_key_bits.
     exact (poly_max_member _ (fun p => Pos.size_nat (X.encode (fst p))) 0 (lhs r) p Hin).
+  Qed.
+
+  (** The unchanged keys retain their exact representation-width measure. *)
+  Lemma poly_gcd_scaled_key_bits : forall d before after,
+    poly_gcd_scaled d before after ->
+    C.row_key_bits (poly_constraint after) = C.row_key_bits (poly_constraint before).
+  Proof.
+    intros d before after [_ [Hcoef _]].
+    unfold C.row_key_bits. rewrite Hcoef. unfold poly_scale_coef.
+    rewrite map_map. reflexivity.
+  Qed.
+
+  (** Common-divisor normalization leaves key widths unchanged. *)
+  Lemma poly_gcd_normalize_key_bits : forall r,
+    C.row_key_bits (poly_constraint (poly_gcd_normalize r)) =
+      C.row_key_bits (poly_constraint r).
+  Proof.
+    intro r. destruct (poly_gcd_normalize_scaled X.t r) as [d Hscaled].
+    now apply poly_gcd_scaled_key_bits with (d := d).
+  Qed.
+
+  (** Exact positive unscaling never increases any row integer width. *)
+  Lemma poly_gcd_scaled_row_bits : forall d before after,
+    poly_gcd_scaled d before after ->
+    C.row_bits (poly_constraint after) <= C.row_bits (poly_constraint before).
+  Proof.
+    intros d before after [Hd [Hcoef [Hrhs _]]].
+    unfold C.row_bits at 1. apply poly_max_bound.
+    - eapply Nat.le_trans; [|apply poly_row_rhs_bits].
+      rewrite Hrhs. now apply poly_gcd_size_unscale.
+    - apply Forall_forall. intros [x a] Hin. cbn [snd].
+      eapply Nat.le_trans; [apply (poly_gcd_size_unscale d a Hd)|].
+      apply (poly_row_entry_bits (poly_constraint before) (x, (d * a)%Z)).
+      rewrite Hcoef. unfold poly_scale_coef. apply in_map_iff.
+      exists (x, a). split; [reflexivity|exact Hin].
+  Qed.
+
+  (** Normalized coefficient and right-hand-side widths do not increase. *)
+  Lemma poly_gcd_normalize_row_bits : forall r,
+    C.row_bits (poly_constraint (poly_gcd_normalize r)) <= C.row_bits (poly_constraint r).
+  Proof.
+    intro r. destruct (poly_gcd_normalize_scaled X.t r) as [d Hscaled].
+    now apply poly_gcd_scaled_row_bits with (d := d).
   Qed.
 
   (** Normalization preserves the width bound of a row with unique keys. *)
@@ -5626,12 +6319,15 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0).
     - split; lia.
     - split.
-      + apply poly_add_rows_bits; try assumption.
+      + unfold poly_gcd_add_rows. eapply Nat.le_trans;
+          [apply poly_gcd_normalize_row_bits|].
+        apply poly_add_rows_bits; try assumption.
         * eapply Nat.le_trans; [apply poly_size_sign_mul|].
           eapply Nat.le_trans; [apply poly_row_coefficient_bits; exact Hnr|exact Hr].
         * rewrite poly_size_abs. eapply Nat.le_trans;
             [apply poly_row_coefficient_bits; exact Hnp|exact Hp].
-      + apply poly_add_rows_key_bits; assumption.
+      + unfold poly_gcd_add_rows. rewrite poly_gcd_normalize_key_bits.
+        apply poly_add_rows_key_bits; assumption.
   Qed.
 
   (** A single elimination step satisfies the coefficient and key-width recurrence. *)
@@ -5656,11 +6352,14 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         apply filter_In in Hq as [Hq _]. subst r.
         destruct (Hrows p Hp) as [Hnp [Hbp Hkp]].
         destruct (Hrows q Hq) as [Hnq [Hbq Hkq]]. split.
-        * apply poly_add_rows_bits; try assumption.
+        * unfold poly_gcd_add_rows. eapply Nat.le_trans;
+          [apply poly_gcd_normalize_row_bits|].
+        apply poly_add_rows_bits; try assumption.
           -- rewrite poly_size_opp. eapply Nat.le_trans;
                [apply poly_row_coefficient_bits; exact Hnq|exact Hbq].
           -- eapply Nat.le_trans; [apply poly_row_coefficient_bits; exact Hnp|exact Hbp].
-        * apply poly_add_rows_key_bits; assumption.
+        * unfold poly_gcd_add_rows. rewrite poly_gcd_normalize_key_bits.
+        apply poly_add_rows_key_bits; assumption.
   Qed.
 
   (** Initial normalization fits the maximum widths of normal input rows. *)
@@ -6369,15 +7068,6 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     lia.
   Qed.
 
-  (** Every stored coefficient is bounded by its row's maximum coefficient width. *)
-  Lemma poly_row_entry_bits : forall r p, In p (lhs r) ->
-    Z.size_nat (snd p) <= C.row_bits r.
-  Proof.
-    intros r p Hin. unfold C.row_bits.
-    exact (poly_max_member _ (fun p => Z.size_nat (snd p))
-      (Z.size_nat (rhs r)) (lhs r) p Hin).
-  Qed.
-
   (** A raw row supplies uniform key and coefficient bounds for every occurrence. *)
   Lemma poly_row_entry_sizes : forall r,
     Forall (fun p => Pos.size_nat (X.encode (fst p)) <= C.row_key_bits r /\
@@ -6899,6 +7589,46 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       change (Z.size_nat z <= bits' + 1). lia.
   Qed.
 
+  (** Every normalized multiplier fits the original uniform width envelope. *)
+  Lemma poly_gcd_scaled_multiplier_bits : forall d (before after : poly_row X.t) bits,
+    poly_gcd_scaled d before after ->
+    Forall (fun z => Z.size_nat z <= bits) (poly_multipliers before) ->
+    Forall (fun z => Z.size_nat z <= bits) (poly_multipliers after).
+  Proof.
+    intros d before after bits [Hd [_ [_ [Hmult _]]]] Hbits.
+    rewrite Hmult, Forall_map in Hbits. eapply Forall_impl; [|exact Hbits].
+    intros z Hz. eapply Nat.le_trans; [apply (poly_gcd_size_unscale d z Hd)|exact Hz].
+  Qed.
+
+  (** Positive exact unscaling preserves all parts of the tracked-row envelope. *)
+  Lemma poly_gcd_scaled_envelope : forall d before after dim mlen keys bits,
+    poly_gcd_scaled d before after -> poly_row_envelope dim mlen keys bits before ->
+    poly_row_envelope dim mlen keys bits after.
+  Proof.
+    intros d before after dim mlen keys bits Hscaled
+      (Hunique & Hdim & Hkeys & Hbits & Hmlen & Hmult).
+    pose proof (poly_gcd_scaled_keys X.t d before after Hscaled) as Hkey_list.
+    destruct (poly_gcd_scaled_lengths X.t d before after Hscaled) as [Hlength Hlength_mult].
+    unfold poly_row_envelope. split; [now rewrite Hkey_list|].
+    split; [now rewrite Hlength|]. split.
+    - now rewrite (poly_gcd_scaled_key_bits d before after Hscaled).
+    - split.
+      + eapply Nat.le_trans; [apply (poly_gcd_scaled_row_bits d before after Hscaled)|
+          exact Hbits].
+      + split; [now rewrite Hlength_mult|].
+        now apply poly_gcd_scaled_multiplier_bits with (before := before) (d := d).
+  Qed.
+
+  (** The complete tracked-row envelope survives common-divisor normalization. *)
+  Lemma poly_gcd_normalize_envelope : forall r dim mlen keys bits,
+    poly_row_envelope dim mlen keys bits r ->
+    poly_row_envelope dim mlen keys bits (poly_gcd_normalize r).
+  Proof.
+    intros r dim mlen keys bits Hrow.
+    destruct (poly_gcd_normalize_scaled X.t r) as [d Hscaled].
+    now apply poly_gcd_scaled_envelope with (before := r) (d := d).
+  Qed.
+
   (** One row operation charges its coefficients and multiplier entries at the common width. *)
   Definition poly_clock_span (dim mlen keys bits : nat) : N :=
     (N.of_nat (dim + mlen + 1) * N.of_nat (keys + bits + 1)^2)%N.
@@ -7073,6 +7803,151 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     change (fun u : X.t => X.T_encode u) with X.T_encode. nia.
   Qed.
 
+  (** Every integer stored in one row satisfies the common numeric bound. *)
+  Lemma poly_gcd_entries_bits : forall r bits,
+    C.row_bits (poly_constraint r) <= bits ->
+    Forall (fun z => Z.size_nat z <= bits) (poly_multipliers r) ->
+    Forall (fun z => Z.size_nat z <= bits) (poly_gcd_entries r).
+  Proof.
+    intros r bits Hrow Hmult. unfold poly_gcd_entries. constructor.
+    - eapply Nat.le_trans; [apply poly_row_rhs_bits|exact Hrow].
+    - apply Forall_app. split; [|exact Hmult].
+      apply Forall_map, Forall_forall. intros p Hp.
+      eapply Nat.le_trans; [apply poly_row_entry_bits; exact Hp|exact Hrow].
+  Qed.
+
+  (** Dividing the complete stored row visits each integer once. *)
+  Lemma T_poly_gcd_divide_row_bounded : forall r d bits,
+    Z.size_nat d <= bits ->
+    C.row_bits (poly_constraint r) <= bits ->
+    Forall (fun z => Z.size_nat z <= bits) (poly_multipliers r) ->
+    (T_poly_gcd_divide_row d r <= 128 *
+      N.of_nat (length (lhs (poly_constraint r)) + length (poly_multipliers r) + 2) *
+      N.of_nat (bits + 1)^2)%N.
+  Proof.
+    intros r d bits Hd Hrow Hmult.
+    assert (Hrhs : Z.size_nat (rhs (poly_constraint r)) <= bits).
+    { eapply Nat.le_trans; [apply poly_row_rhs_bits|exact Hrow]. }
+    pose proof (T_poly_gcd_div_width _ d bits Hrhs Hd) as Hright.
+    time_unfold (@T_poly_gcd_divide_row). time_simpl.
+    lazymatch goal with
+    | |- context [ListDef.T_map ?f ?Tf (lhs (poly_constraint r))] =>
+        pose proof (poly_T_map_members _ _ f Tf
+          (64 * N.of_nat (bits + 1)^2 + 4)%N (lhs (poly_constraint r))
+          ltac:(intros p Hp;
+            assert (Hpbits : Z.size_nat (snd p) <= bits)
+              by (eapply Nat.le_trans; [apply poly_row_entry_bits; exact Hp|exact Hrow]);
+            pose proof (T_poly_gcd_div_width (snd p) d bits Hpbits Hd);
+            time_simpl; lia)) as Hcoefficients
+    end.
+    lazymatch goal with
+    | |- context [ListDef.T_map ?f ?Tf (poly_multipliers r)] =>
+        pose proof (poly_T_map_members _ _ f Tf
+          (64 * N.of_nat (bits + 1)^2 + 1)%N (poly_multipliers r)
+          ltac:(intros m Hm;
+            pose proof (T_poly_gcd_div_width m d bits
+              (proj1 (Forall_forall _ _) Hmult m Hm) Hd);
+            time_simpl; lia)) as Hmultipliers
+    end.
+    rewrite !Nat2N.inj_add in *. change (N.of_nat 1) with 1%N in *.
+    change (N.of_nat 2) with 2%N in *.
+    assert (Hpositive : (1 <= N.of_nat (bits + 1)^2)%N) by nia.
+    clear -Hright Hcoefficients Hmultipliers Hpositive. nia.
+  Qed.
+
+  (** This constant covers field collection, the gcd fold, and the quotient pass. *)
+  Definition poly_gcd_normalize_factor : N := 256%N.
+
+  (** The gcd pass and exact quotient pass fit one quadratic charge per stored integer. *)
+  Lemma T_poly_gcd_normalize_bounded : forall r bits,
+    C.row_bits (poly_constraint r) <= bits ->
+    Forall (fun z => Z.size_nat z <= bits) (poly_multipliers r) ->
+    (T_poly_gcd_normalize r <= poly_gcd_normalize_factor *
+      N.of_nat (length (lhs (poly_constraint r)) + length (poly_multipliers r) + 2) *
+      N.of_nat (bits + 1)^2)%N.
+  Proof.
+    intros r bits Hrow Hmult.
+    pose proof (poly_gcd_entries_bits r bits Hrow Hmult) as Hentries.
+    pose proof (T_poly_gcd_entries_bounded X.t r) as Hcollect.
+    pose proof (T_poly_gcd_values_bounded _ bits Hentries) as Hfold.
+    pose proof (poly_gcd_values_bits _ bits Hentries) as Hdivisor.
+    pose proof (T_poly_gcd_divide_row_bounded r _ bits Hdivisor Hrow Hmult) as Hdivide.
+    pose proof (Z.T_ltb_le 1 (poly_gcd_values (poly_gcd_entries r))) as Htest.
+    change (Z.T_ltb 1 (poly_gcd_values (poly_gcd_entries r)) <= 5)%N in Htest.
+    assert (Hlength : length (poly_gcd_entries r) =
+      S (length (lhs (poly_constraint r)) + length (poly_multipliers r))).
+    { unfold poly_gcd_entries. cbn [length]. now rewrite length_app, length_map. }
+    rewrite Hlength in Hfold.
+    assert (Hpositive : (1 <= N.of_nat (bits + 1)^2)%N) by nia.
+    time_unfold (@T_poly_gcd_normalize).
+    destruct (1 <? poly_gcd_values (poly_gcd_entries r))%Z; time_simpl;
+      unfold poly_gcd_normalize_factor;
+      rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *;
+      change (N.of_nat 1) with 1%N in *; change (N.of_nat 2) with 2%N in *;
+      clear -Hcollect Hfold Hdivide Htest Hpositive; nia.
+  Qed.
+
+  (** The arithmetic sum has at most the combined coefficient lengths. *)
+  Lemma poly_gcd_add_rows_length : forall a p b q,
+    length (lhs (poly_constraint (poly_add_rows X.encode a p b q))) <=
+      length (lhs (poly_constraint p)) + length (lhs (poly_constraint q)).
+  Proof.
+    intros a p b q. cbn [poly_add_rows poly_constraint lhs].
+    eapply Nat.le_trans; [apply poly_normal_length|].
+    unfold poly_scale_coef. now rewrite length_app, !length_map.
+  Qed.
+
+  (** A fresh sum pays the raw addition cost and its bounded normalization pass. *)
+  Definition poly_gcd_add_rows_factor : N :=
+    (poly_add_rows_factor + 18 * poly_gcd_normalize_factor + 4)%N.
+
+  (** Normalizing a fresh sum fits the same quadratic FM envelope with a larger constant. *)
+  Lemma T_poly_gcd_add_rows_bounded : forall a p b q dim mlen keys bits,
+    poly_row_envelope dim mlen keys bits p ->
+    poly_row_envelope dim mlen keys bits q ->
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    (T_poly_gcd_add_rows X.encode X.T_encode a p b q <=
+      poly_gcd_add_rows_factor * poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros a p b q dim mlen keys bits Hp Hq Ha Hb.
+    pose proof (T_poly_add_rows_bounded a p b q dim mlen keys bits Hp Hq Ha Hb) as Hadd.
+    destruct Hp as (Hnp & Hdp & Hkp & Hbp & Hmp & Hup).
+    destruct Hq as (Hnq & Hdq & Hkq & Hbq & Hmq & Huq).
+    set (r := poly_add_rows X.encode a p b q).
+    assert (Hbits : C.row_bits (poly_constraint r) <= 2 * bits + 2).
+    { unfold r. eapply Nat.le_trans; [apply poly_add_rows_bits; eassumption|lia]. }
+    destruct (poly_gcd_weighted_bounds a (poly_multipliers p) b (poly_multipliers q)
+      bits Ha Hb Hup Huq) as [Hmult_length Hmult_bits].
+    change (Forall (fun m => Z.size_nat m <= 2 * bits + 2) (poly_multipliers r))
+      in Hmult_bits.
+    assert (Hmult : length (poly_multipliers r) <= mlen).
+    { unfold r. cbn [poly_add_rows poly_multipliers]. lia. }
+    pose proof (T_poly_gcd_normalize_bounded r (2 * bits + 2) Hbits Hmult_bits) as Hnormalize.
+    pose proof (poly_gcd_add_rows_length a p b q) as Hlength. fold r in Hlength.
+    assert (Hwork :
+      (length (lhs (poly_constraint r)) + length (poly_multipliers r) + 2) *
+        (2 * bits + 2 + 1)^2 <=
+      18 * ((dim + mlen + 1) * (keys + bits + 1)^2)).
+    { assert (Hcount : length (lhs (poly_constraint r)) + length (poly_multipliers r) + 2
+          <= 2 * (dim + mlen + 1)) by lia.
+      assert (Hwidth : (2 * bits + 2 + 1)^2 <= 9 * (keys + bits + 1)^2).
+      { cbn [Nat.pow]. nia. }
+      eapply Nat.le_trans; [apply Nat.mul_le_mono; [exact Hcount|exact Hwidth]|]. ring_simplify.
+      reflexivity. }
+    assert (Hnormal_span : (T_poly_gcd_normalize r <=
+      18 * poly_gcd_normalize_factor * poly_clock_span dim mlen keys bits)%N).
+    { apply time_of_nat_le in Hwork.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_pow in Hwork.
+      change (N.of_nat 18) with 18%N in Hwork.
+      change (N.of_nat 2) with 2%N in Hwork.
+      unfold poly_clock_span, poly_gcd_normalize_factor in *.
+      clear -Hnormalize Hwork. nia. }
+    pose proof (poly_span_positive dim mlen keys bits) as Hpositive.
+    time_unfold (@T_poly_gcd_add_rows). fold r. time_simpl.
+    change (fun x => X.T_encode x) with X.T_encode.
+    unfold poly_gcd_add_rows_factor. clear -Hadd Hnormal_span Hpositive. nia.
+  Qed.
+
   (** Multiplying by a sign needs only a linear pass over the other operand. *)
   Lemma T_poly_sign_mul_bounded : forall a b bits,
     Z.size_nat b <= bits ->
@@ -7086,7 +7961,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
   (** Cancellation adds two coefficient lookups and a bounded factor calculation. *)
   Definition poly_cancel_factor : N :=
-    (poly_add_rows_factor + 4 * poly_coef_factor + 96)%N.
+    (poly_gcd_add_rows_factor + 4 * poly_coef_factor + 96)%N.
 
   (** Eliminating with an equality pivot fits the same row envelope. *)
   Lemma T_poly_cancel_bounded : forall x p r dim mlen keys bits,
@@ -7112,7 +7987,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       dim mlen keys bits ltac:(lia) ltac:(lia)) as Hspan_r.
     pose proof (N.mul_le_mono_l _ _ poly_coef_factor Hspan_p) as Hlookup_span_p.
     pose proof (N.mul_le_mono_l _ _ poly_coef_factor Hspan_r) as Hlookup_span_r.
-    pose proof (T_poly_add_rows_bounded (- Z.sgn a * b)%Z p (Z.abs a) r
+    pose proof (T_poly_gcd_add_rows_bounded (- Z.sgn a * b)%Z p (Z.abs a) r
       dim mlen keys bits ltac:(repeat split; assumption) ltac:(repeat split; assumption)
       ltac:(pose proof (poly_size_sign_mul a b); lia)
       ltac:(now rewrite poly_size_abs)) as Hadd.
@@ -7218,13 +8093,13 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
   (** One pair forms the Fourier-Motzkin combination of its two coefficients. *)
   Definition poly_clock_pair (x : X.t) (p q : poly_row X.t) : poly_row X.t :=
-    poly_add_rows X.encode (- poly_coefficient X.eqb x (poly_constraint q))%Z p
+    poly_gcd_add_rows X.encode (- poly_coefficient X.eqb x (poly_constraint q))%Z p
       (poly_coefficient X.eqb x (poly_constraint p)) q.
 
   TimeFun poly_clock_pair.
 
   Definition poly_pair_factor : N :=
-    (poly_add_rows_factor + 2 * poly_coef_factor + 16)%N.
+    (poly_gcd_add_rows_factor + 2 * poly_coef_factor + 16)%N.
 
   (** Constructing a pair charges its two coefficient lookups and its normalized row sum. *)
   Lemma T_poly_pair_bounded : forall x p q dim mlen keys bits,
@@ -7237,7 +8112,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (T_poly_lookup_envelope x q _ _ _ _ Hq) as Hlookup_q.
     pose proof (poly_envelope_coefficient_bits x p _ _ _ _ Hp) as Hbits_p.
     pose proof (poly_envelope_coefficient_bits x q _ _ _ _ Hq) as Hbits_q.
-    pose proof (T_poly_add_rows_bounded
+    pose proof (T_poly_gcd_add_rows_bounded
       (- poly_coefficient X.eqb x (poly_constraint q))%Z p
       (poly_coefficient X.eqb x (poly_constraint p)) q dim mlen keys bits Hp Hq
       ltac:(now rewrite poly_size_opp) Hbits_p) as Hadd.
@@ -7748,7 +8623,8 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - split; [exact Hlr|]. eapply Forall_impl; [|exact Hr]. intros m Hm.
       change (Z.size_nat m <= bits + 1) in Hm.
       change (Z.size_nat m <= 2 * bits + 2). lia.
-    - apply poly_add_rows_growth; try assumption.
+    - unfold poly_gcd_add_rows. apply poly_gcd_normalize_mult_growth.
+        apply poly_add_rows_growth; try assumption.
       + eapply Nat.le_trans; [apply poly_size_sign_mul|exact Hcr].
       + now rewrite poly_size_abs.
   Qed.
@@ -7780,6 +8656,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         apply filter_In in Hq as [Hq _]. subst r.
         destruct (Hrows p Hp) as [Hlp [Hmp Hcp]].
         destruct (Hrows q Hq) as [_ [Hmq Hcq]].
+        unfold poly_gcd_add_rows. apply poly_gcd_normalize_mult_growth.
         apply poly_add_rows_growth; try assumption. now rewrite poly_size_opp.
   Qed.
 
@@ -13250,12 +14127,15 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     poly_zero_equality (poly_cancel X.encode X.eqb x r r).
   Proof.
     intros x r Hrel Hnonzero. unfold poly_zero_equality, poly_cancel. rewrite Hnonzero.
-    split.
-    - cbn [poly_add_rows poly_constraint lrel]. unfold poly_eq_used.
+    unfold poly_gcd_add_rows. split.
+    - rewrite (proj1 (poly_gcd_normalize_metadata _ _)).
+      cbn [poly_add_rows poly_constraint lrel]. unfold poly_eq_used.
       rewrite Hrel. reflexivity.
     - split.
-      + cbn [poly_add_rows poly_constraint rhs]. rewrite <- poly_sgn_abs. ring.
-      + intro y. rewrite poly_add_rows_coefficient, <- poly_sgn_abs. ring.
+      + apply poly_gcd_normalize_rhs_zero.
+        cbn [poly_add_rows poly_constraint rhs]. rewrite <- poly_sgn_abs. ring.
+      + intro y. apply poly_gcd_normalize_zero.
+        rewrite poly_add_rows_coefficient, <- poly_sgn_abs. ring.
   Qed.
 
   (** A singleton step either retains its equality or returns its zero self-cancellation. *)
@@ -14141,7 +15021,7 @@ Module PolyAssignBranchExtended (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     let neg := filter (fun r => (poly_coefficient X.eqb x (poly_constraint r) <? 0)%Z) rows in
     filter (fun r => Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0) rows ++
       flat_map (fun p => map (fun q =>
-        poly_add_rows X.encode (- poly_coefficient X.eqb x (poly_constraint q))%Z p
+        poly_gcd_add_rows X.encode (- poly_coefficient X.eqb x (poly_constraint q))%Z p
           (poly_coefficient X.eqb x (poly_constraint p)) q) neg) pos.
 
   TimeFun poly_assign_inequalities.

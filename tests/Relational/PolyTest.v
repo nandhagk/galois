@@ -1,12 +1,12 @@
 (** * Polyhedral computation fixtures
 
-    These examples exercise raw constraints independently of expression linearization.
+    These examples exercise rational constraints, elimination and their expression wrappers.
     For example, 2*x <= 1 does not rationally entail x <= 0.
     Builds on: Poly, LinCert, Linearize, ZLang and positive keys. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key.
-From Galois.Domains Require Import LangSig ValueSig ZLang.
+From Galois.Domains Require Import LangSig ValueSig IntervalSig ZLang.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinCertSig LinCert Linearize PolySig Poly.
 Import List.ListNotations.
@@ -16,6 +16,8 @@ Local Open Scope Z_scope.
 Module FixtureLinearize := LinearizeCode PosKeyCode ZLangCode.
 Module FixtureCertificate := LinCertCode PosKeyCode.
 Module FixturePoly := PolyCode PosKeyCode ZLangCode FixtureLinearize FixtureCertificate.
+Module GcdFixtureLinearize := ZLinearizeCode PosKeyCode.
+Module GcdFixturePoly := PolyCode PosKeyCode ZLangCode GcdFixtureLinearize FixtureCertificate.
 
 Definition upper_x (b : Z) : lcons positive := LCons _ [(1%positive, 1)] RLe b.
 Definition lower_x (b : Z) : lcons positive := LCons _ [(1%positive, -1)] RLe (-b).
@@ -156,6 +158,107 @@ Example eliminate_negative_equality :
     [LCons _ [(1%positive, -2); (2%positive, 1)] REq 4; upper_x 3] =
     [Tracked _ (LCons _ [] REq 0) [0; 0];
      Tracked _ (LCons _ [(2%positive, 1)] RLe 10) [1; 2]].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A newly combined row sheds the common factor shared with its certificate. *)
+Example gcd_elimination_reduces_row :
+  map row_of (FixturePoly.fm_elim 1%positive
+    [LCons _ [(1%positive, 2); (2%positive, 2)] RLe 6;
+     LCons _ [(1%positive, -2)] RLe (-2)]) =
+    [LCons _ [(2%positive, 2)] RLe 4].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The checked projection wrapper accepts the divided elimination row. *)
+Example gcd_havoc_checks_normalized_row :
+  FixturePoly.havoc 1%positive
+    (Reached [LCons _ [(1%positive, 2); (2%positive, 2)] RLe 6;
+      LCons _ [(1%positive, -2)] RLe (-2)]) =
+    Reached [LCons _ [(2%positive, 2)] RLe 4].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Exact division handles negative equality coefficients and right-hand sides. *)
+Example gcd_reduces_signed_equality :
+  poly_constraint (poly_gcd_normalize
+    (PolyRow positive (LCons _ [(1%positive, -6); (2%positive, 9)] REq (-12))
+      [-3; 6] false)) =
+    LCons _ [(1%positive, -2); (2%positive, 3)] REq (-4).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An indivisible multiplier prevents division even when the constraint has a common factor. *)
+Example gcd_preserves_primitive_certificate_row :
+  poly_constraint (poly_gcd_normalize
+    (PolyRow positive (LCons _ [(1%positive, 4)] RLe 8) [1] false)) =
+    LCons _ [(1%positive, 4)] RLe 8.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An indivisible right-hand side prevents any rounding into an integer cut. *)
+Example gcd_preserves_fractional_bound :
+  poly_constraint (poly_gcd_normalize
+    (PolyRow positive (LCons _ [(1%positive, 2)] RLe 1) [2] false)) =
+    LCons _ [(1%positive, 2)] RLe 1.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The all-zero strict row remains a contradiction when its gcd is zero. *)
+Example gcd_preserves_zero_strict_contradiction :
+  poly_contradiction (poly_gcd_normalize
+    (PolyRow positive (LCons _ [] RLe 0) [0; 0] true)) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Assignment divides the new equality and its certificate by their shared factor. *)
+Example gcd_assignment_divides_new_row :
+  FixturePoly.assign_linear 1%positive (Lin _ [(1%positive, 2)] 1)
+    [LCons _ [(1%positive, 4)] REq 0] =
+    [LCons _ [] REq 0; LCons _ [(1%positive, 2)] REq 2].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition gcd_assignment_term : term ZLangCode.op positive :=
+  Node ZAdd [Node ZMul [Node (ZConst 2) []; Leaf 1%positive]; Node (ZConst 1) []].
+
+(** The numeric term wrapper reaches the same normalized assignment result. *)
+Example gcd_numeric_assignment_divides_new_row :
+  GcdFixturePoly.assign 1%positive gcd_assignment_term
+    (Reached [LCons _ [(1%positive, 4)] REq 0]) =
+    Reached [LCons _ [] REq 0; LCons _ [(1%positive, 2)] REq 2].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A divided strict contradiction still yields a checked entailment certificate. *)
+Example gcd_entailment_checks_normalized_row :
+  FixturePoly.entails_row [LCons _ [(1%positive, 2)] RLe 2]
+    (LCons _ [(1%positive, 4)] RLe 4) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Dividing a projected equality preserves both exact rational endpoints. *)
+Example gcd_range_checks_normalized_row :
+  FixturePoly.range_linear [LCons _ [(1%positive, 4)] REq 0]
+    (Lin _ [(1%positive, 2)] 1) = (Fin 1, Fin 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The numeric term wrapper returns both endpoints from the divided projection. *)
+Example gcd_numeric_range_checks_normalized_row :
+  GcdFixturePoly.range gcd_assignment_term
+    (Reached [LCons _ [(1%positive, 4)] REq 0]) = (Fin 1, Fin 1).
 Proof.
   vm_compute. reflexivity.
 Qed.
