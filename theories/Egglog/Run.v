@@ -10347,7 +10347,8 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
         * split; assumption.
   Qed.
 
-  (** The checked replacement for F7 uses the loaded action sorts and current allocation. *)
+  (** Applying a rule's actions preserves derivedness, using the loaded action sorts and the current
+      allocation. *)
   Lemma run_apply_derives_checked : forall p cp initial db r s,
     plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
     no_ids db -> derived p initial db -> In r (rules V.t p) ->
