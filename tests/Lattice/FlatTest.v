@@ -83,5 +83,3 @@ Module RankTests.
   Qed.
 
 End RankTests.
-
-(* LatticeFlatTest.flat_leb_ticks and flat_join_ticks retire with Cost.ticks. *)
