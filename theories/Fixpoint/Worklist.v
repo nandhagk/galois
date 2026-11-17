@@ -2,9 +2,14 @@
 
     The solver prepares row and reader indexes and tracks live queue entries.
     For example, repeated reads by one row enqueue that row once per change.
+    Main results
+    - [run_complexity] Running at sufficient fuel has the published work bound.
+
     Builds on: Fixpoint.WorklistSig and Base.Loop. *)
+
 From Stdlib Require Import List Bool Arith NArith PArith Lia.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import Code MapSig Trie HeapSig Loop.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Graph Require Import DigraphSig WtoSig.
@@ -8032,10 +8037,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Proof.
     intros; apply T_run_all_head_budget; assumption.
   Qed.
-  Lemma run_complexity : bigO
-    (fun x : S.prog * policy L.wparam => fits (fst x) (snd x))
-    (fun x => work (fst x) (snd x))
-    (fun x => T_run (fst x) (snd x) (fuel_for (fst x) (snd x))).
+  (** Running at sufficient fuel has the published work bound. *)
+  Lemma run_complexity :
+    T_run p pol (fuel_for p pol) ∈ 𝑂(work p pol) for (p, pol) | fits p pol.
   Proof.
     exists (2 * c_wl)%N; intros [p pol] Hfits; cbn [fst snd] in *.
     pose proof (T_run_le p pol (fuel_for p pol) Hfits) as Hrun.
