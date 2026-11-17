@@ -2,38 +2,83 @@
 
     These examples pin scalar layouts and key equality.
     For example, signed negative three has a different code from positive three.
-    Builds on: Key. *)
+    Builds on: Key.
+
+    Groups:
+    - ScalarTests: the codes of scalar values, including zero and the signs of integers.
+    - WidthTests: the widths in bits of the scalar keys. *)
 
 From Stdlib Require Import Bool NArith ZArith.
 From Galois.Base Require Import Key.
 
-Local Open Scope positive_scope.
+(** * Scalar codes *)
 
-Example scalar_rejects :
-  Pos.eqb (ZKeyCode.encode 3%Z) (ZKeyCode.encode (-3)%Z) = false.
-Proof. vm_compute. reflexivity. Qed.
+Module ScalarTests.
 
-Example scalar_zero_boundary :
-  (PosKeyCode.encode 1, NKeyCode.encode 0%N, NatKeyCode.encode 0%nat,
-    ZKeyCode.encode 0%Z, BoolKeyCode.encode false, UnitKeyCode.encode tt) =
-  (1%positive, 1%positive, 1%positive, 1%positive, 1%positive, 1%positive).
-Proof. vm_compute. reflexivity. Qed.
+  Local Open Scope positive_scope.
 
-Example positive_scalar_boundary_widths : (PosKey.bits 1, PosKey.bits 2) = (1, 2)%nat.
-Proof. vm_compute. reflexivity. Qed.
+  (** Signed positive and negative three have different codes. *)
+  Example signed_codes_differ_by_sign :
+    Pos.eqb (ZKeyCode.encode 3%Z) (ZKeyCode.encode (-3)%Z) = false.
+  Proof. vm_compute. reflexivity. Qed.
 
-Example unit_scalar_width : UnitKey.bits tt = 1%nat.
-Proof. vm_compute. reflexivity. Qed.
+  (** The positive key one encodes to one. *)
+  Example positive_one_encodes_to_one : PosKeyCode.encode 1 = 1.
+  Proof. vm_compute. reflexivity. Qed.
 
-Example imported_positive_scalar_value p : PosKeyCode.encode p = p.
-Proof.
-  vm_compute. reflexivity.
-Qed.
+  (** Zero as a natural number encodes to one. *)
+  Example zero_nat_encodes_to_one : NKeyCode.encode 0%N = 1.
+  Proof. vm_compute. reflexivity. Qed.
 
-Example imported_unit_scalar_value x : UnitKeyCode.encode x = 1%positive.
-Proof.
-  vm_compute. reflexivity.
-Qed.
+  (** Zero as a machine natural encodes to one. *)
+  Example zero_natural_encodes_to_one : NatKeyCode.encode 0%nat = 1.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** Zero as an integer encodes to one. *)
+  Example zero_integer_encodes_to_one : ZKeyCode.encode 0%Z = 1.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** The boolean false encodes to one. *)
+  Example false_encodes_to_one : BoolKeyCode.encode false = 1.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** The unit value encodes to one. *)
+  Example unit_encodes_to_one : UnitKeyCode.encode tt = 1.
+  Proof. vm_compute. reflexivity. Qed.
+
+End ScalarTests.
+
+(** * Widths *)
+
+Module WidthTests.
+
+  Local Open Scope positive_scope.
+
+  (** The positive key one has one bit. *)
+  Example positive_one_has_one_bit : PosKey.bits 1 = 1%nat.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** The positive key two has two bits. *)
+  Example positive_two_has_two_bits : PosKey.bits 2 = 2%nat.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** The unit key has one bit. *)
+  Example unit_key_is_one_bit : UnitKey.bits tt = 1%nat.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (** The positive key encodes to itself. *)
+  Example positive_key_is_identity (p : positive) : PosKeyCode.encode p = p.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The unit key encodes every value to one. *)
+  Example unit_key_encodes_to_one (x : unit) : UnitKeyCode.encode x = 1%positive.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End WidthTests.
 
 (* BaseEncodingTest.scalar_roundtrips expects six Some results and scalar_rejects
    also expects (None, None) from bool and unit decoding. These coordinates retire
