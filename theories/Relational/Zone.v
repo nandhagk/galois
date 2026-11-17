@@ -9357,37 +9357,67 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       + pose proof assume_time_coefficient. nia.
   Qed.
 
+  (** Assignment is linear in the public numeric work measure. *)
   Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_num). intros [[x e] s] _.
+    pose proof (T_assign_le x e s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [fst snd]. nia.
+  Qed.
 
+  (** Forgetting a variable is linear in the public numeric work measure. *)
   Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x)))
     (fun x => T_havoc (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_num). intros [x s] _.
+    pose proof (T_havoc_le x s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [fst snd]. nia.
+  Qed.
 
+  (** Assumption is linear in the public numeric work measure. *)
   Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_num). intros [[g es] s] _.
+    pose proof (T_assume_le g es s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [fst snd]. nia.
+  Qed.
 
+  (** Range queries are linear in the public numeric work measure. *)
   Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
     (fun x => T_range (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_num). intros [e s] _.
+    pose proof (T_range_le e s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [fst snd]. nia.
+  Qed.
 
+  (** Closure is cubic in the support of a well-formed matrix. *)
   Lemma close_bigO : bigO (fun m : dbm => dbm_wf m)
     (fun m => N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
     (fun m => T_close m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_zone). intros m Hwf.
+    pose proof (T_close_le m Hwf) as Htime.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 
+  (** Incremental closure is quadratic in the original support. *)
   Lemma incr_close_bigO : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
     (fun x => N.of_nat ((supp (snd x) + 1)^2 *
       (b (snd x) + K.bits (fst (fst (fst x))) + K.bits (snd (fst (fst x))) +
         ell (snd x) + Z.size_nat (snd (fst x)) + 1)))
     (fun x => T_incr_close (fst (fst (fst x))) (snd (fst (fst x))) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_zone). intros [[[i j] d] m] _.
+    pose proof (T_incr_close_le i j d m) as Htime.
+    cbn [fst snd]. rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   Lemma leb_bigO : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) + 1) *
