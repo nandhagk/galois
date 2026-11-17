@@ -88,7 +88,3 @@ Module HeightTests.
   Qed.
 
 End HeightTests.
-
-(* LatticeDualTest.dual_leb_ticks, dual_join_ticks and dual_callback_charges retire
-   with Cost.ticks. bool_meet_contract is a proof client of the retired dictionary
-   meet_laws. BoolLat supplies the meet laws used by DualBoolLat. *)
