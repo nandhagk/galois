@@ -2393,12 +2393,16 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       N.of_nat (interval_bits a + interval_bits b + 1))%N.
   Proof.
     intros a b.
+    (* The finite case needs the meet bounds below before arithmetic can close. *)
     destruct a as [|[|la|] [|ha|]];
       destruct b as [|[|lb|] [|hb|]];
       unfold T_interval_assume_ult, T_interval_finite_helper,
         interval_finite_helper;
       time_simpl; time_cbn; time_pose; time_cbn_all;
-      try (repeat rewrite Nat2N.inj_add in *; nia).
+      try (lazymatch goal with
+        | |- context [Scalar.T_interval_meet _ _] => fail
+        | _ => repeat rewrite Nat2N.inj_add in *; nia
+        end).
     pose proof (table_integer_sub_bits hb 1) as Hsub_bits.
     pose proof (table_integer_add_bits la 1) as Hadd_bits.
     pose proof (Std.Z.T_sub_le hb 1) as Hsub_time.
