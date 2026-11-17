@@ -4,9 +4,9 @@
     For example, reversing the read order changes checker acceptance.
 
     Groups:
-    - Reads: a row accepts the values it reads in order and rejects them reversed.
-    - Empty: a system without rows accepts any values.
-    - Constant: a row whose target is false rejects the empty candidate.
+    - [ReadTests] A row accepts the values it reads in order and rejects them reversed.
+    - [EmptyTests] A system without rows accepts any values.
+    - [ConstantTests] A row whose target is false rejects the empty candidate.
 
     Builds on: Fixpoint.Query and Fixpoint.Check. *)
 
