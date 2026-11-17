@@ -9,8 +9,10 @@
     - [above_sound] Upper search is sound even when the tree is unordered.
     - [below_sound] Lower search is sound even when the tree is unordered.
     - [make_complexity] Construction has the published comparison-sort bound.
-    - [above_complexity] Upper search has the published path-times-bits class.
-    - [below_complexity] Lower search has the published path-times-bits class.
+    - [above_complexity] Upper search has the published path-times-bits class,
+      O((depth tree + 1) (tree_bits tree + 1)).
+    - [below_complexity] Lower search has the published path-times-bits class,
+      O((depth tree + 1) (tree_bits tree + 1)).
 
     Builds on: ThresholdsSig. *)
 
