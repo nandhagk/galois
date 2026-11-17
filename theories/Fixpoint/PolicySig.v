@@ -2,10 +2,17 @@
 
     Policies store priorities and widening heads as data.
     For example, a head with zero delay widens at its first strict update.
+
+    Main results
+    - [update_spec] Updates follow the policy's delay and widening head.
+    - [update_complexity] An update is linear in the key, both values, the counter and the
+      widening cost.
+
     Builds on: Base.Trie and Lattice.LatticeSig. *)
 
 From Stdlib Require Import PArith List Arith NArith.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 
@@ -116,11 +123,11 @@ Module Type POLICY_TIME (L : WLATTICE_T) (Import P : POLICY L).
           | None => 0
           end) + 1))%N.
   (** An update is linear in the key, both values, the counter and the widening cost. *)
-  Parameter update_complexity : bigO (X := policy L.wparam * positive * N * L.t * L.t)
-    (fun _ => True)
-    (fun '(pol, x, cnt, a, b) => N.of_nat (Pos.size_nat x + L.size a + L.size b +
+  Parameter update_complexity :
+    T_update pol x cnt a b ∈
+      𝑂(N.of_nat (Pos.size_nat x + L.size a + L.size b +
         N.size_nat cnt + (L.wunits a + L.wunits b + 1) * L.wsize (wp pol)))
-    (fun '(pol, x, cnt, a, b) => T_update pol x cnt a b).
+    for (pol, x, cnt, a, b).
 End POLICY_TIME.
 
 Module Type POLICY_T (L : WLATTICE_T) := POLICY L <+ POLICY_TIME L.
