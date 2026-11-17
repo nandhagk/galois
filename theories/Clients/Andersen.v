@@ -927,11 +927,15 @@ Module AndersenCode (V : VALUE_OPS with Definition t := positive)
   Definition compile (_ : pointer_input) : program V.t := andersen_program.
   Definition seed_put (db : D.t) (entry : positive * (positive * positive)) : D.t :=
     D.put (fst entry) [Val (fst (snd entry)); Val (snd (snd entry))] None db.
-  Definition seed (q : pointer_input) : D.t :=
+  (** A supplied plan shares its slot layout with the subsequent run. *)
+  Definition seed_at (cp : compiled V.t) (q : pointer_input) : D.t :=
     fold_left seed_put (pointer_seed_entries 5 q)
-      (D.init (decls V.t (compile q)) (pointer_plan_slots (R.plan (compile q)))).
+      (D.init (decls V.t (compile q)) (pointer_plan_slots cp)).
+  Definition seed (q : pointer_input) : D.t := seed_at (R.plan (compile q)) q.
   Definition solve (q : pointer_input) (lim : limits) : stop * D.t :=
-    let p := compile q in R.run p (R.plan p) lim (seed q).
+    let p := compile q in
+    let cp := R.plan p in
+    R.run p cp lim (seed_at cp q).
   Definition points (db : D.t) (x a : positive) : bool :=
     match fst (D.lookup 5 [Val x; Val a] db) with
     | Some None => true
@@ -1162,6 +1166,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Module SeedTime := PointerSeedTime V I J D R.
   TimeFun compile.
   TimeFun seed_put.
+  TimeFun seed_at.
   TimeFun seed.
   TimeFun solve.
   TimeFun points.
@@ -1266,7 +1271,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     { clear - q; pose proof (SeedTime.unit_positive (seed q)); lia. }
     rewrite (proj1 (proj2 (proj2 (seed_wf q)))); cbn [N.log2 N.to_nat].
     rewrite N.mul_1_r.
-    time_unfold T_seed; time_simpl.
+    time_unfold T_seed; time_unfold T_seed_at; time_simpl.
     change (pointer_plan_slots (R.plan (compile q))) with
       (Syntax.slots V.t (R.plan (compile q))).
     rewrite (Nat2N.inj_add (length (constraints q) + length (initial_pointers q)) 1)
@@ -1300,24 +1305,44 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + c_andersen)%N.
   Proof.
-    intros q lim; time_unfold T_solve; time_simpl; unfold c_andersen, k_wrap; lia.
+    intros q lim; time_unfold T_solve; time_unfold T_seed; time_simpl.
+    change (seed_at (R.plan (compile q)) q) with (seed q).
+    unfold c_andersen, k_wrap; lia.
   Qed.
 
+  (** Seeding is linear in the input entries at the final database unit and identifier width. *)
   Lemma seed_bigO : bigO (fun _ => True)
     (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
       D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
     T_seed.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_andersen).
+    intros q _; cbn beta.
+    eapply N.le_trans; [apply T_seed_le |].
+    rewrite !Nat2N.inj_mul; nia.
+  Qed.
 
+  (** Compiling the fixed inclusion program costs a constant. *)
   Lemma compile_bigO : bigO (fun _ => True) (fun _ => 0%N) T_compile.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_andersen).
+    intros q _; cbn beta.
+    rewrite N.mul_0_r, N.add_0_l; apply T_compile_le.
+  Qed.
 
+  (** A points-to lookup is linear in the database unit and the two value widths. *)
   Lemma points_bigO : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
     (fun z => let '(db, x, a) := z in
       N.of_nat (3 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
     (fun z => let '(db, x, a) := z in T_points db x a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_andersen).
+    intros [[db x] a] Hwf; cbn [fst snd] in Hwf |- *.
+    eapply N.le_trans; [apply T_points_le; exact Hwf |].
+    rewrite !Nat2N.inj_add; nia.
+  Qed.
 
+  (** Solving composes the seed, plan and run bounds under the final database budgets. *)
   Lemma solve_bigO : bigO
     (fun x : N * nat * pointer_input * limits =>
       let '(B, U, q, lim) := x in
@@ -1329,7 +1354,23 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
         (R.size_program (compile q) + 1)) +
       R.run_cost B U (compile q) (R.plan (compile q)) lim (seed q))%N)
     (fun x => let '(_, _, q, lim) := x in T_solve q lim).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    destruct seed_bigO as [c_seed Hseed].
+    destruct R.plan_bigO as [c_plan Hplan].
+    destruct R.run_bigO as [c_run Hrun].
+    apply bigO_intro with (c := (c_andersen + c_andersen + c_seed + c_plan + c_run)%N).
+    intros [[[B U] q] lim] Hbounds; cbn beta iota zeta in Hbounds |- *.
+    rewrite solve_run in Hbounds.
+    specialize (Hseed q I).
+    specialize (Hplan (compile q) I).
+    specialize (Hrun (B, U, compile q, R.plan (compile q), lim, seed q)
+      (conj (R.plan_checked (compile q) (program_sorted q))
+        (conj (proj1 (seed_wf q)) (conj (seed_loaded q) Hbounds)))).
+    cbn beta iota zeta in Hseed, Hplan, Hrun.
+    pose proof (T_compile_le q) as Hcompile.
+    pose proof (T_solve_le q lim) as Hsolve; cbn zeta in Hsolve.
+    nia.
+  Qed.
 
   Lemma F1_source_closed : forall q, pointer_closed q (may_points q).
   Proof.
@@ -1416,7 +1457,9 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
   Proof.
-    intros q lim; time_unfold T_solve; time_simpl; unfold k_wrap; lia.
+    intros q lim; time_unfold T_solve; time_unfold T_seed; time_simpl.
+    change (seed_at (R.plan (compile q)) q) with (seed q).
+    unfold k_wrap; lia.
   Qed.
 
 End AndersenT.

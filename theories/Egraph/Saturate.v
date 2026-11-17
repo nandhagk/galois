@@ -4125,7 +4125,19 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     (fun x : list decl * list (rewrite V.t) * list (rule V.t) * list (fexpr V.t) =>
       let '(ds, rws, ans, es) := x in N.of_nat (front_size ds rws ans es + 1))
     (fun x => let '(ds, rws, ans, es) := x in T_check_front ds rws ans es).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_sat).
+    intros [[[ds rws] ans] es] _. cbn beta iota zeta.
+    pose proof (T_check_front_le ds rws ans es) as Hcheck. lia.
+  Qed.
+
+  (** Dropping final credit preserves a bound by work plus initial credit. *)
+  Lemma amortized_bigO_bound : forall t pending c work credit : N,
+    (t + pending <= c * work + credit ->
+      t <= (c + 1) * (work + credit) + (c + 1))%N.
+  Proof.
+    intros t pending c work credit Hcost. nia.
+  Qed.
 
   (** Adding an input costs its nodes at the identifier width, and its scaled credit. *)
   Lemma add_expr_bigO : bigO
@@ -4137,7 +4149,44 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
       (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1) *
         N.of_nat (expr_work e) + N.of_nat U * D.potential B db)%N)
     (fun x => let '(_, _, _, e, db) := x in T_add_expr e db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := (c_sat + 1)%N).
+    intros [[[[B U] ds] e] db] [Hwf [Hexpr [Hids HU]]]. cbn beta iota zeta.
+    apply amortized_bigO_bound with
+      (pending := (N.of_nat U * D.potential B (snd (add_expr e db)))%N).
+    rewrite !N.mul_assoc. exact (T_add_expr_amort B U ds e db Hwf Hexpr Hids HU).
+  Qed.
+
+  (** The front-end measure pays for every rewrite and every analysis rule. *)
+  Lemma compile_front_bound : forall ds rws ans es,
+    (C.T_compile ds rws ans <= C.c_compile *
+      N.of_nat (front_size ds rws ans es + 1))%N.
+  Proof.
+    intros ds rws ans es.
+    assert (Hlength : length ans <=
+      fold_right (fun r n => (rule_bits r + n)%nat) 0%nat ans).
+    { induction ans as [|r rest IH]; cbn [length fold_right].
+      - lia.
+      - assert (Hpositive : 1 <= rule_bits r) by (unfold rule_bits; lia). lia. }
+    eapply N.le_trans; [apply C.T_compile_le |].
+    apply N.mul_le_mono_l. unfold front_size. lia.
+  Qed.
+
+  (** Adding the six phase bounds uses the sum of their coefficients. *)
+  Lemma saturate_sum_bound : forall check compile plan load inputs run
+      k_check k_compile k_plan k_load k_inputs k_run front planning loading inserting running : N,
+    (check <= k_check * front -> compile <= k_compile * front ->
+      plan <= k_plan * (planning + 1) -> load <= k_load * (loading + 1) ->
+      inputs <= k_inputs * inserting -> run <= k_run * (running + 1) ->
+      check + k_check + (compile + plan + load + inputs + run) <=
+      (k_check + k_compile + k_plan + k_load + k_inputs + k_run) *
+        (front + planning + loading + inserting + running) +
+      (k_check + k_compile + k_plan + k_load + k_inputs + k_run))%N.
+  Proof.
+    intros check compile plan load inputs run k_check k_compile k_plan k_load k_inputs k_run
+      front planning loading inserting running Hcheck Hcompile Hplan Hload Hinputs Hrun.
+    nia.
+  Qed.
 
   (** Saturation of accepted input costs its check, planning, loading, its inputs and its
       run. *)
@@ -4154,5 +4203,41 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
       D.unit (snd (E.run p cp lim (inputs_db es db0))) <= U)
     (fun x => let '(B, U, ds, rws, ans, lim, es) := x in saturate_cost B U ds rws ans lim es)
     (fun x => let '(_, _, ds, rws, ans, lim, es) := x in T_saturate ds rws ans lim es).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    destruct E.plan_bigO as [c_plan Hplan_cost].
+    destruct E.load_bigO as [c_load Hload_cost].
+    destruct E.run_bigO as [c_run Hrun_cost].
+    apply bigO_intro with
+      (c := (c_sat + C.c_compile + c_plan + c_load + c_sat * c_sat + c_run)%N).
+    intros [[[[[[B U] ds] rws] ans] lim] es]
+      [Hfront [Hids [HU [Hrun_ids Hrun_unit]]]]. cbn beta iota zeta.
+    set (p := C.compile ds rws ans) in *.
+    set (cp := E.plan p) in *.
+    set (db0 := E.load p cp) in *.
+    assert (Hplans : E.plans_ok p cp).
+    { apply E.plan_checked. apply C.compile_sorted. exact (proj1 Hfront). }
+    destruct (inputs_loaded ds rws ans es Hfront) as [Hwf Hloaded].
+    fold p cp db0 in Hwf, Hloaded.
+    pose proof (Hrun_cost (B, U, p, cp, lim, inputs_db es db0)
+      (conj Hplans (conj Hwf (conj Hloaded (conj Hrun_ids Hrun_unit))))) as Hrun.
+    specialize (Hplan_cost p I). specialize (Hload_cost (p, cp) I).
+    pose proof (T_inputs_le B U ds rws ans es Hfront Hids HU) as Hinputs.
+    fold p cp db0 in Hinputs.
+    assert (Hinputs_bound : (c_sat * T_inputs es db0 <= (c_sat * c_sat) *
+      (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db0 + 1) *
+        N.of_nat (fold_right (fun e n => (expr_work e + 1 + n)%nat) 1%nat es)))%N).
+    { rewrite <- N.mul_assoc. apply N.mul_le_mono_l. rewrite !N.mul_assoc.
+      eapply N.le_trans; [| exact Hinputs]. lia. }
+    pose proof (T_saturate_le ds rws ans lim es) as Htotal.
+    rewrite (proj2 (check_front_spec ds rws ans es) Hfront) in Htotal.
+    fold p cp db0 in Htotal.
+    eapply N.le_trans; [exact Htotal |]. unfold saturate_cost. fold p cp db0.
+    eapply saturate_sum_bound.
+    - apply T_check_front_le.
+    - apply compile_front_bound.
+    - exact Hplan_cost.
+    - exact Hload_cost.
+    - exact Hinputs_bound.
+    - exact Hrun.
+  Qed.
 End SaturateT.

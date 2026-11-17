@@ -73,11 +73,13 @@ Module SteensgaardCode (V : VALUE_OPS with Definition t := positive)
   Definition compile (_ : pointer_input) : program V.t := steensgaard_program.
   Definition seed_put (db : D.t) (entry : positive * (positive * positive)) : D.t :=
     D.put (fst entry) [Val (fst (snd entry)); Val (snd (snd entry))] None db.
-  Definition seed (q : pointer_input) : D.t :=
+  (** The prepared rule plan supplies the slots used when seeding the input. *)
+  Definition seed_at (cp : compiled V.t) (q : pointer_input) : D.t :=
     fold_left seed_put (pointer_seed_entries 1 q)
-      (D.init (decls V.t (compile q)) (pointer_plan_slots (R.plan (compile q)))).
+      (D.init (decls V.t (compile q)) (pointer_plan_slots cp)).
+  Definition seed (q : pointer_input) : D.t := seed_at (R.plan (compile q)) q.
   Definition solve (q : pointer_input) (lim : limits) : stop * D.t :=
-    let p := compile q in R.run p (R.plan p) lim (seed q).
+    let p := compile q in let cp := R.plan p in R.run p cp lim (seed_at cp q).
   Definition lookup_id (f : positive) (key : list (cell V.t)) (db : D.t) : option positive :=
     match fst (D.lookup f key db) with
     | Some (Some (Id i)) => Some i
@@ -671,6 +673,7 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Module SeedTime := PointerSeedTime V I J D R.
   TimeFun compile.
   TimeFun seed_put.
+  TimeFun seed_at.
   TimeFun seed.
   TimeFun solve.
   TimeFun lookup_id.
@@ -793,7 +796,7 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     { clear - q; pose proof (SeedTime.unit_positive (seed q)); lia. }
     rewrite (proj1 (proj2 (proj2 (seed_invariant q)))); cbn [N.log2 N.to_nat].
     rewrite N.mul_1_r.
-    time_unfold T_seed; time_simpl.
+    time_unfold T_seed; time_unfold T_seed_at; time_simpl.
     change (pointer_plan_slots (R.plan (compile q))) with
       (Syntax.slots V.t (R.plan (compile q))).
     rewrite (Nat2N.inj_add (length (constraints q) + length (initial_pointers q)) 1)
@@ -850,24 +853,42 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + c_steensgaard)%N.
   Proof.
-    intros q lim; time_unfold T_solve; time_simpl; unfold c_steensgaard, k_wrap; lia.
+    intros q lim; time_unfold T_solve; time_unfold T_seed; time_simpl.
+    change (seed_at (R.plan (compile q)) q) with (seed q).
+    unfold c_steensgaard, k_wrap; lia.
   Qed.
 
+  (** Seeding is linear in the input count at the final database's unit and identifier width. *)
   Lemma seed_bigO : bigO (fun _ => True)
     (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
       D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
     T_seed.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_steensgaard).
+    intros q _; pose proof (T_seed_le q) as Hseed.
+    rewrite !Nat2N.inj_mul; nia.
+  Qed.
 
+  (** The fixed pointer program has a constant compilation cost. *)
   Lemma compile_bigO : bigO (fun _ => True) (fun _ => 0%N) T_compile.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_steensgaard).
+    intros q _; rewrite N.mul_0_r, N.add_0_l; apply T_compile_le.
+  Qed.
 
+  (** A points-to query costs its two encoded cells and the database lookup unit. *)
   Lemma points_bigO : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
     (fun z => let '(db, x, a) := z in
       N.of_nat (8 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
     (fun z => let '(db, x, a) := z in T_points db x a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_steensgaard).
+    intros [[db x] a] Hwf; cbn [fst snd] in Hwf |- *.
+    pose proof (T_points_le db x a Hwf) as Hpoints.
+    rewrite !Nat2N.inj_add in Hpoints |- *; nia.
+  Qed.
 
+  (** Solving composes the seed and fixed-program plan with the engine's trace cost. *)
   Lemma solve_bigO : bigO
     (fun x : N * nat * pointer_input * limits =>
       let '(B, U, q, lim) := x in
@@ -879,7 +900,31 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
         (R.size_program (compile q) + 1)) +
       R.run_cost B U (compile q) (R.plan (compile q)) lim (seed q))%N)
     (fun x => let '(_, _, q, lim) := x in T_solve q lim).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    destruct seed_bigO as [cseed Hseed].
+    destruct R.plan_bigO as [cplan Hplan].
+    destruct R.run_bigO as [crun Hrun].
+    apply (bigO_intro _ _ _ (2 * c_steensgaard + cseed + cplan + crun)%N).
+    intros [[[B U] q] lim] [Hids Hunit].
+    specialize (Hseed q I).
+    specialize (Hplan (compile q) I).
+    specialize (Hrun (B, U, compile q, R.plan (compile q), lim, seed q)).
+    cbn beta iota zeta in Hrun.
+    assert (Hready : R.plans_ok (compile q) (R.plan (compile q)) /\
+      D.wf (seed q) /\ R.loaded (compile q) (R.plan (compile q)) (seed q) /\
+      (D.ids (snd (R.run (compile q) (R.plan (compile q)) lim (seed q))) <= B)%N /\
+      D.unit (snd (R.run (compile q) (R.plan (compile q)) lim (seed q))) <= U).
+    { split; [apply R.plan_checked; apply program_sorted |].
+      split; [exact (proj1 (seed_wf q)) |].
+      split; [apply seed_loaded |].
+      rewrite <- solve_run; split; assumption. }
+    specialize (Hrun Hready).
+    pose proof (T_solve_le q lim) as Hsolve.
+    pose proof (T_compile_le q) as Hcompile.
+    cbn beta iota zeta in Hseed, Hplan, Hsolve |- *.
+    clear Hready Hids Hunit.
+    nia.
+  Qed.
 
   Lemma F1_source_closed : forall q,
     pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
@@ -937,7 +982,9 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
   Proof.
-    intros q lim; time_unfold T_solve; time_simpl; unfold k_wrap; lia.
+    intros q lim; time_unfold T_solve; time_unfold T_seed; time_simpl.
+    change (seed_at (R.plan (compile q)) q) with (seed q).
+    unfold k_wrap; lia.
   Qed.
 
 End SteensgaardT.
