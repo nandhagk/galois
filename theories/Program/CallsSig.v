@@ -2,10 +2,23 @@
 
     Call inventories retain site and target order while graph vertices use encoded function keys.
     For example, a recursive call contributes a successor equal to its caller.
+
+    Main results
+    - [calls_spec] The call inventory of a well-formed presentation retains function, site and
+      resolver order.
+    - [calls_complexity] Call enumeration is linear in its output, O(n) for n calls.
+    - [sites_of_complexity] Site lookup is linear in the function key and the returned sites.
+    - [caller_of_complexity] Caller lookup is linear in the site key.
+    - [resolve_complexity] Resolution is linear in the site key and the returned targets.
+    - [functions_complexity] The function inventory is linear in its output.
+    - [roots_complexity] The root inventory is linear in its output.
+    - [call_graph_complexity] Call graphs have the aggregate inventory and bit-width bound.
+
     Builds on: Program.SemanticsSig and first-order graph data. *)
 
 From Stdlib Require Import List NArith.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Graph Require Import Data Spec.
 From Galois.Program Require Import SemanticsSig.
@@ -111,25 +124,20 @@ Module Type CALLS_TIME (P : TYPE) (F S : KEY_T) (Import C : CALLS P F S).
   Parameter T_resolve_le : forall p site,
     (T_resolve p site <= c_calls * N.of_nat (S.bits site + length (resolve p site) + 1))%N.
   (** Call enumeration is linear in its output. *)
-  Parameter calls_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (calls p))) T_calls.
+  Parameter calls_complexity : T_calls p ∈ 𝑂(N.of_nat (length (calls p))) for p.
   (** Site lookup is linear in the function key and the returned sites. *)
-  Parameter sites_of_complexity : bigO (X := P.t * F.t) (fun _ => True)
-    (fun '(p, f) => N.of_nat (F.bits f + length (sites_of p f)))
-    (fun '(p, f) => T_sites_of p f).
+  Parameter sites_of_complexity :
+    T_sites_of p f ∈ 𝑂(N.of_nat (F.bits f + length (sites_of p f))) for (p, f).
   (** Caller lookup is linear in the site key. *)
-  Parameter caller_of_complexity : bigO (X := P.t * S.t) (fun _ => True)
-    (fun '(_, site) => N.of_nat (S.bits site)) (fun '(p, site) => T_caller_of p site).
+  Parameter caller_of_complexity :
+    T_caller_of p site ∈ 𝑂(N.of_nat (S.bits site)) for (p, site).
   (** Resolution is linear in the site key and the returned targets. *)
-  Parameter resolve_complexity : bigO (X := P.t * S.t) (fun _ => True)
-    (fun '(p, site) => N.of_nat (S.bits site + length (resolve p site)))
-    (fun '(p, site) => T_resolve p site).
+  Parameter resolve_complexity :
+    T_resolve p site ∈ 𝑂(N.of_nat (S.bits site + length (resolve p site))) for (p, site).
   (** The function inventory is linear in its output. *)
-  Parameter functions_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (functions p))) T_functions.
+  Parameter functions_complexity : T_functions p ∈ 𝑂(N.of_nat (length (functions p))) for p.
   (** The root inventory is linear in its output. *)
-  Parameter roots_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (roots p))) T_roots.
+  Parameter roots_complexity : T_roots p ∈ 𝑂(N.of_nat (length (roots p))) for p.
   Definition call_graph_work p :=
     (T_functions p +
       fold_right N.add 0%N (map (fun f => T_sites_of p f + F.T_encode f)%N (functions p)) +
@@ -141,7 +149,7 @@ Module Type CALLS_TIME (P : TYPE) (F S : KEY_T) (Import C : CALLS P F S).
   Parameter T_call_graph_le : forall p,
     (T_call_graph p <= c_calls * call_graph_work p)%N.
   (** Call graphs have the aggregate inventory and bit-width bound. *)
-  Parameter call_graph_complexity : bigO (fun _ : P.t => True) call_graph_work T_call_graph.
+  Parameter call_graph_complexity : T_call_graph p ∈ 𝑂(call_graph_work p) for p.
 End CALLS_TIME.
 
 Module Type CALLS_T (P : TYPE) (F S : KEY_T) := CALLS P F S <+ CALLS_TIME P F S.
