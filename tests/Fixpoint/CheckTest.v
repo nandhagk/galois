@@ -4,9 +4,8 @@
     For example, the seed row rejects the empty assignment through its true side value.
 
     Groups:
-    - Fixtures: a Boolean lattice, a cycle system and two assignments.
-    - Full: the checker accepts or rejects a complete assignment.
-    - Lookup: a lookup returns the stored value of a bound key and false for a missing key.
+    - [FullTests] The checker accepts or rejects a complete assignment.
+    - [LookupTests] A lookup returns the stored value of a bound key and false for a missing key.
 
     Builds on: Fixpoint.Check and Base.Key. *)
 
