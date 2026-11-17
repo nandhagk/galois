@@ -2,10 +2,15 @@
 
     Edge kinds are stored in a trie keyed by edge identity.
     For example, an absent binding denotes an internal edge.
+
+    Main results
+    - [kind_complexity] Edge classification is linear in the edge key, O(|e|) for edge e.
+
     Builds on: Program.IcfgSig and Base.Trie. *)
 
 From Stdlib Require Import NArith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Program Require Import CfgSig IcfgSig.
 
@@ -56,8 +61,7 @@ Module IcfgT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Edge classification is linear in the edge key. *)
-  Lemma kind_complexity : bigO (X := P.t * E.t) (fun _ => True)
-    (fun '(_, e) => N.of_nat (E.bits e)) (fun '(p, e) => T_kind p e).
+  Lemma kind_complexity : T_kind p e ∈ 𝑂(N.of_nat (E.bits e)) for (p, e).
   Proof.
     apply bigO_intro with (c := c_icfg).
     intros [p e] _; pose proof (T_kind_le p e) as Htime.

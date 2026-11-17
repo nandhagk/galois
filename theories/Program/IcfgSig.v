@@ -2,10 +2,15 @@
 
     Edge kinds describe stack changes independently of a concrete machine.
     For example, a return removes the same call site that its matching call pushed.
+
+    Main results
+    - [kind_complexity] Edge classification is linear in the edge key, O(|e|) for edge e.
+
     Builds on: Program.CfgSig and Program.SemanticsSig. *)
 
 From Stdlib Require Import List NArith.
-From Argent Require Import BigO.
+From Argent Require Import Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Program Require Import CfgSig SemanticsSig.
 
@@ -50,8 +55,7 @@ Module Type ICFG_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
   (** Edge classification pays for the edge key. *)
   Parameter T_kind_le : forall p e, (T_kind p e <= c_icfg * N.of_nat (E.bits e + 1))%N.
   (** Edge classification is linear in the edge key. *)
-  Parameter kind_complexity : bigO (X := P.t * E.t) (fun _ => True)
-    (fun '(_, e) => N.of_nat (E.bits e)) (fun '(p, e) => T_kind p e).
+  Parameter kind_complexity : T_kind p e ∈ 𝑂(N.of_nat (E.bits e)) for (p, e).
 End ICFG_TIME.
 
 Module Type ICFG_T (P : TYPE) (N : KEY_T) (E : KEY_T)
