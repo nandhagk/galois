@@ -453,6 +453,82 @@ Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%
     | _ => lower
     end.
 
+  (** An absent copied bound removes the target column. *)
+  Definition put_bound (k : K.t) (bound : option Z) (row : M.t Z) : M.t Z :=
+    match bound with Some z => M.set k z row | None => M.remove k row end.
+
+  Definition copy_column_row (target source : K.t) (d : Z)
+      (old : option (M.t Z)) (_ : option (M.t Z)) : option (M.t Z) :=
+    match old with
+    | Some row => Some (put_bound target (edge_prefix d (M.get source row)) row)
+    | None => None
+    end.
+
+  (** Copying a literal updates its column and then its row from the same source. *)
+  Definition copy_literal (target source : K.t) (d : Z) (m : dbm) : dbm :=
+    let next := M.merge (copy_column_row target source d) m M.empty in
+    M.set target (M.merge (shift_bound d) (row_of (M.get source next)) M.empty) next.
+
+  Definition copy_literals (x : X.t) (source : K.t) (d : Z) (m : dbm) : dbm :=
+    copy_literal (x, false) (flip source) (-d)%Z
+      (copy_literal (x, true) source d m).
+
+  (** Both signed copies overwrite every old occurrence of the assigned variable. *)
+  Definition assign_copy_fast (x : X.t) (source : K.t) (d : Z) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      if K.eqb source (x, true) then Reached (shift x d m) else
+        Reached (copy_literals x source d (add_cons source source 0%Z m))
+    end.
+
+  Definition range_average (bound unary : option Z) (_ : option Z) : option Z :=
+    match bound, unary with
+    | Some a, Some b => Some (Z.div2 (a + b))
+    | _, _ => None
+    end.
+
+  Definition range_column_row (x : X.t) (lower upper : option Z)
+      (old : option (M.t Z)) (unary : option Z) : option (M.t Z) :=
+    match old with
+    | Some row =>
+      Some (put_bound (x, false) (range_average lower unary None)
+        (put_bound (x, true) (range_average upper unary None) row))
+    | None => None
+    end.
+
+  (** A missing side creates only its zero diagonal, without traversing the unary map. *)
+  Definition range_literal_row (x : X.t) (sign : bool) (bound : option Z)
+      (unaries : M.t Z) : M.t Z :=
+    let row := match bound with
+      | Some _ => M.merge (range_average bound) unaries M.empty
+      | None => M.empty
+      end in
+    M.set (x, sign) 0%Z (put_bound (x, negb sign) bound row).
+
+  (** Only the two assigned rows and their columns receive strengthened bounds. *)
+  Definition range_matrix (x : X.t) (lower upper : option Z) (m : dbm) : dbm :=
+    let unaries := M.fold (unary_maps m) m (M.empty, M.empty) in
+    let next := M.merge (range_column_row x lower upper) m (fst unaries) in
+    M.set (x, true) (range_literal_row x true lower (snd unaries))
+      (M.set (x, false) (range_literal_row x false upper (snd unaries)) next).
+
+  Definition add_range_fast (x : X.t) (bounds : bnd * bnd) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      match bounds with
+      | (Fin lo, Fin hi) =>
+        if (lo <=? hi)%Z then
+          Reached (range_matrix x (Some (-2 * lo)%Z) (Some (2 * hi)%Z) m)
+        else Unreached
+      | (Fin lo, PosInf) => Reached (range_matrix x (Some (-2 * lo)%Z) None m)
+      | (NegInf, Fin hi) => Reached (range_matrix x None (Some (2 * hi)%Z) m)
+      | (NegInf, PosInf) => s
+      | _ => Unreached
+      end
+    end.
+
   Definition assign (x : X.t) (e : term L.op X.t) (s : t) : t :=
     match s with
     | Unreached => Unreached
@@ -463,10 +539,10 @@ Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%
         let bounds := form_bounds m f in
         match copy_source f with
         | Some source =>
-          if andb (copy_allowed x source) (rel_wrap_exact r bounds) then
-            assign_copy x source (cst f) s
-          else add_range x (rel_wrap_bounds r bounds) (havoc x s)
-        | None => add_range x (rel_wrap_bounds r bounds) (havoc x s)
+          if (if copy_allowed x source then rel_wrap_exact r bounds else false) then
+            assign_copy_fast x source (cst f) s
+          else add_range_fast x (rel_wrap_bounds r bounds) (havoc x s)
+        | None => add_range_fast x (rel_wrap_bounds r bounds) (havoc x s)
         end
       end
     end.
@@ -1697,6 +1773,286 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
       repeat (apply refine_sound; [|unfold vl; cbn [fst snd]; lia]); exact Hmodel.
   Qed.
 
+  (** Optional insertion has the same pointwise equation for finite and absent bounds. *)
+  Lemma get_put_bound : forall k bound row j,
+    M.get j (put_bound k bound row) =
+      if K.eqb j k then bound else M.get j row.
+  Proof.
+    intros k [z|] row j; unfold put_bound;
+      destruct (K.eqb_spec j k) as [Heq|Hneq].
+    - subst j. apply M.get_set_same.
+    - now apply M.get_set_other.
+    - subst j. apply M.get_remove_same.
+    - now apply M.get_remove_other.
+  Qed.
+
+  Lemma entry_copy_columns : forall target source d m i j,
+    entry (M.merge (copy_column_row target source d) m M.empty) i j =
+      if K.eqb j target then edge_prefix d (entry m i source) else entry m i j.
+  Proof.
+    intros target source d m i j. unfold entry.
+    rewrite M.get_merge by reflexivity. rewrite M.get_empty.
+    destruct (M.get i m) as [row|]; cbn [copy_column_row].
+    - apply get_put_bound.
+    - destruct (K.eqb j target); reflexivity.
+  Qed.
+
+  Definition copy_coordinate (target source i : K.t) : K.t :=
+    if K.eqb i target then source else i.
+
+  Lemma entry_copy_literal : forall target source d m i j,
+    entry (copy_literal target source d m) i j =
+      if K.eqb i target then
+        if K.eqb j target then entry m source source else
+          option_map (fun z => (z - d)%Z) (entry m source j)
+      else if K.eqb j target then
+        option_map (fun z => (z + d)%Z) (entry m i source)
+      else entry m i j.
+  Proof.
+    intros target source d m i j. unfold copy_literal.
+    destruct (K.eqb_spec i target) as [Heq|Hneq].
+    - subst i. unfold entry at 1. rewrite M.get_set_same.
+      rewrite M.get_merge by reflexivity. rewrite M.get_empty, get_row_of.
+      change (shift_bound d
+        (entry (M.merge (copy_column_row target source d) m M.empty) source j) None =
+          if K.eqb j target then entry m source source else
+            option_map (fun z => (z - d)%Z) (entry m source j)).
+      rewrite entry_copy_columns. destruct (K.eqb j target).
+      + destruct (entry m source source); cbn [shift_bound edge_prefix];
+          [f_equal; lia|reflexivity].
+      + destruct (entry m source j); reflexivity.
+    - unfold entry at 1. rewrite M.get_set_other by exact Hneq.
+      fold (entry (M.merge (copy_column_row target source d) m M.empty) i j).
+      rewrite entry_copy_columns. destruct (K.eqb j target);
+        [destruct (entry m i source)|]; reflexivity.
+  Qed.
+
+  (** A literal copy substitutes one coordinate and translates each incident bound. *)
+  Lemma entry_copy_literal_linear : forall target source d m i j,
+    entry (copy_literal target source d m) i j =
+      option_map (fun z =>
+        (z + literal_offset target d j - literal_offset target d i)%Z)
+      (entry m (copy_coordinate target source i) (copy_coordinate target source j)).
+  Proof.
+    intros target source d m i j. rewrite entry_copy_literal.
+    unfold literal_offset, copy_coordinate.
+    destruct (K.eqb i target), (K.eqb j target).
+    - destruct (entry m source source); cbn [option_map]; try reflexivity; f_equal; ring.
+    - destruct (entry m source j); cbn [option_map]; try reflexivity; f_equal; ring.
+    - destruct (entry m i source); cbn [option_map]; try reflexivity; f_equal; ring.
+    - destruct (entry m i j); cbn [option_map]; try reflexivity; f_equal; ring.
+  Qed.
+
+  Definition copied_literal (x : X.t) (source i : K.t) : K.t :=
+    if X.eqb (fst i) x then if snd i then source else flip source else i.
+
+  Lemma copy_coordinate_pair : forall x source i, fst source <> x ->
+    copy_coordinate (x, true) source (copy_coordinate (x, false) (flip source) i) =
+      copied_literal x source i.
+  Proof.
+    intros x [y polarity] [z sign] Hsource.
+    unfold copy_coordinate, copied_literal, flip. cbn [fst snd] in *.
+    destruct (X.eqb_spec z x) as [Hz|Hz];
+      destruct (K.eqb_spec (z, sign) (x, false)) as [Hneg|Hneg].
+    - inversion Hneg; subst z sign.
+      destruct (K.eqb_spec (y, negb polarity) (x, true)); congruence.
+    - destruct (K.eqb_spec (z, sign) (x, true)); destruct sign; congruence.
+    - inversion Hneg. contradiction.
+    - destruct (K.eqb_spec (z, sign) (x, true)); [congruence|reflexivity].
+  Qed.
+
+  Lemma copied_literal_offset : forall x source d i, fst source <> x ->
+    literal_offset (x, true) d (copy_coordinate (x, false) (flip source) i) =
+      literal_offset (x, true) d i.
+  Proof.
+    intros x source d i Hsource. unfold copy_coordinate, literal_offset.
+    destruct (K.eqb_spec i (x, false)) as [Heq|Hneq]; [subst i|reflexivity].
+    destruct (K.eqb_spec (x, false) (x, true)); [discriminate|].
+    destruct (K.eqb_spec (flip source) (x, true)) as [Hflip|Hflip]; [|reflexivity].
+    destruct source as [y sign]. unfold flip in Hflip. cbn [fst snd] in *. congruence.
+  Qed.
+
+  (** The signed pair performs one simultaneous variable substitution. *)
+  Lemma entry_copy_literals : forall x source d m i j, fst source <> x ->
+    entry (copy_literals x source d m) i j =
+      option_map (fun z => (z + variable_offset x d j - variable_offset x d i)%Z)
+        (entry m (copied_literal x source i) (copied_literal x source j)).
+  Proof.
+    intros x source d m i j Hsource. unfold copy_literals.
+    rewrite !entry_copy_literal_linear, !copy_coordinate_pair by exact Hsource.
+    rewrite !copied_literal_offset by exact Hsource.
+    destruct (entry m (copied_literal x source i) (copied_literal x source j)) as [z|];
+      [|reflexivity]. cbn [option_map].
+    rewrite <- (signed_offsets x d i), <- (signed_offsets x d j). f_equal. ring.
+  Qed.
+
+  Lemma vl_update_copy : forall x source d st c i,
+    N.num c = (vl (fun y => N.num (st y)) source + d)%Z ->
+    vl (fun y => N.num (upd X.eqb st x c y)) i =
+      (vl (fun y => N.num (st y)) (copied_literal x source i) +
+        variable_offset x d i)%Z.
+  Proof.
+    intros x source d st c [y sign] Hvalue.
+    unfold copied_literal, variable_offset, upd. cbn [fst snd].
+    destruct (X.eqb_spec y x) as [Heq|Hneq].
+    - subst y. destruct sign; cbn [snd]; rewrite ?vl_flip;
+        unfold vl at 1; cbn [fst snd];
+        destruct (X.eqb_spec x x); try congruence; lia.
+    - unfold vl at 1. cbn [fst snd].
+      destruct (X.eqb_spec y x); [contradiction|].
+      destruct sign; cbn [vl fst snd]; lia.
+  Qed.
+
+  Lemma copy_literals_models : forall x source d m st c,
+    fst source <> x -> models m (fun y => N.num (st y)) ->
+    N.num c = (vl (fun y => N.num (st y)) source + d)%Z ->
+    models (copy_literals x source d m) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x source d m st c Hsource Hmodel Hvalue i j bound Hentry.
+    rewrite entry_copy_literals in Hentry by exact Hsource.
+    destruct (entry m (copied_literal x source i) (copied_literal x source j))
+      as [z|] eqn:Hz; [|discriminate Hentry].
+    inversion Hentry; subst bound.
+    pose proof (Hmodel _ _ z Hz) as Hbound.
+    rewrite (vl_update_copy x source d st c i Hvalue),
+      (vl_update_copy x source d st c j Hvalue). lia.
+  Qed.
+
+  (** Fast assignment retains the original soundness contract for both signed copies. *)
+  Lemma assign_copy_fast_sound : forall x source d s st c,
+    copy_allowed x source = true ->
+    ngamma s (fun y => N.num (st y)) ->
+    N.num c = (vl (fun y => N.num (st y)) source + d)%Z ->
+    ngamma (assign_copy_fast x source d s) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x source d [|m] st c Hallowed Hmodel Hvalue; [exact Hmodel|].
+    unfold assign_copy_fast. destruct (K.eqb_spec source (x, true)) as [Heq|Hneq].
+    - subst source. now apply shift_models.
+    - apply copy_literals_models; [| |exact Hvalue].
+      + destruct (copy_allowed_spec x source Hallowed); [contradiction|assumption].
+      + apply models_add_cons; [exact Hmodel|lia].
+  Qed.
+
+  Lemma range_average_comm : forall a b,
+    range_average a b None = range_average b a None.
+  Proof.
+    intros [a|] [b|]; cbn [range_average]; try reflexivity.
+    now rewrite Z.add_comm.
+  Qed.
+
+  Lemma get_range_literal_row : forall x sign bound unaries j,
+    M.get j (range_literal_row x sign bound unaries) =
+      if K.eqb j (x, sign) then Some 0%Z else
+      if K.eqb j (x, negb sign) then bound else
+        range_average bound (M.get j unaries) None.
+  Proof.
+    intros x sign bound unaries j. unfold range_literal_row.
+    rewrite get_set_cases, get_put_bound.
+    destruct (K.eqb j (x, sign)); [reflexivity|].
+    destruct (K.eqb j (x, negb sign)); [reflexivity|].
+    destruct bound as [a|]; cbn [range_average].
+    - rewrite M.get_merge by reflexivity. rewrite M.get_empty. reflexivity.
+    - apply M.get_empty.
+  Qed.
+
+  (** A finite average is justified by its two signed unary inequalities. *)
+  Lemma range_average_holds : forall v i j bound unary z,
+    (forall a, bound = Some a -> (vl v (flip i) - vl v i <= a)%Z) ->
+    (forall b, unary = Some b -> (vl v j - vl v (flip j) <= b)%Z) ->
+    range_average bound unary None = Some z -> (vl v j - vl v i <= z)%Z.
+  Proof.
+    intros v i j [a|] [b|] z Ha Hb Haverage; try discriminate Haverage.
+    inversion Haverage; subst z. apply strengthen_bound_holds;
+      [apply Ha|apply Hb]; reflexivity.
+  Qed.
+
+  Lemma range_literal_row_holds : forall x sign bound unaries v,
+    (forall a, bound = Some a ->
+      (vl v (flip (x, sign)) - vl v (x, sign) <= a)%Z) ->
+    (forall j b, M.get j unaries = Some b ->
+      (vl v j - vl v (flip j) <= b)%Z) ->
+    row_holds v (x, sign) (range_literal_row x sign bound unaries).
+  Proof.
+    intros x sign bound unaries v Hbound Hunaries j z Hentry.
+    rewrite get_range_literal_row in Hentry.
+    destruct (K.eqb_spec j (x, sign)) as [Heq|Hneq].
+    - subst j. inversion Hentry; subst z. lia.
+    - destruct (K.eqb_spec j (x, negb sign)) as [Heq|Hother].
+      + subst j. exact (Hbound z Hentry).
+      + eapply range_average_holds; [exact Hbound| |exact Hentry].
+        intros b Hb. now apply (Hunaries j b).
+  Qed.
+
+  Lemma range_column_row_holds : forall x lower upper row unary v i,
+    row_holds v i row ->
+    (forall a, unary = Some a -> (vl v (flip i) - vl v i <= a)%Z) ->
+    (forall a, lower = Some a -> (vl v (x, false) - vl v (x, true) <= a)%Z) ->
+    (forall a, upper = Some a -> (vl v (x, true) - vl v (x, false) <= a)%Z) ->
+    row_holds v i (row_of (range_column_row x lower upper (Some row) unary)).
+  Proof.
+    intros x lower upper row unary v i Hrow Hunary Hlower Hupper j z Hentry.
+    cbn [range_column_row row_of] in Hentry. rewrite !get_put_bound in Hentry.
+    destruct (K.eqb_spec j (x, false)) as [Heq|Hneq].
+    - subst j. rewrite range_average_comm in Hentry.
+      eapply range_average_holds; [exact Hunary|exact Hlower|exact Hentry].
+    - destruct (K.eqb_spec j (x, true)) as [Heq|Hother].
+      + subst j. rewrite range_average_comm in Hentry.
+        eapply range_average_holds; [exact Hunary|exact Hupper|exact Hentry].
+      + now apply Hrow.
+  Qed.
+
+  (** Sparse interval assignment adds only consequences of the supplied bounds. *)
+  Lemma range_matrix_models : forall x lower upper m v,
+    models m v ->
+    (forall a, lower = Some a -> (vl v (x, false) - vl v (x, true) <= a)%Z) ->
+    (forall a, upper = Some a -> (vl v (x, true) - vl v (x, false) <= a)%Z) ->
+    models (range_matrix x lower upper m) v.
+  Proof.
+    intros x lower upper m v Hmodel Hlower Hupper.
+    pose proof (collect_unary_models m v Hmodel) as [Hleft Hright].
+    unfold range_matrix. set (unaries := M.fold (unary_maps m) m (M.empty, M.empty)).
+    fold unaries in Hleft, Hright.
+    intros i j d Hentry. unfold entry at 1 in Hentry.
+    rewrite !get_set_cases in Hentry.
+    destruct (K.eqb_spec i (x, true)) as [Heq|Hneq].
+    - subst i. exact (range_literal_row_holds x true lower (snd unaries) v
+        Hlower Hright j d Hentry).
+    - destruct (K.eqb_spec i (x, false)) as [Heq|Hother].
+      + subst i. exact (range_literal_row_holds x false upper (snd unaries) v
+          Hupper Hright j d Hentry).
+      + rewrite M.get_merge in Hentry by reflexivity.
+        destruct (M.get i m) as [row|] eqn:Hrow; cbn [range_column_row] in Hentry;
+          [|discriminate Hentry].
+        apply (range_column_row_holds x lower upper row (M.get i (fst unaries)) v i
+          (row_models m v i row Hmodel Hrow) (Hleft i) Hlower Hupper j d).
+        exact Hentry.
+  Qed.
+
+  Lemma add_range_fast_sound : forall x bounds s v, ngamma s v ->
+    in_bnd (fst bounds) (snd bounds) (v x) -> ngamma (add_range_fast x bounds s) v.
+  Proof.
+    intros x [lo hi] [|m] v Hmodel Hbounds; [exact Hmodel|].
+    unfold add_range_fast, in_bnd in *. cbn [fst snd] in *.
+    destruct Hbounds as [Hlo Hhi].
+    destruct lo as [|lo|], hi as [|hi|]; cbn in Hlo, Hhi; try contradiction.
+    - apply range_matrix_models; [exact Hmodel| |].
+      + intros a Ha. discriminate Ha.
+      + intros a Ha. injection Ha as Ha. subst a.
+        change (v x - - v x <= 2 * hi)%Z. lia.
+    - exact Hmodel.
+    - destruct (lo <=? hi)%Z eqn:Horder.
+      + apply range_matrix_models; [exact Hmodel| |].
+        * intros a Ha. injection Ha as Ha. subst a.
+          change (- v x - v x <= -2 * lo)%Z. lia.
+        * intros a Ha. injection Ha as Ha. subst a.
+          change (v x - - v x <= 2 * hi)%Z. lia.
+      + apply Z.leb_gt in Horder. lia.
+    - apply range_matrix_models; [exact Hmodel| |].
+      + intros a Ha. injection Ha as Ha. subst a.
+        change (- v x - v x <= -2 * lo)%Z. lia.
+      + intros a Ha. discriminate Ha.
+  Qed.
+
   Lemma assign_sound : forall x e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
@@ -1713,14 +2069,16 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
     assert (Hupdate : N.num (upd X.eqb st x c x) = N.num c).
     { unfold upd. destruct (X.eqb_spec x x); [reflexivity|congruence]. }
     destruct (copy_source f) as [source|] eqn:Hsource.
-    - destruct (andb (copy_allowed x source) (rel_wrap_exact r (form_bounds m f))) eqn:Hexact.
-      + apply andb_true_iff in Hexact. destruct Hexact as [Hallowed Hwrap].
-        apply assign_copy_sound; [exact Hallowed|exact Hmodel|].
-        rewrite Hvalue, (rel_wrap_exact_sound r (form_bounds m f) _ Hbounds Hwrap).
-        now apply copy_source_sound.
-      + apply add_range_sound; [now apply havoc_sound|]. now rewrite Hupdate.
-    - apply add_range_sound; [now apply havoc_sound|]. now rewrite Hupdate.
+    - destruct (copy_allowed x source) eqn:Hallowed; cbn beta iota zeta.
+      + destruct (rel_wrap_exact r (form_bounds m f)) eqn:Hwrap.
+        * apply assign_copy_fast_sound; [exact Hallowed|exact Hmodel|].
+          rewrite Hvalue, (rel_wrap_exact_sound r (form_bounds m f) _ Hbounds Hwrap).
+          now apply copy_source_sound.
+        * apply add_range_fast_sound; [now apply havoc_sound|]. now rewrite Hupdate.
+      + apply add_range_fast_sound; [now apply havoc_sound|]. now rewrite Hupdate.
+    - apply add_range_fast_sound; [now apply havoc_sound|]. now rewrite Hupdate.
   Qed.
+
   Lemma entry_spec : forall m i j,
     entry m i j = match M.get i m with Some row => M.get j row | None => None end.
   Proof.
@@ -1864,6 +2222,16 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   TimeFun havoc.
   TimeFun assign_copy.
   TimeFun add_range.
+  TimeFun put_bound.
+  TimeFun copy_column_row.
+  TimeFun copy_literal.
+  TimeFun copy_literals.
+  TimeFun assign_copy_fast.
+  TimeFun range_average.
+  TimeFun range_column_row.
+  TimeFun range_literal_row.
+  TimeFun range_matrix.
+  TimeFun add_range_fast.
   TimeFun bot.
   TimeFun top.
   TimeFun meet.
@@ -5362,15 +5730,139 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       repeat apply coh_refine; exact Hcoh.
   Qed.
 
+  Lemma copied_literal_flip : forall x source i,
+    copied_literal x source (flip i) = flip (copied_literal x source i).
+  Proof.
+    intros x source [y sign]. unfold copied_literal, flip. cbn [fst snd].
+    destruct (X.eqb y x), sign; cbn [fst snd negb];
+      [reflexivity|destruct source as [z polarity]; destruct polarity; reflexivity|
+        reflexivity|reflexivity].
+  Qed.
+
+  Lemma coherent_copy_literals : forall x source d m, fst source <> x ->
+    coherent m -> coherent (copy_literals x source d m).
+  Proof.
+    intros x source d m Hsource Hcoh i j.
+    change (entry (copy_literals x source d m) i j =
+      entry (copy_literals x source d m) (flip j) (flip i)).
+    rewrite !entry_copy_literals by exact Hsource.
+    rewrite !variable_offset_flip, !copied_literal_flip.
+    rewrite (coherent_entry m Hcoh (copied_literal x source i) (copied_literal x source j)).
+    destruct (entry m (flip (copied_literal x source j))
+      (flip (copied_literal x source i))); cbn [option_map];
+      [f_equal; ring|reflexivity].
+  Qed.
+
+  Lemma coh_assign_copy_fast : forall x source d s,
+    copy_allowed x source = true -> coh s -> coh (assign_copy_fast x source d s).
+  Proof.
+    intros x source d [|m] Hallowed Hcoh; [exact I|]. cbn [assign_copy_fast].
+    destruct (K.eqb_spec source (x, true)) as [Heq|Hneq].
+    - cbn [coh]. now apply coherent_shift.
+    - cbn [coh]. apply coherent_copy_literals.
+      + destruct (copy_allowed_spec x source Hallowed); [contradiction|assumption].
+      + now apply coherent_add_cons.
+  Qed.
+
+  Lemma collect_unary_row_none : forall m i, M.get i m = None ->
+    M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty))) = None.
+  Proof.
+    intros m i Hnone.
+    destruct (M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty))))
+      as [d|] eqn:Hget; [|reflexivity].
+    apply collect_unary_left in Hget. unfold entry in Hget.
+    rewrite Hnone in Hget. discriminate Hget.
+  Qed.
+
+  Lemma literal_key_eqb : forall x y sign polarity,
+    K.eqb (x, sign) (y, polarity) =
+      if X.eqb x y then Bool.eqb sign polarity else false.
+  Proof.
+    intros x y sign polarity.
+    destruct (X.eqb_spec x y), (K.eqb_spec (x, sign) (y, polarity));
+      destruct sign, polarity; cbn; congruence.
+  Qed.
+
+  Lemma entry_range_columns : forall x lower upper m i j,
+    entry (M.merge (range_column_row x lower upper) m
+      (fst (M.fold (unary_maps m) m (M.empty, M.empty)))) i j =
+    if X.eqb (fst j) x then
+      range_average (if snd j then upper else lower)
+        (M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty)))) None
+    else entry m i j.
+  Proof.
+    intros x lower upper m i [y sign].
+    unfold entry at 1. rewrite M.get_merge by reflexivity.
+    destruct (M.get i m) as [row|] eqn:Hrow.
+    - cbn [range_column_row]. rewrite !get_put_bound, !literal_key_eqb.
+      unfold entry. rewrite Hrow. cbn [fst snd].
+      destruct (X.eqb y x), sign; reflexivity.
+    - cbn [range_column_row]. rewrite (collect_unary_row_none m i Hrow).
+      unfold entry. rewrite Hrow. cbn [fst snd].
+      destruct (X.eqb y x), sign, lower, upper; reflexivity.
+  Qed.
+
+  (** The new matrix retains old edges away from the assigned variable. *)
+  Lemma entry_range_matrix : forall x lower upper m i j,
+    let unaries := M.fold (unary_maps m) m (M.empty, M.empty) in
+    entry (range_matrix x lower upper m) i j =
+      if X.eqb (fst i) x then
+        if X.eqb (fst j) x then
+          if Bool.eqb (snd i) (snd j) then Some 0%Z
+          else if snd i then lower else upper
+        else range_average (if snd i then lower else upper) (M.get j (snd unaries)) None
+      else if X.eqb (fst j) x then
+        range_average (if snd j then upper else lower) (M.get i (fst unaries)) None
+      else entry m i j.
+  Proof.
+    intros x lower upper m [a sa] [b sb]. cbn [fst snd].
+    unfold range_matrix, entry at 1. rewrite !get_set_cases, !literal_key_eqb.
+    destruct (X.eqb a x) eqn:Ha; destruct sa; cbn [Bool.eqb].
+    - rewrite get_range_literal_row, !literal_key_eqb. cbn [negb].
+      destruct (X.eqb b x), sb; reflexivity.
+    - rewrite get_range_literal_row, !literal_key_eqb. cbn [negb].
+      destruct (X.eqb b x), sb; reflexivity.
+    - fold (entry (M.merge (range_column_row x lower upper) m
+        (fst (M.fold (unary_maps m) m (M.empty, M.empty)))) (a, true) (b, sb)).
+      apply entry_range_columns.
+    - fold (entry (M.merge (range_column_row x lower upper) m
+        (fst (M.fold (unary_maps m) m (M.empty, M.empty)))) (a, false) (b, sb)).
+      apply entry_range_columns.
+  Qed.
+
+  Lemma coherent_range_matrix : forall x lower upper m,
+    coherent m -> coherent (range_matrix x lower upper m).
+  Proof.
+    intros x lower upper m Hcoh i j.
+    change (entry (range_matrix x lower upper m) i j =
+      entry (range_matrix x lower upper m) (flip j) (flip i)).
+    rewrite !entry_range_matrix.
+    pose proof (collect_unary_twins m) as Htwins. unfold unary_twins in Htwins.
+    rewrite !Htwins, !flip_involutive.
+    destruct i as [a sa], j as [b sb]. cbn [flip fst snd].
+    destruct (X.eqb a x), (X.eqb b x); destruct sa, sb;
+      cbn [negb Bool.eqb]; try reflexivity; apply Hcoh.
+  Qed.
+
+  Lemma coh_add_range_fast : forall x bounds s, coh s -> coh (add_range_fast x bounds s).
+  Proof.
+    intros x [lo hi] [|m] Hcoh; [exact I|].
+    destruct lo as [|lo|], hi as [|hi|]; cbn [add_range_fast coh];
+      try exact I; try exact Hcoh; try (now apply coherent_range_matrix).
+    destruct (lo <=? hi)%Z; [now apply coherent_range_matrix|exact I].
+  Qed.
+
   Lemma coh_assign : forall x e s, coh s -> coh (assign x e s).
   Proof.
     intros x e [|m] Hcoh; [exact I|]. cbn [assign].
     destruct (F.lin_of e) as [[f r]|]; [|now apply coh_havoc].
     destruct (copy_source f) as [source|].
-    - destruct (andb (copy_allowed x source) (rel_wrap_exact r (form_bounds m f))).
-      + now apply coh_assign_copy.
-      + apply coh_add_range, coh_havoc, Hcoh.
-    - apply coh_add_range, coh_havoc, Hcoh.
+    - destruct (copy_allowed x source) eqn:Hallowed; cbn beta iota zeta.
+      + destruct (rel_wrap_exact r (form_bounds m f)).
+        * now apply coh_assign_copy_fast.
+        * apply coh_add_range_fast, coh_havoc, Hcoh.
+      + apply coh_add_range_fast, coh_havoc, Hcoh.
+    - apply coh_add_range_fast, coh_havoc, Hcoh.
   Qed.
 
   Lemma coh_assume_cmp : forall c shape d s, coh s -> coh (assume_cmp c shape d s).
@@ -5790,6 +6282,61 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       (M.nodes m + sum_weight M.nodes (rows m))). cbn [Nat.pow]. nia.
   Qed.
 
+  (** The sparse skeleton and stored codes cover all finite-entry bit work. *)
+  Lemma code_work_entries : forall m,
+    code_work (code_work Z.size_nat) m <=
+      (skel m + entries (Reached m)) * (ell m + 1).
+  Proof.
+    intro m.
+    assert (Hsum : sum_weight (code_work Z.size_nat) (rows m) <=
+      sum_weight (fun row => M.nodes row + length (M.codes row) * (ell m + 1)) (rows m)).
+    { apply sum_weight_mono. intros row Hin.
+      apply rows_find in Hin. destruct Hin as [p Hrow].
+      pose proof (stored_row_bits_bound m p row Hrow) as Hbits.
+      unfold code_work. nia. }
+    assert (Hscale : forall rs : list (M.t Z),
+      sum_weight (fun row => length (M.codes row) * (ell m + 1)) rs =
+      sum_weight (fun row => length (M.codes row)) rs * (ell m + 1)).
+    { intro rs. induction rs as [|row rs IH]; [reflexivity|].
+      change (length (M.codes row) * (ell m + 1) +
+        sum_weight (fun r => length (M.codes r) * (ell m + 1)) rs =
+        (length (M.codes row) + sum_weight (fun r => length (M.codes r)) rs) * (ell m + 1)).
+      rewrite IH. ring. }
+    rewrite sum_weight_add, Hscale in Hsum.
+    unfold code_work at 1. rewrite stored_weight_rows.
+    change (M.nodes m + length (M.codes m) + sum_weight (code_work Z.size_nat) (rows m) <=
+      (M.nodes m + sum_weight M.nodes (rows m) +
+        (length (M.codes m) + sum_weight (fun row => length (M.codes row)) (rows m))) *
+      (ell m + 1)). nia.
+  Qed.
+
+  (** Lattice operations charge sparse structure, stored codes, labels, and entry bits. *)
+  Definition lattice_work (a b : t) : nat :=
+    (skels a + skels b + entries a + entries b + labs a + labs b + 1) *
+      (bs a + bs b + ells a + ells b + 1).
+
+  (** The sparse lattice budget also covers constant dispatch on empty states. *)
+  Lemma lattice_work_pos : forall a b, 1 <= lattice_work a b.
+  Proof.
+    intros a b. unfold lattice_work. nia.
+  Qed.
+
+  (** The two arguments contribute symmetrically to the lattice budget. *)
+  Lemma lattice_work_sym : forall a b, lattice_work a b = lattice_work b a.
+  Proof.
+    intros a b. unfold lattice_work. ring.
+  Qed.
+
+  (** The published sparse lattice budget covers both matrices' nested code work. *)
+  Lemma matrix_code_work_lattice : forall ma mb,
+    code_work (code_work Z.size_nat) ma + code_work (code_work Z.size_nat) mb + 1 <=
+      lattice_work (Reached ma) (Reached mb).
+  Proof.
+    intros ma mb. pose proof (code_work_entries ma) as Ha.
+    pose proof (code_work_entries mb) as Hb.
+    unfold lattice_work, skels, labs, bs, ells. nia.
+  Qed.
+
   (** A matrix traversal adds one outer sparse-map pass to the row bound. *)
   Definition matrix_time_factor : N := (M.c_map * (row_time_factor + 1) * 2 + 8)%N.
 
@@ -5853,6 +6400,65 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma matrix_time_factor_lat : (2 * matrix_time_factor + 8 <= c_lat)%N.
   Proof.
     unfold matrix_time_factor, row_time_factor, c_lat. nia.
+  Qed.
+
+  (** Inclusion scans the sparse matrices within the entry-based lattice budget. *)
+  Lemma T_leb_entries_le : forall a b,
+    (T_leb a b <= matrix_time_factor * N.of_nat (lattice_work a b))%N.
+  Proof.
+    intros a b.
+    assert (Hfactor : (8 <= matrix_time_factor)%N) by (unfold matrix_time_factor; nia).
+    assert (Hwork : (1 <= N.of_nat (lattice_work a b))%N).
+    { pose proof (lattice_work_pos a b). lia. }
+    destruct a as [|ma], b as [|mb].
+    - time_step.
+    - time_step.
+    - time_step.
+    - eapply N.le_trans; [apply T_leb_matrix_le|].
+      apply N.mul_le_mono_l, time_of_nat_le, matrix_code_work_lattice.
+  Qed.
+
+  (** Join merges the sparse matrices within the entry-based lattice budget. *)
+  Lemma T_join_entries_le : forall a b,
+    (T_join a b <= matrix_time_factor * N.of_nat (lattice_work a b))%N.
+  Proof.
+    intros a b.
+    assert (Hfactor : (8 <= matrix_time_factor)%N) by (unfold matrix_time_factor; nia).
+    assert (Hwork : (1 <= N.of_nat (lattice_work a b))%N).
+    { pose proof (lattice_work_pos a b). lia. }
+    destruct a as [|ma], b as [|mb].
+    - time_step.
+    - time_step.
+    - time_step.
+    - eapply N.le_trans; [apply T_join_matrix_le|].
+      apply N.mul_le_mono_l, time_of_nat_le, matrix_code_work_lattice.
+  Qed.
+
+  (** Widening pays for one comparison and at most one sparse merge. *)
+  Lemma T_widen_entries_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat (lattice_work a b))%N.
+  Proof.
+    intros p a b. pose proof (T_leb_entries_le b a) as Hcompare.
+    rewrite (lattice_work_sym b a) in Hcompare.
+    set (work := N.of_nat (lattice_work a b)) in *.
+    assert (Hwork : (1 <= work)%N).
+    { unfold work. pose proof (lattice_work_pos a b). lia. }
+    assert (Hmerge : forall ma mb, a = Reached ma -> b = Reached mb ->
+      (M.T_merge row_widen (fun x y => T_row_widen x y) ma mb <=
+        matrix_time_factor * work)%N).
+    { intros ma mb Ha Hb. subst a b. unfold work.
+      eapply N.le_trans; [apply T_widen_merge_le|].
+      apply N.mul_le_mono_l, time_of_nat_le, matrix_code_work_lattice. }
+    assert (Hbudget : ((2 * matrix_time_factor + 8) * work <= c_lat * work)%N).
+    { apply N.mul_le_mono_r. exact matrix_time_factor_lat. }
+    clearbody work. unfold T_widen. cbn beta iota zeta.
+    destruct (leb b a); cbn beta iota zeta.
+    - nia.
+    - destruct a as [|ma], b as [|mb]; cbn beta iota zeta.
+      + nia.
+      + nia.
+      + nia.
+      + specialize (Hmerge ma mb eq_refl eq_refl). nia.
   Qed.
 
   (** Comparison dispatch and sparse scanning fit the matrix coefficient. *)
@@ -10551,6 +11157,692 @@ Definition shift_column_work (target : K.t) (d : Z) (row : M.t Z) : nat :=
     clearbody work. clear - Hfirst Hsecond Hopp Hbudget Hwork. lia.
   Qed.
 
+  (** Raw optional insertion changes exactly the supplied target code. *)
+  Lemma find_put_bound_raw : forall target bound row p,
+    M.find p (put_bound target bound row) =
+      if Pos.eqb p (K.encode target) then bound else M.find p row.
+  Proof.
+    intros target [z|] row p; unfold put_bound.
+    - apply M.find_set.
+    - apply M.find_remove.
+  Qed.
+
+  Local Definition copy_column_matrix (target source : K.t) (d : Z) (m : dbm) : dbm :=
+    M.merge (copy_column_row target source d) m M.empty.
+
+  (** Copying a column retains the source matrix's outer rows. *)
+  Lemma find_copy_column_matrix : forall target source d m p,
+    M.find p (copy_column_matrix target source d m) =
+      match M.find p m with
+      | Some row => Some (put_bound target (edge_prefix d (M.get source row)) row)
+      | None => None
+      end.
+  Proof.
+    intros target source d m p. unfold copy_column_matrix.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m); reflexivity.
+  Qed.
+
+  (** Every copied column entry comes from its source column and offset. *)
+  Lemma raw_copy_column_matrix : forall target source d m p q,
+    raw_entry (copy_column_matrix target source d m) p q =
+      if Pos.eqb q (K.encode target) then
+        edge_prefix d (raw_entry m p (K.encode source))
+      else raw_entry m p q.
+  Proof.
+    intros target source d m p q. unfold raw_entry at 1.
+    rewrite find_copy_column_matrix. unfold raw_entry.
+    destruct (M.find p m) as [row|]; cbn [row_of].
+    - rewrite find_put_bound_raw, M.get_find. reflexivity.
+    - rewrite !M.find_empty. destruct (Pos.eqb q (K.encode target)); reflexivity.
+  Qed.
+
+  (** Copying a column introduces no code other than the target. *)
+  Lemma support_copy_column_matrix : forall target source d m p,
+    In p (support (copy_column_matrix target source d m)) ->
+      p = K.encode target \/ In p (support m).
+  Proof.
+    intros target source d m p Hp. apply support_find in Hp.
+    destruct Hp as [Hrow|[q Hentry]].
+    - right. apply support_find. left. rewrite find_copy_column_matrix in Hrow.
+      destruct (M.find p m); congruence.
+    - rewrite raw_copy_column_matrix in Hentry.
+      destruct (Pos.eqb p (K.encode target)) eqn:Htarget.
+      + left. now apply Pos.eqb_eq.
+      + right. apply support_find. right. now exists q.
+  Qed.
+
+  (** Column copying adds at most the target's signed endpoint allowance. *)
+  Lemma copy_column_matrix_sizes : forall target source d m,
+    supp (copy_column_matrix target source d m) <= supp m + 4 /\
+    b (copy_column_matrix target source d m) <= b m + K.bits target + 1.
+  Proof.
+    intros target source d m.
+    assert (Hsupport : forall p, In p (support (copy_column_matrix target source d m)) ->
+      p = K.encode target \/ p = K.encode target \/ p = K.encode (flip target) \/
+        p = K.encode (flip target) \/ In p (support m)).
+    { intros p Hp. pose proof (support_copy_column_matrix target source d m p Hp). tauto. }
+    destruct (support_signed_endpoints target target _ m Hsupport) as [Hcount Hbits].
+    split; [exact Hcount|]. rewrite Nat.max_id in Hbits.
+    eapply Nat.le_trans; [exact Hbits|]. apply Nat.max_lub; lia.
+  Qed.
+
+  (** A copied column adds one offset and one carry bit to the payload bound. *)
+  Lemma ell_copy_column_matrix : forall target source d m,
+    ell (copy_column_matrix target source d m) <= ell m + Z.size_nat d + 1.
+  Proof.
+    intros target source d m. apply ell_bound. intros p q z Hentry.
+    rewrite raw_copy_column_matrix in Hentry.
+    destruct (Pos.eqb q (K.encode target)).
+    - destruct (raw_entry m p (K.encode source)) as [a|] eqn:Hsource; [|discriminate].
+      cbn [edge_prefix] in Hentry. injection Hentry as <-.
+      pose proof (ell_entry m p (K.encode source) a Hsource).
+      pose proof (zbits_add_sum a d). lia.
+    - pose proof (ell_entry m p q z Hentry). lia.
+  Qed.
+
+  (** The new target row is the shifted source row after the column copy. *)
+  Lemma raw_copy_literal : forall target source d m p q,
+    raw_entry (copy_literal target source d m) p q =
+      if Pos.eqb p (K.encode target) then
+        option_map (fun z => (z - d)%Z)
+          (raw_entry (copy_column_matrix target source d m) (K.encode source) q)
+      else raw_entry (copy_column_matrix target source d m) p q.
+  Proof.
+    intros target source d m p q. unfold copy_literal.
+    fold (copy_column_matrix target source d m). unfold raw_entry at 1.
+    rewrite M.find_set. destruct (Pos.eqb p (K.encode target)); [|reflexivity].
+    cbn [row_of]. rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    unfold raw_entry. rewrite M.get_find.
+    destruct (M.find q (row_of (M.find (K.encode source)
+      (copy_column_matrix target source d m)))); reflexivity.
+  Qed.
+
+  (** The target row is the only new outer row of a literal copy. *)
+  Lemma find_copy_literal_presence : forall target source d m p,
+    M.find p (copy_literal target source d m) <> None <->
+      p = K.encode target \/ M.find p m <> None.
+  Proof.
+    intros target source d m p. unfold copy_literal.
+    fold (copy_column_matrix target source d m). rewrite M.find_set.
+    destruct (Pos.eqb p (K.encode target)) eqn:Htarget.
+    - apply Pos.eqb_eq in Htarget. split; [intros; now left|intros; discriminate].
+    - apply Pos.eqb_neq in Htarget. rewrite find_copy_column_matrix.
+      destruct (M.find p m); split; intuition congruence.
+  Qed.
+
+  (** Literal copying introduces no supported code except its target. *)
+  Lemma support_copy_literal : forall target source d m p,
+    In p (support (copy_literal target source d m)) ->
+      p = K.encode target \/ In p (support m).
+  Proof.
+    intros target source d m p Hp. apply support_find in Hp.
+    destruct Hp as [Hrow|[q Hentry]].
+    - apply find_copy_literal_presence in Hrow. destruct Hrow as [Htarget|Hrow].
+      + now left.
+      + right. apply support_find. now left.
+    - rewrite raw_copy_literal in Hentry.
+      apply (support_copy_column_matrix target source d m p).
+      apply support_find. right.
+      destruct (Pos.eqb q (K.encode target)).
+      + apply shift_option_presence in Hentry. now exists (K.encode source).
+      + now exists q.
+  Qed.
+
+  (** One literal copy has bounded support and key-width growth. *)
+  Lemma copy_literal_sizes : forall target source d m,
+    supp (copy_literal target source d m) <= supp m + 4 /\
+    b (copy_literal target source d m) <= b m + K.bits target + 1.
+  Proof.
+    intros target source d m.
+    assert (Hsupport : forall p, In p (support (copy_literal target source d m)) ->
+      p = K.encode target \/ p = K.encode target \/ p = K.encode (flip target) \/
+        p = K.encode (flip target) \/ In p (support m)).
+    { intros p Hp. pose proof (support_copy_literal target source d m p Hp). tauto. }
+    destruct (support_signed_endpoints target target _ m Hsupport) as [Hcount Hbits].
+    split; [exact Hcount|]. rewrite Nat.max_id in Hbits.
+    eapply Nat.le_trans; [exact Hbits|]. apply Nat.max_lub; lia.
+  Qed.
+
+  (** A literal copy adds at most two offset allowances to every finite entry. *)
+  Lemma ell_copy_literal : forall target source d m,
+    ell (copy_literal target source d m) <= ell m + 2 * Z.size_nat d + 2.
+  Proof.
+    intros target source d m.
+    pose proof (ell_copy_column_matrix target source d m) as Hell.
+    apply ell_bound. intros p q z Hentry. rewrite raw_copy_literal in Hentry.
+    destruct (Pos.eqb p (K.encode target)).
+    - destruct (raw_entry (copy_column_matrix target source d m) (K.encode source) q)
+        as [a|] eqn:Hsource; [|discriminate].
+      cbn [option_map] in Hentry. injection Hentry as <-.
+      pose proof (ell_entry _ _ _ a Hsource). pose proof (zbits_sub_sum a d). lia.
+    - pose proof (ell_entry _ _ _ z Hentry). lia.
+  Qed.
+
+  (** A linear support allowance includes one full payload charge. *)
+  Lemma linear_payload_le : forall n payload, payload <= (n + 1) * payload.
+  Proof.
+    intros n payload. nia.
+  Qed.
+
+  (** A positive unit of setup cost fits one additional support item. *)
+  Lemma shift_support_budget : forall n payload factor,
+    1 <= payload -> 1 <= factor ->
+    n * (factor * payload) + 1 <= factor * ((n + 1) * payload).
+  Proof.
+    intros n payload factor Hpayload Hfactor.
+    assert (Hpositive : 1 <= factor * payload) by nia.
+    eapply Nat.le_trans with ((n + 1) * (factor * payload)); [nia|].
+    replace (factor * ((n + 1) * payload)) with
+      ((n + 1) * (factor * payload)) by ring.
+    apply Nat.mul_le_mono_r. cbn [Nat.pow]. nia.
+  Qed.
+
+  (** Column translation visits each stored row once. *)
+  Lemma shift_column_work_linear : forall target d m,
+    code_work (shift_column_work target d) m + 1 <=
+      3 * ((supp m + 1) *
+        (b m + ell m + K.bits target + Z.size_nat d + 1)).
+  Proof.
+    intros target d m.
+    assert (Hsupport : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Hsupport) as Hnodes.
+    pose proof (codes_support_length (M.t Z) m m Hsupport) as Hcount.
+    assert (Hstored : stored_weight (shift_column_work target d) m <=
+      length (M.codes m) * (K.bits target + Z.size_nat d + ell m + 1)).
+    { apply stored_weight_uniform. intros p row Hrow.
+      unfold shift_column_work.
+      destruct (M.get target row) as [old|] eqn:Hentry; cbn [option_weight].
+      - pose proof (row_get_bits m p row target old Hrow Hentry). lia.
+      - lia. }
+    assert (Hstored' : stored_weight (shift_column_work target d) m <=
+      supp m * (K.bits target + Z.size_nat d + ell m + 1)).
+    { eapply Nat.le_trans; [exact Hstored|]. now apply Nat.mul_le_mono_r. }
+    set (payload := b m + ell m + K.bits target + Z.size_nat d + 1).
+    assert (Hpayload : 1 <= payload) by (unfold payload; lia).
+    assert (Hscalar : b m + ell m + K.bits target + Z.size_nat d + 3 <=
+      3 * payload) by (unfold payload; lia).
+    assert (Hwork : code_work (shift_column_work target d) m + 1 <=
+      supp m * (3 * payload) + 1).
+    { pose proof (Nat.mul_le_mono_l _ _ (supp m) Hscalar) as Hscaled.
+      unfold code_work. nia. }
+    eapply Nat.le_trans; [exact Hwork|].
+    apply shift_support_budget; lia.
+  Qed.
+
+  (** The translated source row has only linear support work. *)
+  Lemma shift_selected_row_work_linear : forall target d m row,
+    M.get target (shift_columns target d m) = Some row ->
+    code_work (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat) row + 1 <=
+      4 * ((supp m + 1) *
+        (b m + ell m + K.bits target + Z.size_nat d + 1)).
+  Proof.
+    intros target d m row Hrow.
+    set (next := shift_columns target d m). fold next in Hrow.
+    assert (Hsupport : forall p, In p (M.codes row) -> In p (support next)).
+    { intros p Hp. apply (row_lookup_support next target p).
+      rewrite Hrow. exact Hp. }
+    assert (Hbits : forall p z, M.find p row = Some z -> Z.size_nat z <= ell next).
+    { intros p z Hz. apply (row_lookup_bits next target p z).
+      rewrite Hrow. exact Hz. }
+    pose proof (code_work_bits_bound next row (Z.size_nat d) (ell next)
+      Hsupport Hbits) as Hrow_work.
+    destruct (shift_columns_sizes target d m) as [Hcount Hkeys].
+    pose proof (ell_shift_columns target d m) as Hell.
+    fold next in Hcount, Hkeys, Hell. rewrite Hcount, Hkeys in Hrow_work.
+    set (payload := b m + ell m + K.bits target + Z.size_nat d + 1).
+    assert (Hpayload : 1 <= payload) by (unfold payload; lia).
+    assert (Hscalar : b m + ell next + Z.size_nat d + 3 <= 4 * payload).
+    { unfold payload. lia. }
+    assert (Hwork : code_work (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat)
+      row + 1 <= supp m * (4 * payload) + 1).
+    { pose proof (Nat.mul_le_mono_l _ _ (supp m) Hscalar). lia. }
+    eapply Nat.le_trans; [exact Hwork|]. apply shift_support_budget; lia.
+  Qed.
+
+  (** Column translation has linear support cost with bit-priced callbacks. *)
+  Lemma T_shift_columns_linear : forall target d m,
+    (T_shift_columns target d m <= 64 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1) *
+        (b m + ell m + K.bits target + Z.size_nat d + 1)))%N.
+  Proof.
+    intros target d m.
+    set (units := (supp m + 1) *
+      (b m + ell m + K.bits target + Z.size_nat d + 1)).
+    change (T_shift_columns target d m <=
+      64 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N.
+    assert (Hpositive : 1 <= units).
+    { unfold units. eapply Nat.le_trans; [|apply linear_payload_le]. lia. }
+    pose proof (time_of_nat_le _ _ Hpositive) as Hwork.
+    pose proof (shift_column_work_linear target d m) as Hdata.
+    change (code_work (shift_column_work target d) m + 1 <= 3 * units) in Hdata.
+    pose proof (time_of_nat_le _ _ Hdata) as HdataN.
+    rewrite (Nat2N.inj_mul 3 units) in HdataN.
+    set (work := N.of_nat units) in *.
+    change (1 <= work)%N in Hwork.
+    pose proof (T_merge_left_code_work (M.t Z) (M.t Z) (M.t Z)
+      (shift_column_row target d) (fun a b => T_shift_column_row target d a b)
+      (shift_column_work target d) m (8 * (M.c_map + 1))%N
+      (T_shift_column_row_le target d)) as Hmerge.
+    assert (Hmerge_work : (M.T_merge (shift_column_row target d)
+      (fun a b => T_shift_column_row target d a b) m M.empty <=
+      M.c_map * (8 * (M.c_map + 1) + 1) * 2 * (3 * work))%N).
+    { eapply N.le_trans; [exact Hmerge|].
+      apply N.mul_le_mono_l. exact HdataN. }
+    assert (Hcoefficient :
+      (M.c_map * (8 * (M.c_map + 1) + 1) * 2 * 3 + 1 <=
+        64 * (M.c_map + 1) * (M.c_map + 1))%N).
+    { pose proof (N.le_0_l M.c_map) as Hmap. clear -Hmap. nia. }
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    rewrite N.mul_add_distr_r, N.mul_1_l in Hbudget.
+    replace (M.c_map * (8 * (M.c_map + 1) + 1) * 2 * (3 * work))%N with
+      ((M.c_map * (8 * (M.c_map + 1) + 1) * 2 * 3) * work)%N
+      in Hmerge_work by ring.
+    unfold T_shift_columns. cbn beta iota zeta.
+    clearbody work. clear - Hmerge_work Hwork Hbudget. lia.
+  Qed.
+
+  (** A literal translation adds one source-row traversal to its column pass. *)
+  Lemma T_shift_literal_linear : forall target d m,
+    (T_shift_literal target d m <= 256 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1) *
+        (b m + ell m + K.bits target + Z.size_nat d + 1)))%N.
+  Proof.
+    intros target d m.
+    set (units := (supp m + 1) *
+      (b m + ell m + K.bits target + Z.size_nat d + 1)).
+    change (T_shift_literal target d m <=
+      256 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N.
+    set (next := shift_columns target d m).
+    assert (Hkey : K.bits target + 1 <= units).
+    { unfold units. eapply Nat.le_trans; [|apply linear_payload_le]. lia. }
+    assert (Hpositive : 1 <= units) by lia.
+    pose proof (time_of_nat_le _ _ Hkey) as HkeyN.
+    pose proof (time_of_nat_le _ _ Hpositive) as Hwork.
+    pose proof (T_shift_columns_linear target d m) as Hcolumns.
+    change (T_shift_columns target d m <=
+      64 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N in Hcolumns.
+    set (work := N.of_nat units) in *.
+    change (1 <= work)%N in Hwork.
+    assert (Hget : (M.T_get target next <= M.c_map * work)%N).
+    { eapply N.le_trans; [apply M.T_get_le|].
+      apply N.mul_le_mono_l. exact HkeyN. }
+    assert (Hcoefficient :
+      (64 * (M.c_map + 1) * (M.c_map + 1) + M.c_map +
+        M.c_map * (8 + 1) * 2 * 4 + M.c_map + 4 <=
+        256 * (M.c_map + 1) * (M.c_map + 1))%N).
+    { pose proof (N.le_0_l M.c_map) as Hmap. clear -Hmap. nia. }
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    repeat rewrite N.mul_add_distr_r in Hbudget.
+    destruct (M.get target next) as [row|] eqn:Hrow.
+    - assert (Hdata : code_work
+        (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat) row + 1 <= 4 * units).
+      { unfold units. apply shift_selected_row_work_linear. exact Hrow. }
+      pose proof (time_of_nat_le _ _ Hdata) as HdataN.
+      rewrite (Nat2N.inj_mul 4 units) in HdataN. fold work in HdataN.
+      pose proof (T_merge_left_code_work Z Z Z (shift_bound d)
+        (fun a b => T_shift_bound d a b)
+        (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat)
+        row 8%N (T_shift_bound_le d)) as Hmerge.
+      assert (Hmerge_work : (M.T_merge (shift_bound d)
+        (fun a b => T_shift_bound d a b) row M.empty <=
+        M.c_map * (8 + 1) * 2 * (4 * work))%N).
+      { eapply N.le_trans; [exact Hmerge|].
+        apply N.mul_le_mono_l. exact HdataN. }
+      assert (Hset : (M.T_set target
+        (M.merge (shift_bound d) row M.empty) next <= M.c_map * work)%N).
+      { eapply N.le_trans; [apply M.T_set_le|].
+        apply N.mul_le_mono_l. exact HkeyN. }
+      replace (M.c_map * (8 + 1) * 2 * (4 * work))%N with
+        ((M.c_map * (8 + 1) * 2 * 4) * work)%N in Hmerge_work by ring.
+      unfold T_shift_literal. cbn beta iota zeta. fold next. rewrite Hrow.
+      cbn beta iota zeta. time_simpl.
+      clearbody work. clear - Hcolumns Hget Hset Hmerge_work Hbudget Hwork. lia.
+    - unfold T_shift_literal. cbn beta iota zeta. fold next. rewrite Hrow.
+      cbn beta iota zeta. time_simpl.
+      clearbody work. clear - Hcolumns Hget Hbudget Hwork. lia.
+  Qed.
+
+  (** Both signed literal translations have linear support cost. *)
+  Lemma T_shift_linear : forall x d m,
+    (T_shift x d m <= 2048 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1) *
+        (b m + ell m + X.bits x + Z.size_nat d + 1)))%N.
+  Proof.
+    intros x d m.
+    set (units := (supp m + 1) *
+      (b m + ell m + X.bits x + Z.size_nat d + 1)).
+    set (work := N.of_nat units).
+    assert (Hpositive : 1 <= units).
+    { unfold units. eapply Nat.le_trans; [|apply linear_payload_le]. lia. }
+    pose proof (time_of_nat_le _ _ Hpositive) as Hwork.
+    change (1 <= work)%N in Hwork.
+    assert (Hfirst_nat : (supp m + 1) *
+      (b m + ell m + K.bits (x, true) + Z.size_nat d + 1) <= 2 * units).
+    { unfold units. rewrite literal_bits. cbn beta iota zeta.
+      replace (2 * ((supp m + 1) *
+        (b m + ell m + X.bits x + Z.size_nat d + 1))) with
+        ((supp m + 1) * (2 * (b m + ell m + X.bits x + Z.size_nat d + 1))) by ring.
+      apply Nat.mul_le_mono_l. lia. }
+    assert (Hfirst : (T_shift_literal (x, true) d m <=
+      512 * (M.c_map + 1) * (M.c_map + 1) * work)%N).
+    { eapply N.le_trans; [apply T_shift_literal_linear|].
+      replace (512 * (M.c_map + 1) * (M.c_map + 1) * work)%N with
+        (256 * (M.c_map + 1) * (M.c_map + 1) * (2 * work))%N by ring.
+      apply N.mul_le_mono_l.
+      pose proof (time_of_nat_le _ _ Hfirst_nat) as Hcast.
+      rewrite (Nat2N.inj_mul 2 units) in Hcast. exact Hcast. }
+    set (first := shift_literal (x, true) d m).
+    destruct (shift_literal_sizes (x, true) d m) as [Hcount Hkeys].
+    pose proof (ell_shift_literal (x, true) d m) as Hell.
+    fold first in Hcount, Hkeys, Hell.
+    assert (Hsecond_nat : (supp first + 1) *
+      (b first + ell first + K.bits (x, false) + Z.size_nat (-d)%Z + 1) <= 3 * units).
+    { unfold units. rewrite Hcount, Hkeys, literal_bits, zbits_opp.
+      cbn beta iota zeta.
+      replace (3 * ((supp m + 1) *
+        (b m + ell m + X.bits x + Z.size_nat d + 1))) with
+        ((supp m + 1) * (3 * (b m + ell m + X.bits x + Z.size_nat d + 1))) by ring.
+      apply Nat.mul_le_mono_l. lia. }
+    assert (Hsecond : (T_shift_literal (x, false) (-d)%Z first <=
+      768 * (M.c_map + 1) * (M.c_map + 1) * work)%N).
+    { eapply N.le_trans; [apply T_shift_literal_linear|].
+      replace (768 * (M.c_map + 1) * (M.c_map + 1) * work)%N with
+        (256 * (M.c_map + 1) * (M.c_map + 1) * (3 * work))%N by ring.
+      apply N.mul_le_mono_l.
+      pose proof (time_of_nat_le _ _ Hsecond_nat) as Hcast.
+      rewrite (Nat2N.inj_mul 3 units) in Hcast. exact Hcast. }
+    pose proof (Z.T_opp_le d) as Hopp.
+    assert (Hcoefficient :
+      (512 * (M.c_map + 1) * (M.c_map + 1) +
+        768 * (M.c_map + 1) * (M.c_map + 1) + 2 <=
+        2048 * (M.c_map + 1) * (M.c_map + 1))%N).
+    { pose proof (N.le_0_l M.c_map) as Hmap. clear -Hmap. nia. }
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    repeat rewrite N.mul_add_distr_r in Hbudget.
+    match goal with
+    | |- N.le ?clock _ =>
+      change (clock <= 2048 * (M.c_map + 1) * (M.c_map + 1) * work)%N
+    end.
+    unfold T_shift. cbn beta iota zeta. fold first. time_simpl.
+    clearbody work. clear - Hfirst Hsecond Hopp Hbudget Hwork. lia.
+  Qed.
+
+  (** Setting or removing an optional bound charges only its target key. *)
+  Lemma T_put_bound_le : forall target bound row,
+    (T_put_bound target bound row <=
+      8 * (M.c_map + 1) * N.of_nat (K.bits target + 1))%N.
+  Proof.
+    intros target [d|] row; time_step.
+  Qed.
+
+  (** A column copy reads one source entry and replaces one target entry. *)
+  Definition copy_column_work (target source : K.t) (d : Z) (row : M.t Z) : nat :=
+    K.bits target + K.bits source + Z.size_nat d +
+      option_weight Z.size_nat (M.get source row) + 1.
+
+  Lemma T_copy_column_row_le : forall target source d old ignored,
+    (T_copy_column_row target source d old ignored <= 32 * (M.c_map + 1) *
+      N.of_nat (option_weight (copy_column_work target source d) old + 1))%N.
+  Proof.
+    intros target source d [row|] ignored.
+    - pose proof (M.T_get_le Z source row) as Hget.
+      pose proof (T_edge_prefix_le d (M.get source row)) as Hprefix.
+      pose proof (T_put_bound_le target (edge_prefix d (M.get source row)) row) as Hput.
+      cbn [option_weight]. unfold copy_column_work, optional_bits in *.
+      unfold T_copy_column_row. time_simpl. rewrite ?Nat2N.inj_add in *. nia.
+    - unfold T_copy_column_row. time_simpl. cbn [option_weight]. nia.
+  Qed.
+
+  (** The column pass charges each row's source entry only once. *)
+  Lemma copy_column_work_linear : forall target source d m,
+    code_work (copy_column_work target source d) m + 1 <=
+      3 * ((supp m + 1) *
+        (b m + ell m + K.bits target + K.bits source + Z.size_nat d + 1)).
+  Proof.
+    intros target source d m.
+    assert (Hsupport : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Hsupport) as Hnodes.
+    pose proof (codes_support_length (M.t Z) m m Hsupport) as Hcount.
+    assert (Hstored : stored_weight (copy_column_work target source d) m <=
+      length (M.codes m) * (K.bits target + K.bits source + Z.size_nat d + ell m + 1)).
+    { apply stored_weight_uniform. intros p row Hrow. unfold copy_column_work.
+      destruct (M.get source row) as [old|] eqn:Hentry; cbn [option_weight].
+      - pose proof (row_get_bits m p row source old Hrow Hentry). lia.
+      - lia. }
+    unfold code_work. nia.
+  Qed.
+
+  (** The column-copy merge has linear support cost. *)
+  Lemma T_copy_columns_linear : forall target source d m,
+    (M.T_merge (copy_column_row target source d)
+      (fun old ignored => T_copy_column_row target source d old ignored) m M.empty <=
+      256 * (M.c_map + 1) * (M.c_map + 1) *
+        N.of_nat ((supp m + 1) *
+          (b m + ell m + K.bits target + K.bits source + Z.size_nat d + 1)))%N.
+  Proof.
+    intros target source d m.
+    pose proof (T_merge_left_code_work (M.t Z) (M.t Z) (M.t Z)
+      (copy_column_row target source d)
+      (fun old ignored => T_copy_column_row target source d old ignored)
+      (copy_column_work target source d) m (32 * (M.c_map + 1))%N
+      (T_copy_column_row_le target source d)) as Hmerge.
+    pose proof (time_of_nat_le _ _ (copy_column_work_linear target source d m)) as Hdata.
+    rewrite Nat2N.inj_mul in Hdata.
+    eapply N.le_trans; [exact Hmerge|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact Hdata|].
+    rewrite N.mul_assoc. apply N.mul_le_mono_r. nia.
+  Qed.
+
+  (** The selected copied row has at most one extra literal's support work. *)
+  Lemma copied_row_work_linear : forall target source d m,
+    code_work (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat)
+      (row_of (M.get source (copy_column_matrix target source d m))) + 1 <=
+      24 * ((supp m + 1) *
+        (b m + ell m + K.bits target + K.bits source + Z.size_nat d + 1)).
+  Proof.
+    intros target source d m.
+    set (next := copy_column_matrix target source d m).
+    pose proof (code_work_bits_bound next (row_of (M.get source next))
+      (Z.size_nat d) (ell next) (row_lookup_support next source)
+      (row_lookup_bits next source)) as Hrow.
+    destruct (copy_column_matrix_sizes target source d m) as [Hcount Hkeys].
+    pose proof (ell_copy_column_matrix target source d m) as Hell.
+    fold next in Hcount, Hkeys, Hell. nia.
+  Qed.
+
+  (** A literal copy performs one column pass and one shifted source-row pass. *)
+  Lemma T_copy_literal_linear : forall target source d m,
+    (T_copy_literal target source d m <= 1024 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1) *
+        (b m + ell m + K.bits target + K.bits source + Z.size_nat d + 1)))%N.
+  Proof.
+    intros target source d m.
+    set (units := (supp m + 1) *
+      (b m + ell m + K.bits target + K.bits source + Z.size_nat d + 1)).
+    set (work := N.of_nat units).
+    assert (Hpositive : (1 <= work)%N) by (unfold work, units; nia).
+    assert (Htarget : (N.of_nat (K.bits target + 1) <= work)%N).
+    { unfold work, units. apply time_of_nat_le. nia. }
+    assert (Hsource : (N.of_nat (K.bits source + 1) <= work)%N).
+    { unfold work, units. apply time_of_nat_le. nia. }
+    pose proof (T_copy_columns_linear target source d m) as Hcolumns.
+    fold units work in Hcolumns.
+    set (next := copy_column_matrix target source d m).
+    set (row := row_of (M.get source next)).
+    pose proof (T_merge_left_code_work Z Z Z (shift_bound d)
+      (fun a b => T_shift_bound d a b)
+      (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat) row 8%N
+      (T_shift_bound_le d)) as Hrow.
+    pose proof (time_of_nat_le _ _ (copied_row_work_linear target source d m)) as Hdata.
+    fold next row units in Hdata. rewrite Nat2N.inj_mul in Hdata. fold work in Hdata.
+    assert (Hmerge : (M.T_merge (shift_bound d) (fun a b => T_shift_bound d a b)
+      row M.empty <= 432 * M.c_map * work)%N).
+    { eapply N.le_trans; [exact Hrow|].
+      eapply N.le_trans; [apply N.mul_le_mono_l; exact Hdata|].
+      cbn [N.of_nat]. ring_simplify. apply N.le_refl. }
+    assert (Hget : (M.T_get source next <= M.c_map * work)%N).
+    { eapply N.le_trans; [apply M.T_get_le|]. now apply N.mul_le_mono_l. }
+    assert (Hset : (M.T_set target (M.merge (shift_bound d) row M.empty) next <=
+      M.c_map * work)%N).
+    { eapply N.le_trans; [apply M.T_set_le|]. now apply N.mul_le_mono_l. }
+    pose proof (T_row_of_le (M.get source next)) as Hrow_of.
+    assert (Hcoefficient : (256 * (M.c_map + 1) * (M.c_map + 1) +
+      434 * M.c_map + 4 <= 1024 * (M.c_map + 1) * (M.c_map + 1))%N) by (clear; nia).
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    rewrite !N.mul_add_distr_r in Hbudget.
+    change (T_copy_literal target source d m <=
+      1024 * (M.c_map + 1) * (M.c_map + 1) * work)%N.
+    unfold T_copy_literal. time_simpl. fold copy_column_matrix. fold next row.
+    subst row next. unfold copy_column_matrix in *.
+    clearbody work. clear - Hpositive Hcolumns Hmerge Hget Hset Hrow_of Hbudget. lia.
+  Qed.
+
+  (** Copying both signs has linear support cost and fixed offset growth. *)
+  Lemma T_copy_literals_linear : forall x source d m,
+    (T_copy_literals x source d m <= 65536 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1) *
+        (b m + ell m + X.bits x + K.bits source + Z.size_nat d + 1)))%N.
+  Proof.
+    intros x source d m.
+    set (units := (supp m + 1) *
+      (b m + ell m + X.bits x + K.bits source + Z.size_nat d + 1)).
+    set (work := N.of_nat units).
+    assert (Hpositive : (1 <= work)%N) by (unfold work, units; nia).
+    assert (Hfirst_data : (supp m + 1) *
+      (b m + ell m + K.bits (x, true) + K.bits source + Z.size_nat d + 1) <= 2 * units).
+    { unfold units. rewrite literal_bits. cbn beta iota zeta. nia. }
+    pose proof (T_copy_literal_linear (x, true) source d m) as Hfirst.
+    pose proof (time_of_nat_le _ _ Hfirst_data) as Hfirst_cast.
+    rewrite (Nat2N.inj_mul 2 units) in Hfirst_cast. fold work in Hfirst_cast.
+    assert (Hfirst_time : (T_copy_literal (x, true) source d m <=
+      2048 * (M.c_map + 1) * (M.c_map + 1) * work)%N).
+    { eapply N.le_trans; [exact Hfirst|].
+      eapply N.le_trans; [apply N.mul_le_mono_l; exact Hfirst_cast|].
+      cbn [N.of_nat]. ring_simplify. apply N.le_refl. }
+    set (first := copy_literal (x, true) source d m).
+    destruct (copy_literal_sizes (x, true) source d m) as [Hcount Hkeys].
+    pose proof (ell_copy_literal (x, true) source d m) as Hell.
+    fold first in Hcount, Hkeys, Hell.
+    assert (Hsecond_data : (supp first + 1) *
+      (b first + ell first + K.bits (x, false) + K.bits (flip source) +
+        Z.size_nat (-d)%Z + 1) <= 30 * units).
+    { rewrite literal_bits, zbits_opp. cbn beta iota zeta.
+      rewrite literal_bits in Hkeys. cbn beta iota zeta in Hkeys.
+      pose proof (flip_bits source) as Hflip_bits.
+      assert (Hsupport : supp first + 1 <= 5 * (supp m + 1)) by lia.
+      assert (Hpayload : b first + ell first + (2 * X.bits x + 0) +
+        K.bits (flip source) + Z.size_nat d + 1 <=
+        6 * (b m + ell m + X.bits x + K.bits source + Z.size_nat d + 1)) by lia.
+      unfold units. eapply Nat.le_trans.
+      - apply Nat.mul_le_mono; [exact Hsupport|exact Hpayload].
+      - ring_simplify. apply Nat.le_refl. }
+    pose proof (T_copy_literal_linear (x, false) (flip source) (-d)%Z first) as Hsecond.
+    pose proof (time_of_nat_le _ _ Hsecond_data) as Hsecond_cast.
+    rewrite (Nat2N.inj_mul 30 units) in Hsecond_cast. fold work in Hsecond_cast.
+    assert (Hsecond_time : (T_copy_literal (x, false) (flip source) (-d)%Z first <=
+      30720 * (M.c_map + 1) * (M.c_map + 1) * work)%N).
+    { eapply N.le_trans; [exact Hsecond|].
+      eapply N.le_trans; [apply N.mul_le_mono_l; exact Hsecond_cast|].
+      cbn [N.of_nat]. ring_simplify. apply N.le_refl. }
+    pose proof (T_flip_le source) as Hflip. pose proof (Z.T_opp_le d) as Hopp.
+    assert (Hcoefficient : (2048 * (M.c_map + 1) * (M.c_map + 1) +
+      30720 * (M.c_map + 1) * (M.c_map + 1) + 6 <=
+      65536 * (M.c_map + 1) * (M.c_map + 1))%N) by (clear; nia).
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    rewrite !N.mul_add_distr_r in Hbudget.
+    change (T_copy_literals x source d m <=
+      65536 * (M.c_map + 1) * (M.c_map + 1) * work)%N.
+    unfold T_copy_literals. time_simpl. fold first.
+    clearbody work. clear - Hfirst_time Hsecond_time Hflip Hopp Hpositive Hbudget. lia.
+  Qed.
+
+  (** Materializing the source diagonals adds only its two signed codes. *)
+  Lemma copy_seed_resources : forall source m,
+    let seed := add_cons source source 0%Z m in
+    supp seed <= supp m + 4 /\
+    b seed <= b m + K.bits source + 1 /\ ell seed <= ell m.
+  Proof.
+    intros source m. cbn beta iota zeta.
+    assert (Hsupport : forall p, In p (support (add_cons source source 0%Z m)) ->
+      p = K.encode source \/ p = K.encode source \/ p = K.encode (flip source) \/
+        p = K.encode (flip source) \/ In p (support m)).
+    { intros p Hp. now apply support_add_cons in Hp. }
+    destruct (support_signed_endpoints source source _ m Hsupport) as [Hcount Hbits].
+    split; [exact Hcount|]. split.
+    - rewrite Nat.max_id in Hbits. eapply Nat.le_trans; [exact Hbits|].
+      apply Nat.max_lub; lia.
+    - apply ell_add_cons; [lia|change (0 <= ell m); lia].
+  Qed.
+
+  (** Copy assignment has linear support cost, including source-diagonal materialization. *)
+  Lemma T_assign_copy_fast_small : forall x source d s,
+    (T_assign_copy_fast x source d s <=
+      (1024 * 1024) * (M.c_map + K.c_key + 1) * (M.c_map + K.c_key + 1) *
+      N.of_nat ((ns s + 1) *
+        (bs s + ells s + X.bits x + K.bits source + Z.size_nat d + 1)))%N.
+  Proof.
+    intros x source d [|m].
+    - unfold T_assign_copy_fast. time_simpl. cbn [ns bs ells].
+      assert (Hpositive : (1 <= N.of_nat (X.bits x + K.bits source + Z.size_nat d + 1))%N)
+        by lia.
+      rewrite Nat.mul_1_l. nia.
+    - cbn [ns bs ells].
+      set (units := (supp m + 1) *
+        (b m + ell m + X.bits x + K.bits source + Z.size_nat d + 1)).
+      set (work := N.of_nat units).
+      assert (Hpositive : (1 <= work)%N) by (unfold work, units; nia).
+      assert (Hsource : (N.of_nat (K.bits source + 1) <= work)%N).
+      { unfold work, units. apply time_of_nat_le. nia. }
+      assert (Hequal : (K.T_eqb source (x, true) <= K.c_key * work)%N).
+      { eapply N.le_trans; [apply K.T_eqb_le|]. now apply N.mul_le_mono_l. }
+      assert (Hshift : (T_shift x d m <=
+        2048 * (M.c_map + 1) * (M.c_map + 1) * work)%N).
+      { eapply N.le_trans; [apply T_shift_linear|].
+        apply N.mul_le_mono_l. unfold work, units. apply time_of_nat_le.
+        apply Nat.mul_le_mono_l. lia. }
+      set (seed := add_cons source source 0%Z m).
+      destruct (copy_seed_resources source m) as [Hcount [Hkeys Hell]].
+      fold seed in Hcount, Hkeys, Hell.
+      assert (Hdata : (supp seed + 1) *
+        (b seed + ell seed + X.bits x + K.bits source + Z.size_nat d + 1) <= 10 * units).
+      { assert (Hsupport : supp seed + 1 <= 5 * (supp m + 1)) by lia.
+        assert (Hpayload : b seed + ell seed + X.bits x + K.bits source +
+          Z.size_nat d + 1 <=
+          2 * (b m + ell m + X.bits x + K.bits source + Z.size_nat d + 1)) by lia.
+        unfold units. eapply Nat.le_trans.
+        - apply Nat.mul_le_mono; [exact Hsupport|exact Hpayload].
+        - ring_simplify. apply Nat.le_refl. }
+      pose proof (time_of_nat_le _ _ Hdata) as Hcast.
+      rewrite (Nat2N.inj_mul 10 units) in Hcast. fold work in Hcast.
+      pose proof (T_copy_literals_linear x source d seed) as Hcopies.
+      assert (Hcopy_time : (T_copy_literals x source d seed <=
+        655360 * (M.c_map + 1) * (M.c_map + 1) * work)%N).
+      { eapply N.le_trans; [exact Hcopies|].
+        eapply N.le_trans; [apply N.mul_le_mono_l; exact Hcast|].
+        cbn [N.of_nat]. ring_simplify. apply N.le_refl. }
+      assert (Hseed : (T_add_cons source source 0%Z m <= 512 * (M.c_map + 1) * work)%N).
+      { eapply N.le_trans; [apply T_add_cons_small|].
+        replace (512 * (M.c_map + 1) * work)%N with
+          (256 * (M.c_map + 1) * (2 * work))%N by ring.
+        apply N.mul_le_mono_l. unfold work, units. cbn [Z.size_nat].
+        change 2%N with (N.of_nat 2).
+        rewrite <- Nat2N.inj_mul. apply time_of_nat_le. clear; nia. }
+      assert (Hcoefficient : (K.c_key +
+        2048 * (M.c_map + 1) * (M.c_map + 1) +
+        655360 * (M.c_map + 1) * (M.c_map + 1) + 512 * (M.c_map + 1) + 4 <=
+        (1024 * 1024) * (M.c_map + K.c_key + 1) * (M.c_map + K.c_key + 1))%N) by (clear; nia).
+      pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+      rewrite !N.mul_add_distr_r in Hbudget.
+      change (T_assign_copy_fast x source d (Reached m) <=
+        (1024 * 1024) * (M.c_map + K.c_key + 1) * (M.c_map + K.c_key + 1) * work)%N.
+      unfold T_assign_copy_fast. time_simpl. fold seed.
+      clearbody work. clear - Hpositive Hequal Hshift Hcopy_time Hseed Hbudget.
+      destruct (K.eqb source (x, true)); time_simpl; lia.
+  Qed.
+
   Lemma T_signed_unit_le : forall x a,
     (T_signed_unit x a <= 16 * N.of_nat (Z.size_nat a + 1))%N.
   Proof. intros x a. time_step. Qed.
@@ -10724,6 +12016,296 @@ Definition shift_column_work (target : K.t) (d : Z) (row : M.t Z) : nat :=
   Qed.
 
   (** Installing signed interval endpoints performs two bounded refinements and scalings. *)
+  (** Averaging a finite bound charges only the present unary payload. *)
+  Lemma T_range_average_le : forall bound unary ignored,
+    (T_range_average bound unary ignored <= 32 * N.of_nat
+      (option_weight (fun z => (option_weight Z.size_nat bound + Z.size_nat z + 1)%nat)
+        unary + 1))%N.
+  Proof.
+    intros [a|] [z|] ignored; cbn [option_weight];
+      try (pose proof (zbits_add_sum a z)); time_step.
+  Qed.
+
+  (** Updating two columns pays for two key writes and the present unary integer. *)
+  Lemma T_range_column_row_le : forall x lower upper old unary,
+    (T_range_column_row x lower upper old unary <= 128 * (M.c_map + 1) * N.of_nat
+      (option_weight (fun _ : M.t Z => (X.bits x + option_weight Z.size_nat lower +
+        option_weight Z.size_nat upper + 1)%nat) old +
+        option_weight Z.size_nat unary + 1))%N.
+  Proof.
+    intros x lower upper [row|] unary; cbn [option_weight].
+    - pose proof (T_range_average_le lower unary None) as Hlower.
+      pose proof (T_range_average_le upper unary None) as Hupper.
+      pose proof (T_put_bound_le (x, true) (range_average upper unary None) row) as Hputu.
+      pose proof (T_put_bound_le (x, false) (range_average lower unary None)
+        (put_bound (x, true) (range_average upper unary None) row)) as Hputl.
+      rewrite !literal_bits in Hputu, Hputl. cbn beta iota zeta in Hputu, Hputl.
+      destruct unary as [z|]; cbn [option_weight] in *;
+        unfold T_range_column_row; time_simpl;
+        rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *; nia.
+    - unfold T_range_column_row. time_simpl. nia.
+  Qed.
+
+  (** A new literal row traverses the unary map once and writes two signed entries. *)
+  Lemma T_range_literal_row_le : forall x sign bound unaries,
+    (T_range_literal_row x sign bound unaries <= 256 * (M.c_map + 1) * N.of_nat
+      (X.bits x + code_work (fun z =>
+        (option_weight Z.size_nat bound + Z.size_nat z + 1)%nat) unaries + 1))%N.
+  Proof.
+    intros x sign bound unaries.
+    pose proof (T_merge_left_code_work Z Z Z (range_average bound)
+      (fun unary ignored => T_range_average bound unary ignored)
+      (fun z => (option_weight Z.size_nat bound + Z.size_nat z + 1)%nat)
+      unaries 32%N (T_range_average_le bound)) as Hmerge.
+    set (row := match bound with
+      | Some _ => M.merge (range_average bound) unaries M.empty
+      | None => M.empty
+      end).
+    pose proof (T_put_bound_le (x, negb sign) bound row) as Hput.
+    pose proof (M.T_set_le Z (x, sign) 0%Z
+      (put_bound (x, negb sign) bound row)) as Hset.
+    set (work := N.of_nat (X.bits x + code_work (fun z =>
+      (option_weight Z.size_nat bound + Z.size_nat z + 1)%nat) unaries + 1)).
+    assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+    assert (Hkey : forall s, (N.of_nat (K.bits (x, s) + 1) <= 2 * work)%N).
+    { intro s. unfold work. rewrite literal_bits.
+      destruct s; cbn beta iota zeta;
+        rewrite !Nat2N.inj_add, ?Nat2N.inj_mul; lia. }
+    assert (Hpayload : (N.of_nat (code_work (fun z =>
+      (option_weight Z.size_nat bound + Z.size_nat z + 1)%nat) unaries + 1) <= work)%N).
+    { unfold work. lia. }
+    assert (Hput_work : (T_put_bound (x, negb sign) bound row <=
+      16 * (M.c_map + 1) * work)%N).
+    { eapply N.le_trans; [exact Hput|].
+      replace (16 * (M.c_map + 1) * work)%N with
+        (8 * (M.c_map + 1) * (2 * work))%N by ring.
+      apply N.mul_le_mono_l. apply Hkey. }
+    assert (Hset_work : (M.T_set (x, sign) 0%Z
+      (put_bound (x, negb sign) bound row) <= 2 * M.c_map * work)%N).
+    { eapply N.le_trans; [exact Hset|].
+      replace (2 * M.c_map * work)%N with (M.c_map * (2 * work))%N by ring.
+      apply N.mul_le_mono_l. apply Hkey. }
+    assert (Hmerge_work : (M.T_merge (range_average bound)
+      (fun unary ignored => T_range_average bound unary ignored) unaries M.empty <=
+      66 * M.c_map * work)%N).
+    { eapply N.le_trans; [exact Hmerge|].
+      replace (66 * M.c_map * work)%N with (M.c_map * (32 + 1) * 2 * work)%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hcoefficient : (16 * (M.c_map + 1) + 2 * M.c_map + 66 * M.c_map + 2 <=
+      256 * (M.c_map + 1))%N) by lia.
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    rewrite !N.mul_add_distr_r in Hbudget.
+    fold work. unfold T_range_literal_row. destruct bound as [a|]; fold row; time_simpl;
+      clearbody work; clear - Hpositive Hput_work Hset_work Hmerge_work Hbudget; lia.
+  Qed.
+
+  (** Interval construction charges the raw labels and one supported row or column per literal. *)
+  Definition range_matrix_work (x : X.t) (lower upper : option Z) (m : dbm) : nat :=
+    (supp m + 1) * (b m + ell m + X.bits x + option_weight Z.size_nat lower +
+      option_weight Z.size_nat upper + 1) + M.weight m.
+
+  (** The outer merge visits only outer rows and the supported unary map. *)
+  Lemma range_matrix_maps_work : forall x lower upper m,
+    code_work (fun _ : M.t Z => (X.bits x + option_weight Z.size_nat lower +
+      option_weight Z.size_nat upper + 1)%nat) m +
+      code_work Z.size_nat (fst (M.fold (unary_maps m) m (M.empty, M.empty))) + 1 <=
+    8 * range_matrix_work x lower upper m.
+  Proof.
+    intros x lower upper m.
+    assert (Houter : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Houter) as Hnodes.
+    pose proof (codes_support_length (M.t Z) m m Houter) as Hcount.
+    pose proof (stored_weight_uniform (M.t Z)
+      (fun _ : M.t Z => (X.bits x + option_weight Z.size_nat lower +
+        option_weight Z.size_nat upper + 1)%nat) m
+      (X.bits x + option_weight Z.size_nat lower + option_weight Z.size_nat upper + 1)
+      ltac:(intros p row Hrow; apply Nat.le_refl)) as Hstored.
+    destruct (collect_unary_support m) as [Hsupport _].
+    destruct (collect_unary_bits m) as [Hbits _].
+    assert (Hunary : code_work Z.size_nat
+      (fst (M.fold (unary_maps m) m (M.empty, M.empty))) <= supp m * (b m + ell m + 3)).
+    { eapply Nat.le_trans with (code_work (fun z => (0 + Z.size_nat z + 1)%nat)
+        (fst (M.fold (unary_maps m) m (M.empty, M.empty)))).
+      - apply code_work_mono. intros p z Hz.
+        lia.
+      - eapply Nat.le_trans; [apply code_work_bits_bound; eassumption|].
+        apply Nat.mul_le_mono_l. lia. }
+    unfold code_work at 1. unfold range_matrix_work. nia.
+  Qed.
+
+  (** Either new literal row has linear work in the original support and endpoint bits. *)
+  Lemma range_matrix_literal_work : forall x lower upper m bound,
+    option_weight Z.size_nat bound <=
+      option_weight Z.size_nat lower + option_weight Z.size_nat upper ->
+    X.bits x + code_work (fun z =>
+      (option_weight Z.size_nat bound + Z.size_nat z + 1)%nat)
+      (snd (M.fold (unary_maps m) m (M.empty, M.empty))) + 1 <=
+    4 * range_matrix_work x lower upper m.
+  Proof.
+    intros x lower upper m bound Hbound.
+    destruct (collect_unary_support m) as [_ Hsupport].
+    destruct (collect_unary_bits m) as [_ Hbits].
+    pose proof (code_work_bits_bound m
+      (snd (M.fold (unary_maps m) m (M.empty, M.empty)))
+      (option_weight Z.size_nat bound) (ell m) Hsupport Hbits) as Hwork.
+    unfold range_matrix_work. nia.
+  Qed.
+
+  (** Collecting the unary rows charges their labels without requiring consistent map labels. *)
+  Lemma range_matrix_fold_time : forall x lower upper m,
+    (M.T_fold (unary_maps m) (fun acc k row => T_unary_maps m acc k row)
+      m (M.empty, M.empty) <= M.c_map * (64 * (M.c_map + 1) + 1) *
+      N.of_nat (range_matrix_work x lower upper m))%N.
+  Proof.
+    intros x lower upper m.
+    pose proof (T_fold_label_weight (M.t Z) (M.t Z * M.t Z)%type (unary_maps m)
+      (fun acc k row => T_unary_maps m acc k row) m (M.empty, M.empty)
+      (64 * (M.c_map + 1))%N (T_unary_maps_le m)) as Hfold.
+    assert (Houter : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Houter) as Hnodes.
+    assert (Hnode : M.nodes m + 1 <= range_matrix_work x lower upper m).
+    { unfold range_matrix_work. nia. }
+    assert (Hlabels : M.weight m <= range_matrix_work x lower upper m).
+    { unfold range_matrix_work. lia. }
+    pose proof (time_of_nat_le _ _ Hnode) as HnodeN.
+    pose proof (time_of_nat_le _ _ Hlabels) as HlabelN.
+    eapply N.le_trans; [exact Hfold|].
+    replace (M.c_map * (64 * (M.c_map + 1) + 1) *
+      N.of_nat (range_matrix_work x lower upper m))%N with
+      (M.c_map * ((64 * (M.c_map + 1) + 1) *
+        N.of_nat (range_matrix_work x lower upper m)))%N by ring.
+    apply N.mul_le_mono_l.
+    rewrite N.mul_add_distr_r, N.mul_1_l.
+    pose proof (N.mul_le_mono_l _ _ (64 * (M.c_map + 1))%N HlabelN). lia.
+  Qed.
+
+  (** Installing both interval literals takes linear support work and the raw label sum. *)
+  Lemma T_range_matrix_le : forall x lower upper m,
+    (T_range_matrix x lower upper m <= 8192 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat (range_matrix_work x lower upper m))%N.
+  Proof.
+    intros x lower upper m.
+    set (unaries := M.fold (unary_maps m) m (M.empty, M.empty)).
+    set (next := M.merge (range_column_row x lower upper) m (fst unaries)).
+    set (work := N.of_nat (range_matrix_work x lower upper m)).
+    assert (Hpositive : (1 <= work)%N) by (unfold work, range_matrix_work; nia).
+    pose proof (range_matrix_fold_time x lower upper m) as Hfold. fold work in Hfold.
+    pose proof (T_merge_code_work (M.t Z) Z (M.t Z) (range_column_row x lower upper)
+      (fun old unary => T_range_column_row x lower upper old unary)
+      (fun _ : M.t Z => (X.bits x + option_weight Z.size_nat lower +
+        option_weight Z.size_nat upper + 1)%nat) Z.size_nat m (fst unaries)
+      (128 * (M.c_map + 1))%N (T_range_column_row_le x lower upper)) as Hmerge.
+    pose proof (time_of_nat_le _ _ (range_matrix_maps_work x lower upper m)) as Hmaps.
+    rewrite Nat2N.inj_mul in Hmaps. fold unaries work in Hmaps.
+    assert (Hmerge_work : (M.T_merge (range_column_row x lower upper)
+      (fun old unary => T_range_column_row x lower upper old unary) m (fst unaries) <=
+      16 * M.c_map * (128 * (M.c_map + 1) + 1) * work)%N).
+    { eapply N.le_trans; [exact Hmerge|].
+      replace (16 * M.c_map * (128 * (M.c_map + 1) + 1) * work)%N with
+        (M.c_map * (128 * (M.c_map + 1) + 1) * 2 * (8 * work))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hrow : forall sign bound, option_weight Z.size_nat bound <=
+        option_weight Z.size_nat lower + option_weight Z.size_nat upper ->
+      (T_range_literal_row x sign bound (snd unaries) <= 1024 * (M.c_map + 1) * work)%N).
+    { intros sign bound Hbound. eapply N.le_trans; [apply T_range_literal_row_le|].
+      pose proof (time_of_nat_le _ _
+        (range_matrix_literal_work x lower upper m bound Hbound)) as Hrowwork.
+      rewrite Nat2N.inj_mul in Hrowwork. fold unaries work in Hrowwork.
+      replace (1024 * (M.c_map + 1) * work)%N with
+        (256 * (M.c_map + 1) * (4 * work))%N by ring.
+      now apply N.mul_le_mono_l. }
+    pose proof (Hrow true lower ltac:(lia)) as Hlower.
+    pose proof (Hrow false upper ltac:(lia)) as Hupper.
+    assert (Hset : forall sign (row : M.t Z) (base : dbm),
+      (M.T_set (x, sign) row base <= 2 * M.c_map * work)%N).
+    { intros sign row base. eapply N.le_trans; [apply M.T_set_le|].
+      replace (2 * M.c_map * work)%N with (M.c_map * (2 * work))%N by ring.
+      apply N.mul_le_mono_l.
+      assert (Hkey : K.bits (x, sign) + 1 <= 2 * range_matrix_work x lower upper m).
+      { rewrite literal_bits. unfold range_matrix_work. destruct sign; cbn beta iota zeta; nia. }
+      pose proof (time_of_nat_le _ _ Hkey) as Hcast. rewrite Nat2N.inj_mul in Hcast.
+      exact Hcast. }
+    pose proof (Hset false (range_literal_row x false upper (snd unaries)) next) as Hsetu.
+    pose proof (Hset true (range_literal_row x true lower (snd unaries))
+      (M.set (x, false) (range_literal_row x false upper (snd unaries)) next)) as Hsetl.
+    assert (Hcoefficient : (M.c_map * (64 * (M.c_map + 1) + 1) +
+      16 * M.c_map * (128 * (M.c_map + 1) + 1) + 2 * (1024 * (M.c_map + 1)) +
+      4 * M.c_map + 10 <= 8192 * (M.c_map + 1) * (M.c_map + 1))%N) by nia.
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    rewrite !N.mul_add_distr_r in Hbudget.
+    unfold T_range_matrix. time_simpl. fold unaries next.
+    clearbody work. clear - Hfold Hmerge_work Hlower Hupper Hsetu Hsetl Hbudget Hpositive. lia.
+  Qed.
+
+  (** Finite, one-sided and crossed ranges all use the linear interval constructor. *)
+  Lemma T_add_range_fast_small : forall x bounds s bits,
+    rel_bounds_abs (2 ^ bits) bounds ->
+    (T_add_range_fast x bounds s <= 512 * c_octagon * N.of_nat
+      ((ns s + 1) * (bs s + ells s + 4 * X.bits x + bits + 3) + labs s))%N.
+  Proof.
+    intros x [lo hi] [|m] bits Hbounds.
+    - unfold T_add_range_fast, c_octagon. cbn [ns bs ells labs]. time_simpl. nia.
+    - set (units := (supp m + 1) * (b m + ell m + 4 * X.bits x + bits + 3) + M.weight m).
+      set (charge := (c_octagon * N.of_nat units)%N).
+      assert (Hcoefficient : (1 <= c_octagon)%N) by (unfold c_octagon; nia).
+      assert (Hunit : (1 <= N.of_nat units)%N) by (unfold units; nia).
+      assert (Hpositive : (1 <= charge)%N).
+      { unfold charge. change (1 * 1 <= c_octagon * N.of_nat units)%N.
+        now apply N.mul_le_mono. }
+      assert (Hbits_work : bits + 1 <= units) by (unfold units; nia).
+      assert (Hbits_charge : (N.of_nat (bits + 1) <= charge)%N).
+      { unfold charge. eapply N.le_trans; [apply time_of_nat_le; exact Hbits_work|].
+        replace (N.of_nat units) with (1 * N.of_nat units)%N at 1 by ring.
+        now apply N.mul_le_mono_r. }
+      assert (Hscale : forall c a, Z.size_nat c <= 2 -> Z.size_nat a <= bits ->
+        (Z.T_mul c a <= 16 * charge)%N).
+      { intros c a Hc Ha. eapply N.le_trans;
+          [exact (rel_mul_small_time c a bits Hc Ha)|]. now apply N.mul_le_mono_l. }
+      assert (Hcompare : forall a b, Z.size_nat a <= bits ->
+        (Z.T_leb a b <= 4 * charge)%N).
+      { intros a b Ha. pose proof (Z.T_leb_le a b) as Hclock.
+        assert (Hsmall : (Z.T_leb a b <= 4 * N.of_nat (bits + 1))%N).
+        { rewrite Nat2N.inj_add. lia. }
+        eapply N.le_trans; [exact Hsmall|]. now apply N.mul_le_mono_l. }
+      assert (Hmatrix : forall lower upper,
+        option_weight Z.size_nat lower <= bits + 1 ->
+        option_weight Z.size_nat upper <= bits + 1 ->
+        (T_range_matrix x lower upper m <= charge)%N).
+      { intros lower upper Hlower Hupper.
+        assert (Hwork : range_matrix_work x lower upper m <= 2 * units).
+        { unfold range_matrix_work, units. nia. }
+        pose proof (time_of_nat_le _ _ Hwork) as Hcast.
+        rewrite Nat2N.inj_mul in Hcast.
+        eapply N.le_trans; [apply T_range_matrix_le|].
+        eapply N.le_trans with
+          (8192 * (M.c_map + 1) * (M.c_map + 1) * (2 * N.of_nat units))%N.
+        - now apply N.mul_le_mono_l.
+        - unfold charge, c_octagon. nia. }
+      cbn [ns bs ells labs]. fold units.
+      replace (512 * c_octagon * N.of_nat units)%N with (512 * charge)%N
+        by (unfold charge; ring).
+      clear Hcoefficient Hunit Hbits_work Hbits_charge.
+      clearbody charge. clear units.
+      destruct lo as [|lo|], hi as [|hi|];
+        unfold rel_bounds_abs, rel_bound_abs in Hbounds;
+        cbn [fst snd] in Hbounds; destruct Hbounds as [Hlo Hhi];
+        try apply rel_zbits_least in Hlo; try apply rel_zbits_least in Hhi;
+        try (pose proof (Hscale (-2)%Z lo ltac:(change (2 <= 2); lia) Hlo) as Hls);
+        try (pose proof (Hscale 2%Z hi ltac:(change (2 <= 2); lia) Hhi) as Hus).
+      all: try (pose proof (Hmatrix None (Some (2 * hi)%Z) ltac:(cbn [option_weight]; lia)
+        ltac:(cbn [option_weight]; pose proof (zbits_twice hi); lia)) as Hupper).
+      all: try (pose proof (Hmatrix (Some (-2 * lo)%Z) None
+        ltac:(cbn [option_weight]; pose proof (zbits_neg_twice lo); lia)
+        ltac:(cbn [option_weight]; lia)) as Hlower).
+      all: try (pose proof (Hmatrix (Some (-2 * lo)%Z) (Some (2 * hi)%Z)
+        ltac:(cbn [option_weight]; pose proof (zbits_neg_twice lo); lia)
+        ltac:(cbn [option_weight]; pose proof (zbits_twice hi); lia)) as Hboth).
+      all: try (pose proof (Hcompare lo hi Hlo) as Hcmp).
+      all: unfold T_add_range_fast; time_simpl; try destruct (lo <=? hi)%Z; lia.
+  Qed.
+
   Lemma T_add_range_small : forall x bounds s bits,
     rel_bounds_abs (2 ^ bits) bounds ->
     (T_add_range x bounds s <= 512 * c_octagon * N.of_nat
@@ -11177,6 +12759,177 @@ Definition shift_column_work (target : K.t) (d : Z) (row : M.t Z) : nat :=
     destruct (K.eqb source (x, true)); cbn beta iota zeta; fold forgotten; lia.
   Qed.
 
+  (** A source logarithm is paid by support key bits or by the source-size allowance. *)
+  Lemma support_log_linear : forall m nodes,
+    (supp m + 1) * Nat.log2 nodes <=
+      2 * ((supp m + 1) * b m) +
+        (nodes + 1) * (b m + Nat.log2 nodes + 1)^2.
+  Proof.
+    intros m nodes. destruct (Nat.le_gt_cases nodes (supp m + 1)) as [Hsmall|Hlarge].
+    - assert (Hlog : Nat.log2 nodes <= b m).
+      { eapply Nat.le_trans; [apply Nat.log2_le_mono; exact Hsmall|].
+        apply log2_support_le. }
+      eapply Nat.le_trans; [apply Nat.mul_le_mono_l; exact Hlog|]. lia.
+    - assert (Hlinear : Nat.log2 nodes <= (b m + Nat.log2 nodes + 1)^2).
+      { eapply Nat.le_trans with (b m + Nat.log2 nodes + 1); [lia|].
+        cbn [Nat.pow]. nia. }
+      eapply Nat.le_trans with ((nodes + 1) * (b m + Nat.log2 nodes + 1)^2).
+      + apply Nat.mul_le_mono; [lia|exact Hlinear].
+      + lia.
+  Qed.
+
+  (** Fast assignment separates linear matrix updates from source interval arithmetic. *)
+  Definition fast_assign_unit (x : X.t) (e : term L.op X.t) (m : dbm) : N :=
+    N.of_nat ((supp m + 1) *
+      (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1) + skel m + M.weight m +
+      (tsize e + 1) * (range_payload e m)^2).
+
+  (** The range endpoint allowance fits assignment's two linear-update and source work terms. *)
+  Lemma assign_range_update_linear : forall x e m,
+    (supp m + 1) * (b m + ell m + 4 * X.bits x + range_bits e (Reached m) + 3) <=
+      8 * ((supp m + 1) *
+        (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1) +
+        (tsize e + 1) * (range_payload e m)^2).
+  Proof.
+    intros x e m.
+    pose proof (support_log_linear m (tsize e)) as Hlog.
+    assert (Hsource : (tsize e + 1) * (b m + Nat.log2 (tsize e) + 1)^2 <=
+      (tsize e + 1) * (range_payload e m)^2).
+    { apply Nat.mul_le_mono_l. cbn [Nat.pow]. rewrite !Nat.mul_1_r.
+      apply Nat.mul_le_mono; unfold range_payload; lia. }
+    assert (Hkey : (supp m + 1) * b m <=
+      (supp m + 1) *
+        (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1)).
+    { apply Nat.mul_le_mono_l. lia. }
+    assert (Hpayload : b m + ell m + 4 * X.bits x + range_bits e (Reached m) + 3 <=
+      5 * (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1) +
+        Nat.log2 (tsize e)).
+    { unfold range_bits, ells. lia. }
+    assert (Hmatrix :
+      (supp m + 1) * (b m + ell m + 4 * X.bits x + range_bits e (Reached m) + 3) <=
+      5 * ((supp m + 1) *
+        (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1)) +
+        (supp m + 1) * Nat.log2 (tsize e)).
+    { replace (5 * ((supp m + 1) *
+        (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1)) +
+        (supp m + 1) * Nat.log2 (tsize e)) with
+        ((supp m + 1) *
+          (5 * (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1) +
+            Nat.log2 (tsize e))) by ring.
+      now apply Nat.mul_le_mono_l. }
+    set (matrix_work := (supp m + 1) *
+      (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1)) in *.
+    set (source_work := (tsize e + 1) * (range_payload e m)^2) in *.
+    clear Hpayload. clearbody matrix_work source_work. lia.
+  Qed.
+
+  (** Assignment's matrix term contains a nonzero arithmetic unit. *)
+  Lemma fast_assign_unit_positive : forall x e m, (1 <= fast_assign_unit x e m)%N.
+  Proof.
+    intros x e m. unfold fast_assign_unit.
+    apply (time_of_nat_le 1%nat _).
+    assert (Hmatrix : 1 <= (supp m + 1) *
+      (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1)).
+    { cbn [Nat.pow]. nia. }
+    lia.
+  Qed.
+
+  (** The frozen assignment work includes its entire linear matrix allowance. *)
+  Lemma fast_assign_unit_matrix : forall x e m,
+    (N.of_nat ((supp m + 1) *
+      (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1)) <=
+      fast_assign_unit x e m)%N.
+  Proof.
+    intros x e m. unfold fast_assign_unit. apply time_of_nat_le. lia.
+  Qed.
+
+  (** Signed matrix labels are included alongside the linear update allowance. *)
+  Lemma fast_assign_unit_matrix_labels : forall x e m,
+    (N.of_nat ((supp m + 1) *
+      (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1) + M.weight m) <=
+      fast_assign_unit x e m)%N.
+  Proof.
+    intros x e m. unfold fast_assign_unit. apply time_of_nat_le. lia.
+  Qed.
+
+  (** The source interval allowance is another summand of assignment's structural work. *)
+  Lemma fast_assign_unit_source : forall x e m,
+    (N.of_nat ((tsize e + 1)%nat) * range_unit e m <= fast_assign_unit x e m)%N.
+  Proof.
+    intros x e m. unfold range_unit. rewrite <- Nat2N.inj_mul.
+    unfold fast_assign_unit. apply time_of_nat_le. lia.
+  Qed.
+
+  (** One source arithmetic charge fits the complete assignment allowance. *)
+  Lemma fast_assign_unit_range : forall x e m, (range_unit e m <= fast_assign_unit x e m)%N.
+  Proof.
+    intros x e m. eapply N.le_trans; [|apply fast_assign_unit_source].
+    replace (range_unit e m) with (1 * range_unit e m)%N at 1 by ring.
+    apply N.mul_le_mono_r.
+    change (N.of_nat 1%nat <= N.of_nat (tsize e + 1))%N.
+    apply time_of_nat_le. lia.
+  Qed.
+
+  (** The source fold fits one assignment phase charge. *)
+  Lemma T_form_bounds_fast_assign : forall x e m f r,
+    F.lin_of e = Some (f, r) ->
+    (T_form_bounds m f <= k_assign * fast_assign_unit x e m)%N.
+  Proof.
+    intros x e m f r Hlin. eapply N.le_trans; [now apply (T_form_bounds_source e m f r)|].
+    apply N.mul_le_mono.
+    - unfold k_assign. nia.
+    - apply fast_assign_unit_source.
+  Qed.
+
+  (** Source dispatch and wrap tests are small compared with an assignment phase. *)
+  Lemma assignment_fast_source_tests : forall x e m f r,
+    F.lin_of e = Some (f, r) ->
+    (T_copy_source f <= k_assign * fast_assign_unit x e m)%N /\
+    (T_rel_wrap_exact r (form_bounds m f) <= k_assign * fast_assign_unit x e m)%N /\
+    (T_rel_wrap_bounds r (form_bounds m f) <= k_assign * fast_assign_unit x e m)%N.
+  Proof.
+    intros x e m f r Hlin. split.
+    - eapply N.le_trans; [now apply (T_copy_source_range e m f r)|].
+      apply N.mul_le_mono; [unfold k_assign; nia|apply fast_assign_unit_range].
+    - split.
+      + eapply N.le_trans; [now apply (T_wrap_exact_range e m f r)|].
+        apply N.mul_le_mono; [unfold k_assign; nia|apply fast_assign_unit_range].
+      + eapply N.le_trans; [now apply (T_wrap_bounds_range e m f r)|].
+        apply N.mul_le_mono; [unfold k_assign; nia|apply fast_assign_unit_range].
+  Qed.
+
+  (** The signed-copy permission test fits one assignment phase. *)
+  Lemma T_copy_allowed_fast_assign : forall x e m f r source,
+    F.lin_of e = Some (f, r) -> copy_source f = Some source ->
+    (T_copy_allowed x source <= k_assign * fast_assign_unit x e m)%N.
+  Proof.
+    intros x e m f r source Hlin Hsource.
+    eapply N.le_trans; [now apply (T_copy_allowed_source x e m f r source)|].
+    apply N.mul_le_mono; [unfold k_assign; nia|apply fast_assign_unit_range].
+  Qed.
+
+  (** Havoc's sparse traversal fits a small fraction of the assignment matrix term. *)
+  Lemma T_havoc_fast_assign_small : forall x e m,
+    (T_havoc x (Reached m) <=
+      1024 * (M.c_map + 1) * (M.c_map + 1) * fast_assign_unit x e m)%N.
+  Proof.
+    intros x e m. pose proof (T_havoc_small x m) as Htime.
+    assert (Hmatrix : (supp m + 1) * (b m + X.bits x + 4) + 1 <=
+      8 * ((supp m + 1) *
+        (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1))).
+    { clear Htime. cbn [Nat.pow]. nia. }
+    pose proof (time_of_nat_le _ _ Hmatrix) as Hmatrix_cast.
+    rewrite (Nat2N.inj_mul 8 _) in Hmatrix_cast.
+    assert (Hwork : (N.of_nat ((supp m + 1) * (b m + X.bits x + 4) + 1) <=
+      8 * fast_assign_unit x e m)%N).
+    { eapply N.le_trans; [exact Hmatrix_cast|].
+      apply N.mul_le_mono_l. apply fast_assign_unit_matrix. }
+    eapply N.le_trans; [exact Htime|].
+    replace (1024 * (M.c_map + 1) * (M.c_map + 1) * fast_assign_unit x e m)%N with
+      (128 * (M.c_map + 1) * (M.c_map + 1) * (8 * fast_assign_unit x e m))%N by ring.
+    now apply N.mul_le_mono_l.
+  Qed.
+
   (** The public numeric coefficient covers every signed assignment phase. *)
   Lemma assign_public_budget : forall work lin_cost : N,
     (8 + lin_cost + 8 * (k_assign * work) <= c_num * (work + lin_cost + 1))%N.
@@ -11193,6 +12946,138 @@ Definition shift_column_work (target : K.t) (d : Z) (row : M.t Z) : nat :=
       (c_num * work + c_num * lin_cost + c_num)%N by ring. lia.
   Qed.
 
+  (** Fast interval updates follow resource-decreasing havoc within one assignment phase. *)
+  Lemma T_add_range_fast_assign : forall x e m f r,
+    F.lin_of e = Some (f, r) ->
+    (T_add_range_fast x (rel_wrap_bounds r (form_bounds m f)) (havoc x (Reached m)) <=
+      k_assign * fast_assign_unit x e m)%N.
+  Proof.
+    intros x e m f r Hlin.
+    pose proof (range_abs e (Reached m)) as Hbounds.
+    unfold range in Hbounds. rewrite Hlin in Hbounds.
+    pose proof (T_add_range_fast_small x (rel_wrap_bounds r (form_bounds m f))
+      (havoc x (Reached m)) (range_bits e (Reached m)) Hbounds) as Htime.
+    set (forgotten := havoc x (Reached m)) in *.
+    destruct (havoc_resources x (Reached m)) as [Hcount [Hbits [Hell Hlabels]]].
+    fold forgotten in Hcount, Hbits, Hell, Hlabels.
+    change (ns forgotten <= supp m) in Hcount.
+    change (bs forgotten <= b m) in Hbits.
+    change (ells forgotten <= ell m) in Hell.
+    change (labs forgotten <= M.weight m) in Hlabels.
+    assert (Hmatrix : (ns forgotten + 1) *
+      (bs forgotten + ells forgotten + 4 * X.bits x + range_bits e (Reached m) + 3) +
+      labs forgotten <=
+      (supp m + 1) *
+        (b m + ell m + 4 * X.bits x + range_bits e (Reached m) + 3) + M.weight m).
+    { apply Nat.add_le_mono; [apply Nat.mul_le_mono; lia|exact Hlabels]. }
+    pose proof (assign_range_update_linear x e m) as Hmixed.
+    assert (Hwork : (ns forgotten + 1) *
+      (bs forgotten + ells forgotten + 4 * X.bits x + range_bits e (Reached m) + 3) +
+      labs forgotten <=
+      8 * ((supp m + 1) *
+        (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1) + skel m + M.weight m +
+        (tsize e + 1) * (range_payload e m)^2)) by lia.
+    pose proof (time_of_nat_le _ _ Hwork) as Hcast.
+    rewrite (Nat2N.inj_mul 8 _) in Hcast.
+    change (N.of_nat ((ns forgotten + 1) *
+      (bs forgotten + ells forgotten + 4 * X.bits x + range_bits e (Reached m) + 3) +
+      labs forgotten) <= 8 * fast_assign_unit x e m)%N in Hcast.
+    eapply N.le_trans; [exact Htime|].
+    eapply N.le_trans with (512 * c_octagon * (8 * fast_assign_unit x e m))%N.
+    - now apply N.mul_le_mono_l.
+    - replace (512 * c_octagon * (8 * fast_assign_unit x e m))%N with
+        (4096 * c_octagon * fast_assign_unit x e m)%N by ring.
+      apply N.mul_le_mono_r. unfold k_assign, c_octagon. nia.
+  Qed.
+
+  (** A recognized source copy fits the linear support allowance of its expression. *)
+  Lemma T_assign_copy_fast_source : forall x e m f r source,
+    F.lin_of e = Some (f, r) -> copy_source f = Some source ->
+    (T_assign_copy_fast x source (cst f) (Reached m) <=
+      k_assign * fast_assign_unit x e m)%N.
+  Proof.
+    intros x e m f r source Hlin Hsource.
+    destruct (F.lin_of_size e f r Hlin) as [_ Hbits].
+    assert (Hconstant : Z.size_nat (cst f) <= F.bits_e e).
+    { pose proof (form_bits_constant f). lia. }
+    assert (Hsource_bits : K.bits source <= 2 * F.bits_e e + 1).
+    { pose proof (copy_source_key_bits f source Hsource). lia. }
+    assert (Hmatrix : (supp m + 1) *
+      (b m + ell m + X.bits x + K.bits source + Z.size_nat (cst f) + 1) <=
+      3 * ((supp m + 1) *
+        (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1))).
+    { replace (3 * ((supp m + 1) *
+        (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1))) with
+        ((supp m + 1) *
+          (3 * (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1))) by ring.
+      apply Nat.mul_le_mono_l. lia. }
+    pose proof (time_of_nat_le _ _ Hmatrix) as Hcast.
+    rewrite (Nat2N.inj_mul 3 _) in Hcast.
+    assert (Hwork : (N.of_nat ((supp m + 1) *
+      (b m + ell m + X.bits x + K.bits source + Z.size_nat (cst f) + 1)) <=
+      3 * fast_assign_unit x e m)%N).
+    { eapply N.le_trans; [exact Hcast|].
+      apply N.mul_le_mono_l. apply fast_assign_unit_matrix. }
+    eapply N.le_trans; [apply T_assign_copy_fast_small|].
+    eapply N.le_trans with
+      ((1024 * 1024) * (M.c_map + K.c_key + 1) * (M.c_map + K.c_key + 1) *
+        (3 * fast_assign_unit x e m))%N.
+    - now apply N.mul_le_mono_l.
+    - replace ((1024 * 1024) * (M.c_map + K.c_key + 1) * (M.c_map + K.c_key + 1) *
+        (3 * fast_assign_unit x e m))%N with
+        ((3 * (1024 * 1024) * (M.c_map + K.c_key + 1) * (M.c_map + K.c_key + 1)) *
+          fast_assign_unit x e m)%N by ring.
+      apply N.mul_le_mono_r. unfold k_assign. nia.
+  Qed.
+
+  (** Every branch of fast assignment fits the linear matrix and source allowances. *)
+  Lemma T_assign_fast_bound : forall x e m,
+    (T_assign x e (Reached m) <=
+      c_num * (fast_assign_unit x e m + F.T_lin_of e + 1))%N.
+  Proof.
+    intros x e m. set (work := fast_assign_unit x e m).
+    assert (Hhavoc : (T_havoc x (Reached m) <= k_assign * work)%N).
+    { eapply N.le_trans; [apply T_havoc_fast_assign_small|].
+      apply N.mul_le_mono_r. unfold k_assign. nia. }
+    eapply N.le_trans; [|exact (assign_public_budget work (F.T_lin_of e))].
+    time_unfold (@T_assign). time_simpl. cbn beta iota zeta.
+    destruct (F.lin_of e) as [[f r]|] eqn:Hlin.
+    - assert (Hform : (T_form_bounds m f <= k_assign * work)%N).
+      { now apply (T_form_bounds_fast_assign x e m f r). }
+      destruct (assignment_fast_source_tests x e m f r Hlin) as [Hcopy [Hexact Hwrap]].
+      change (T_copy_source f <= k_assign * work)%N in Hcopy.
+      change (T_rel_wrap_exact r (form_bounds m f) <= k_assign * work)%N in Hexact.
+      change (T_rel_wrap_bounds r (form_bounds m f) <= k_assign * work)%N in Hwrap.
+      assert (Hrange : (T_add_range_fast x (rel_wrap_bounds r (form_bounds m f))
+        (havoc x (Reached m)) <= k_assign * work)%N).
+      { now apply (T_add_range_fast_assign x e m f r). }
+      destruct (copy_source f) as [source|] eqn:Hsource.
+      + assert (Hassign_copy : (T_assign_copy_fast x source (cst f) (Reached m) <=
+          k_assign * work)%N).
+        { now apply (T_assign_copy_fast_source x e m f r source). }
+        assert (Hallowed : (T_copy_allowed x source <= k_assign * work)%N).
+        { now apply (T_copy_allowed_fast_assign x e m f r source). }
+        set (charge := (k_assign * work)%N) in *.
+        clearbody charge work.
+        destruct (copy_allowed x source); cbn beta iota zeta.
+        * destruct (rel_wrap_exact r (form_bounds m f));
+            time_simpl; cbn beta iota zeta; lia.
+        * time_simpl. cbn beta iota zeta. lia.
+      + set (charge := (k_assign * work)%N) in *.
+        clearbody charge work. time_simpl. cbn beta iota zeta. lia.
+    - set (charge := (k_assign * work)%N) in *.
+      clearbody charge work. time_simpl. cbn beta iota zeta. lia.
+  Qed.
+
+  (** The linear assignment allowance is covered by the previous quadratic allowance. *)
+  Lemma fast_assign_unit_le : forall x e m,
+    (fast_assign_unit x e m <= assign_unit x e m)%N.
+  Proof.
+    intros x e m. unfold fast_assign_unit, assign_unit. apply time_of_nat_le.
+    apply Nat.add_le_mono_r, Nat.add_le_mono_r, Nat.add_le_mono_r, Nat.mul_le_mono_r.
+    cbn [Nat.pow]. nia.
+  Qed.
+
   (** Numeric assignment charges its performed source work and bounded sparse updates. *)
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
@@ -11204,45 +13089,12 @@ Definition shift_column_work (target : K.t) (d : Z) (row : M.t Z) : nat :=
         apply time_of_nat_le. lia. }
       pose proof (N.mul_le_mono _ _ _ _ Hpositive Hwork) as Hbudget.
       time_unfold (@T_assign). time_simpl. cbn beta iota zeta. lia.
-    - set (work := assign_unit x e m).
-      assert (Hwork : N.of_nat (assign_work x e (Reached m) + 1) =
-        (work + F.T_lin_of e + 1)%N).
+    - assert (Hwork : N.of_nat (assign_work x e (Reached m) + 1) =
+        (assign_unit x e m + F.T_lin_of e + 1)%N).
       { rewrite Nat2N.inj_add, F_assign_work. cbn [ns bs ells skels labs].
-        unfold work, assign_unit, range_payload. reflexivity. }
-      assert (Hhavoc : (T_havoc x (Reached m) <= k_assign * work)%N).
-      { eapply N.le_trans; [apply T_havoc_assign_small|].
-        apply N.mul_le_mono_r.
-        pose proof (N.le_0_l M.c_map) as Hmap_nonnegative. clear -Hmap_nonnegative.
-        unfold k_assign. nia. }
-      rewrite Hwork.
-      eapply N.le_trans; [|exact (assign_public_budget work (F.T_lin_of e))].
-      time_unfold (@T_assign). time_simpl. cbn beta iota zeta.
-      destruct (F.lin_of e) as [[f r]|] eqn:Hlin.
-      + assert (Hform : (T_form_bounds m f <= k_assign * work)%N).
-        { now apply (T_form_bounds_assign x e m f r). }
-        destruct (assignment_source_tests x e m f r Hlin) as [Hcopy [Hexact Hwrap]].
-        change (T_copy_source f <= k_assign * work)%N in Hcopy.
-        change (T_rel_wrap_exact r (form_bounds m f) <= k_assign * work)%N in Hexact.
-        change (T_rel_wrap_bounds r (form_bounds m f) <= k_assign * work)%N in Hwrap.
-        assert (Hrange : (T_add_range x (rel_wrap_bounds r (form_bounds m f))
-          (havoc x (Reached m)) <= k_assign * work)%N).
-        { now apply (T_add_range_assign x e m f r). }
-        destruct (copy_source f) as [source|] eqn:Hsource.
-        * assert (Hassign_copy : (T_assign_copy x source (cst f) (Reached m) <=
-            k_assign * work)%N).
-          { now apply (T_assign_copy_source x e m f r source). }
-          assert (Hallowed : (T_copy_allowed x source <= k_assign * work)%N).
-          { now apply (T_copy_allowed_assign x e m f r source). }
-          pose proof (Std.Datatypes.T_andb_le (copy_allowed x source)
-            (rel_wrap_exact r (form_bounds m f))) as Hconjunction.
-          set (charge := (k_assign * work)%N) in *.
-          clearbody charge work.
-          destruct (andb (copy_allowed x source) (rel_wrap_exact r (form_bounds m f)));
-            time_simpl; cbn beta iota zeta; lia.
-        * set (charge := (k_assign * work)%N) in *.
-          clearbody charge work. time_simpl. cbn beta iota zeta. lia.
-      + set (charge := (k_assign * work)%N) in *.
-        clearbody charge work. time_simpl. cbn beta iota zeta. lia.
+        unfold assign_unit, range_payload. reflexivity. }
+      rewrite Hwork. eapply N.le_trans; [apply T_assign_fast_bound|].
+      apply N.mul_le_mono_l. pose proof (fast_assign_unit_le x e m). lia.
   Qed.
 
   Definition short_coefficients (cs : list (X.t * Z)) : Prop :=
@@ -12101,59 +13953,104 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
       + pose proof assume_time_coefficient. nia.
   Qed.
 
+  (** Assignment is linear in the numeric work charged by its contract. *)
   Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [[x e] s] _.
+    cbn [fst snd]. pose proof (T_assign_le x e s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. nia.
+  Qed.
 
+  (** Havoc is linear in the numeric work charged by its contract. *)
   Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x)))
     (fun x => T_havoc (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [x s] _.
+    cbn [fst snd]. pose proof (T_havoc_le x s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. nia.
+  Qed.
 
+  (** Assumption is linear in the numeric work charged by its contract. *)
   Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [[g es] s] _.
+    cbn [fst snd]. pose proof (T_assume_le g es s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. nia.
+  Qed.
 
+  (** A range query is linear in the numeric work charged by its contract. *)
   Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
     (fun x => T_range (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [e s] _.
+    cbn [fst snd]. pose proof (T_range_le e s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. nia.
+  Qed.
 
+  (** Tight closure is cubic in the support with a linear bit-width factor. *)
   Lemma tclose_bigO : bigO (fun m : dbm => dbm_wf m)
     (fun m => N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
     (fun m => T_tclose m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_octagon). intros m Hwf.
+    pose proof (T_tclose_le m Hwf) as Htime. rewrite Nat2N.inj_mul. nia.
+  Qed.
 
+  (** Incremental closure is quadratic in the support and also scans the outer labels. *)
   Lemma incr_close_bigO : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
     (fun x => N.of_nat ((supp (snd x) + 1)^2 *
       (b (snd x) + K.bits (fst (fst (fst x))) + K.bits (snd (fst (fst x))) +
         ell (snd x) + Z.size_nat (snd (fst x)) + 1) + M.weight (snd x)))
     (fun x => T_incr_close (fst (fst (fst x))) (snd (fst (fst x))) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_octagon). intros [[[i j] d] m] _.
+    cbn [fst snd]. pose proof (T_incr_close_le i j d m) as Htime.
+    rewrite Nat2N.inj_add, Nat2N.inj_mul. nia.
+  Qed.
 
+  (** Inclusion is linear in sparse structure and stored entries times their bit width. *)
   Lemma leb_bigO : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
         labs (fst x) + labs (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
     (fun x => T_leb (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := matrix_time_factor). intros [a b] _.
+    cbn [fst snd]. pose proof (T_leb_entries_le a b) as Htime.
+    unfold lattice_work in Htime. lia.
+  Qed.
 
+  (** Join is linear in sparse structure and stored entries times their bit width. *)
   Lemma join_bigO : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
         labs (fst x) + labs (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
     (fun x => T_join (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := matrix_time_factor). intros [a b] _.
+    cbn [fst snd]. pose proof (T_join_entries_le a b) as Htime.
+    unfold lattice_work in Htime. lia.
+  Qed.
 
+  (** Widening is linear in sparse structure and stored entries times their bit width. *)
   Lemma widen_bigO : bigO (fun _ : wparam * t * t => True)
     (fun x => N.of_nat ((skels (snd (fst x)) + skels (snd x) +
         entries (snd (fst x)) + entries (snd x) + labs (snd (fst x)) + labs (snd x) + 1) *
       (bs (snd (fst x)) + bs (snd x) + ells (snd (fst x)) + ells (snd x) + 1)))
     (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_lat). intros [[p a] b] _.
+    cbn [fst snd]. pose proof (T_widen_entries_le p a b) as Htime.
+    unfold lattice_work in Htime. lia.
+  Qed.
 
+  (** Fast assignment is linear in matrix support plus source interval arithmetic. *)
   Lemma assign_fast_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => (N.of_nat (skels (snd x) +
       (ns (snd x) + 1) * (bs (snd x) + ells (snd x) + X.bits (fst (fst x)) +
@@ -12162,5 +14059,17 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
         Nat.log2 (tsize (snd (fst x))) + 1)^2 + labs (snd x)) +
       F.T_lin_of (snd (fst x)))%N)
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [[x e] [|m]] _.
+    - cbn [fst snd].
+      assert (Hpositive : (1 <= c_num)%N) by (unfold c_num; nia).
+      time_unfold (@T_assign). time_simpl. cbn beta iota zeta. nia.
+    - cbn [fst snd skels labs ns bs ells].
+      assert (Hwork : N.of_nat (skel m +
+        (supp m + 1) * (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1) +
+        (tsize e + 1) * (b m + ell m + F.bits_e e + Nat.log2 (tsize e) + 1)^2 +
+        M.weight m) = fast_assign_unit x e m).
+      { unfold fast_assign_unit, range_payload. f_equal. lia. }
+      rewrite Hwork. pose proof (T_assign_fast_bound x e m) as Htime. nia.
+  Qed.
 End OctagonT.

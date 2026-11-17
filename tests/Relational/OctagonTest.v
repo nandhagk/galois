@@ -4,7 +4,7 @@
     For example, tightening a bound preserves the stronger bound already stored.
     Builds on: Octagon, keyed trie maps and the integer language. *)
 
-From Stdlib Require Import List ZArith.
+From Stdlib Require Import List ZArith Lia.
 From Galois.Base Require Import Key Map Trie.
 From Galois.Domains Require Import LangSig ValueSig IntervalSig ZLang.
 From Galois.States Require Import EnvSig.
@@ -345,4 +345,279 @@ Example repeated_labels_tighten_once :
   Oct.entry (Oct.tighten repeated_unary_labels) positive_x (Oct.flip positive_x) = Some (-6)%Z.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+Module OctTimeKey := PairKeyT PosKeyT BoolKeyT.
+Module OctTimeMap := TrieMapT OctTimeKey.
+Module OctTimeForms := ZLinearizeT PosKeyT.
+Module OctTime := OctagonT PosKeyT OctTimeKey OctTimeMap ZLangT ZNum OctTimeForms.
+
+(** Two entrywise comparisons give equality at every pair of signed literals. *)
+Lemma same_entries_by_comparison : forall a b,
+  Oct.leb a b = true -> Oct.leb b a = true -> OctTime.same_entries a b.
+Proof.
+  intros [|a] [|b] Hab Hba; cbn [OctTime.same_entries].
+  - constructor.
+  - discriminate Hba.
+  - discriminate Hab.
+  - intros i j.
+    pose proof (proj1 (OctTime.leb_entries a b) Hab
+      (OctTimeKey.encode i) (OctTimeKey.encode j)) as Hforward.
+    pose proof (proj1 (OctTime.leb_entries b a) Hba
+      (OctTimeKey.encode i) (OctTimeKey.encode j)) as Hbackward.
+    rewrite !OctTime.raw_entry_get in Hforward, Hbackward.
+    destruct (OctTime.entry a i j) as [c|]; destruct (OctTime.entry b i j) as [d|];
+      cbn [OctTime.bound_leb] in Hforward, Hbackward; try discriminate; try reflexivity.
+    f_equal. apply Z.le_antisymm; now apply Z.leb_le.
+Qed.
+
+(** Incremental assumptions close the relation x - y <= 1 with 0 <= x <= 9. *)
+Definition assignment_closed_state : Oct.t :=
+  Oct.assume (ZGuardCmp Lt) [Leaf 1%positive; Node (ZConst 10%Z) []]
+    (Oct.assume (ZGuardCmp Gt) [Leaf 1%positive; Node (ZConst (-1)%Z) []]
+      (Oct.assume (ZGuardCmp Lt)
+        [Node ZSub [Leaf 1%positive; Leaf 2%positive]; Node (ZConst 2%Z) []] Oct.top)).
+
+Definition assignment_half_expr : term ZLangCode.op positive :=
+  Node ZAdd [Node ZMul [Node (ZConst 2%Z) []; Leaf 2%positive]; Node (ZConst 2%Z) []].
+
+(** A closed positive copy keeps every entry of the two-refinement specification. *)
+Example assign_closed_copy_agrees :
+  OctTime.same_entries
+    (Oct.assign 1%positive
+      (Node ZAdd [Leaf 2%positive; Node (ZConst 3%Z) []]) assignment_closed_state)
+    (Oct.assign_copy 1%positive positive_y 3%Z assignment_closed_state).
+Proof.
+  apply same_entries_by_comparison; vm_compute; reflexivity.
+Qed.
+
+(** A closed negative copy keeps both signs of the source relation. *)
+Example assign_closed_negative_copy_agrees :
+  OctTime.same_entries
+    (Oct.assign 1%positive
+      (Node ZSub [Node (ZConst 3%Z) []; Leaf 2%positive]) assignment_closed_state)
+    (Oct.assign_copy 1%positive (Oct.flip positive_y) 3%Z assignment_closed_state).
+Proof.
+  apply same_entries_by_comparison; vm_compute; reflexivity.
+Qed.
+
+(** Negative self assignment takes the finite interval branch with bounds zero and nine. *)
+Example assign_closed_interval_agrees :
+  OctTime.same_entries
+    (Oct.assign 1%positive
+      (Node ZSub [Node (ZConst 9%Z) []; Leaf 1%positive]) assignment_closed_state)
+    (Oct.add_range 1%positive (Fin 0%Z, Fin 9%Z) (Oct.havoc 1%positive assignment_closed_state)).
+Proof.
+  apply same_entries_by_comparison; vm_compute; reflexivity.
+Qed.
+
+(** Interval assignment retains the strengthened relations to the lower-bounded variable. *)
+Example assign_closed_interval_strengthens :
+  match Oct.assign 1%positive
+    (Node ZSub [Node (ZConst 9%Z) []; Leaf 1%positive]) assignment_closed_state with
+  | Reached m =>
+    (Oct.entry m positive_y positive_x, Oct.entry m positive_x (Oct.flip positive_y))
+  | Unreached => (None, None)
+  end = (Some 10%Z, Some 1%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A doubled source has a finite lower bound and no finite upper bound. *)
+Example assign_one_sided_interval_agrees :
+  OctTime.same_entries
+    (Oct.assign 1%positive assignment_half_expr assignment_closed_state)
+    (Oct.add_range 1%positive (Fin 0%Z, PosInf) (Oct.havoc 1%positive assignment_closed_state)).
+Proof.
+  apply same_entries_by_comparison; vm_compute; reflexivity.
+Qed.
+
+(** The one-sided assignment exposes its finite lower bound through range. *)
+Example assign_one_sided_interval_range :
+  Oct.range (Leaf 1%positive)
+    (Oct.assign 1%positive assignment_half_expr assignment_closed_state) = (Fin 0%Z, PosInf).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** * Strong closure does not require even unary entries *)
+
+Definition negative_y := Oct.flip positive_y.
+
+Definition strong_odd_matrix : OctTime.dbm :=
+  OctTime.put positive_y positive_y 0%Z
+    (OctTime.put negative_y negative_y 0%Z
+      (OctTime.put positive_y negative_y 1%Z OctTimeMap.empty)).
+
+(** The odd unary entry is its own signed twin, and the two diagonals agree. *)
+Local Lemma odd_coherent : OctTime.coherent strong_odd_matrix.
+Proof.
+  assert (Heq : strong_odd_matrix = OctTime.add_cons positive_y positive_y 0%Z
+    (OctTime.add_cons positive_y negative_y 1%Z OctTimeMap.empty)) by (vm_compute; reflexivity).
+  rewrite Heq. repeat apply OctTime.coherent_add_cons. exact OctTime.coh_top.
+Qed.
+
+(** Only the positive and negative literals of y occur in this matrix. *)
+Local Lemma odd_support : forall i, In (OctTimeKey.encode i) (OctTime.support strong_odd_matrix) ->
+  i = positive_y \/ i = negative_y.
+Proof.
+  intros i Hin. unfold strong_odd_matrix in Hin. rewrite !OctTime.support_put in Hin.
+  change (OctTimeKey.encode i = OctTimeKey.encode positive_y \/
+    OctTimeKey.encode i = OctTimeKey.encode positive_y \/
+    OctTimeKey.encode i = OctTimeKey.encode negative_y \/
+    OctTimeKey.encode i = OctTimeKey.encode negative_y \/
+    OctTimeKey.encode i = OctTimeKey.encode positive_y \/
+    OctTimeKey.encode i = OctTimeKey.encode negative_y \/ False) in Hin.
+  destruct Hin as [H|[H|[H|[H|[H|[H|H]]]]]]; try contradiction;
+    apply OctTimeKey.encode_inj in H; tauto.
+Qed.
+
+(** The matrix has exactly its two diagonals and its odd unary entry. *)
+Local Lemma odd_entry_cases : forall i j d, OctTime.entry strong_odd_matrix i j = Some d ->
+  (i = positive_y /\ j = positive_y /\ d = 0%Z) \/
+  (i = negative_y /\ j = negative_y /\ d = 0%Z) \/
+  (i = positive_y /\ j = negative_y /\ d = 1%Z).
+Proof.
+  intros i j d.
+  assert (Hempty : OctTime.entry OctTimeMap.empty i j = None).
+  { unfold OctTime.entry. now rewrite OctTimeMap.get_empty. }
+  unfold strong_odd_matrix. rewrite !OctTime.entry_put, Hempty.
+  destruct (OctTimeKey.eqb_spec i positive_y) as [Hi|Hi];
+    destruct (OctTimeKey.eqb_spec j positive_y) as [Hj|Hj];
+    destruct (OctTimeKey.eqb_spec i negative_y) as [Hi'|Hi'];
+    destruct (OctTimeKey.eqb_spec j negative_y) as [Hj'|Hj'];
+    intros Hentry; inversion Hentry; subst; tauto.
+Qed.
+
+(** Strong closure permits a finite odd unary bound. *)
+Example odd_strongly_closed : OctTime.strongly_closed strong_odd_matrix.
+Proof.
+  split; [exact odd_coherent|]. split.
+  - intros i Hin. apply odd_support in Hin.
+    destruct Hin as [Hi|Hi]; subst i; vm_compute; reflexivity.
+  - split.
+    + intros i j k a z Hleft Hright.
+      apply odd_entry_cases in Hleft. apply odd_entry_cases in Hright.
+      destruct Hleft as [[Hi [Hk Ha]]|[[Hi [Hk Ha]]|[Hi [Hk Ha]]]];
+        destruct Hright as [[Hk' [Hj Hz]]|[[Hk' [Hj Hz]]|[Hk' [Hj Hz]]]];
+        subst; try discriminate.
+      all: eexists; split; [vm_compute; reflexivity|lia].
+    + intros i j a z Hleft Hright.
+      apply odd_entry_cases in Hleft. apply odd_entry_cases in Hright.
+      destruct Hleft as [[Hi [Hk Ha]]|[[Hi [Hk Ha]]|[Hi [Hk Ha]]]];
+        destruct Hright as [[Hk' [Hj Hz]]|[[Hk' [Hj Hz]]|[Hk' [Hj Hz]]]];
+        subst; try discriminate.
+      all: eexists; split; [vm_compute; reflexivity|lia].
+Qed.
+
+(** Tight closure excludes this matrix because its unary entry is odd. *)
+Example odd_not_tightly_closed : ~ OctTime.tightly_closed strong_odd_matrix.
+Proof.
+  intros [_ Heven]. specialize (Heven positive_y 1%Z eq_refl). vm_compute in Heven. discriminate.
+Qed.
+
+(** The old interval assignment tightens the unrelated odd unary entry. *)
+Example old_assignment_tightens_odd_unrelated_entry :
+  match Oct.add_range 1%positive (Fin 0%Z, Fin 0%Z)
+    (Oct.havoc 1%positive (Reached strong_odd_matrix)) with
+  | Reached m => OctTime.entry m positive_y negative_y
+  | Unreached => None
+  end = Some 0%Z.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The direct positive copy matches the old specification on a tightly closed state. *)
+Example fast_closed_copy_agrees :
+  OctTime.same_entries
+    (Oct.assign_copy_fast 1%positive positive_y 3%Z assignment_closed_state)
+    (Oct.assign_copy 1%positive positive_y 3%Z assignment_closed_state).
+Proof.
+  apply same_entries_by_comparison; vm_compute; reflexivity.
+Qed.
+
+(** The direct negative copy matches the old specification on a tightly closed state. *)
+Example fast_closed_negative_copy_agrees :
+  OctTime.same_entries
+    (Oct.assign_copy_fast 1%positive (Oct.flip positive_y) 3%Z assignment_closed_state)
+    (Oct.assign_copy 1%positive (Oct.flip positive_y) 3%Z assignment_closed_state).
+Proof.
+  apply same_entries_by_comparison; vm_compute; reflexivity.
+Qed.
+
+(** The direct finite interval installs the same strengthened entries as two refinements. *)
+Example fast_closed_interval_agrees :
+  OctTime.same_entries
+    (Oct.add_range_fast 1%positive (Fin 0%Z, Fin 9%Z)
+      (Oct.havoc 1%positive assignment_closed_state))
+    (Oct.add_range 1%positive (Fin 0%Z, Fin 9%Z)
+      (Oct.havoc 1%positive assignment_closed_state)).
+Proof.
+  apply same_entries_by_comparison; vm_compute; reflexivity.
+Qed.
+
+(** A finite lower side retains the old strengthened relations without an upper bound. *)
+Example fast_lower_interval_agrees :
+  OctTime.same_entries
+    (Oct.add_range_fast 1%positive (Fin 0%Z, PosInf)
+      (Oct.havoc 1%positive assignment_closed_state))
+    (Oct.add_range 1%positive (Fin 0%Z, PosInf)
+      (Oct.havoc 1%positive assignment_closed_state)).
+Proof.
+  apply same_entries_by_comparison; vm_compute; reflexivity.
+Qed.
+
+(** A finite upper side retains the old strengthened relations without a lower bound. *)
+Example fast_upper_interval_agrees :
+  OctTime.same_entries
+    (Oct.add_range_fast 1%positive (NegInf, Fin 9%Z)
+      (Oct.havoc 1%positive assignment_closed_state))
+    (Oct.add_range 1%positive (NegInf, Fin 9%Z)
+      (Oct.havoc 1%positive assignment_closed_state)).
+Proof.
+  apply same_entries_by_comparison; vm_compute; reflexivity.
+Qed.
+
+(** A crossed finite range produces the unreachable state. *)
+Example fast_crossed_interval_unreached :
+  Oct.add_range_fast 1%positive (Fin 1%Z, Fin 0%Z)
+    (Oct.havoc 1%positive assignment_closed_state) = Unreached.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The direct update preserves the odd foreign unary, distinguishing strong from tight closure. *)
+Example fast_assignment_keeps_odd_unrelated_entry :
+  match Oct.add_range_fast 1%positive (Fin 0%Z, Fin 0%Z)
+    (Oct.havoc 1%positive (Reached strong_odd_matrix)) with
+  | Reached m => Oct.entry m positive_y negative_y
+  | Unreached => None
+  end = Some 1%Z.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An interval with no finite side leaves the already forgotten matrix unchanged. *)
+Example fast_unbounded_interval_unchanged :
+  Oct.add_range_fast 1%positive (NegInf, PosInf)
+    (Oct.havoc 1%positive assignment_closed_state) =
+    Oct.havoc 1%positive assignment_closed_state.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Public assignment preserves a foreign odd unary rather than tightening the whole matrix. *)
+Example assign_keeps_odd_unrelated_entry :
+  match Oct.assign 1%positive (Node (ZConst 0%Z) []) (Reached strong_odd_matrix) with
+  | Reached m => Oct.entry m positive_y negative_y
+  | Unreached => None
+  end = Some 1%Z.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The strong-but-not-tight counterexample also satisfies every map well-formedness condition. *)
+Example strong_odd_matrix_wf : OctTime.dbm_wf strong_odd_matrix.
+Proof.
+  unfold strong_odd_matrix. repeat apply OctTime.put_wf. apply OctTime.dbm_empty_wf.
 Qed.
