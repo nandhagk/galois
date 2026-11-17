@@ -2,10 +2,25 @@
 
     Environments map variables to abstract values and track unreachable states separately.
     For example, an absent binding denotes the value domain's top.
+
+    Main results
+    - [read_spec] Reading an absent key returns top.
+    - [leb_complexity] Inclusion is linear in both environment sizes, O(|a| + |b|).
+    - [join_complexity] Join is linear in both environment sizes, O(|a| + |b|).
+    - [widen_complexity] Widening is linear in the sizes and in the widening units times the
+      parameter size.
+    - [assign_complexity] Assignment is linear in its work measure.
+    - [havoc_complexity] Havoc is linear in its work measure.
+    - [assume_complexity] Assumption is linear in its work measure.
+    - [eval_complexity] Evaluation is linear in its work measure.
+    - [is_bot_complexity] The bottom test is linear in the environment size, O(|a|).
+    - [narrow_complexity] Narrowing is linear in both environment sizes, O(|a| + |b|).
+
     Builds on: MapSig, StateSig and ValueSig. *)
 
 From Stdlib Require Import List NArith.
-From Argent Require Import BigO.
+From Argent Require Import Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -106,39 +121,25 @@ Module Type ENV_TIME (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
   Parameter T_join_env_le : forall a b, env_wf a -> env_wf b ->
     (T_join a b <= c_env * N.of_nat ((esize a + esize b + 1)%nat))%N.
   (** Inclusion is linear in both environment sizes. *)
-  Parameter leb_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_leb (fst ab) (snd ab)).
+  Parameter leb_complexity : T_leb a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   (** Join is linear in both environment sizes. *)
-  Parameter join_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_join (fst ab) (snd ab)).
+  Parameter join_complexity : T_join a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   (** Widening is linear in the sizes and in the widening units times the parameter size. *)
-  Parameter widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
-    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
-    (fun '(p, a, b) => T_widen p a b).
+  Parameter widen_complexity : T_widen p a b ∈ 𝑂(N.of_nat ((wunits a + wunits b) * wsize p +
+    (size a + size b + wsize p))) for (p, a, b).
   (** Assignment is linear in its work measure. *)
-  Parameter assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
-    (fun '(x, e, s) => N.of_nat (assign_work x e s))
-    (fun '(x, e, s) => T_assign x e s).
+  Parameter assign_complexity : T_assign x e s ∈ 𝑂(N.of_nat (assign_work x e s)) for (x, e, s).
   (** Havoc is linear in its work measure. *)
-  Parameter havoc_complexity : bigO (X := X.t * t) (fun _ => True)
-    (fun '(x, s) => N.of_nat (havoc_work x s))
-    (fun '(x, s) => T_havoc x s).
+  Parameter havoc_complexity : T_havoc x s ∈ 𝑂(N.of_nat (havoc_work x s)) for (x, s).
   (** Assumption is linear in its work measure. *)
-  Parameter assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
-    (fun '(gd, es, s) => N.of_nat (assume_work gd es s))
-    (fun '(gd, es, s) => T_assume gd es s).
+  Parameter assume_complexity :
+    T_assume gd es s ∈ 𝑂(N.of_nat (assume_work gd es s)) for (gd, es, s).
   (** Evaluation is linear in its work measure. *)
-  Parameter eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
-    (fun '(e, s) => N.of_nat (eval_work e s))
-    (fun '(e, s) => T_eval e s).
+  Parameter eval_complexity : T_eval e s ∈ 𝑂(N.of_nat (eval_work e s)) for (e, s).
   (** The bottom test is linear in the environment size. *)
-  Parameter is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Parameter is_bot_complexity : T_is_bot a ∈ 𝑂(N.of_nat (size a)) for a.
   (** Narrowing is linear in both environment sizes. *)
-  Parameter narrow_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_narrow (fst ab) (snd ab)).
+  Parameter narrow_complexity : T_narrow a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
 End ENV_TIME.
 
 Module Type ENV_T (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L) :=
