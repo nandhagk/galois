@@ -21,9 +21,9 @@
 
 From Stdlib Require Import List Bool NArith PeanoNat Lia Sorting.Sorted.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig TrieSig MapSig SetSig.
 From Galois.Base Require Import Trie.
+Import ComplexityNotations.
 
 Module TrieSetCode (K : KEY_OPS) <: SET_OPS K.
   Definition t := PTrieCode.t K.t.

@@ -5172,7 +5172,7 @@ Proof.
   intros Hagree Hclosed [pv Hv].
   pose proof (PTrieT.T_trie_get_hit (N * N) v info
     ltac:(rewrite Hagree, Hv; discriminate)) as Hv_clock.
-  pose proof (PTrieT.T_set_lower N v (dom_size_get sizes v) sizes) as Hv_write.
+  pose proof (PTrieT.T_set_ge N v (dom_size_get sizes v) sizes) as Hv_write.
   change (N.of_nat (Pos.size_nat v) <=
     PTrieCode.T_set v (dom_size_get sizes v) sizes)%N in Hv_write.
   unfold T_dom_info_add_size, T_dom_add_size. rewrite Hagree, Hv.
@@ -5181,7 +5181,7 @@ Proof.
     rewrite Hagree, Hp.
     pose proof (PTrieT.T_trie_get_hit (N * N) p info
       ltac:(rewrite Hagree, Hp; discriminate)) as Hp_clock.
-    pose proof (PTrieT.T_set_lower N p
+    pose proof (PTrieT.T_set_ge N p
       (N.add (dom_size_get (PTrieCode.set v (dom_size_get sizes v) sizes) p)
         (dom_size_get sizes v)) (PTrieCode.set v (dom_size_get sizes v) sizes)) as Hp_write.
     change (N.of_nat (Pos.size_nat p) <= PTrieCode.T_set p
@@ -5436,7 +5436,7 @@ Qed.
 Local Lemma dom_info_add_size_lower m sizes v :
   (N.of_nat (Pos.size_nat v) <= T_dom_add_size m sizes v)%N.
 Proof.
-  pose proof (PTrieT.T_set_lower N v (dom_size_get sizes v) sizes) as Hset.
+  pose proof (PTrieT.T_set_ge N v (dom_size_get sizes v) sizes) as Hset.
   change (N.of_nat (Pos.size_nat v) <=
     PTrieCode.T_set v (dom_size_get sizes v) sizes)%N in Hset.
   unfold T_dom_add_size. time_simpl.

@@ -10,10 +10,10 @@
 
 From Stdlib Require Import List PArith Arith NArith.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
+Import ComplexityNotations.
 
 Record indexed (P R : Type) := Indexed {
   program : P;

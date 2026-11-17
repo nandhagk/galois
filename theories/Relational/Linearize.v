@@ -18,8 +18,8 @@ From Galois.Base Require Import KeySig.
 From Galois.Bits Require Import Word Fun Arith Op.
 From Galois.Domains Require Import LangSig ValueSig IntervalSig ZLang BitsLang.
 From Galois.Relational Require Import LinForm LinearizeSig.
-Import ComplexityNotations.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Local Open Scope nat_scope.
 

@@ -17,10 +17,10 @@
 
 From Stdlib Require Import List NArith Lia.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
+Import ComplexityNotations.
 
 Module CheckCode (L : LATTICE_OPS) (S : SYSTEM_OPS L) <: CHECK_OPS L S.
   Definition look (m : kmap S.key L.t) (x : S.key) : L.t :=

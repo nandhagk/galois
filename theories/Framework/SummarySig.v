@@ -18,11 +18,11 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig.
 From Galois.Program Require Import SemanticsSig CallsSig.
+Import ComplexityNotations.
 
 Inductive summary_row (F Site : Type) :=
   | SummaryLocal (function : F)

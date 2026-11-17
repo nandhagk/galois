@@ -14,9 +14,9 @@
 
 From Stdlib Require Import List Bool NArith PArith Lia Sorting.Sorted.
 From Argent Require Import Time Std Tactics Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import InternSig KeySig MapSig.
 From Galois.Base Require Import Trie.
+Import ComplexityNotations.
 
 Record intern_table (K : Type) (M : Type -> Type) := InternTable {
   intern_forward : M positive;

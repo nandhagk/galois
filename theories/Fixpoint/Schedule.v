@@ -16,11 +16,11 @@
 
 From Stdlib Require Import List PArith Arith NArith Bool Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Graph Require Import Data Spec DigraphSig WtoSig.
 From Galois.Fixpoint Require Import SystemSig PolicySig ScheduleSig.
+Import ComplexityNotations.
 
 (** Setting a trie binding changes exactly the selected key. *)
 Lemma schedule_get_set {A} (u v : positive) (a : A) m :

@@ -24,8 +24,8 @@
 
 From Stdlib Require Import NArith PArith Arith List Bool Lia Sorting.Sorted.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import TrieSig.
+Import ComplexityNotations.
 
 Inductive trie_ne (A : Type) : Type :=
   | N001 (r : trie_ne A)

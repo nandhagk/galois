@@ -10,10 +10,10 @@
 
 From Stdlib Require Import List PArith Arith NArith Bool Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig IndexedSig.
+Import ComplexityNotations.
 
 Module IndexedCode (L : LATTICE_OPS) (S : SYSTEM_OPS L) <: INDEXED_OPS L S.
   Definition prog := indexed S.prog S.row.

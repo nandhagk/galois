@@ -11,9 +11,9 @@
 
 From Stdlib Require Import List NArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie Code.
 From Galois.Program Require Import CfgSig SemanticsSig MemorySig.
+Import ComplexityNotations.
 Import Code.List.
 
 Module Type MEMORY_DATA (P : TYPE) (R : KEY_OPS).

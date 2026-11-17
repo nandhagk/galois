@@ -18,8 +18,8 @@
 
 From Stdlib Require Import List Arith NArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Domains Require Import LangSig HarnessSig.
+Import ComplexityNotations.
 
 Module HarnessCode (L : LANG_OPS) (B : HARNESS_BASE_OPS L) (T : TABLE_OPS L B)
     <: HARNESS_OPS L B T.

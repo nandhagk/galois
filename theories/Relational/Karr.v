@@ -20,8 +20,8 @@ From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig LinCertSig KarrSig.
-Import ComplexityNotations.
 Import List.ListNotations.
+Import ComplexityNotations.
 Local Open Scope nat_scope.
 
 Module List.

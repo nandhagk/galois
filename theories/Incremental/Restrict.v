@@ -12,13 +12,13 @@
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
 From Galois.Incremental Require Import RestrictSig.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Record restricted_program (P K A R : Type) := {
   original : P;

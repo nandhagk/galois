@@ -9,12 +9,12 @@
 
 From Stdlib Require Import List Bool Arith NArith PArith Lia.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import Code MapSig Trie HeapSig Loop.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Graph Require Import DigraphSig WtoSig.
 From Galois.Fixpoint Require Import Query SystemSig SolverSig PolicySig ScheduleSig WorklistSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 Import Code.List.
 
 (** * Binary-loop and numbering facts *)

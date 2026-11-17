@@ -18,10 +18,10 @@
 
 From Stdlib Require Import List Arith NArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Graph Require Import Data Spec.
 From Galois.Program Require Import SemanticsSig CallsSig.
+Import ComplexityNotations.
 
 Module Nat.
   TimeFun Nat.max.

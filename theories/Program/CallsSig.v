@@ -18,10 +18,10 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Time Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Graph Require Import Data Spec.
 From Galois.Program Require Import SemanticsSig.
+Import ComplexityNotations.
 
 Record call_edge (F S : Type) := CallEdge {
   edge_site : S;

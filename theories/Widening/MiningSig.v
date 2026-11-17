@@ -12,9 +12,9 @@
 
 From Stdlib Require Import List ZArith.
 From Argent Require Import Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ThresholdsSig.
+Import ComplexityNotations.
 
 Module Type MINING_OPS (X : KEY_OPS) (L : LANG_OPS) (T : THRESHOLDS_OPS).
   Parameter lits : term L.op X.t -> list Z.

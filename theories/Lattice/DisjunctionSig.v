@@ -16,9 +16,9 @@
 
 From Stdlib Require Import List Arith NArith.
 From Argent Require Import Time Complexity.
-Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module Type DISJUNCTION_OPS (L : LATTICE_OPS) (C : CAP).
   Include (LATTICE_OPS with Definition t :=

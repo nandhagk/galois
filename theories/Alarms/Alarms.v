@@ -15,13 +15,13 @@
 
 From Stdlib Require Import List NArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
 From Galois.Program Require Import SemanticsSig CfgSig.
 From Galois.Framework Require Import InterpSig.
 From Galois.Alarms Require Import ChecksSig AlarmsSig.
+Import ComplexityNotations.
 
 Module AlarmsCode (N X : KEY_OPS) (MN : MAP_OPS N) (L : LANG_OPS)
     (V : VALUE_DOMAIN_OPS L) (S : STATE_DOMAIN_OPS X L V) (C : CHECKS_OPS L V)

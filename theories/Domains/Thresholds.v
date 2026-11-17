@@ -16,9 +16,9 @@
 
 From Stdlib Require Import List ZArith NArith Arith Lia Sorting.Sorted Sorting.Permutation.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Domains Require Import ThresholdsSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module Nat.
   TimeFun Stdlib.Arith.PeanoNat.Nat.divmod.

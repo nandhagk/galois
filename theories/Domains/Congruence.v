@@ -20,8 +20,8 @@ From Stdlib Require Import ZArith NArith Zpow_facts List Bool Lia Wellfounded.In
 From Argent Require Import Time Tactics Std Loop Complexity.
 From Galois.Bits Require Import Word Fun Op Testbit Arith.
 From Galois.Domains Require Import CongruenceSig WordSig BitsLang.
-Import ComplexityNotations.
 Import List.ListNotations.
+Import ComplexityNotations.
 Local Open Scope Z_scope.
 
 Record congr_crt_state : Type := {

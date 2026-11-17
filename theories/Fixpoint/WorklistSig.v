@@ -10,11 +10,11 @@
 
 From Stdlib Require Import List NArith Arith PArith.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import MapSig Trie HeapSig Loop.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Graph Require Import DigraphSig WtoSig.
 From Galois.Fixpoint Require Import Query SystemSig PolicySig SolverSig ScheduleSig.
+Import ComplexityNotations.
 
 (** Worklist states keep values, strict head counters and the priority queue as data. *)
 Record wl_state (K A Q : Type) := WlState {

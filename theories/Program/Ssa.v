@@ -35,10 +35,10 @@
 
 From Stdlib Require Import List Bool NArith PArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie Loop Code.
 From Galois.Graph Require Import Data SearchSig Search Dom.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
+Import ComplexityNotations.
 Import Code.List.
 
 Record ssa_tables (N E V K G : Type) := SsaTables {

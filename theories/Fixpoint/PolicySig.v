@@ -12,9 +12,9 @@
 
 From Stdlib Require Import PArith List Arith NArith.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
+Import ComplexityNotations.
 
 Record head_cfg := HeadCfg {
   delay : N;

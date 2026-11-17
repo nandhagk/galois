@@ -14,9 +14,9 @@
 
 From Stdlib Require Import List Arith PArith NArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie Code.
 From Galois.Program Require Import CfgSig VarsSig.
+Import ComplexityNotations.
 Import Code.List.
 
 Module Nat.

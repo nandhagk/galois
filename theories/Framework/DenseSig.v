@@ -16,11 +16,11 @@
 
 From Stdlib Require Import List Relation_Operators NArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import SemanticsSig CfgSig.
+Import ComplexityNotations.
 
 Inductive direction :=
   | Forward

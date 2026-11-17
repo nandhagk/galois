@@ -22,8 +22,8 @@
 
 From Stdlib Require Import NArith PArith List Bool.
 From Argent Require Import Time Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie.
+Import ComplexityNotations.
 
 Definition kmap (K A : Type) : Type := PTrieCode.t (K * A).
 

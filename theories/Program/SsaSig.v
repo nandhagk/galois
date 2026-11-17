@@ -35,9 +35,9 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Program Require Import CfgSig SemanticsSig VarsSig.
+Import ComplexityNotations.
 
 Inductive definition (N V K : Type) : Type :=
   | Op (operator : K) (operands : list V)

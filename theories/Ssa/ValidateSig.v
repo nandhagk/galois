@@ -22,8 +22,8 @@ From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig.
 From Galois.Program Require Import CfgSig SsaSig.
 From Galois.Ssa Require Import Lang LiveSig.
-Import ComplexityNotations.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition renaming := list (positive * positive).
 Definition cert := (list (positive * renaming) * list (positive * list positive))%type.

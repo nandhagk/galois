@@ -12,8 +12,8 @@ From Stdlib Require Import ZArith NArith List Bool Lia Ring PeanoNat.
 From Argent Require Import Time Tactics Std Complexity.
 From Galois.Bits Require Import Word Fun Testbit Op Arith.
 From Galois.Domains Require Import SignSig WordSig BitsLang.
-Import ComplexityNotations.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Local Open Scope Z_scope.
 

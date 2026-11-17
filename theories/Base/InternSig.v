@@ -14,8 +14,8 @@
 
 From Stdlib Require Import PArith NArith.
 From Argent Require Import Time Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
+Import ComplexityNotations.
 
 Module Type INTERN_OPS (K : KEY_OPS).
   Parameter t : Type.

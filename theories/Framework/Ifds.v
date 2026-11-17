@@ -18,12 +18,12 @@
 
 From Stdlib Require Import List Bool NArith PArith Arith Lia.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig Code Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import CfgSig IcfgSig.
 From Galois.Framework Require Import IfdsSig.
+Import ComplexityNotations.
 
 (** Enumerate finite rules with binary occurrence identifiers. *)
 Fixpoint path_number {N E F} (next : positive) (rules : list (path_rule N E F))

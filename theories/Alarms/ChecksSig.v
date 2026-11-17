@@ -11,8 +11,8 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Time Std Complexity.
-Import ComplexityNotations.
 From Galois.Domains Require Import LangSig ValueSig.
+Import ComplexityNotations.
 
 Record check (N K X Kd : Type) := MkCheck {
   site : N;

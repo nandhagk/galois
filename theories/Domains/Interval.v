@@ -39,8 +39,8 @@
 From Stdlib Require Import ZArith Zpow_facts NArith Bool List Lia.
 From Argent Require Import Time Tactics Std Complexity.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig.
-Import ComplexityNotations.
 Import List.ListNotations.
+Import ComplexityNotations.
 Local Open Scope Z_scope.
 
 Module Nat.

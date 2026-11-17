@@ -12,10 +12,10 @@
 
 From Stdlib Require Import ZArith List.
 From Argent Require Import Time Std Complexity.
-Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig ProductSig BitsLang WordSig
   KnownBitsSig WrappedSig IntervalSig CongruenceSig.
+Import ComplexityNotations.
 
 (** The arc between the least and the greatest member of a known-bit payload. *)
 Definition bits_hull (w : positive) (b : tnum) : wrapped :=

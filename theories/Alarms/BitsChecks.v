@@ -13,11 +13,11 @@
 
 From Stdlib Require Import ZArith Zpow_facts NArith List Bool Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import LangSig ValueSig BitsLang.
 From Galois.Alarms Require Import ChecksSig BitsChecksSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** A range containing zero makes the zero-membership test succeed. *)
 Lemma range_zero_complete : forall r,

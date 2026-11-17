@@ -18,9 +18,9 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Program Require Import SemanticsSig.
+Import ComplexityNotations.
 
 Module Type CFG_OPS (P : TYPE) (N : KEY_OPS) (E : TYPE).
   Parameter entries : P.t -> list N.t.

@@ -15,10 +15,10 @@
 
 From Stdlib Require Import List NArith PArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
+Import ComplexityNotations.
 
 Module Type NARROW_OPS (L : WLATTICE_OPS) (S : SYSTEM_OPS L)
     (C : CHECK_OPS L S).

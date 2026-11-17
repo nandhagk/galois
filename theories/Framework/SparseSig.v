@@ -19,12 +19,12 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.Fixpoint Require Import SystemSig.
 From Galois.Program Require Import CfgSig SemanticsSig SsaSig.
+Import ComplexityNotations.
 
 Inductive sparse_row (E X : Type) :=
   | SparseSeed (value : X)

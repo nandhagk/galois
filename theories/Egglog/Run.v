@@ -31,10 +31,10 @@ From Stdlib Require Import List PArith NArith Arith Bool Lia Relations.Relation_
 From Argent Require Import Time Tactics Std Loop Complexity.
 From Galois.Base Require Import Code Loop Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts RunSig.
+Import ComplexityNotations.
 
 Import Lia.
 Import List.ListNotations.
-Import ComplexityNotations.
 
 (** * Record readers *)
 

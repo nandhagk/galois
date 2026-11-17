@@ -10,10 +10,10 @@
 
 From Stdlib Require Import List ZArith NArith Bool Lia Ring.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Bits Require Import Word Fun Testbit Op Arith.
 From Galois.Domains Require Import LangSig WordSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module WordAlgebra.
   Local Open Scope Z_scope.

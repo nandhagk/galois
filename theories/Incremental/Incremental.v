@@ -15,13 +15,13 @@
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import Code MapSig Trie Loop.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig SolverSig CheckSig PolicySig Indexed.
 From Galois.Incremental Require Import RestrictSig Restrict IncrementalSig.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 Import Code.List.
 
 Record incremental_state (K A : Type) := {

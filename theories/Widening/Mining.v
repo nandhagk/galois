@@ -12,10 +12,10 @@
 
 From Stdlib Require Import List NArith ZArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ThresholdsSig.
 From Galois.Widening Require Import MiningSig.
+Import ComplexityNotations.
 
 Module List.
   TimeFun Stdlib.Lists.List.flat_map.

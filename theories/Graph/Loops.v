@@ -3818,7 +3818,7 @@ Proof.
     + cbn [tree_step]. destruct (trie_get v (pre t)), (trie_get v (idom t));
         cbn [loop_result_work loop_tree_order_work loop_tree_output loop_order];
         lia.
-    + pose proof (PTrieT.T_set_lower unit v tt active) as Hactive.
+    + pose proof (PTrieT.T_set_ge unit v tt active) as Hactive.
       change (N.of_nat (Pos.size_nat v) <= PTrieCode.T_set v tt active)%N in Hactive.
       cbn [tree_step loop_result_work loop_tree_order_work loop_tree_output loop_order].
       unfold T_tree_step. time_simpl. unfold loop_order_work. cbn [fold_right].

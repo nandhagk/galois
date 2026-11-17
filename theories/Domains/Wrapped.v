@@ -23,11 +23,11 @@
 
 From Stdlib Require Import ZArith NArith List Bool Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Bits Require Import Word Op Fun Arith.
 From Galois.Domains Require Import ValueSig WordSig WrappedSig IntervalSig Interval IntervalOps
   Thresholds BitsLang.
 Import List.ListNotations.
+Import ComplexityNotations.
 Local Open Scope Z_scope.
 
 Module WrappedScalar := IntervalBaseT ThresholdsT.

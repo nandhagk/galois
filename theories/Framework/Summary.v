@@ -18,12 +18,12 @@
 
 From Stdlib Require Import List Bool Arith NArith Lia.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import CallsSig SemanticsSig.
 From Galois.Framework Require Import SummarySig.
+Import ComplexityNotations.
 
 Module SummaryCode (P : TYPE) (F Site : KEY_OPS) (CL : CALLS_OPS P F Site)
     (L : LATTICE_OPS) (B : BODY_OPS P F Site L) <: SUMMARY_OPS P F Site L.

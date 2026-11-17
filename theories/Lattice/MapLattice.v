@@ -12,9 +12,9 @@
 
 From Stdlib Require Import Bool List Arith NArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Lattice Require Import LatticeSig.
+Import ComplexityNotations.
 
 Module MapLatticeCode (K : KEY_OPS) (M : MAP_OPS K) (L : LATTICE_OPS)
     <: LATTICE_OPS.

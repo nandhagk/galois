@@ -20,11 +20,11 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
+Import ComplexityNotations.
 
 Inductive reach (A : Type) :=
   | Unreached

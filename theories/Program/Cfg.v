@@ -17,11 +17,11 @@
     Builds on: Program.CfgSig and Graph.Data. *)
 From Stdlib Require Import List PArith NArith Arith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie Code.
 From Galois.Graph Require Import Data.
 From Galois.Program Require Import CfgSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 Import Code.List.
 
 Fixpoint occurrences {E} (es : list E) (i : nat) : list (E * nat) :=

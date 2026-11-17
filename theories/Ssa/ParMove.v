@@ -16,9 +16,9 @@ From Stdlib Require Import List PArith NArith Bool Lia.
 From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Ssa Require Import ParMoveSig.
-Import ComplexityNotations.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module ListDef.
   TimeFun List.firstn.

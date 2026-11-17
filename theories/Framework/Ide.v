@@ -20,12 +20,12 @@
 
 From Stdlib Require Import List Bool NArith PArith Arith Lia.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig Code.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import CfgSig IcfgSig.
 From Galois.Framework Require Import IfdsSig Ifds IdeSig.
+Import ComplexityNotations.
 
 (** A fact path records the value obtained by applying each edge weight in order. *)
 Inductive fact_value_path {E F A V}

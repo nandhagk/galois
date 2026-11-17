@@ -22,9 +22,9 @@
 
 From Stdlib Require Import List Bool NArith PeanoNat Lia Sorting.Sorted.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig TrieSig MapSig.
 From Galois.Base Require Import Trie.
+Import ComplexityNotations.
 
 
 Module Datatypes.

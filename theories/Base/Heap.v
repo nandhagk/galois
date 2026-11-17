@@ -15,9 +15,9 @@
 
 From Stdlib Require Import List Bool NArith PArith PeanoNat Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import HeapSig KeySig MapSig Trie Loop.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition heap_entry := (N * positive)%type.
 Scheme All for list.

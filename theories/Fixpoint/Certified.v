@@ -13,10 +13,10 @@
 
 From Stdlib Require Import NArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig PolicySig SolverSig CheckSig NarrowSig CertifiedSig.
+Import ComplexityNotations.
 
 Module CertifiedCode (L : WLATTICE_OPS) (S : SYSTEM_OPS L)
     (V : SOLVER_OPS L S) (C : CHECK_OPS L S) (R : NARROW_OPS L S C)

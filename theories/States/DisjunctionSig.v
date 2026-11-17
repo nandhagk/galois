@@ -18,12 +18,12 @@
 
 From Stdlib Require Import List NArith Arith Bool.
 From Argent Require Import Time Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig DisjunctionSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module SharedDisjunction := DisjunctionSig.
 

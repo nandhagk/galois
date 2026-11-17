@@ -12,9 +12,9 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
+Import ComplexityNotations.
 
 Module Type VALUE_REDUCER_SOUND (L : LANG) (A B : VALUE_DOMAIN L)
     (R : REDUCER_OPS A B).

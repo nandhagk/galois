@@ -30,9 +30,9 @@
 
 From Stdlib Require Import ZArith List Bool.
 From Argent Require Import Time Std Complexity.
-Import ComplexityNotations.
 From Galois.Bits Require Import Word Op Fun.
 From Galois.Domains Require Import WordSig.
+Import ComplexityNotations.
 Local Open Scope nat_scope.
 
 Record tnum : Type := Tnum {

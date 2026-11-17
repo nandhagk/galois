@@ -20,12 +20,12 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Time Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig.
 From Galois.Program Require Import CfgSig IcfgSig.
 From Galois.Framework Require Import IfdsSig.
+Import ComplexityNotations.
 
 (** Each output retains its fact and the composed micro-function for that fact path. *)
 Definition weighted_facts {E F A} (flow : E -> F -> list F)

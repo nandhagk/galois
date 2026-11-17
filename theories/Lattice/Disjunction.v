@@ -16,9 +16,9 @@
 
 From Stdlib Require Import List Bool Arith NArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig DisjunctionSig Bounded.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition cap_predecessor (n : nat) : nat :=
   match n with

@@ -12,9 +12,9 @@
 
 From Stdlib Require Import List Arith NArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig ProductSig Product.
+Import ComplexityNotations.
 
 Module Datatypes.
   TimeFun Corelib.Init.Datatypes.nat_rect.

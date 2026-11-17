@@ -16,11 +16,11 @@
 
 From Stdlib Require Import List PArith Arith NArith.
 From Argent Require Import Time Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Graph Require Import Data Spec DigraphSig WtoSig.
 From Galois.Fixpoint Require Import SystemSig PolicySig.
+Import ComplexityNotations.
 
 Module Type SCHEDULE_OPS (L : WLATTICE_OPS) (S : SYSTEM_OPS L).
   Parameter dep_graph : S.prog -> digraph.

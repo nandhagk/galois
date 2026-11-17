@@ -13,12 +13,12 @@
 
 From Stdlib Require Import List Bool NArith Arith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig SetSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import CfgSig.
 From Galois.Framework Require Import DenseSig Dense GenKillSig.
+Import ComplexityNotations.
 
 Module GenKillMayDomainCode (F : KEY_OPS) (S : SET_OPS F)
     <: GENKILL_MAY_DOMAIN_OPS F S.

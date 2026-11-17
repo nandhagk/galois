@@ -15,8 +15,8 @@
 
 From Stdlib Require Import List PArith NArith Arith.
 From Argent Require Import Time Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import Loop.
+Import ComplexityNotations.
 
 Module Type PQ_OPS.
   Parameter t : Type.

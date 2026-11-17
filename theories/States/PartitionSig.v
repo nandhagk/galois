@@ -25,12 +25,12 @@
 
 From Stdlib Require Import List NArith Arith Bool.
 From Argent Require Import Time Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig DisjunctionSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** Lists of at most k elements. *)
 Definition capped (A : Type) (k : nat) : Type := {xs : list A | Nat.leb (length xs) k = true}.

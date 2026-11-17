@@ -19,13 +19,13 @@
 
 From Stdlib Require Import List Bool Arith NArith Lia.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import CfgSig SsaSig SemanticsSig.
 From Galois.Framework Require Import SparseSig.
+Import ComplexityNotations.
 
 Module List.
   TimeFun Stdlib.Lists.List.flat_map.

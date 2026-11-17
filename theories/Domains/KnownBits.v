@@ -30,12 +30,12 @@
 
 From Stdlib Require Import ZArith NArith Zpow_facts List Bool Lia.
 From Argent Require Import Time Tactics Std Complexity Loop.
-Import ComplexityNotations.
 From Galois.Base Require Import Loop.
 From Galois.Bits Require Import Word Op Fun Testbit Arith.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import WordSig KnownBitsSig BitsLang.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 
 Local Open Scope Z_scope.

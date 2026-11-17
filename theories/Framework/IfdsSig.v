@@ -20,11 +20,11 @@
 
 From Stdlib Require Import List Bool NArith.
 From Argent Require Import Time Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig Code.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig.
 From Galois.Program Require Import CfgSig IcfgSig.
+Import ComplexityNotations.
 
 Definition path_edge (N F : Type) := (F * (N * F))%type.
 

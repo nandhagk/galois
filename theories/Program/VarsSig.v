@@ -14,9 +14,9 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Time Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Program Require Import SemanticsSig CfgSig.
+Import ComplexityNotations.
 
 Module Type VARS_OPS (P : TYPE) (N : KEY_OPS) (E : TYPE)
     (C : CFG_INDEXED_OPS P N E) (X : KEY_OPS).

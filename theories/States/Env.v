@@ -20,11 +20,11 @@
 
 From Stdlib Require Import List Bool NArith Arith Lia Permutation.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** Variable collection prepends the leaves in their expression order. *)
 Fixpoint env_vars_into {K X} (e : term K X) (acc : list X) : list X :=

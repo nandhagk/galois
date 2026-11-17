@@ -11,9 +11,9 @@
 
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Complexity.
-Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
+Import ComplexityNotations.
 
 Module Type RESTRICT_OPS (L : LATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
     (RS : SYSTEM_OPS L with Definition key := S.key

@@ -16,7 +16,6 @@
 
 From Stdlib Require Import List Bool PeanoNat NArith Lia.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
@@ -24,6 +23,7 @@ From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import SemanticsSig CfgSig.
 From Galois.Framework Require Import DenseSig InterpSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module InterpCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
     (X : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L)

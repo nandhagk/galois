@@ -24,12 +24,12 @@
 
 From Stdlib Require Import List NArith Arith Bool Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig DisjunctionSig Disjunction PartitionSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 Local Open Scope nat_scope.
 
 (** The tail fitting operation adds at most one part to its prefix. *)

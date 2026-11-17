@@ -24,9 +24,9 @@
 
 From Stdlib Require Import ZArith List.
 From Argent Require Import Std Complexity.
-Import ComplexityNotations.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import LangSig HarnessSig.
+Import ComplexityNotations.
 
 Inductive tagged (P : Type) : Type :=
   | TBot

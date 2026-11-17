@@ -15,8 +15,8 @@ From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import DigraphSig.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
 From Galois.Ssa Require Import Lang LiveSig.
-Import ComplexityNotations.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** Lookup stops at an absent subtree, even when the requested key is unusually wide. *)
 Fixpoint live_lookup {A} (key : positive) (table : ptrie A) : option A :=

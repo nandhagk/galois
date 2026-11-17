@@ -12,10 +12,10 @@
 
 From Stdlib Require Import NArith ZArith Zpow_facts Lia Bool.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Bits Require Import Word Testbit.
 From Galois.Domains Require Import ValueSig BitsLang WordSig KnownBitsSig WrappedSig
   IntervalSig CongruenceSig ThresholdsSig ReducersSig Tagged.
+Import ComplexityNotations.
 
 Local Open Scope Z_scope.
 

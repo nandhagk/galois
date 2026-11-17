@@ -10,9 +10,9 @@
 
 From Stdlib Require Import NArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Program Require Import CfgSig IcfgSig.
+Import ComplexityNotations.
 
 Module Type ICFG_DATA (P : TYPE) (S : KEY_OPS).
   Parameter kinds : P.t -> ptrie (edge_kind S.t).

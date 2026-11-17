@@ -12,10 +12,10 @@
 
 From Stdlib Require Import List PArith Arith NArith Lia.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import PolicySig.
+Import ComplexityNotations.
 
 Module PolicyCode (L : WLATTICE_OPS) <: POLICY_OPS L.
   Definition update (p : policy L.wparam) x cnt old new :=

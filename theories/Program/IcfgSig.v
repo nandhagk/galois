@@ -10,9 +10,9 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Program Require Import CfgSig SemanticsSig.
+Import ComplexityNotations.
 
 Inductive edge_kind (S : Type) : Type :=
   | Intra

@@ -23,9 +23,9 @@ From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig RunSig Syntax Model Sorts
   ModelFacts.
 From Galois.Egraph Require Import Syntax CompileSig SaturateSig.
-Import ComplexityNotations.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** * Checking flat syntax *)
 

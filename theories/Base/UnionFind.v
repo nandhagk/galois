@@ -17,9 +17,9 @@
 
 From Stdlib Require Import List PArith NArith Arith Lia Sorting.Permutation.
 From Argent Require Import Time Loop Std Complexity Tactics.
-Import ComplexityNotations.
 From Galois.Base Require Import Trie UnionFindSig.
 Import ListNotations.
+Import ComplexityNotations.
 
 Record uf : Type := UF { parents : PTrieCode.t positive; sizes : PTrieCode.t N; count : N }.
 

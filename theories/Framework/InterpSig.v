@@ -16,13 +16,13 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
 From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import SemanticsSig CfgSig.
 From Galois.Framework Require Import DenseSig.
+Import ComplexityNotations.
 
 Inductive action (K G X : Type) :=
   | Assign (x : X) (e : term K X)

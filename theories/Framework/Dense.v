@@ -16,13 +16,13 @@
 
 From Stdlib Require Import List Relation_Operators Bool PeanoNat NArith Lia.
 From Argent Require Import Loop Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import SemanticsSig CfgSig.
 From Galois.Framework Require Import DenseSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module DenseCode (P : TYPE) (N : KEY_OPS) (E : TYPE)
     (C : CFG_OPS P N E) (L : LATTICE_OPS) (T : FLOW_OPS P N E L)

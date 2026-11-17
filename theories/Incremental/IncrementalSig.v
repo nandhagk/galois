@@ -15,13 +15,13 @@
 
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig SolverSig CheckSig PolicySig.
 From Galois.Incremental Require Import RestrictSig.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** Rows with one primary target share their recorded write occurrences. *)
 Record incremental_snapshot (K : Type) := {

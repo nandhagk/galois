@@ -17,10 +17,10 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
+Import ComplexityNotations.
 
 Module Type CHECK_OPS (L : LATTICE_OPS) (S : SYSTEM_OPS L).
   Parameter look : kmap S.key L.t -> S.key -> L.t.

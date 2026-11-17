@@ -23,9 +23,9 @@
 
 From Stdlib Require Import ZArith List.
 From Argent Require Import Time Std Complexity.
-Import ComplexityNotations.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import WordSig.
+Import ComplexityNotations.
 
 Local Open Scope nat_scope.
 

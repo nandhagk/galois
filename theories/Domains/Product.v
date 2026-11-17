@@ -12,9 +12,9 @@
 
 From Stdlib Require Import List NArith Bool Lia PeanoNat.
 From Argent Require Import Time Tactics Std Complexity.
-Import ComplexityNotations.
 From Galois.Lattice Require Import Product.
 From Galois.Domains Require Import LangSig ValueSig ProductSig.
+Import ComplexityNotations.
 
 Definition product_is_bot {A B} (ba : A -> bool) (bb : B -> bool) (x : A * B) :=
   orb (ba (fst x)) (bb (snd x)).

@@ -21,9 +21,9 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Complexity.
-Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
+Import ComplexityNotations.
 
 Module Type HARNESS_BASE_OPS (L : LANG_OPS).
   Include ALATTICE_OPS.

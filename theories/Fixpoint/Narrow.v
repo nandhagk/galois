@@ -15,10 +15,10 @@
 
 From Stdlib Require Import List Bool PeanoNat PArith NArith Lia.
 From Argent Require Import Time Tactics Std Loop Complexity.
-Import ComplexityNotations.
 From Galois.Base Require Import Code MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig NarrowSig.
+Import ComplexityNotations.
 Import Code.List.
 
 Module NarrowCode (L : WLATTICE_OPS) (S : SYSTEM_OPS L) (C : CHECK_OPS L S)
