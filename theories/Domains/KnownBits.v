@@ -700,6 +700,99 @@ Definition tnum_mul (w : width) (a b : tnum) : tnum :=
   end.
 TimeFun tnum_mul.
 
+(** Shared masks also avoid repeated trailing-zero normalization. *)
+Definition tnum_ctz_m (mask : Z) (w : width) (x : Z) : Z :=
+  let v := tnum_wrap_m mask x in
+  if v =? 0 then Zpos w else Z.log2 (Z.land v (-v)).
+TimeFun tnum_ctz_m.
+
+Lemma tnum_ctz_m_eq : forall w x,
+  tnum_ctz_m (Z.ones (Zpos w)) w x = wctz w x.
+Proof.
+  reflexivity.
+Qed.
+
+Lemma tnum_ctz_m_time : forall w x,
+  (T_tnum_ctz_m (Z.ones (Zpos w)) w x <= T_wctz w x)%N.
+Proof.
+  intros w x. time_unfold T_tnum_ctz_m. time_unfold T_wctz. time_cbn.
+  change (tnum_wrap_m (Z.ones (Zpos w)) x) with (wrap w x).
+  pose proof (tnum_wrap_m_time w x) as Hwrap.
+  change (T_tnum_wrap w x) with (T_wrap w x) in Hwrap.
+  destruct (wrap w x =? 0); lia.
+Qed.
+
+Definition tnum_trailing_m (mask : Z) (w : width) (a : tnum) : Z :=
+  tnum_ctz_m mask w (tnum_wnot_m mask (zeros a)).
+TimeFun tnum_trailing_m.
+
+Lemma tnum_trailing_m_eq : forall w a,
+  tnum_trailing_m (Z.ones (Zpos w)) w a = tnum_trailing w a.
+Proof.
+  reflexivity.
+Qed.
+
+Lemma tnum_trailing_m_time : forall w a,
+  (T_tnum_trailing_m (Z.ones (Zpos w)) w a <= T_tnum_trailing w a)%N.
+Proof.
+  intros w a. time_unfold T_tnum_trailing_m. time_unfold T_tnum_trailing.
+  time_cbn. rewrite ?tnum_wnot_m_eq.
+  pose proof (tnum_wnot_m_time w (zeros a)) as Hnot.
+  pose proof (tnum_ctz_m_time w (tnum_wnot w (zeros a))) as Hctz.
+  lia.
+Qed.
+TimeBound tnum_trailing_m_time.
+
+Definition tnum_mul_low_m (mask : Z) (w : width) (a b : tnum) : tnum :=
+  Tnum (tnum_wrap_m mask (Z.ones (tnum_trailing_m mask w a + tnum_trailing_m mask w b))) 0.
+TimeFun tnum_mul_low_m.
+
+Lemma tnum_mul_low_m_eq : forall w a b,
+  tnum_mul_low_m (Z.ones (Zpos w)) w a b = tnum_mul_low w a b.
+Proof.
+  reflexivity.
+Qed.
+
+Lemma tnum_mul_low_m_time : forall w a b,
+  (T_tnum_mul_low_m (Z.ones (Zpos w)) w a b <= T_tnum_mul_low w a b)%N.
+Proof.
+  intros w a b. time_unfold T_tnum_mul_low_m. time_unfold T_tnum_mul_low.
+  time_cbn. rewrite ?tnum_trailing_m_eq. time_pose. lia.
+Qed.
+TimeBound tnum_mul_low_m_time.
+
+Definition tnum_mul_m (mask : Z) (w : width) (a b : tnum) : tnum :=
+  match tnum_constant_m mask a, tnum_constant_m mask b with
+  | Some x, Some y => tnum_const_m mask (wmul w x y)
+  | _, _ => tnum_mul_low_m mask w a b
+  end.
+TimeFun tnum_mul_m.
+
+Lemma tnum_mul_m_eq : forall w a b,
+  tnum_mul_m (Z.ones (Zpos w)) w a b = tnum_mul w a b.
+Proof.
+  reflexivity.
+Qed.
+
+Lemma tnum_mul_m_time : forall w a b,
+  (T_tnum_mul_m (Z.ones (Zpos w)) w a b <= T_tnum_mul w a b)%N.
+Proof.
+  intros w a b. time_unfold T_tnum_mul_m. time_unfold T_tnum_mul.
+  time_cbn. rewrite ?tnum_constant_m_eq.
+  destruct (tnum_constant w a), (tnum_constant w b); time_pose; lia.
+Qed.
+TimeBound tnum_mul_m_time.
+
+Definition tnum_mul_fast (w : width) (a b : tnum) : tnum :=
+  tnum_mul_m (Z.ones (Zpos w)) w a b.
+TimeFun tnum_mul_fast.
+
+Lemma tnum_mul_fast_eq : forall w a b, tnum_mul_fast w a b = tnum_mul w a b.
+Proof.
+  reflexivity.
+Qed.
+
+
 Definition tnum_map (sw rw : width) (f : Z -> Z) (a : tnum) : tnum :=
   Tnum (tnum_wnot rw (f (tnum_max sw a))) (tnum_wrap rw (f (tnum_min sw a))).
 TimeFun tnum_map.
@@ -759,6 +852,26 @@ Definition tnum_concat (w v : width) (a b : tnum) : tnum :=
   Tnum (tnum_wrap (w + v)%positive (tnum_wrap w (zeros a) * modulus v + tnum_wrap v (zeros b)))
     (tnum_wrap (w + v)%positive (tnum_wrap w (ones a) * modulus v + tnum_wrap v (ones b))).
 TimeFun tnum_concat.
+
+(** Concatenation shifts each endpoint and shares each width mask. *)
+Definition tnum_concat_fast (w v : width) (a b : tnum) : tnum :=
+  let mw := Z.ones (Zpos w) in
+  let mv := Z.ones (Zpos v) in
+  let m := Z.ones (Zpos (w + v)%positive) in
+  Tnum (tnum_wrap_m m
+      (Z.shiftl (tnum_wrap_m mw (zeros a)) (Zpos v) + tnum_wrap_m mv (zeros b)))
+    (tnum_wrap_m m
+      (Z.shiftl (tnum_wrap_m mw (ones a)) (Zpos v) + tnum_wrap_m mv (ones b))).
+TimeFun tnum_concat_fast.
+
+Lemma tnum_concat_fast_eq : forall w v a b,
+  tnum_concat_fast w v a b = tnum_concat w v a b.
+Proof.
+  intros w v a b. unfold tnum_concat_fast, tnum_concat.
+  rewrite !Z.shiftl_mul_pow2 by lia. unfold modulus, tnum_wrap_m, tnum_wrap.
+  reflexivity.
+Qed.
+
 
 Definition tnum_rotation (o : op) : bool :=
   match o with
@@ -844,7 +957,7 @@ TimeFun tnum_mul_with.
 
 Definition tnum_mul_with_fast (choice : mulchoice) (w : width) (a b : tnum) : tnum :=
   match choice with
-  | MulLow => tnum_mul w a b
+  | MulLow => tnum_mul_fast w a b
   | MulStages => tnum_mul_stages_fast w a b
   | MulAcc => tnum_mul_acc w a b
   | MulBoth => tnum_meet w (tnum_mul_stages_fast w a b) (tnum_mul_acc w a b)
@@ -2503,7 +2616,7 @@ Lemma tnum_mul_with_fast_agrees : forall choice w a b,
   tnum_mul_with_fast choice w a b = tnum_mul_with choice w a b.
 Proof.
   intros choice w a b. destruct choice; cbn [tnum_mul_with_fast tnum_mul_with];
-    now rewrite ?tnum_mul_stages_fast_agrees.
+    now rewrite ?tnum_mul_stages_fast_agrees, ?tnum_mul_fast_eq.
 Qed.
 
 Lemma tnum_mul_runs_sound : forall w a b x y,
@@ -4706,6 +4819,36 @@ Proof.
   rewrite Nat2Z.inj_add, Z2Nat.id, Z.pow_add_r by lia. nia.
 Qed.
 
+(** The shifted concatenation has a linear derived clock. *)
+Lemma tnum_concat_fast_time : forall w v a b,
+  (T_tnum_concat_fast w v a b <=
+    1024 * N.of_nat (Pos.to_nat w + Pos.to_nat v + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w v a b.
+  pose proof (tnum_positive_bits w) as Hwbits.
+  pose proof (tnum_positive_bits v) as Hvbits.
+  pose proof (tnum_ones_time (Zpos w) ltac:(lia)) as Hmw.
+  pose proof (tnum_ones_time (Zpos v) ltac:(lia)) as Hmv.
+  pose proof (tnum_ones_time (Zpos (w + v)%positive) ltac:(lia)) as Hm.
+  pose proof (tnum_wrap_bits w (zeros a)) as Haz.
+  pose proof (tnum_wrap_bits w (ones a)) as Hao.
+  pose proof (tnum_wrap_bits v (zeros b)) as Hbz.
+  pose proof (tnum_wrap_bits v (ones b)) as Hbo.
+  pose proof (tnum_shiftl_time (tnum_wrap w (zeros a)) (Zpos v) ltac:(lia)) as Hzshift.
+  pose proof (tnum_shiftl_time (tnum_wrap w (ones a)) (Zpos v) ltac:(lia)) as Hoshift.
+  pose proof (tnum_shiftl_bits (tnum_wrap w (zeros a)) (Zpos v) ltac:(lia)) as Hzbits.
+  pose proof (tnum_shiftl_bits (tnum_wrap w (ones a)) (Zpos v) ltac:(lia)) as Hobits.
+  pose proof (tnum_sum_bits (Z.shiftl (tnum_wrap w (zeros a)) (Zpos v))
+    (tnum_wrap v (zeros b))) as Hszero.
+  pose proof (tnum_sum_bits (Z.shiftl (tnum_wrap w (ones a)) (Zpos v))
+    (tnum_wrap v (ones b))) as Hsone.
+  cbn [Z.shiftl] in Hzbits, Hobits, Hszero, Hsone.
+  time_unfold T_tnum_concat_fast. time_cbn. rewrite ?tnum_wrap_m_eq. time_pose.
+  cbn [Z.to_nat] in *. rewrite ?Pos2Nat.inj_add in *.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_concat_fast_time.
+
 (** A nonnegative right shift cannot increase the stored magnitude bits. *)
 Lemma tnum_shiftr_bits : forall z k, 0 <= z -> 0 <= k ->
   (Z.size_nat (Z.shiftr z k) <= Z.size_nat z)%nat.
@@ -5382,6 +5525,24 @@ Proof.
     clearbody budget. lia.
 Qed.
 TimeBound tnum_mul_time.
+
+(** One shared width mask fits the unchanged public multiplier budget. *)
+Lemma tnum_mul_fast_time : forall w a b,
+  (T_tnum_mul_fast w a b <=
+    262144 * N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros w a b.
+  pose proof (tnum_mul_m_time w a b) as Hshared.
+  pose proof (tnum_mul_time w a b) as Hmul.
+  pose proof (tnum_ones_time (Zpos w) ltac:(lia)) as Hmask.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  time_unfold T_tnum_mul_fast. cbn beta iota zeta.
+  cbn [Z.to_nat] in Hmask. rewrite ?Nat2N.inj_add in *.
+  set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  clearbody budget. lia.
+Qed.
+TimeBound tnum_mul_fast_time.
 
 (** The multiplication shift helper returns a normalized word. *)
 Lemma tnum_shl_scalar_value_word : forall w k x,

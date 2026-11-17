@@ -42,7 +42,7 @@ Module KnownBitsOpsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     end.
 End KnownBitsOpsCode.
 
-(** The executable table extracts bits with a shift while retaining the original table above. *)
+(** The executable table uses shifts for extraction and concatenation. *)
 Module KnownBitsOpsFastCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     (K : KNOWN_BITS_OPS L C).
   Definition tnum_forward_raw (o : op) (wps : list (width * tnum)) (rw : width) : tnum :=
@@ -70,7 +70,7 @@ Module KnownBitsOpsFastCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     | bvsext _, [(w, a)] => tnum_map w rw (fun x => tnum_wrap rw (signed w x)) a
     | bvextract _ lo, [(w, a)] =>
       tnum_map w rw (fun x => tnum_wrap rw (Z.shiftr x (Z.of_nat lo))) a
-    | bvconcat, [(w, a); (v, b)] => tnum_concat w v a b
+    | bvconcat, [(w, a); (v, b)] => tnum_concat_fast w v a b
     | _, _ => tnum_top
     end.
 End KnownBitsOpsFastCode.
@@ -95,14 +95,16 @@ Module KnownBitsOpsAgreement (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
   Module Original := KnownBitsOpsCode L C K.
   Module Fast := KnownBitsOpsFastCode L C K.
 
-  (** A right shift returns the same endpoint quotient for every natural extraction offset. *)
+  (** The optimized endpoint shifts preserve every result of the original table. *)
   Lemma tnum_forward_raw_agrees : forall o wps rw,
     Fast.tnum_forward_raw o wps rw = Original.tnum_forward_raw o wps rw.
   Proof.
     intros o wps rw. destruct o; try reflexivity.
-    destruct wps as [|[w a] [|wp wps]]; try reflexivity.
-    unfold Fast.tnum_forward_raw, Original.tnum_forward_raw.
-    apply tnum_map_ext. intro x. now rewrite Z.shiftr_div_pow2 by lia.
+    - destruct wps as [|[w a] [|wp wps]]; try reflexivity.
+      unfold Fast.tnum_forward_raw, Original.tnum_forward_raw.
+      apply tnum_map_ext. intro x. now rewrite Z.shiftr_div_pow2 by lia.
+    - destruct wps as [|[w a] [|[v b] [|wp wps]]]; try reflexivity.
+      apply tnum_concat_fast_eq.
   Qed.
 End KnownBitsOpsAgreement.
 
@@ -335,6 +337,21 @@ Proof.
 Qed.
 TimeBound table_concat_time.
 
+(** Linear shifted concatenation fits the existing quadratic table allowance. *)
+Lemma table_concat_fast_time : forall w v a b,
+  (T_tnum_concat_fast w v a b <= 8192 * N.of_nat
+    ((Pos.to_nat w + Pos.to_nat v + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros w v a b. pose proof (tnum_concat_fast_time w v a b) as Hconcat.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + Pos.to_nat v + 1)
+    (Pos.to_nat w + Pos.to_nat v + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  rewrite ?Nat2N.inj_add in *.
+  set (square := N.of_nat ((Pos.to_nat w + Pos.to_nat v + 1) ^ 2)) in *.
+  clearbody square. lia.
+Qed.
+TimeBound table_concat_fast_time.
+
+
 (** Two bounded endpoint callbacks lift to the shared quadratic table budget. *)
 Lemma table_map_time_budget : forall sw rw f Tf a k,
   (forall x, is_word sw x -> is_word rw (f x)) ->
@@ -546,7 +563,7 @@ Module KnownBitsForwardClockProof (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     pose proof (table_urem_time rw a) as Hremainder.
     pose proof (table_srem_time rw a) as Hsigned.
     pose proof (table_compare_time o w a b) as Hcompare.
-    pose proof (table_concat_time w v a b) as Hconcat.
+    pose proof (table_concat_fast_time w v a b) as Hconcat.
     rewrite ?Nat2N.inj_add in *.
     set (square := N.of_nat
       ((Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + 1) ^ 2)) in *.
@@ -564,7 +581,7 @@ Module KnownBitsForwardClockProof (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     | |- context [T_tnum_urem _ _] => clear - Hlinear Hremainder
     | |- context [T_tnum_srem _ _] => clear - Hlinear Hsigned
     | |- context [T_tnum_compare _ _ _ _] => clear - Hlinear Hcompare
-    | |- context [T_tnum_concat _ _ _ _] => clear - Hlinear Hcatwidth Hconcat
+    | |- context [T_tnum_concat_fast _ _ _ _] => clear - Hlinear Hcatwidth Hconcat
     end; time_simpl; nia].
     clear - Hlinear Hmulwidth Hmul Hfallback Hwbits Hvbits Hrwbits.
     destruct (Pos.eqb w rw && Pos.eqb v rw); time_simpl; time_pose;

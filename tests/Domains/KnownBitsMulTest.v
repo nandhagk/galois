@@ -249,3 +249,28 @@ Example multiplier_cost_bound_clients :
   (Cost.ticks (tnum_mul_stages_c 8%positive tnum_top tnum_top) <= 24)%N.
 Proof. vm_compute. intuition discriminate. Qed.
 *)
+
+Module SharedLowConfig <: TNUM_CONFIG.
+  Definition multiplier := MulLow.
+End SharedLowConfig.
+Module SharedLow := KnownBitsCode WordLanguageCode SharedLowConfig.
+
+(** The default multiplier keeps exact constants and shared trailing-zero facts. *)
+Definition shared_low_fixtures : list (positive * tnum * tnum) :=
+  [(1%positive, Tnum 0 1, Tnum 0 1);
+   (8%positive, Tnum 240 0, Tnum 248 0);
+   (8%positive, Tnum 240 15, Tnum 252 1);
+   (8%positive, Tnum 0 0, Tnum 0 0);
+   (8%positive, Tnum 7 7, Tnum 0 0);
+   (8%positive, Tnum (-16) 257, Tnum 65280 255);
+   (64%positive, Tnum 240 0, Tnum 248 0)].
+
+Example shared_low_public_specification :
+  Forall (fun '(w, a, b) =>
+    SharedLow.tnum_mul w a b = tnum_mul w a b /\
+    SharedLow.tnum_mul_with MulLow w a b = tnum_mul w a b)
+    shared_low_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; split; reflexivity|]).
+  apply Forall_nil.
+Qed.

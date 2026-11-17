@@ -495,3 +495,11 @@ Example kb_rotr_symbolic_client : forall w x y,
 Proof.
   apply wrotr_value.
 Qed.
+
+(** The complete harness reaches shifted concatenation through the public table. *)
+Example kb_shifted_concat_public_table :
+  kb_forward bvconcat [(8%positive, Tnum 240 15); (8%positive, Tnum 252 1)]
+    16%positive = Tnum 61692 3841.
+Proof.
+  vm_compute. reflexivity.
+Qed.

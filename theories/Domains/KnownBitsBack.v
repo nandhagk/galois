@@ -2334,7 +2334,7 @@ Module KnownBitsTableT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     pose proof (K.tnum_stage_bits MulLow o rw a b) as [Hchoice Hvariable].
     pose proof (tnum_top_bits rw) as Htop.
     pose proof (Pos2Nat.is_pos rw) as Hwidth.
-    destruct o; cbn [tnum_forward_raw]; try lia.
+    destruct o; cbn [tnum_forward_raw]; rewrite ?tnum_concat_fast_eq; try lia.
     all: try match goal with
     | |- context [tnum_udiv ?w ?a ?b] =>
       pose proof (tnum_udiv_bits w a b) as Hbound; lia
