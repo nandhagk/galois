@@ -2,14 +2,29 @@
 
     Dominator-tree traversal classifies back edges and builds their reverse closures.
     For example, a self-edge produces a one-vertex natural loop.
+
+    Main results
+    - [headers_spec] Body bindings exist precisely at targets of dominance back edges.
+    - [body_spec] Each header row is the semantic natural loop of that header.
+    - [header_spec] Header lookup chooses the innermost loop containing a vertex.
+    - [parent_spec] Parent lookup gives immediate strict containment of natural loops.
+    - [reducible_b_spec] The Boolean test reflects the requested retreating-edge condition.
+    - [forest_complexity] Forest construction has the published nesting-sensitive bit-cost
+      bound.
+    - [reducible_b_complexity] Reducibility checking has the published nesting-sensitive
+      bit-cost bound.
+    - [reducible_b_linear_complexity] Reducibility checking classifies once and scans one
+      search, with no nesting factor.
+
     Builds on: prepared graphs, dominator trees and depth-first traces. *)
 
 From Stdlib Require Import PArith NArith Arith Lia List Bool.
 From Stdlib.Sorting Require Import Permutation.
-From Argent Require Import Time Tactics Std BigO Loop.
+From Argent Require Import Time Tactics Std Complexity Loop.
 From Galois.Base Require Import Key Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search DomSig DomOrder LoopsSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition loop_tail {A : Type} (xs : list A) : list A :=
   match xs with
@@ -6027,35 +6042,30 @@ Module LoopsT <: LOOPS_ALL.
     exact T_reducible_b_plan_le.
   Qed.
 
-  Lemma forest_complexity : bigO (fun '(g, t, r) =>
-      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
-    (fun '(g, t, _) => N.of_nat
-      ((graph_n (base g) + graph_e (base g) + 1) *
-        (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, t, _) => T_forest g t).
+  Lemma forest_complexity :
+    T_forest g t ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
+      for (g, t, r) | wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t.
   Proof.
     exists c_loops. intros [[g t] r] [Hgraph [Hprepared Htree]].
     pose proof (T_forest_le g t r Hgraph Hprepared Htree) as Hbound.
     clear -Hbound. rewrite !Nat2N.inj_mul. nia.
   Qed.
 
-  Lemma reducible_b_complexity : bigO (fun '(g, t, r) =>
-      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
-    (fun '(g, t, _) => N.of_nat
-      ((graph_n (base g) + graph_e (base g) + 1) *
-        (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, t, _) => T_reducible_b g t).
+  Lemma reducible_b_complexity :
+    T_reducible_b g t ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
+      for (g, t, r) | wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t.
   Proof.
     exists c_loops. intros [[g t] r] [Hgraph [Hprepared Htree]].
     pose proof (T_reducible_b_le g t r Hgraph Hprepared Htree) as Hbound.
     clear -Hbound. rewrite !Nat2N.inj_mul. nia.
   Qed.
 
-  Lemma reducible_b_linear_complexity : bigO (fun '(g, t, r) =>
-      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
-    (fun '(g, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+  Lemma reducible_b_linear_complexity :
+    T_reducible_b g t ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))
-    (fun '(g, t, _) => T_reducible_b g t).
+      for (g, t, r) | wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t.
   Proof.
     exists (k_reducible * (k_classify + k_trace + k_test + 1))%N.
     intros [[g t] r] [Hgraph [Hprepared Htree]].

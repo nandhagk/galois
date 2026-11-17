@@ -2,13 +2,28 @@
 
     Natural loops group back-edge sources under dominating headers.
     For example, a two-vertex cycle has its DFS entry as its natural loop header.
+
+    Main results
+    - [headers_spec] Body bindings exist precisely at targets of dominance back edges.
+    - [body_spec] Each header row is the semantic natural loop of that header.
+    - [header_spec] Header lookup chooses the innermost loop containing a vertex.
+    - [parent_spec] Parent lookup gives immediate strict containment of natural loops.
+    - [reducible_b_spec] The Boolean test reflects the requested retreating-edge condition.
+    - [forest_complexity] Forest construction has the published nesting-sensitive bit-cost
+      bound.
+    - [reducible_b_complexity] Reducibility checking has the published nesting-sensitive
+      bit-cost bound.
+    - [reducible_b_linear_complexity] Reducibility checking classifies once and scans one
+      search, with no nesting factor.
+
     Builds on: DFS trace derivations, graph dominance and preparation measures. *)
 
 From Stdlib Require Import PArith NArith List Bool.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig DomSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** Back edges target a reachable dominator of their source. *)
 Definition natural_header (g : digraph) (r h : positive) : Prop :=
@@ -177,23 +192,20 @@ Module Type LOOPS_TIME (Import L : LOOPS).
     (T_reducible_b g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (loop_depth g (forest g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   (** Forest construction has the published nesting-sensitive bit-cost bound. *)
-  Parameter forest_complexity : bigO (fun '(g, t, r) =>
-      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
-    (fun '(g, t, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+  Parameter forest_complexity :
+    T_forest g t ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, t, _) => T_forest g t).
+      for (g, t, r) | wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t.
   (** Reducibility checking has the published nesting-sensitive bit-cost bound. *)
-  Parameter reducible_b_complexity : bigO (fun '(g, t, r) =>
-      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
-    (fun '(g, t, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+  Parameter reducible_b_complexity :
+    T_reducible_b g t ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, t, _) => T_reducible_b g t).
+      for (g, t, r) | wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t.
   (** Reducibility checking classifies once and scans one search, with no nesting factor. *)
-  Parameter reducible_b_linear_complexity : bigO (fun '(g, t, r) =>
-      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
-    (fun '(g, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+  Parameter reducible_b_linear_complexity :
+    T_reducible_b g t ∈ 𝑂(N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))
-    (fun '(g, t, _) => T_reducible_b g t).
+      for (g, t, r) | wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t.
 End LOOPS_TIME.
 
 Module Type LOOPS_T := LOOPS <+ LOOPS_TIME.
