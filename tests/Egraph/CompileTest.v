@@ -5,9 +5,9 @@
     Builds on: Compile, Egraph syntax and the operations-only value interface.
 
     Groups:
-    - RewriteTests: a rewrite compiles to a query and the unions of its right side.
-    - ConditionTests: a condition takes fresh variables after the left side's nodes.
-    - AnalysisTests: compiling a program keeps its analysis rules. *)
+    - [RewriteTests] A rewrite compiles to a query and the unions of its right side.
+    - [ConditionTests] A condition takes fresh variables after the left side's nodes.
+    - [AnalysisTests] Compiling a program keeps its analysis rules. *)
 
 From Stdlib Require Import List PArith.
 From Galois.Egglog Require Import ValueSig Syntax.

@@ -4,19 +4,19 @@
     For example, clipping at width one retains the interval from zero to one.
 
     Groups:
-    - ClipTests: clipping an interval to a word.
-    - PayloadConstantTests: constants wrap to the width of their payload.
-    - PayloadLatticeTests: join, meet, widen and narrow at shared moduli.
-    - ArithmeticTests: word arithmetic and signed division, remainder and shifts.
-    - ComparisonTests: unsigned and equality comparisons.
-    - AssumeTests: refinement of an operand from a result.
-    - BackwardTests: backward transfers, including malformed inputs.
-    - BitwiseTests: masks, complements and empty bitwise operands.
-    - WordShiftTests: left and logical right shifts at two widths.
-    - SignedConstantTests: signs and signed views of constant ranges.
-    - JoinMeetTests: join and meet of scalar intervals.
-    - WideningTests: widening and narrowing with thresholds.
-    - ThresholdTreeTests: threshold trees and their ranks.
+    - [ClipTests] Clipping an interval to a word.
+    - [PayloadConstantTests] Constants wrap to the width of their payload.
+    - [PayloadLatticeTests] Join, meet, widen and narrow at shared moduli.
+    - [ArithmeticTests] Word arithmetic and signed division, remainder and shifts.
+    - [ComparisonTests] Unsigned and equality comparisons.
+    - [AssumeTests] Refinement of an operand from a result.
+    - [BackwardTests] Backward transfers, including malformed inputs.
+    - [BitwiseTests] Masks, complements and empty bitwise operands.
+    - [WordShiftTests] Left and logical right shifts at two widths.
+    - [SignedConstantTests] Signs and signed views of constant ranges.
+    - [JoinMeetTests] Join and meet of scalar intervals.
+    - [WideningTests] Widening and narrowing with thresholds.
+    - [ThresholdTreeTests] Threshold trees and their ranks.
     Builds on: IntervalOps IntervalBack BitsLang Tagged Harness WordSig ZLang. *)
 
 From Stdlib Require Import ZArith List.

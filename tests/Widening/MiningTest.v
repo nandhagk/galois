@@ -5,9 +5,9 @@
     Builds on: Mining, ZLang and Thresholds.
 
     Groups:
-    - LiteralTests: collecting the literals of a term, and the linear bound on it.
-    - NeighborTests: the thresholds that mining produces around the literals.
-    - BoundTests: the time bound of mining, composed from its parts. *)
+    - [LiteralTests] Collecting the literals of a term, and the linear bound on it.
+    - [NeighborTests] The thresholds that mining produces around the literals.
+    - [BoundTests] The time bound of mining, composed from its parts. *)
 
 From Stdlib Require Import List ZArith NArith.
 From Argent Require Import Std.

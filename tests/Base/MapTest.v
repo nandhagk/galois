@@ -5,12 +5,12 @@
     Builds on: Map and Key.
 
     Groups:
-    - LookupTests: reading values of a map, present or absent.
-    - UpdateTests: adding and removing keys.
-    - EnumerationTests: the order and the content of the elements of a map.
-    - ComparisonTests: equality of a map with itself.
-    - CollisionTests: maps whose keys share one encoded code, or whose storage is malformed.
-    - RawTests: a map over a unit key, read back through its raw code. *)
+    - [LookupTests] Reading values of a map, present or absent.
+    - [UpdateTests] Adding and removing keys.
+    - [EnumerationTests] The order and the content of the elements of a map.
+    - [ComparisonTests] Equality of a map with itself.
+    - [CollisionTests] Maps whose keys share one encoded code, or whose storage is malformed.
+    - [RawTests] A map over a unit key, read back through its raw code. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key Map Trie.

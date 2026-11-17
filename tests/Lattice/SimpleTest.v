@@ -5,9 +5,9 @@
     Builds on: Simple and WithBot.
 
     Groups:
-    - BooleanTests: the boolean lattice, its order, join and widening.
-    - UnitTests: the unit lattice.
-    - LiftTests: the lifted boolean lattice with a fresh bottom, and its heights. *)
+    - [BooleanTests] The boolean lattice, its order, join and widening.
+    - [UnitTests] The unit lattice.
+    - [LiftTests] The lifted boolean lattice with a fresh bottom, and its heights. *)
 
 From Stdlib Require Import Bool List.
 From Galois.Lattice Require Import Simple WithBot JoinWidening.

@@ -4,14 +4,14 @@
     For example, incompatible sign classes intersect to bottom.
 
     Groups:
-    - MeetTests: intersection of sign classes.
-    - OneBitTests: transfers at width one.
-    - ComparisonTests: comparisons decide on signs.
-    - TransferTests: bitwise and arithmetic transfers.
-    - ExtensionTests: extensions and selection.
-    - ConstantTests: constants and tagged abstraction at width sixty-four.
-    - RefinementTests: tagged meet refines a sign.
-    - EmptyOperandTests: empty operands give empty signs.
+    - [MeetTests] Intersection of sign classes.
+    - [OneBitTests] Transfers at width one.
+    - [ComparisonTests] Comparisons decide on signs.
+    - [TransferTests] Bitwise and arithmetic transfers.
+    - [ExtensionTests] Extensions and selection.
+    - [ConstantTests] Constants and tagged abstraction at width sixty-four.
+    - [RefinementTests] Tagged meet refines a sign.
+    - [EmptyOperandTests] Empty operands give empty signs.
     Builds on: Sign. *)
 
 From Stdlib Require Import ZArith List.

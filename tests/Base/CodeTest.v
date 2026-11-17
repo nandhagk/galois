@@ -5,8 +5,8 @@
     Builds on: Key and Code.
 
     Groups:
-    - PairTests: codes of pairs, which change when the components are reversed.
-    - SumTests: codes of sums, which change with the tag of the value. *)
+    - [PairTests] Codes of pairs, which change when the components are reversed.
+    - [SumTests] Codes of sums, which change with the tag of the value. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key Code.

@@ -5,8 +5,8 @@
     Builds on: Op and Tactics.
 
     Groups:
-    - DefaultTests: the cases that the operator and kind tactics leave to the client.
-    - WidthTests: the result widths that the operator checks give. *)
+    - [DefaultTests] The cases that the operator and kind tactics leave to the client.
+    - [WidthTests] The result widths that the operator checks give. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Op Tactics.

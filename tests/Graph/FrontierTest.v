@@ -4,9 +4,9 @@
     For example, both branches of a diamond have the join in their frontier.
 
     Groups:
-    - FrontierRowTests: the frontier of each vertex in the fixtures.
-    - IdfTests: the iterated frontier of a set of seeds.
-    - RawInputTests: frontiers from raw rows that repeat vertices.
+    - [FrontierRowTests] The frontier of each vertex in the fixtures.
+    - [IdfTests] The iterated frontier of a set of seeds.
+    - [RawInputTests] Frontiers from raw rows that repeat vertices.
 
     Builds on: graph fixtures, dominator construction and frontier code. *)
 

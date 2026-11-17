@@ -5,7 +5,7 @@
     Builds on: Egglog sorts and the pointer analysis signatures.
 
     Groups:
-    - ProgramTests: the inclusion and unification programs are well sorted. *)
+    - [ProgramTests] The inclusion and unification programs are well sorted. *)
 
 From Galois.Egglog Require Import Sorts.
 From Galois.Clients Require Import AndersenSig SteensgaardSig.

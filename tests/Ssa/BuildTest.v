@@ -4,12 +4,12 @@
     For example, a diamond join receives one parameter and a loop carries its updated value.
 
     Groups:
-    - BuildTests: the results of running the built functions.
-    - PlacementTests: the definition index and the parameters that the placement adds.
-    - RejectionTests: sources and validators that the build must reject.
-    - ShortCircuitTests: the build agrees with the checked produce-then-validate path.
-    - LocalTemporaryTests: a function whose temporaries are all local to one block.
-    - LargeUniverseTests: a large function with twenty live inputs.
+    - [BuildTests] The results of running the built functions.
+    - [PlacementTests] The definition index and the parameters that the placement adds.
+    - [RejectionTests] Sources and validators that the build must reject.
+    - [ShortCircuitTests] The build agrees with the checked produce-then-validate path.
+    - [LocalTemporaryTests] A function whose temporaries are all local to one block.
+    - [LargeUniverseTests] A large function with twenty live inputs.
 
     Builds on: Ssa.Build, Ssa.Validate and Ssa.Present. *)
 

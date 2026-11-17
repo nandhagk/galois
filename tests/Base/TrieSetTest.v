@@ -5,11 +5,11 @@
     Builds on: TrieSet and Key.
 
     Groups:
-    - MembershipTests: members, non-members and the listing of a set.
-    - OperationTests: union, intersection and difference, including the empty sets.
-    - EqualityTests: equality of sets with shared and one-sided members.
-    - CollisionTests: sets whose keys share one encoded code, or whose storage is malformed.
-    - RawTests: a set over a unit key, read back through its raw code. *)
+    - [MembershipTests] Members, non-members and the listing of a set.
+    - [OperationTests] Union, intersection and difference, including the empty sets.
+    - [EqualityTests] Equality of sets with shared and one-sided members.
+    - [CollisionTests] Sets whose keys share one encoded code, or whose storage is malformed.
+    - [RawTests] A set over a unit key, read back through its raw code. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key TrieSet Trie.

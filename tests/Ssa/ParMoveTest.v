@@ -4,9 +4,9 @@
     For example, a swap needs a temporary whereas an independent move does not.
 
     Groups:
-    - SequenceTests: the sequential moves that a parallel move expands to.
-    - CheckTests: which move lists the checker accepts.
-    - AgreementTests: whether a parallel table agrees with its symbolic form.
+    - [SequenceTests] The sequential moves that a parallel move expands to.
+    - [CheckTests] Which move lists the checker accepts.
+    - [AgreementTests] Whether a parallel table agrees with its symbolic form.
 
     Builds on: ParMove and ParMoveSig. *)
 

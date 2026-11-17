@@ -5,13 +5,13 @@
     Builds on: Env and Const.
 
     Groups:
-    - AssignTests: assignment and havoc of one variable.
-    - AssumeTests: guards that refine the stored values.
-    - TraceTests: operand order of traces through a guard.
-    - JoinTests: joins and the top and bottom environments.
-    - WideningTests: widening over three iterations, and narrowing.
-    - BoundaryTests: the order on a value domain whose top is not the greatest element.
-    - PointTests: meets and tops of the point domain. *)
+    - [AssignTests] Assignment and havoc of one variable.
+    - [AssumeTests] Guards that refine the stored values.
+    - [TraceTests] Operand order of traces through a guard.
+    - [JoinTests] Joins and the top and bottom environments.
+    - [WideningTests] Widening over three iterations, and narrowing.
+    - [BoundaryTests] The order on a value domain whose top is not the greatest element.
+    - [PointTests] Meets and tops of the point domain. *)
 
 From Stdlib Require Import List Bool ZArith.
 From Galois.Base Require Import Key Map.

@@ -5,9 +5,9 @@
     Builds on: Trie.
 
     Groups:
-    - MergeTests: the bindings that a merge keeps, adds or drops.
-    - ForallTests: pointwise comparison of two tries.
-    - ComparisonTests: equality of tries and their binding counts. *)
+    - [MergeTests] The bindings that a merge keeps, adds or drops.
+    - [ForallTests] Pointwise comparison of two tries.
+    - [ComparisonTests] Equality of tries and their binding counts. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Trie.

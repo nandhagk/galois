@@ -5,14 +5,14 @@
     Builds on: Word, Fun, Op and BaseEncoding.
 
     Groups:
-    - RawTests: sixty-four-bit operands outside the normalized range.
-    - NormalizationTests: normalization of in-range and out-of-range words.
-    - ArithmeticTests: overflow and zero divisors.
-    - ComparisonTests: unsigned, signed and equality comparisons, and their width checks.
-    - WidthTests: width changes, concatenation, truncation and selection, with their bad operands.
-    - CountTests: leading zeros, trailing zeros and population counts.
-    - CodeTests: the operator encodings and the distinctness of their tags.
-    - SymbolicTests: width checks and value formulas for any operand width. *)
+    - [RawTests] Sixty-four-bit operands outside the normalized range.
+    - [NormalizationTests] Normalization of in-range and out-of-range words.
+    - [ArithmeticTests] Overflow and zero divisors.
+    - [ComparisonTests] Unsigned, signed and equality comparisons, and their width checks.
+    - [WidthTests] Width changes, concatenation, truncation and selection, with their bad operands.
+    - [CountTests] Leading zeros, trailing zeros and population counts.
+    - [CodeTests] The operator encodings and the distinctness of their tags.
+    - [SymbolicTests] Width checks and value formulas for any operand width. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Word Fun Op.

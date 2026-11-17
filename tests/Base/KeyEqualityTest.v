@@ -5,8 +5,8 @@
     Builds on: Key and Code.
 
     Groups:
-    - ListTests: equality of lists of natural numbers through their codes.
-    - PositiveKeyTests: equality of positive scalar keys. *)
+    - [ListTests] Equality of lists of natural numbers through their codes.
+    - [PositiveKeyTests] Equality of positive scalar keys. *)
 
 From Stdlib Require Import Bool List NArith.
 From Galois.Base Require Import Key Code.

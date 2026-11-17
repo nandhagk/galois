@@ -5,11 +5,11 @@
     Builds on: Intern, Map and Key.
 
     Groups:
-    - LookupTests: finding an identifier from a key, and a key from an identifier.
-    - SizeTests: the number of keys in a table and the size bounds.
-    - FrontierTests: the next identifier to allocate.
-    - GroupTests: grouping of values by key, in input order.
-    - AgreementTests: the lookups agree with the underlying maps. *)
+    - [LookupTests] Finding an identifier from a key, and a key from an identifier.
+    - [SizeTests] The number of keys in a table and the size bounds.
+    - [FrontierTests] The next identifier to allocate.
+    - [GroupTests] Grouping of values by key, in input order.
+    - [AgreementTests] The lookups agree with the underlying maps. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key Map Intern Trie.

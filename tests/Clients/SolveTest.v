@@ -5,8 +5,8 @@
     Builds on: the relational code tower and the Andersen and Steensgaard clients.
 
     Groups:
-    - SeedTests: the seed database keeps the three input rows of each client.
-    - SolveTests: saturation copies an address through a copy constraint. *)
+    - [SeedTests] The seed database keeps the three input rows of each client.
+    - [SolveTests] Saturation copies an address through a copy constraint. *)
 
 From Stdlib Require Import List PArith NArith Bool.
 From Galois.Base Require Import Key.

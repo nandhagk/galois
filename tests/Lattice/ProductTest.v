@@ -5,10 +5,10 @@
     Builds on: Product, Flat and Simple.
 
     Groups:
-    - PairTests: pairs of flat and boolean coordinates, with their order and join.
-    - UnitPairTests: pairs of a boolean and a unit coordinate.
-    - BoolPairTests: pairs of two boolean coordinates, incomparable ones included.
-    - MeasureTests: heights and ranks of the product lattices. *)
+    - [PairTests] Pairs of flat and boolean coordinates, with their order and join.
+    - [UnitPairTests] Pairs of a boolean and a unit coordinate.
+    - [BoolPairTests] Pairs of two boolean coordinates, incomparable ones included.
+    - [MeasureTests] Heights and ranks of the product lattices. *)
 
 From Stdlib Require Import Bool NArith List.
 From Galois.Base Require Import Key.

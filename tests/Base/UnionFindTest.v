@@ -5,10 +5,10 @@
     Builds on: UnionFind and Trie.
 
     Groups:
-    - FindTests: representatives, unknown keys and path compression.
-    - UnionTests: which keys share a class after a union, and the roots that a union picks.
-    - SupportTests: the keys that a forest holds, in order.
-    - StaleSizeTests: a stored size that outlives its key, and the add that resets it. *)
+    - [FindTests] Representatives, unknown keys and path compression.
+    - [UnionTests] Which keys share a class after a union, and the roots that a union picks.
+    - [SupportTests] The keys that a forest holds, in order.
+    - [StaleSizeTests] A stored size that outlives its key, and the add that resets it. *)
 
 From Stdlib Require Import List NArith Lia.
 From Galois.Base Require Import Trie UnionFind.

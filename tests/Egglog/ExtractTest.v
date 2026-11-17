@@ -6,15 +6,15 @@
     Builds on: Extract, Database and Index code towers.
 
     Groups:
-    - CycleTests: the cheapest finite alternative breaks a cycle.
-    - BestRowsTests: the best row of each candidate, and a zero-cost search.
-    - InventoryTests: the inventory keeps the full constructor slots of the declared arity.
-    - UnfoldTests: a DAG unfolds through earlier entries only.
-    - CheckerTests: a certificate DAG is accepted only when every entry is valid.
-    - IndexPathTests: index paths of stored tuples.
-    - RowTests: the constructor rows of a database.
-    - CandidateTests: an extraction candidate is checked against its budget and root.
-    - CodedTests: the coded extraction state of a row.
+    - [CycleTests] The cheapest finite alternative breaks a cycle.
+    - [BestRowsTests] The best row of each candidate, and a zero-cost search.
+    - [InventoryTests] The inventory keeps the full constructor slots of the declared arity.
+    - [UnfoldTests] A DAG unfolds through earlier entries only.
+    - [CheckerTests] A certificate DAG is accepted only when every entry is valid.
+    - [IndexPathTests] Index paths of stored tuples.
+    - [RowTests] The constructor rows of a database.
+    - [CandidateTests] An extraction candidate is checked against its budget and root.
+    - [CodedTests] The coded extraction state of a row.
     - Probes: the index interface and the timed queue and database observations. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia.

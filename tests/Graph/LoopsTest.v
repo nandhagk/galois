@@ -4,9 +4,9 @@
     For example, the inner cycle assigns vertex 3 to header 2.
 
     Groups:
-    - ForestTests: the parent and header of each vertex in the loop forest.
-    - ReducibilityTests: which fixture graphs are reducible.
-    - BodyTests: the natural loop body of each header.
+    - [ForestTests] The parent and header of each vertex in the loop forest.
+    - [ReducibilityTests] Which fixture graphs are reducible.
+    - [BodyTests] The natural loop body of each header.
 
     Builds on: graph fixtures, dominator construction and loop code. *)
 

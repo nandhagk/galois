@@ -5,9 +5,9 @@
     Builds on: Env and ValueOpenTest.
 
     Groups:
-    - EvalTests: evaluating terms with nested operands.
-    - RefineTests: refining a leaf from an assumed value.
-    - TraceTests: threading targets and environments through the operands of a node. *)
+    - [EvalTests] Evaluating terms with nested operands.
+    - [RefineTests] Refining a leaf from an assumed value.
+    - [TraceTests] Threading targets and environments through the operands of a node. *)
 
 From Stdlib Require Import List Bool Arith ZArith.
 From Galois.Base Require Import Key Map.

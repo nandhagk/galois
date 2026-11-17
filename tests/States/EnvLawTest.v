@@ -5,12 +5,12 @@
     Builds on: Env, Interval and ZLang.
 
     Groups:
-    - InclusionTests: inclusion of environments, with bottom and unreached states.
-    - WideningTests: widening of an environment with an unstable binding.
-    - SoundnessTests: the semantic clients of evaluation, assignment and guards.
-    - UpdateTests: concrete replacements of a key by an update.
-    - BigOTests: size and work bounds of the timed environment.
-    - EmptyKeyTests: the meaning of environments over a key type without elements. *)
+    - [InclusionTests] Inclusion of environments, with bottom and unreached states.
+    - [WideningTests] Widening of an environment with an unstable binding.
+    - [SoundnessTests] The semantic clients of evaluation, assignment and guards.
+    - [UpdateTests] Concrete replacements of a key by an update.
+    - [BigOTests] Size and work bounds of the timed environment.
+    - [EmptyKeyTests] The meaning of environments over a key type without elements. *)
 
 From Stdlib Require Import List Bool NArith ZArith.
 From Galois.Base Require Import Key KeySig Map.

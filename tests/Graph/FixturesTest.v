@@ -4,8 +4,8 @@
     For example, the two-entry join has no parent binding.
 
     Groups:
-    - ParentBindingTests: the parent of each vertex in the fixtures.
-    - OrderTests: the candidate order of the nested-loop fixture.
+    - [ParentBindingTests] The parent of each vertex in the fixtures.
+    - [OrderTests] The candidate order of the nested-loop fixture.
 
     Builds on: the first-order graph fixtures. *)
 

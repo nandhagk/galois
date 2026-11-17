@@ -5,11 +5,11 @@
     Builds on: Word, Op, Expr and Bridge.
 
     Groups:
-    - ApplicationTests: applying an operator to the consecutive variables of its arity.
-    - ExtensionTests: zero and sign extension of words.
-    - TruncationTests: truncation after extension and after an overflowing sum.
-    - ConcatTests: the high and low parts of a concatenation, and reversed extraction bounds.
-    - SecondLanguageTests: a bridge into a second operator language with its own values. *)
+    - [ApplicationTests] Applying an operator to the consecutive variables of its arity.
+    - [ExtensionTests] Zero and sign extension of words.
+    - [TruncationTests] Truncation after extension and after an overflowing sum.
+    - [ConcatTests] The high and low parts of a concatenation, and reversed extraction bounds.
+    - [SecondLanguageTests] A bridge into a second operator language with its own values. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op Expr Bridge.

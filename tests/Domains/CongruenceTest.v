@@ -4,20 +4,20 @@
     For example, the intersection of 1 modulo 4 and 3 modulo 6 is 9 modulo 12.
 
     Groups:
-    - NormalizationTests: reducing a congruence class to its normal residue.
-    - WidthOneTests: transfers at width one, where out-of-range constants are bottom.
-    - NegationTests: negation at wide words.
-    - AdditionTests: addition and subtraction keep common power-of-two factors.
-    - MultiplicationTests: products use the gcd of coefficient products.
-    - ShiftTests: shifts of residue classes.
-    - ProjectionTests: projection folds moduli into divisors of the word modulus.
-    - WideningTests: widening keeps stable operands and raw payloads.
-    - JoinMeetTests: join and meet of residue classes.
-    - RemainderTests: unsigned remainder with a zero divisor.
-    - ForwardEntryTests: forward entries of the transfer table.
-    - OneBitTests: forward entries at width one.
-    - EmptyOperandTests: empty operands give empty classes.
-    - MalformedTests: operand lists of the wrong length.
+    - [NormalizationTests] Reducing a congruence class to its normal residue.
+    - [WidthOneTests] Transfers at width one, where out-of-range constants are bottom.
+    - [NegationTests] Negation at wide words.
+    - [AdditionTests] Addition and subtraction keep common power-of-two factors.
+    - [MultiplicationTests] Products use the gcd of coefficient products.
+    - [ShiftTests] Shifts of residue classes.
+    - [ProjectionTests] Projection folds moduli into divisors of the word modulus.
+    - [WideningTests] Widening keeps stable operands and raw payloads.
+    - [JoinMeetTests] Join and meet of residue classes.
+    - [RemainderTests] Unsigned remainder with a zero divisor.
+    - [ForwardEntryTests] Forward entries of the transfer table.
+    - [OneBitTests] Forward entries at width one.
+    - [EmptyOperandTests] Empty operands give empty classes.
+    - [MalformedTests] Operand lists of the wrong length.
     Builds on: Congruence. *)
 
 From Stdlib Require Import ZArith List.

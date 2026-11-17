@@ -5,9 +5,9 @@
     Builds on: Egglog syntax and sorts.
 
     Groups:
-    - DeclarationTests: arity and the sorts that a duplicate declaration keeps.
-    - VariableTests: query variables and their sorts.
-    - ActionTests: the sorts of make, let, union and primitive results. *)
+    - [DeclarationTests] Arity and the sorts that a duplicate declaration keeps.
+    - [VariableTests] Query variables and their sorts.
+    - [ActionTests] The sorts of make, let, union and primitive results. *)
 
 From Stdlib Require Import List PArith.
 From Galois.Egglog Require Import Syntax Sorts.

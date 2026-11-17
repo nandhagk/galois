@@ -5,11 +5,11 @@
     Builds on: Index, Syntax and the operations-only value interface.
 
     Groups:
-    - NavigationTests: child and degree observations of a shared prefix.
-    - InsertTests: insertion of duplicate, shared-prefix and fresh suffixes.
-    - RemoveTests: removal of tuples, and pruning of empty nodes and table entries.
-    - TerminalTests: the empty tuple and the mixed cell kinds.
-    - NodeTests: node identifiers and cached degrees. *)
+    - [NavigationTests] Child and degree observations of a shared prefix.
+    - [InsertTests] Insertion of duplicate, shared-prefix and fresh suffixes.
+    - [RemoveTests] Removal of tuples, and pruning of empty nodes and table entries.
+    - [TerminalTests] The empty tuple and the mixed cell kinds.
+    - [NodeTests] Node identifiers and cached degrees. *)
 
 From Stdlib Require Import List PArith NArith.
 From Galois.Base Require Import Trie.

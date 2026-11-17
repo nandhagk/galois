@@ -5,11 +5,11 @@
     Builds on: Env, BitsLang and Tagged.
 
     Groups:
-    - AssumeTests: guards that refine the variables of a state.
-    - EvalTests: evaluating a term over an abstract state.
-    - RefineTests: refining a variable from the result of a term.
-    - EqualTests: guards on equality with a constant.
-    - DifferTests: guards on disequality with a constant. *)
+    - [AssumeTests] Guards that refine the variables of a state.
+    - [EvalTests] Evaluating a term over an abstract state.
+    - [RefineTests] Refining a variable from the result of a term.
+    - [EqualTests] Guards on equality with a constant.
+    - [DifferTests] Guards on disequality with a constant. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map.

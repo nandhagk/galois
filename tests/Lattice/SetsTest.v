@@ -5,9 +5,9 @@
     Builds on: Sets, TrieSet and Key.
 
     Groups:
-    - MayTests: the may lattice, where a set is above the sets it contains.
-    - MustTests: the must lattice, with an unrestricted option carrier.
-    - EnumerationTests: comparisons and listings of trie sets. *)
+    - [MayTests] The may lattice, where a set is above the sets it contains.
+    - [MustTests] The must lattice, with an unrestricted option carrier.
+    - [EnumerationTests] Comparisons and listings of trie sets. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key TrieSet Trie.

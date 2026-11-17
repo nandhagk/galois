@@ -5,10 +5,10 @@
     Builds on: Word.
 
     Groups:
-    - WrapTests: wrapping of raw integers to one, eight and sixty-four bits.
-    - SignedTests: signed interpretation of words at the sign-bit endpoints.
-    - ModulusTests: the modulus of a width, and its logarithm.
-    - SymbolicTests: general facts about wrapping and signed values, for any width. *)
+    - [WrapTests] Wrapping of raw integers to one, eight and sixty-four bits.
+    - [SignedTests] Signed interpretation of words at the sign-bit endpoints.
+    - [ModulusTests] The modulus of a width, and its logarithm.
+    - [SymbolicTests] General facts about wrapping and signed values, for any width. *)
 
 From Stdlib Require Import ZArith.
 From Galois.Bits Require Import Word.

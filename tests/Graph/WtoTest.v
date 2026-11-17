@@ -4,15 +4,15 @@
     For example, the nested graph retains its inner header at vertex two.
 
     Groups:
-    - ProducerTests: the orders that the producer builds from the fixtures.
-    - CheckerTests: the orders that the independent checker accepts and rejects.
-    - RankTests: the ranks and enclosing heads of a built order.
-    - EdgeScanTests: the edge scan over ranked and unranked vertices.
-    - RootTests: the candidate roots that a check accepts.
-    - CoverageTests: the length and membership coverage of a candidate.
-    - WideKeyTests: candidate vertices and edges beyond the graph's listed vertices.
-    - ParallelEdgeTests: candidates for a graph with parallel edges.
-    - StaleCacheTests: counted rebuilding with stale cached counts.
+    - [ProducerTests] The orders that the producer builds from the fixtures.
+    - [CheckerTests] The orders that the independent checker accepts and rejects.
+    - [RankTests] The ranks and enclosing heads of a built order.
+    - [EdgeScanTests] The edge scan over ranked and unranked vertices.
+    - [RootTests] The candidate roots that a check accepts.
+    - [CoverageTests] The length and membership coverage of a candidate.
+    - [WideKeyTests] Candidate vertices and edges beyond the graph's listed vertices.
+    - [ParallelEdgeTests] Candidates for a graph with parallel edges.
+    - [StaleCacheTests] Counted rebuilding with stale cached counts.
 
     Builds on: graph fixtures, preparation and weak topological orders. *)
 

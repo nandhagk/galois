@@ -5,9 +5,9 @@
     Builds on: Heap and Key.
 
     Groups:
-    - PopTests: which entry pop returns, and what an empty heap gives.
-    - PushTests: how a later push changes the priority of an entry.
-    - EntryTests: the order in which the entries of a heap are listed. *)
+    - [PopTests] Which entry pop returns, and what an empty heap gives.
+    - [PushTests] How a later push changes the priority of an entry.
+    - [EntryTests] The order in which the entries of a heap are listed. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Trie Heap.

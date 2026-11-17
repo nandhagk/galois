@@ -5,10 +5,10 @@
     Builds on: Disjunction, Flat and Key.
 
     Groups:
-    - CapTests: clipping and joining under caps of zero, one and two.
-    - OrderTests: the order of disjunctions, including its least elements.
-    - BottomTests: testing for the bottom disjunction.
-    - BoundTests: the time bounds of inclusion, join, bottom test and clipping. *)
+    - [CapTests] Clipping and joining under caps of zero, one and two.
+    - [OrderTests] The order of disjunctions, including its least elements.
+    - [BottomTests] Testing for the bottom disjunction.
+    - [BoundTests] The time bounds of inclusion, join, bottom test and clipping. *)
 
 From Stdlib Require Import List Bool NArith.
 From Galois.Base Require Import Key.

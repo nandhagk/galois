@@ -4,11 +4,11 @@
     For example, a dangling branch target contributes no edge.
 
     Groups:
-    - PrepareTests: the entries, blocks and edges that preparation keeps.
-    - AdjacencyTests: the adjacency rows, inventories and point tables of a prepared function.
-    - PresentationTests: the readers of the presentation of a prepared function.
-    - SharedKeyTests: point tables whose edges share a key.
-    - MeasurementTests: the shape of a generated program.
+    - [PrepareTests] The entries, blocks and edges that preparation keeps.
+    - [AdjacencyTests] The adjacency rows, inventories and point tables of a prepared function.
+    - [PresentationTests] The readers of the presentation of a prepared function.
+    - [SharedKeyTests] Point tables whose edges share a key.
+    - [MeasurementTests] The shape of a generated program.
 
     Builds on: Ssa.Present. *)
 

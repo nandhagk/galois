@@ -5,13 +5,13 @@
     Builds on: Fun.
 
     Groups:
-    - RawTests: operations on raw sixty-four-bit operands that are out of range.
-    - ArithmeticTests: addition, subtraction, multiplication and negation at boundaries.
-    - DivisionTests: signed and unsigned division and residues, including zero divisors.
-    - ShiftTests: left, logical and arithmetic shifts at and beyond the width.
-    - ComparisonTests: unsigned and signed comparisons at boundaries.
-    - PopcountTests: population counts, and the steps of the digit traversal.
-    - SymbolicTests: general facts about the operations, for any width. *)
+    - [RawTests] Operations on raw sixty-four-bit operands that are out of range.
+    - [ArithmeticTests] Addition, subtraction, multiplication and negation at boundaries.
+    - [DivisionTests] Signed and unsigned division and residues, including zero divisors.
+    - [ShiftTests] Left, logical and arithmetic shifts at and beyond the width.
+    - [ComparisonTests] Unsigned and signed comparisons at boundaries.
+    - [PopcountTests] Population counts, and the steps of the digit traversal.
+    - [SymbolicTests] General facts about the operations, for any width. *)
 
 From Stdlib Require Import ZArith.
 From Galois.Bits Require Import Word Fun.

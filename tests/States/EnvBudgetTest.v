@@ -5,9 +5,9 @@
     Builds on: EnvBudgetSig.
 
     Groups:
-    - UntagTests: reading a list of tagged values back as concrete pairs.
-    - BinaryTests: combining two tagged values with a payload function.
-    - IntersectionTests: intersecting two tagged values. *)
+    - [UntagTests] Reading a list of tagged values back as concrete pairs.
+    - [BinaryTests] Combining two tagged values with a payload function.
+    - [IntersectionTests] Intersecting two tagged values. *)
 
 From Stdlib Require Import List Arith PArith.
 From Galois.Domains Require Import WordSig.

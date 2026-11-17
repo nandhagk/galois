@@ -4,11 +4,11 @@
     For example, clipping an unbounded interval at width one gives [0, 1].
 
     Groups:
-    - ClippingTests: clipping a raw interval to a word keeps or changes its representation.
-    - RankTests: the rank of an interval with an infinite endpoint.
-    - PayloadWideningTests: widening payloads at word boundaries and thresholds.
-    - PayloadBoundsTests: raw intervals outside the word range act as bottom.
-    - ShiftTests: shifts with negative or ordered endpoints.
+    - [ClippingTests] Clipping a raw interval to a word keeps or changes its representation.
+    - [RankTests] The rank of an interval with an infinite endpoint.
+    - [PayloadWideningTests] Widening payloads at word boundaries and thresholds.
+    - [PayloadBoundsTests] Raw intervals outside the word range act as bottom.
+    - [ShiftTests] Shifts with negative or ordered endpoints.
     Builds on: Interval, IntervalOps, Thresholds and ZLang. *)
 
 From Stdlib Require Import List ZArith.

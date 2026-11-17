@@ -5,7 +5,7 @@
     Builds on: Intern and Key.
 
     Groups:
-    - GroupTests: the members of one bucket, in input order, for each input. *)
+    - [GroupTests] The members of one bucket, in input order, for each input. *)
 
 From Stdlib Require Import List.
 From Galois.Base Require Import Intern Key.

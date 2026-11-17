@@ -4,9 +4,9 @@
     For example, an addition result narrows its first operand.
 
     Groups:
-    - AddTests: backward addition narrows an operand.
-    - UnsignedTests: a false unsigned comparison narrows both operands.
-    - ResizeTests: a truncated result keeps an operand that already fits.
+    - [AddTests] Backward addition narrows an operand.
+    - [UnsignedTests] A false unsigned comparison narrows both operands.
+    - [ResizeTests] A truncated result keeps an operand that already fits.
     Builds on: IntervalBack and Thresholds. *)
 
 From Stdlib Require Import ZArith List.

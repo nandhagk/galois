@@ -4,12 +4,12 @@
     For example, the diamond places its join between its two incoming branches.
 
     Groups:
-    - CheckTests: which parent maps and orders the dominator checker accepts.
-    - EdgeRowTests: the edge rows that the fast check builds from a source row.
-    - AncestorTests: which vertices dominate which.
-    - LowHighTests: the low-high parent maps and their path compression.
-    - ProducerTests: the certificates that the producer builds.
-    - SubtreeSizeTests: the positions and subtree sizes of an order.
+    - [CheckTests] Which parent maps and orders the dominator checker accepts.
+    - [EdgeRowTests] The edge rows that the fast check builds from a source row.
+    - [AncestorTests] Which vertices dominate which.
+    - [LowHighTests] The low-high parent maps and their path compression.
+    - [ProducerTests] The certificates that the producer builds.
+    - [SubtreeSizeTests] The positions and subtree sizes of an order.
 
     Builds on: graph fixtures, preparation and the dominator code tower. *)
 

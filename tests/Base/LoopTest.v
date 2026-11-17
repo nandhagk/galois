@@ -5,8 +5,8 @@
     Builds on: Loop.
 
     Groups:
-    - FuelTests: runs that use up their fuel and return the state.
-    - StopTests: runs that stop early because the callback returns a result. *)
+    - [FuelTests] Runs that use up their fuel and return the state.
+    - [StopTests] Runs that stop early because the callback returns a result. *)
 
 From Stdlib Require Import NArith.
 From Galois.Base Require Import Loop.

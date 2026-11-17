@@ -4,9 +4,9 @@
     For example, the diamond has two predecessors at its join.
 
     Groups:
-    - SuccessorTests: the successor rows that preparation keeps.
-    - PredecessorTests: the predecessor rows that preparation builds.
-    - CountTests: the vertex and edge counts that preparation caches.
+    - [SuccessorTests] The successor rows that preparation keeps.
+    - [PredecessorTests] The predecessor rows that preparation builds.
+    - [CountTests] The vertex and edge counts that preparation caches.
 
     Builds on: graph fixtures and preparation. *)
 

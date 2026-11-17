@@ -5,8 +5,8 @@
     Builds on: Word, Op and Expr.
 
     Groups:
-    - EvaluationTests: nested applications, unbound variables and malformed arguments.
-    - GenericTests: a second operator language that uses the same syntax. *)
+    - [EvaluationTests] Nested applications, unbound variables and malformed arguments.
+    - [GenericTests] A second operator language that uses the same syntax. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op Expr.

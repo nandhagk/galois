@@ -5,9 +5,9 @@
     Builds on: Flat.
 
     Groups:
-    - JoinTests: joins of known, bottom and top values.
-    - OrderTests: the order of known values.
-    - RankTests: the rank of each level of the flat lattice. *)
+    - [JoinTests] Joins of known, bottom and top values.
+    - [OrderTests] The order of known values.
+    - [RankTests] The rank of each level of the flat lattice. *)
 
 From Stdlib Require Import Bool NArith.
 From Galois.Base Require Import Key.

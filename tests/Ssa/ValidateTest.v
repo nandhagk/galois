@@ -4,14 +4,14 @@
     For example, a target edge may pass the renamed value just defined in its source block.
 
     Groups:
-    - CheckTests: the checker on renamed instructions, arguments and arms.
-    - FuelTests: the observations of the renamed program at each fuel.
-    - BranchTests: the exit checks of a branch.
-    - ScanTests: the scan of bindings, with shadowed and overwritten locals.
-    - ExitTests: the exit tables after a local is overwritten.
-    - SsaTests: the strict SSA check and the local operands.
-    - WeakTests: a weakly related state pair.
-    - PaddingTests: padded certificates and the row budget.
+    - [CheckTests] The checker on renamed instructions, arguments and arms.
+    - [FuelTests] The observations of the renamed program at each fuel.
+    - [BranchTests] The exit checks of a branch.
+    - [ScanTests] The scan of bindings, with shadowed and overwritten locals.
+    - [ExitTests] The exit tables after a local is overwritten.
+    - [SsaTests] The strict SSA check and the local operands.
+    - [WeakTests] A weakly related state pair.
+    - [PaddingTests] Padded certificates and the row budget.
 
     Builds on: Ssa.Validate and Ssa.Present. *)
 

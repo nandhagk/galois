@@ -5,12 +5,12 @@
     Builds on: MapLattice, Map, Key and Simple.
 
     Groups:
-    - OrderTests: the order of maps with a bottom default.
-    - JoinTests: joins of singleton maps, and joins of a map with itself.
-    - WideningTests: widening and narrowing of maps.
-    - SetterTests: the default of a map at keys that were set or not set.
-    - LiftTests: the lifted environment with a fresh bottom.
-    - BoundTests: the time bounds of inclusion, join and the bottom test. *)
+    - [OrderTests] The order of maps with a bottom default.
+    - [JoinTests] Joins of singleton maps, and joins of a map with itself.
+    - [WideningTests] Widening and narrowing of maps.
+    - [SetterTests] The default of a map at keys that were set or not set.
+    - [LiftTests] The lifted environment with a fresh bottom.
+    - [BoundTests] The time bounds of inclusion, join and the bottom test. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key Map.

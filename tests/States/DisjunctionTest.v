@@ -5,12 +5,12 @@
     Builds on: State Disjunction, Env and the shared disjunction lattice.
 
     Groups:
-    - BottomTests: the empty disjunction.
-    - JoinTests: joins of capped alternatives.
-    - WideningTests: widening of alternatives, including the empty case.
-    - HavocTests: havoc of a capped disjunction.
-    - MeetTests: meets of capped disjunctions.
-    - PartitionTests: the labelled partition that the disjunction is built on. *)
+    - [BottomTests] The empty disjunction.
+    - [JoinTests] Joins of capped alternatives.
+    - [WideningTests] Widening of alternatives, including the empty case.
+    - [HavocTests] Havoc of a capped disjunction.
+    - [MeetTests] Meets of capped disjunctions.
+    - [PartitionTests] The labelled partition that the disjunction is built on. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map.

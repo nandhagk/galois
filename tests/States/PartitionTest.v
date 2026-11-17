@@ -5,10 +5,10 @@
     Builds on: Partition, Env, Interval and ZLang.
 
     Groups:
-    - CoverageTests: coverage of parts by labels.
-    - JoinTests: joins of parts, with and without a label overflow.
-    - WideningTests: routed widening of parts, and the widening coverage theorem.
-    - BigOTests: the size and work bounds of the timed partition and disjunction. *)
+    - [CoverageTests] Coverage of parts by labels.
+    - [JoinTests] Joins of parts, with and without a label overflow.
+    - [WideningTests] Routed widening of parts, and the widening coverage theorem.
+    - [BigOTests] The size and work bounds of the timed partition and disjunction. *)
 
 From Stdlib Require Import List NArith ZArith Lia.
 From Argent Require Import Time Tactics Std.

@@ -4,12 +4,12 @@
     For example, swapping loop parameters requires a checked temporary on the back edge.
 
     Groups:
-    - SwapLoopTests: a loop whose back edge swaps two parameters.
-    - MissingValueTests: a source that reads a value that is never defined.
-    - ImperativeTests: a program that is already imperative.
-    - MalformedTests: programs with malformed parameters or arities.
-    - MoveTests: the preconditions of a parallel move.
-    - CopyBlockTests: the copies of one block's edge.
+    - [SwapLoopTests] A loop whose back edge swaps two parameters.
+    - [MissingValueTests] A source that reads a value that is never defined.
+    - [ImperativeTests] A program that is already imperative.
+    - [MalformedTests] Programs with malformed parameters or arities.
+    - [MoveTests] The preconditions of a parallel move.
+    - [CopyBlockTests] The copies of one block's edge.
 
     Builds on: DestroyCode, ParMoveCode and the block interpreter. *)
 

@@ -4,11 +4,11 @@
     For example, assuming x + 3 = 7 refines x to 4.
 
     Groups:
-    - RawPayloadTests: a raw constant payload keeps its integer outside the width.
-    - ForwardTests: forward transfers on constant operands.
-    - AnnihilatorTests: zero and maximum operands fix the result of an operation.
-    - TaggedTests: tagged operands of mismatched widths.
-    - InverseTests: backward transfers from a known result.
+    - [RawPayloadTests] A raw constant payload keeps its integer outside the width.
+    - [ForwardTests] Forward transfers on constant operands.
+    - [AnnihilatorTests] Zero and maximum operands fix the result of an operation.
+    - [TaggedTests] Tagged operands of mismatched widths.
+    - [InverseTests] Backward transfers from a known result.
     Builds on: Const and Tagged. *)
 
 From Stdlib Require Import ZArith List.

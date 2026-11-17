@@ -4,10 +4,10 @@
     For example, an eight-bit upper endpoint of 256 becomes positive infinity.
 
     Groups:
-    - TransferTests: outward transfers construct their already-checked results.
-    - BudgetTests: endpoints within the budget are kept, and malformed ones are bottom.
-    - OverflowTests: results and operands beyond the budget become top or are kept.
-    - PermutedRawTests: a lawful raw domain can still break the cutoff's bottom laws.
+    - [TransferTests] Outward transfers construct their already-checked results.
+    - [BudgetTests] Endpoints within the budget are kept, and malformed ones are bottom.
+    - [OverflowTests] Results and operands beyond the budget become top or are kept.
+    - [PermutedRawTests] A lawful raw domain can still break the cutoff's bottom laws.
     Builds on: CutInterval, Interval, Thresholds and ZLang. *)
 
 From Stdlib Require Import List ZArith.

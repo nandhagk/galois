@@ -5,9 +5,9 @@
     Builds on: WithTop and Simple.
 
     Groups:
-    - JoinTests: joins with the top element, and the bottom.
-    - OrderTests: the order of the top element against a known value.
-    - RankTests: the heights and the ranks of the lifted lattice. *)
+    - [JoinTests] Joins with the top element, and the bottom.
+    - [OrderTests] The order of the top element against a known value.
+    - [RankTests] The heights and the ranks of the lifted lattice. *)
 
 From Stdlib Require Import NArith.
 From Galois.Lattice Require Import WithTop Simple JoinWidening.

@@ -4,8 +4,8 @@
     For example, a self-loop produces a back edge.
 
     Groups:
-    - VisitOrderTests: the vertices that the search enters, in order.
-    - TraceTests: the full trace of events, including edge classes.
+    - [VisitOrderTests] The vertices that the search enters, in order.
+    - [TraceTests] The full trace of events, including edge classes.
 
     Builds on: graph fixtures and search. *)
 

@@ -5,10 +5,10 @@
     Builds on: BitsChecks and the constant value domain.
 
     Groups:
-    - DivZeroTests: division by a divisor range that may be zero.
-    - BoundsTests: an index checked against an array bound.
-    - NullDerefTests: a dereference of a pointer of unknown value.
-    - OverflowTests: sums and products checked against their word width. *)
+    - [DivZeroTests] Division by a divisor range that may be zero.
+    - [BoundsTests] An index checked against an array bound.
+    - [NullDerefTests] A dereference of a pointer of unknown value.
+    - [OverflowTests] Sums and products checked against their word width. *)
 
 From Stdlib Require Import List ZArith Bool.
 From Galois.Bits Require Import Word Op.

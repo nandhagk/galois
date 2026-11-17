@@ -5,8 +5,8 @@
     Builds on: Key.
 
     Groups:
-    - ScalarTests: the codes of scalar values, including zero and the signs of integers.
-    - WidthTests: the widths in bits of the scalar keys. *)
+    - [ScalarTests] The codes of scalar values, including zero and the signs of integers.
+    - [WidthTests] The widths in bits of the scalar keys. *)
 
 From Stdlib Require Import Bool NArith ZArith.
 From Galois.Base Require Import Key.

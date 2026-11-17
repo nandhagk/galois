@@ -4,13 +4,13 @@
     For example, a read of a variable in its own assignment stays live before that assignment.
 
     Groups:
-    - LiveRowTests: the live rows of small functions.
-    - KillTests: whether the parallel edges between two points kill a variable.
-    - EntryTableTests: the entry table that groups block entries.
-    - EncodingReuseTests: the search helpers reuse the point encodings they are given.
-    - CachedPredecessorTests: predecessors that come from the cached incoming table.
-    - CachedSearchTests: cached search agrees with its specification.
-    - DuplicateEdgeTests: a repeated edge inventory.
+    - [LiveRowTests] The live rows of small functions.
+    - [KillTests] Whether the parallel edges between two points kill a variable.
+    - [EntryTableTests] The entry table that groups block entries.
+    - [EncodingReuseTests] The search helpers reuse the point encodings they are given.
+    - [CachedPredecessorTests] Predecessors that come from the cached incoming table.
+    - [CachedSearchTests] Cached search agrees with its specification.
+    - [DuplicateEdgeTests] A repeated edge inventory.
 
     Builds on: Ssa.Live and Ssa.Present. *)
 

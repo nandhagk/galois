@@ -5,14 +5,14 @@
     Builds on: Word, Fun, Testbit and Arith.
 
     Groups:
-    - SignedTests: signed endpoints at width one and width eight.
-    - DivisionTests: division and remainders, with overflow and zero divisors.
-    - ArithmeticTests: products and powers of two.
-    - ComparisonTests: the sign bit as a bias for comparisons.
-    - ShiftTests: shifts beyond the width.
-    - RotationTests: rotations with cyclic amounts.
-    - CountTests: leading zeros, trailing zeros and population counts.
-    - BitwiseTests: truth tables and testbit observations. *)
+    - [SignedTests] Signed endpoints at width one and width eight.
+    - [DivisionTests] Division and remainders, with overflow and zero divisors.
+    - [ArithmeticTests] Products and powers of two.
+    - [ComparisonTests] The sign bit as a bias for comparisons.
+    - [ShiftTests] Shifts beyond the width.
+    - [RotationTests] Rotations with cyclic amounts.
+    - [CountTests] Leading zeros, trailing zeros and population counts.
+    - [BitwiseTests] Truth tables and testbit observations. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Fun Testbit Arith.

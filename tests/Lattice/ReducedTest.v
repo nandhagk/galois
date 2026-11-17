@@ -5,9 +5,9 @@
     Builds on: Reduced and Simple.
 
     Groups:
-    - ReduceTests: the reducers, and the order that they give.
-    - JoinTests: joins of reduced pairs, and their compatibility.
-    - HeightTests: the rank of reduced pairs. *)
+    - [ReduceTests] The reducers, and the order that they give.
+    - [JoinTests] Joins of reduced pairs, and their compatibility.
+    - [HeightTests] The rank of reduced pairs. *)
 
 From Stdlib Require Import Bool.
 From Galois.Lattice Require Import Reduced Simple Product JoinWidening.

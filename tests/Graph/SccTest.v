@@ -4,8 +4,8 @@
     For example, a self-loop forms one singleton component.
 
     Groups:
-    - ComponentTests: the components of the graph fixtures.
-    - PreparedInputTests: components from prepared inputs with stale or unlisted parts.
+    - [ComponentTests] The components of the graph fixtures.
+    - [PreparedInputTests] Components from prepared inputs with stale or unlisted parts.
 
     Builds on: graph fixtures, preparation and SCC computation. *)
 

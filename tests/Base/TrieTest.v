@@ -5,9 +5,9 @@
     Builds on: PTrieCode.
 
     Groups:
-    - LookupTests: reading keys from a trie, present or absent.
-    - UpdateTests: setting a key, present or absent, and removing one.
-    - ForallTests: pairwise comparison of two tries. *)
+    - [LookupTests] Reading keys from a trie, present or absent.
+    - [UpdateTests] Setting a key, present or absent, and removing one.
+    - [ForallTests] Pairwise comparison of two tries. *)
 
 From Stdlib Require Import NArith.
 From Galois.Base Require Import Trie.

@@ -5,9 +5,9 @@
     Builds on: Alarms, Env and Interval.
 
     Groups:
-    - InvAtTests: the invariant recorded at a program point.
-    - AlarmTests: whether one check raises an alarm.
-    - AlarmsTests: which checks raise alarms, and in what order. *)
+    - [InvAtTests] The invariant recorded at a program point.
+    - [AlarmTests] Whether one check raises an alarm.
+    - [AlarmsTests] Which checks raise alarms, and in what order. *)
 
 From Stdlib Require Import List ZArith Bool.
 From Galois.Base Require Import Key Map.
