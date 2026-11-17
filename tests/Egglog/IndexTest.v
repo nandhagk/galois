@@ -110,3 +110,25 @@ Example unallocated_node_queries :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Inserting a second triple follows the shared prefix and allocates only its fresh suffix. *)
+Example insert_shared_prefix_fresh_suffix :
+  let first := [Val 2; Val 3; Val 7]%positive in
+  let second := [Val 2; Val 5; Val 11]%positive in
+  let ix := RuntimeIndex.insert second (RuntimeIndex.insert first RuntimeIndex.empty) in
+  (RuntimeIndex.contains first ix, RuntimeIndex.contains second ix,
+   RuntimeIndex.child ix 1 (Val 2)%positive,
+   RuntimeIndex.child ix 2 (Val 5)%positive,
+   RuntimeIndex.child ix 5 (Val 11)%positive, RuntimeIndex.next ix) =
+    (true, true, Some 2%positive, Some 5%positive, Some 6%positive, 6%positive).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A missing middle cell makes removal retain the entire original triple index. *)
+Example absent_removal_after_shared_prefix :
+  let ix := RuntimeIndex.insert [Val 2; Val 3; Val 7]%positive RuntimeIndex.empty in
+  RuntimeIndex.remove [Val 2; Val 5; Val 11]%positive ix = ix.
+Proof.
+  vm_compute. reflexivity.
+Qed.

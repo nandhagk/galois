@@ -443,10 +443,15 @@ Module IndexCode (V : VALUE_OPS) <: INDEX_OPS V.
     if contains r ix then mark_terminal (fst st) (snd st) false (index_cell_width ix) else ix.
 
   Definition insert (r : list (cell V.t)) (ix : t) : t :=
-    insert_finish r ix (fold_left insert_step_st r (start ix)).
+    if contains r ix then ix else
+      let st := fold_left insert_step_st r (start ix) in
+      mark_terminal (fst st) (snd st) true (Nat.max (index_cell_width ix) (tuple_bits r)).
 
   Definition remove (r : list (cell V.t)) (ix : t) : t :=
-    remove_finish r ix (fold_left remove_step_st r (start ix)).
+    if contains r ix then
+      let st := fold_left remove_step_st r (start ix) in
+      mark_terminal (fst st) (snd st) false (index_cell_width ix)
+    else ix.
 End IndexCode.
 
 Module Index (V : VALUE) <: INDEX V.
@@ -481,6 +486,20 @@ Module Index (V : VALUE) <: INDEX V.
     parents_unique ix /\ counted_edges ix.
   Definition wf (a : nat) (ix : t) : Prop :=
     valid ix /\ (forall r, mem ix r -> length r = a).
+
+  (** Checking membership before insertion preserves the specified walk result. *)
+  Lemma insert_agrees : forall r ix,
+    insert r ix = insert_finish r ix (fold_left insert_step_st r (start ix)).
+  Proof.
+    intros r ix. unfold insert, insert_finish. destruct (contains r ix); reflexivity.
+  Qed.
+
+  (** Checking membership before removal preserves the specified walk result. *)
+  Lemma remove_agrees : forall r ix,
+    remove r ix = remove_finish r ix (fold_left remove_step_st r (start ix)).
+  Proof.
+    intros r ix. unfold remove, remove_finish. destruct (contains r ix); reflexivity.
+  Qed.
 
   (** The tuple's maximum cell width covers every cell that occurs in it. *)
   Lemma tuple_bits_member : forall r c, In c r -> cell_bits V.encode c <= tuple_bits r.
@@ -4044,6 +4063,30 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     lia.
   Qed.
 
+  (** Guarding insertion avoids the discarded walk and the finishing wrapper call. *)
+  Lemma T_insert_fold_finish_le : forall r ix,
+    (T_insert r ix <= 1 + (T_start ix +
+      List.T_fold_left insert_step_st T_insert_step_st r (start ix) +
+      T_insert_finish r ix (fold_left insert_step_st r (start ix))))%N.
+  Proof.
+    intros r ix. time_unfold T_insert. time_unfold T_insert_finish.
+    change (fun (st : walk_state) (c : cell V.t) => T_insert_step_st st c)
+      with T_insert_step_st.
+    destruct (contains r ix); time_cbn; lia.
+  Qed.
+
+  (** Guarding removal avoids the discarded walk and the finishing wrapper call. *)
+  Lemma T_remove_fold_finish_le : forall r ix,
+    (T_remove r ix <= 1 + (T_start ix +
+      List.T_fold_left remove_step_st T_remove_step_st r (start ix) +
+      T_remove_finish r ix (fold_left remove_step_st r (start ix))))%N.
+  Proof.
+    intros r ix. time_unfold T_remove. time_unfold T_remove_finish.
+    change (fun (st : walk_state) (c : cell V.t) => T_remove_step_st st c)
+      with T_remove_step_st.
+    destruct (contains r ix); time_cbn; lia.
+  Qed.
+
   (** Insertion's complete clock follows from its actual walk and finishing pass. *)
   Lemma T_insert_total_budget : forall r ix, valid ix ->
     (T_insert r ix <= 512 * (PTrieT.c_trie + V.c_key + 1) *
@@ -4060,7 +4103,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     rewrite Hlength in Hfinish |- *.
     set (amount := N.of_nat (length r)) in *.
     pose proof (mutation_total_budget cost bits amount Hcost Hbits) as Hbudget.
-    time_unfold T_insert. rewrite T_start_exact.
+    eapply N.le_trans; [apply T_insert_fold_finish_le |]. rewrite T_start_exact.
     change (1 + (2 + List.T_fold_left insert_step_st T_insert_step_st r (start ix) +
       T_insert_finish r ix (fold_left insert_step_st r (start ix))) <=
       512 * cost * (amount + 1) * bits)%N.
@@ -4083,7 +4126,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     rewrite Hlength in Hfinish |- *.
     set (amount := N.of_nat (length r)) in *.
     pose proof (mutation_total_budget cost bits amount Hcost Hbits) as Hbudget.
-    time_unfold T_remove. rewrite T_start_exact.
+    eapply N.le_trans; [apply T_remove_fold_finish_le |]. rewrite T_start_exact.
     change (1 + (2 + List.T_fold_left remove_step_st T_remove_step_st r (start ix) +
       T_remove_finish r ix (fold_left remove_step_st r (start ix))) <=
       512 * cost * (amount + 1) * bits)%N.
@@ -4194,14 +4237,14 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Lemma F_insert_steps : forall r ix, inv ix ->
     insert r ix = insert_finish r ix (fold_left insert_step_st r (start ix)).
   Proof.
-    reflexivity.
+    intros r ix _. apply insert_agrees.
   Qed.
 
   (** Removal follows its named state walk. *)
   Lemma F_remove_steps : forall r ix, inv ix ->
     remove r ix = remove_finish r ix (fold_left remove_step_st r (start ix)).
   Proof.
-    reflexivity.
+    intros r ix _. apply remove_agrees.
   Qed.
 
   (** Insertion aggregates the path-step charges. *)
