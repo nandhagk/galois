@@ -6,16 +6,35 @@
     For example, the rule [path(x, z) :- path(x, y), edge(y, z)] joins the slots
     [(path, [0; 1])] and [(edge, [0; 1])] on the join variable of [y].
     Builds on: RunSig, Sorts, the binary trie, the self-delimiting codes and the binary-fuel
-    loop. *)
+    loop.
+
+    Main results
+    - [universe_spec] The finite universe contains exactly declared relational tuples over active
+      values.
+    - [herbrand_spec] The Herbrand budget counts the pinned finite universe.
+    - [load_spec] Loading initializes precisely the declarations and compiled index slots.
+    - [run_least] A saturated relational result is included in every closed extension of its seed
+      that keeps the program's kinds and sorts, so a relation row of the extension has no output.
+    - [plan_complexity] Planning is cubic in the program text, because sorting the positions of an
+      atom compares unary join indices.
+    - [load_complexity] Loading is linear in its declarations and slots, with the layout work of
+      sorting.
+    - [check_plan_complexity] Plan checking is linear in the program and plan syntax at their
+      identifier width.
+    - [run_complexity] A run costs its trace work at the identifier width, its fuel counter and
+      its scaled initial credit.
+    - [round_complexity] A round costs its round work at the identifier width and its scaled
+      initial credit. *)
 
 From Stdlib Require Import List PArith NArith Arith Bool Lia Relations.Relation_Operators
   Sorting.Sorted Sorting.Permutation PeanoNat.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
 From Galois.Base Require Import Code Loop Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts RunSig.
 
 Import Lia.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** * Record readers *)
 
@@ -20859,9 +20878,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
 
   (** Planning is cubic in the program text, because sorting the positions of an atom
       compares unary join indices. *)
-  Lemma plan_complexity : bigO (fun _ => True)
-    (fun p => N.of_nat ((size_program p + 1) * (size_program p + 1) * (size_program p + 1)))
-    T_plan.
+  Lemma plan_complexity :
+    T_plan p ∈ 𝑂(N.of_nat ((size_program p + 1) * (size_program p + 1) * (size_program p + 1)))
+      for p.
   Proof.
     apply bigO_intro with (c := c_run). intros p _.
     pose proof (T_plan_le p) as Htime.
@@ -20869,12 +20888,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** Loading is linear in its declarations and slots, with the layout work of sorting. *)
-  Lemma load_complexity : bigO (fun _ => True)
-    (fun x : program V.t * compiled V.t => load_cost (fst x) (snd x))
-    (fun x => T_load (fst x) (snd x)).
+  Lemma load_complexity : T_load p cp ∈ 𝑂(load_cost p cp) for (p, cp).
   Proof.
     apply bigO_intro with (c := (c_run + D.c_db)%N). intros [p cp] _.
-    cbn [fst snd].
     pose proof (T_load_le p cp) as Hload.
     pose proof (D.T_init_le (decls V.t p) (Syntax.slots V.t cp)) as Hinit.
     unfold load_cost. rewrite !Nat2N.inj_add, !Nat2N.inj_mul.
@@ -20882,13 +20898,12 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** Plan checking is linear in the program and plan syntax at their identifier width. *)
-  Lemma check_plan_complexity : bigO (fun _ => True)
-    (fun x : program V.t * compiled V.t =>
-      N.of_nat ((size_program (fst x) + size_compiled (snd x) + 1) * (wbits (fst x) + 1)))
-    (fun x => T_check_plan (fst x) (snd x)).
+  Lemma check_plan_complexity :
+    T_check_plan p cp ∈ 𝑂(N.of_nat ((size_program p + size_compiled cp + 1) * (wbits p + 1)))
+      for (p, cp).
   Proof.
     apply bigO_intro with (c := c_run). intros [p cp] _.
-    cbn [fst snd]. pose proof (T_check_plan_le p cp) as Htime.
+    pose proof (T_check_plan_le p cp) as Htime.
     rewrite Nat2N.inj_mul. nia.
   Qed.
 
@@ -20906,13 +20921,11 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
 
   (** A run costs its trace work at the identifier width, its fuel counter and its scaled
       initial credit. *)
-  Lemma run_complexity : bigO
-    (fun x : N * nat * program V.t * compiled V.t * limits * D.t =>
-      let '(B, U, p, cp, lim, db) := x in
-      plans_ok p cp /\ D.wf db /\ loaded p cp db /\
-      (D.ids (snd (run p cp lim db)) <= B)%N /\ D.unit (snd (run p cp lim db)) <= U)
-    (fun x => let '(B, U, p, cp, lim, db) := x in run_cost B U p cp lim db)
-    (fun x => let '(_, _, p, cp, lim, db) := x in T_run p cp lim db).
+  Lemma run_complexity :
+    T_run p cp lim db ∈ 𝑂(run_cost B U p cp lim db)
+      for (B, U, p, cp, lim, db) |
+        plans_ok p cp /\ D.wf db /\ loaded p cp db /\
+        (D.ids (snd (run p cp lim db)) <= B)%N /\ D.unit (snd (run p cp lim db)) <= U.
   Proof.
     apply bigO_intro with (c := (c_run + 1)%N).
     intros [[[[[B U] p] cp] lim] db] [Hplans [Hwf [Hloaded [Hids Hunit]]]].
@@ -20923,13 +20936,11 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** A round costs its round work at the identifier width and its scaled initial credit. *)
-  Lemma round_complexity : bigO
-    (fun x : N * nat * program V.t * compiled V.t * bool * D.t =>
-      let '(B, U, p, cp, nv, db) := x in
-      plans_ok p cp /\ D.wf db /\ loaded p cp db /\
-      (D.ids (round p cp nv db) <= B)%N /\ D.unit (round p cp nv db) <= U)
-    (fun x => let '(B, U, p, cp, nv, db) := x in round_cost B U p cp nv db)
-    (fun x => let '(_, _, p, cp, nv, db) := x in T_round p cp nv db).
+  Lemma round_complexity :
+    T_round p cp nv db ∈ 𝑂(round_cost B U p cp nv db)
+      for (B, U, p, cp, nv, db) |
+        plans_ok p cp /\ D.wf db /\ loaded p cp db /\
+        (D.ids (round p cp nv db) <= B)%N /\ D.unit (round p cp nv db) <= U.
   Proof.
     apply bigO_intro with (c := (c_run + 1)%N).
     intros [[[[[B U] p] cp] nv] db] [Hplans [Hwf [Hloaded [Hids Hunit]]]].
