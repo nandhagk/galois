@@ -157,8 +157,9 @@ End BuildTests.
 
 Module PlacementTests.
 
-  (** The definition index lists the variable once for each definition in its block. *)
-  Example definition_index_keeps_repeated_definitions :
+  (** Two definitions of a variable in one block give one entry, and the entry block's input
+      gives a second, so the row is [1; 1] and not [1; 1; 1]. *)
+  Example definition_index_deduplicates_within_blocks :
     frontier_row (TestBuild.def_index build_straight) 1 = [1; 1].
   Proof.
     vm_compute; reflexivity.
@@ -225,14 +226,20 @@ End RejectionTests.
 
 Module ShortCircuitTests.
 
+  (** The path that produces a candidate and then validates it, which the build must agree with. *)
+  Definition checked_produce (p : TestSource.t) :=
+    match TestBuild.produce p with
+    | None => None
+    | Some (s, c) =>
+      if andb (TestValidate.check p s c) (TestValidate.check_ssa s) then Some s else None
+    end.
+
+  (** One source that is accepted and one that is rejected. *)
+  Definition short_circuit_sources := [build_diamond; build_unavailable].
+
   (** Building agrees with producing and then validating, on accepted and rejected sources. *)
   Example build_agrees_with_checked_produce :
-    map TestBuild.build [build_diamond; build_unavailable] =
-      map (fun p => match TestBuild.produce p with
-        | None => None
-        | Some (s, c) =>
-          if andb (TestValidate.check p s c) (TestValidate.check_ssa s) then Some s else None
-        end) [build_diamond; build_unavailable].
+    map TestBuild.build short_circuit_sources = map checked_produce short_circuit_sources.
   Proof.
     vm_compute; reflexivity.
   Qed.
@@ -272,32 +279,34 @@ Module LocalTemporaryTests.
     vm_compute; reflexivity.
   Qed.
 
+  (** The placement table over the complete universe of variables, not only the live ones. *)
+  Definition complete_placement :=
+    TestInputBuild.placement_with (TestInputBuild.frontiers build_local_temporaries)
+      (TestInputBuild.def_index build_local_temporaries)
+      (TestInputBuild.live_sets (TestInputLive.live_in build_local_temporaries))
+      local_universe.
+
   (** Filtering leaves exactly the same placement table as the complete universe. *)
   Example placement_matches_complete_universe :
-    TestInputBuild.placement build_local_temporaries =
-      TestInputBuild.placement_with (TestInputBuild.frontiers build_local_temporaries)
-        (TestInputBuild.def_index build_local_temporaries)
-        (TestInputBuild.live_sets (TestInputLive.live_in build_local_temporaries))
-        local_universe.
+    TestInputBuild.placement build_local_temporaries = complete_placement.
   Proof.
     vm_compute; reflexivity.
   Qed.
 
-  (** A function accepted by the original guard keeps its exact checked candidate. *)
+  (** The candidate that the complete placement renames, kept only if the validator accepts it. *)
+  Definition checked_local_build :=
+    match TestInputBuild.rename build_local_temporaries
+      (TestInputBuild.dom_tree build_local_temporaries) complete_placement
+      (TestInputLive.live_in build_local_temporaries) with
+    | None => None
+    | Some (s, c) =>
+      if andb (TestValidate.check build_local_temporaries s c) (TestValidate.check_ssa s)
+      then Some s else None
+    end.
+
+  (** A function that the validator accepts keeps its exact checked candidate. *)
   Example checked_build_is_unchanged :
-    TestInputBuild.build build_local_temporaries =
-      match TestInputBuild.rename build_local_temporaries
-        (TestInputBuild.dom_tree build_local_temporaries)
-        (TestInputBuild.placement_with (TestInputBuild.frontiers build_local_temporaries)
-          (TestInputBuild.def_index build_local_temporaries)
-          (TestInputBuild.live_sets (TestInputLive.live_in build_local_temporaries))
-          local_universe)
-        (TestInputLive.live_in build_local_temporaries) with
-      | None => None
-      | Some (s, c) =>
-        if andb (TestValidate.check build_local_temporaries s c) (TestValidate.check_ssa s)
-        then Some s else None
-      end.
+    TestInputBuild.build build_local_temporaries = checked_local_build.
   Proof.
     vm_compute; reflexivity.
   Qed.
