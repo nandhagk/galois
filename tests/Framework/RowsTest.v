@@ -2,12 +2,22 @@
 
     Explicit query frames retain the order of a row's two reads.
     For example, reversing the read order changes checker acceptance.
+
+    Groups:
+    - Reads: a row accepts the values it reads in order and rejects them reversed.
+    - Empty: a system without rows accepts any values.
+    - Constant: a row whose target is false rejects the empty candidate.
+
     Builds on: Fixpoint.Query and Fixpoint.Check. *)
 
 From Stdlib Require Import List Bool.
 From Galois.Base Require Import Key Trie.
 From Galois.Fixpoint Require Import Query SystemSig Check.
 Import List.ListNotations.
+
+(** * Fixtures *)
+
+(** Booleans ordered by implication, with false as bottom and or as join. *)
 Module BoolOps.
   Definition t := bool.
   Definition leb := implb.
@@ -16,6 +26,7 @@ Module BoolOps.
   Definition join := orb.
 End BoolOps.
 
+(** A system with one row, whose two reads are true and then the answer of the first read. *)
 Module Rows <: SYSTEM_OPS BoolOps.
   Definition prog := option bool.
   Definition key := bool.
@@ -35,46 +46,68 @@ Module Rows <: SYSTEM_OPS BoolOps.
   Definition deps (_ : prog) (_ : unit) := [true; false].
   Definition sides (_ : prog) (_ : unit) : list bool := [].
 End Rows.
+
 Module C := CheckCode BoolOps Rows.
+
+(** The candidate that maps false to the pair (false, true) and no other key. *)
 Definition values := PTrieCode.set (Rows.key_code false) (false, true) PTrieCode.empty.
 
-Example ordered_row_accepts : C.check (Some true) values = true.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+(** * Reads *)
 
-Example reversed_row_rejects : C.check (Some false) values = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+Module ReadTests.
 
-Example empty_rows : C.check None values = true.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** The row with the reads in their stated order is accepted by the candidate. *)
+  Example ordered_reads_accepted : C.check (Some true) values = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Module Constant <: SYSTEM_OPS BoolOps.
-  Definition prog := unit.
-  Definition key := bool.
-  Definition row := unit.
-  Definition frame := unit.
-  Definition key_code := BoolKeyCode.encode.
-  Definition key_eqb := Bool.eqb.
-  Definition rows (_ : unit) := [tt].
-  Definition target (_ : unit) (_ : unit) := false.
-  Definition start (_ : unit) (_ : unit) : query bool bool unit := Ret true.
-  Definition resume (_ : unit) (_ : unit) (a : bool) : query bool bool unit := Ret a.
-  Definition deps (_ : unit) (_ : unit) : list bool := [].
-  Definition sides (_ : unit) (_ : unit) : list bool := [].
-End Constant.
-Module CC := CheckCode BoolOps Constant.
+  (** The row with the reads reversed is rejected by the same candidate. *)
+  Example reversed_reads_rejected : C.check (Some false) values = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Example constant_row_rejects_bottom : CC.check tt PTrieCode.empty = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+End ReadTests.
 
-(* arbitrary_reader_reflection quantified over the retired Rows.t closure record.
-   SYSTEM_SPEC.post_solution now specifies the query evaluator directly.
-   The old empty_rows was universal in the reader and assignment. This executable
-   empty inventory retains its acceptance observation without claiming that theorem. *)
+(** * Empty *)
+
+Module EmptyTests.
+
+  (** A program without rows is accepted by the candidate. *)
+  Example no_rows_accepted : C.check None values = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End EmptyTests.
+
+(** * Constant *)
+
+Module ConstantTests.
+
+  (** A system whose only row has target false rejects the empty candidate. *)
+  Module Constant <: SYSTEM_OPS BoolOps.
+    Definition prog := unit.
+    Definition key := bool.
+    Definition row := unit.
+    Definition frame := unit.
+    Definition key_code := BoolKeyCode.encode.
+    Definition key_eqb := Bool.eqb.
+    Definition rows (_ : unit) := [tt].
+    Definition target (_ : unit) (_ : unit) := false.
+    Definition start (_ : unit) (_ : unit) : query bool bool unit := Ret true.
+    Definition resume (_ : unit) (_ : unit) (a : bool) : query bool bool unit := Ret a.
+    Definition deps (_ : unit) (_ : unit) : list bool := [].
+    Definition sides (_ : unit) (_ : unit) : list bool := [].
+  End Constant.
+
+  Module CC := CheckCode BoolOps Constant.
+
+  (** The empty candidate fails the constant row. *)
+  Example constant_row_rejects_empty : CC.check tt PTrieCode.empty = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End ConstantTests.
