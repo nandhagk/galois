@@ -4,9 +4,8 @@
     For example, a self edge needs a configured head.
 
     Groups:
-    - Fixtures: the schedule of the self-dependent system, a plain policy and a head.
-    - Graph: the vertices and successors of the dependency graph.
-    - Cut: a self edge is cut only when the policy configures a head.
+    - [GraphTests] The vertices and successors of the dependency graph.
+    - [CutTests] A self edge is cut only when the policy configures a head.
 
     Builds on: Fixpoint.Schedule and Fixpoint.WorklistSelfTest. *)
 
