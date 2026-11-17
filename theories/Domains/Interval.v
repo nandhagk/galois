@@ -14,6 +14,41 @@ Module Nat.
   TimeFun Nat.max.
 End Nat.
 
+(** Counting one bits provides credit for a sequence of binary increments. *)
+Fixpoint interval_counter_ones (p : positive) : N :=
+  match p with
+  | xH => 1%N
+  | xO q => interval_counter_ones q
+  | xI q => (1 + interval_counter_ones q)%N
+  end.
+
+(** Increment spends only constant time after charging the change in one bits. *)
+Lemma interval_succ_credit : forall p,
+  (Std.Pos.T_succ p + interval_counter_ones (Pos.succ p) <=
+    2 + interval_counter_ones p)%N.
+Proof.
+  induction p as [p IH|p IH|]; time_unfold Std.Pos.T_succ; time_cbn; lia.
+Qed.
+
+(** Computing a positive bit count makes linearly many amortized increments. *)
+Lemma interval_size_credit : forall p,
+  (Fun.Pos.T_size p + interval_counter_ones (Pos.size p) <=
+    3 * N.of_nat (Pos.size_nat p))%N.
+Proof.
+  induction p as [p IH|p IH|]; time_unfold Fun.Pos.T_size; time_cbn.
+  all: try pose proof (interval_succ_credit (Pos.size p)) as Hsucc.
+  all: lia.
+Qed.
+
+(** Integer logarithm scans its input with a binary counter of linear total cost. *)
+Lemma interval_log2_time : forall z,
+  (Fun.Z.T_log2 z <= 4 * N.of_nat (Z.size_nat z + 1))%N.
+Proof.
+  intros [|[p|p|]|p]; time_unfold Fun.Z.T_log2; time_cbn.
+  all: try pose proof (interval_size_credit p) as Hsize.
+  all: rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ; lia.
+Qed.
+
 Module IntervalBaseCode (T : THRESHOLDS_OPS) <: INTERVAL_SCALAR_OPS T.
   Include INTERVAL_SCALAR_SPEC T.
 End IntervalBaseCode.
@@ -1930,6 +1965,20 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
       cbn [Z.size_nat Pos.size_nat Nat.pow] in *; nia.
   Qed.
 
+  (** Bitwise conjunction compares two lower bounds and selects an upper endpoint. *)
+  Lemma bitand_time_linear : forall a b,
+    (T_bitand a b <= 16 * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      time_unfold T_bitand; try nia.
+    pose proof (Std.Z.T_leb_le 0 la) as Hla.
+    pose proof (Std.Z.T_leb_le 0 lb) as Hlb.
+    pose proof (Std.Z.T_min_le ha hb) as Hmin.
+    time_unfold Datatypes.T_andb.
+    destruct ((0 <=? la)%Z && (0 <=? lb)%Z);
+      unfold size, itv_bits, bnd_bits; cbn [Z.size_nat] in *; nia.
+  Qed.
+
   (** Computing a bitwise cap fits the published quadratic work. *)
   Lemma bitand_time_quadratic : forall a b,
     (T_bitand a b <= 16 * N.of_nat (binary_work a b))%N.
@@ -2410,6 +2459,33 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     change (Z.size_nat 0) with 0. cbn [Nat.max]. lia.
   Qed.
 
+  (** Disjunction constructs a mask whose width is bounded by the input bit counts. *)
+  Lemma bitor_time_linear : forall a b,
+    (T_bitor a b <= 64 * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      unfold T_bitor; cbn beta iota zeta; try nia.
+    pose proof (endpoint_sizes (Fin la) (Fin ha)) as [Hla Hha].
+    pose proof (endpoint_sizes (Fin lb) (Fin hb)) as [Hlb Hhb].
+    cbn [bnd_bits] in Hla, Hha, Hlb, Hhb.
+    set (h := Z.max ha hb).
+    pose proof (integer_max_bits ha hb) as Hh.
+    pose proof (Std.Z.T_max_le ha hb) as Hmax.
+    pose proof (interval_log2_time h) as Hlog.
+    pose proof (shift_log2_value h) as [Hlog0 Hlogvalue].
+    pose proof (shift_log2_bits h) as Hlogbits.
+    pose proof (Std.Z.T_add_le (Z.log2 h) 1) as Hadd.
+    pose proof (shift_ones_time (Z.log2 h + 1) ltac:(lia)) as Hones.
+    pose proof (Z2Nat.id (Z.log2 h + 1) ltac:(lia)) as Hwidth.
+    pose proof (Std.Z.T_leb_le 0 la) as Htesta.
+    pose proof (Std.Z.T_leb_le 0 lb) as Htestb.
+    pose proof (Std.Datatypes.T_andb_le (0 <=? la)%Z (0 <=? lb)%Z) as Hand.
+    fold h in Hh |- *.
+    cbn [Z.size_nat Pos.size_nat] in Hadd, Htesta, Htestb.
+    rewrite !Nat2N.inj_add in *.
+    destruct ((0 <=? la)%Z && (0 <=? lb)%Z); nia.
+  Qed.
+
   (** Disjunction pays for endpoint comparison, logarithm and mask construction. *)
   Lemma bitor_time_quadratic : forall a b,
     (T_bitor a b <= 8192 * N.of_nat (binary_work a b))%N.
@@ -2655,10 +2731,10 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     rewrite Hpoint in Htime. rewrite !Nat2N.inj_add in *. lia.
   Qed.
 
-  (** Signed splitting pays for two ranges and their finite translation. *)
-  Lemma signed_split_time_quadratic : forall w a,
-    (T_signed_split w a <= 8192 * (T.c_thresholds + 1) *
-      N.of_nat ((Pos.to_nat w + size a + 1) ^ 2))%N.
+  (** Signed splitting spends linear time on its two ranges and finite translation. *)
+  Lemma signed_split_time_linear : forall w a,
+    (T_signed_split w a <= 512 * (T.c_thresholds + 1) *
+      N.of_nat (Pos.to_nat w + size a + 1))%N.
   Proof.
     intros w a. set (s := Pos.to_nat w + size a + 1).
     set (budget := ((T.c_thresholds + 1) * N.of_nat s)%N).
@@ -2676,9 +2752,19 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     assert (Hwidth : (N.of_nat (Pos.to_nat w + 1) <= budget)%N).
     { assert (Hpart : (N.of_nat (Pos.to_nat w + 1) <= N.of_nat s)%N) by (unfold s; lia).
       lia. }
-    eapply N.le_trans with (512 * budget)%N.
-    - unfold T_signed_split, T_abst. cbn beta iota zeta. lia.
-    - fold s. unfold budget. rewrite Nat.pow_2_r, Nat2N.inj_mul. nia.
+    replace (512 * (T.c_thresholds + 1) * N.of_nat s)%N
+      with (512 * budget)%N by (unfold budget; ring).
+    unfold T_signed_split, T_abst. cbn beta iota zeta. lia.
+  Qed.
+
+  (** Signed splitting pays for two ranges and their finite translation. *)
+  Lemma signed_split_time_quadratic : forall w a,
+    (T_signed_split w a <= 8192 * (T.c_thresholds + 1) *
+      N.of_nat ((Pos.to_nat w + size a + 1) ^ 2))%N.
+  Proof.
+    intros w a. pose proof (signed_split_time_linear w a) as Hlinear.
+    assert (Hpositive : (1 <= N.of_nat (Pos.to_nat w + size a + 1))%N) by lia.
+    rewrite Nat.pow_2_r, Nat2N.inj_mul. nia.
   Qed.
 
   (** Operator work accounts for every operand size. *)
@@ -3342,6 +3428,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     unfold bigO. exists 64%N. intros [a b] _.
     cbn [fst snd]. pose proof (mul_time_quadratic a b). nia.
   Qed.
+
   (** Addition has the published linear class. *)
   Lemma add_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
@@ -3350,6 +3437,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists c_interval. intros [a b] _. cbn [fst snd].
     pose proof (T_add_le a b). nia.
   Qed.
+
   (** Subtraction has the published linear class. *)
   Lemma sub_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
@@ -3358,6 +3446,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists c_interval. intros [a b] _. cbn [fst snd].
     pose proof (T_sub_le a b). nia.
   Qed.
+
   (** Unsigned division has the published quadratic endpoint class. *)
   Lemma udiv_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_udiv (fst x) (snd x)).
@@ -3365,6 +3454,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists c_interval. intros [a b] _. cbn [fst snd].
     pose proof (T_udiv_le a b). nia.
   Qed.
+
   (** Unsigned remainder has the published quadratic endpoint class. *)
   Lemma urem_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_urem (fst x) (snd x)).
@@ -3372,6 +3462,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists c_interval. intros [a b] _. cbn [fst snd].
     pose proof (T_urem_le a b). nia.
   Qed.
+
   (** Shift has the published quadratic endpoint class. *)
   Lemma shl_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_shl (fst x) (snd x)).
@@ -3379,6 +3470,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists c_interval. intros [a b] _. cbn [fst snd].
     pose proof (T_shl_le a b). nia.
   Qed.
+
   (** Threshold widening has the published bits-plus-search-path class. *)
   Lemma widen_bigO : bigO (X := ttree * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) +
@@ -3388,6 +3480,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists c_interval. intros [ts [a b]] _. cbn [fst snd].
     pose proof (T_widen_thresholds_le ts a b). nia.
   Qed.
+
   (** Backward addition is linear in the result and operand sizes. *)
   Lemma add_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
@@ -3396,6 +3489,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists (512 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (add_back_time_linear r a b). nia.
   Qed.
+
   (** Backward subtraction is linear in the result and operand sizes. *)
   Lemma sub_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
@@ -3404,14 +3498,23 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists (512 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (sub_back_time_linear r a b). nia.
   Qed.
+
   (** Bitwise conjunction is linear, because the result is a minimum of upper endpoints. *)
   Lemma bitand_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitand (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 16%N. intros [a b] _. cbn [fst snd].
+    pose proof (bitand_time_linear a b). nia.
+  Qed.
+
   (** Bitwise disjunction is linear, because the result is a mask of one bit length. *)
   Lemma bitor_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitor (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 64%N. intros [a b] _. cbn [fst snd].
+    pose proof (bitor_time_linear a b). nia.
+  Qed.
+
   (** Comparison has the published linear class. *)
   Lemma cmp_bigO : bigO (X := comparison * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) + 1))
@@ -3420,6 +3523,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists c_interval. intros [c [a b]] _. cbn [fst snd].
     pose proof (T_cmp_le c a b). nia.
   Qed.
+
   (** Backward multiplication is linear, because a preimage only reads a point. *)
   Lemma mul_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
@@ -3428,6 +3532,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists (2048 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (mul_back_time_linear r a b). nia.
   Qed.
+
   (** Backward division is linear, because it only meets with fixed bounds. *)
   Lemma udiv_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
@@ -3436,6 +3541,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists (256 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (unsigned_back_time_linear a b). unfold T_udiv_back. nia.
   Qed.
+
   (** Backward remainder is linear, because it only meets with fixed bounds. *)
   Lemma urem_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
@@ -3444,6 +3550,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists (256 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (unsigned_back_time_linear a b). unfold T_urem_back. nia.
   Qed.
+
   (** Backward comparison is linear in the result and operand sizes. *)
   Lemma ult_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
@@ -3452,11 +3559,16 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists (2048 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (ult_back_time_linear r a b). nia.
   Qed.
+
   (** Signed splitting is linear in the width and the endpoints. *)
   Lemma signed_split_bigO : bigO (X := positive * itv) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + size (snd x) + 1))
     (fun x => T_signed_split (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (512 * (T.c_thresholds + 1))%N. intros [w a] _. cbn [fst snd].
+    pose proof (signed_split_time_linear w a). nia.
+  Qed.
+
   (** Forward transfer has the published operator-work class. *)
   Lemma forward_bigO : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
