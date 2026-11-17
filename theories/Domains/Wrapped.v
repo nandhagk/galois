@@ -2,10 +2,28 @@
 
     Circular arcs represent inclusive sets of words across either numeric pole.
     For example, the eight-bit arc from 250 to 3 contains zero.
+
+    Main results
+    - [wrapped_neg_sound] Arithmetic negation retains each concrete result.
+    - [wrapped_add_sound] Addition retains each concrete result.
+    - [wrapped_sub_sound] Subtraction retains each concrete result.
+    - [wrapped_mul_sound] Multiplication retains each concrete result.
+    - [mul_complexity] Circular multiplication has the published quadratic asymptotic work.
+    - [norm_complexity] Normalization is linear in the width and the raw endpoints.
+    - [neg_complexity] Arithmetic negation is linear.
+    - [double_complexity] Circular expansion is linear.
+    - [not_complexity] Bitwise negation is linear.
+    - [split_complexity] Pole splitting is linear.
+    - [add_complexity] Addition is linear.
+    - [sub_complexity] Subtraction is linear.
+    - [udiv_complexity] Unsigned division has the published quadratic class.
+    - [urem_complexity] Unsigned remainder has the published quadratic class.
+
     Builds on: WrappedSig, Interval and the bit-vector operations. *)
 
 From Stdlib Require Import ZArith NArith List Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Bits Require Import Word Op Fun Arith.
 From Galois.Domains Require Import ValueSig WordSig WrappedSig IntervalSig Interval IntervalOps
   Thresholds BitsLang.
@@ -3967,11 +3985,10 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
   Qed.
   (** Circular multiplication has the published quadratic work bound. *)
-  Lemma mul_complexity : bigO (fun _ => True)
-    (fun x : positive * (wrapped * wrapped) => N.of_nat
-      ((Pos.to_nat (fst x) + 1) ^ 2 + wrapped_bits (fst (snd x)) +
-        wrapped_bits (snd (snd x))))
-    (fun x => T_wrapped_mul (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma mul_complexity :
+    T_wrapped_mul w a b ∈ 𝑂(N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a +
+      wrapped_bits b))
+      for (w, (a, b)).
   Proof.
     exists 17592186044416%N. intros [w [a b]] _.
     change (T_wrapped_mul w a b <= 17592186044416 *
@@ -3983,9 +4000,8 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Normalization is linear in the width and raw endpoint bits. *)
-  Lemma norm_complexity : bigO (X := positive * wrapped) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
-    (fun x => T_wrapped_norm (fst x) (snd x)).
+  Lemma norm_complexity :
+    T_wrapped_norm w a ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + 1)) for (w, a).
   Proof.
     exists 512%N. intros [w a] _. cbn [fst snd].
     pose proof (wrapped_norm_time w a) as Htime.
@@ -3994,9 +4010,8 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Arithmetic negation is linear in the width and raw endpoint bits. *)
-  Lemma neg_complexity : bigO (X := positive * wrapped) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
-    (fun x => T_wrapped_neg (fst x) (snd x)).
+  Lemma neg_complexity :
+    T_wrapped_neg w a ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + 1)) for (w, a).
   Proof.
     exists 2048%N. intros [w a] _. cbn [fst snd].
     pose proof (wrapped_neg_time w a) as Htime.
@@ -4005,9 +4020,8 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Circular expansion is linear in the width and raw endpoint bits. *)
-  Lemma double_complexity : bigO (X := positive * wrapped) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
-    (fun x => T_wrapped_double (fst x) (snd x)).
+  Lemma double_complexity :
+    T_wrapped_double w a ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + 1)) for (w, a).
   Proof.
     exists 4096%N. intros [w a] _. cbn [fst snd].
     pose proof (wrapped_double_time w a) as Htime.
@@ -4016,9 +4030,8 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Bitwise negation is linear in the width and raw endpoint bits. *)
-  Lemma not_complexity : bigO (X := positive * wrapped) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
-    (fun x => T_wrapped_not (fst x) (snd x)).
+  Lemma not_complexity :
+    T_wrapped_not w a ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + 1)) for (w, a).
   Proof.
     exists 1048576%N. intros [w a] _. cbn [fst snd].
     pose proof (wrapped_not_time w a) as Htime.
@@ -4027,9 +4040,8 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Pole splitting is linear in the width and raw endpoint bits. *)
-  Lemma split_complexity : bigO (X := positive * wrapped) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
-    (fun x => T_wrapped_split (fst x) (snd x)).
+  Lemma split_complexity :
+    T_wrapped_split w a ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + 1)) for (w, a).
   Proof.
     exists 8388608%N. intros [w a] _. cbn [fst snd].
     pose proof (wrapped_split_time w a) as Htime.
@@ -4038,10 +4050,9 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Addition is linear in the width and both raw endpoint sets. *)
-  Lemma add_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
-      wrapped_bits (snd (snd x)) + 1))
-    (fun x => T_wrapped_add (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma add_complexity :
+    T_wrapped_add w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1))
+      for (w, (a, b)).
   Proof.
     exists 4096%N. intros [w [a b]] _. cbn [fst snd].
     pose proof (wrapped_add_time w a b) as Htime.
@@ -4050,10 +4061,9 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Subtraction is linear in the width and both raw endpoint sets. *)
-  Lemma sub_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
-      wrapped_bits (snd (snd x)) + 1))
-    (fun x => T_wrapped_sub (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma sub_complexity :
+    T_wrapped_sub w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1))
+      for (w, (a, b)).
   Proof.
     exists 16384%N. intros [w [a b]] _. cbn [fst snd].
     pose proof (wrapped_sub_time w a b) as Htime.
@@ -4062,10 +4072,10 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Unsigned division has the published quadratic class. *)
-  Lemma udiv_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
-    (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
-      wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
-    (fun x => T_wrapped_udiv (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma udiv_complexity :
+    T_wrapped_udiv w a b ∈ 𝑂(N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a +
+      wrapped_bits b))
+      for (w, (a, b)).
   Proof.
     exists c_wrapped. intros [w [a b]] _. cbn [fst snd].
     eapply N.le_trans; [apply T_wrapped_udiv_le|].
@@ -4073,10 +4083,10 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Unsigned remainder has the published quadratic class. *)
-  Lemma urem_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
-    (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
-      wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
-    (fun x => T_wrapped_urem (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma urem_complexity :
+    T_wrapped_urem w a b ∈ 𝑂(N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a +
+      wrapped_bits b))
+      for (w, (a, b)).
   Proof.
     exists c_wrapped. intros [w [a b]] _. cbn [fst snd].
     eapply N.le_trans; [apply T_wrapped_urem_le|].
