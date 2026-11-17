@@ -2,14 +2,21 @@
 
     Branch edges receive private copy blocks before parameters become checked moves.
     For example, a swap is copied on its taken edge using a fresh temporary.
+
+    Main results
+    - [destroy_correct] Destruction adds at most one block step per original edge and retains
+      finite results.
+    - [destroy_complexity] Destruction has the published linear bit-cost bound.
+
     Builds on: Lang, positive-key tries, ParMoveSig and DestroySig. *)
 
 From Stdlib Require Import List Arith PArith NArith Bool Lia.
-From Argent Require Import Time Tactics Std BigO Loop.
+From Argent Require Import Time Tactics Std Complexity Loop.
 From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import DigraphSig.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig ParMoveSig DestroySig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module Pos.
   TimeFun Pos.max.
@@ -3525,8 +3532,8 @@ Module DestroyT (O : OPS)
   Proof.
     intro s. unfold c_ds. apply destroy_source_clock.
   Qed.
-  Lemma destroy_complexity : bigO (fun _ : P.t => True)
-    (fun s => N.of_nat (destroy_work s * (function_width s + 1))) T_destroy.
+  Lemma destroy_complexity :
+    T_destroy s ∈ 𝑂(N.of_nat (destroy_work s * (function_width s + 1))) for s.
   Proof.
     exists c_ds. intros s Htrue. pose proof (T_destroy_le s) as Hclock.
     rewrite Nat2N.inj_mul. nia.
