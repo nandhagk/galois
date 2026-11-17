@@ -1,12 +1,12 @@
 (** * Polyhedral computation fixtures
 
-    These examples exercise raw constraints independently of expression linearization.
+    These examples exercise rational constraints, elimination and their expression wrappers.
     For example, 2*x <= 1 does not rationally entail x <= 0.
     Builds on: Poly, LinCert, Linearize, ZLang and positive keys. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key.
-From Galois.Domains Require Import LangSig ValueSig ZLang.
+From Galois.Domains Require Import LangSig ValueSig IntervalSig ZLang.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinCertSig LinCert Linearize PolySig Poly.
 Import List.ListNotations.
@@ -16,6 +16,8 @@ Local Open Scope Z_scope.
 Module FixtureLinearize := LinearizeCode PosKeyCode ZLangCode.
 Module FixtureCertificate := LinCertCode PosKeyCode.
 Module FixturePoly := PolyCode PosKeyCode ZLangCode FixtureLinearize FixtureCertificate.
+Module GcdFixtureLinearize := ZLinearizeCode PosKeyCode.
+Module GcdFixturePoly := PolyCode PosKeyCode ZLangCode GcdFixtureLinearize FixtureCertificate.
 
 Definition upper_x (b : Z) : lcons positive := LCons _ [(1%positive, 1)] RLe b.
 Definition lower_x (b : Z) : lcons positive := LCons _ [(1%positive, -1)] RLe (-b).
@@ -37,6 +39,226 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** The preserved full-run producer supplies the comparison boolean for stopped searches. *)
+Definition full_run_entails_row (P : list (lcons positive)) (c : lcons positive) : bool :=
+  match FixturePoly.entail_engine_spec (FixturePoly.poly_normal_rows P)
+      (poly_normal_row PosKeyCode.encode c) with
+  | Some _ => true
+  | None => false
+  end.
+
+Definition stop_first_source : list (lcons positive) :=
+  [upper_x 3; LCons _ [(2%positive, 1)] RLe 4; LCons _ [(3%positive, 2)] RLe 10].
+
+Definition stop_first_target : lcons positive := LCons _ [(3%positive, 1)] RLe 6.
+
+(** Eliminating the first variable proves the target before either unrelated variable. *)
+Example entails_stops_after_first_variable :
+  (FixturePoly.entails_row stop_first_source stop_first_target,
+    full_run_entails_row stop_first_source stop_first_target) = (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The stopped result retains both unrelated rows after that first contradiction. *)
+Example stopped_run_retains_unvisited_rows :
+  map poly_constraint
+    (poly_run_stop PosKeyCode.encode PosKeyCode.eqb
+      (poly_variables PosKeyCode.encode (stop_first_target :: stop_first_source))
+      (poly_initial PosKeyCode.encode
+        ((poly_negate stop_first_target, true) ::
+          map (fun r => (r, false)) stop_first_source))) =
+    [upper_x 3; LCons _ [(2%positive, 1)] RLe 4; LCons _ [] RLe (-2)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition stop_chain_source : list (lcons positive) :=
+  [LCons _ [(1%positive, 1); (2%positive, -1)] RLe 0;
+   LCons _ [(2%positive, 1); (3%positive, -1)] RLe 0;
+   LCons _ [(3%positive, 1)] RLe 2].
+
+(** A chain requiring all variables agrees with the full-run entailment result. *)
+Example entails_stopped_full_chain :
+  (FixturePoly.entails_row stop_chain_source (upper_x 2),
+    full_run_entails_row stop_chain_source (upper_x 2)) = (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A failed stopped search has the same false result as the full-run producer. *)
+Example entails_stopped_chain_failure :
+  (FixturePoly.entails_row stop_chain_source (upper_x 1),
+    full_run_entails_row stop_chain_source (upper_x 1)) = (false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Eliminating the unrelated coordinate derives a constant tautology. *)
+Definition prune_source : list (lcons positive) :=
+  [LCons _ [(3%positive, 1)] RLe 1;
+   LCons _ [(3%positive, -1)] RLe 0;
+   LCons _ [(1%positive, 2)] RLe 4].
+
+Definition prune_rows (b : Z) : list (poly_row positive) :=
+  poly_initial PosKeyCode.encode
+    ((poly_negate (upper_x b), true) :: map (fun r => (r, false)) prune_source).
+
+(** The next variable still proves the same target after the tautology is discarded. *)
+Example entails_pruned_tautology :
+  (FixturePoly.entails_row prune_source (upper_x 2),
+    full_run_entails_row prune_source (upper_x 2)) = (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Pruning keeps the contradiction and removes the unrelated constant row. *)
+Example prune_derived_tautology :
+  (map poly_constraint (poly_run_prune_stop PosKeyCode.encode PosKeyCode.eqb
+      [3%positive; 1%positive] (prune_rows 2)),
+    map poly_constraint (poly_run_stop PosKeyCode.encode PosKeyCode.eqb
+      [3%positive; 1%positive] (prune_rows 2))) =
+    ([LCons _ [] RLe 0], [LCons _ [] RLe 1; LCons _ [] RLe 0]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Removing constant tautologies also preserves an unsuccessful entailment search. *)
+Example entails_pruned_failure :
+  (FixturePoly.entails_row prune_source (upper_x 1),
+    full_run_entails_row prune_source (upper_x 1)) = (false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A failed run can discard both non-strict and strict-positive constant rows. *)
+Example prune_failed_tautologies :
+  (map poly_constraint (poly_run_prune_stop PosKeyCode.encode PosKeyCode.eqb
+      [3%positive; 1%positive] (prune_rows 1)),
+    map poly_constraint (poly_run_stop PosKeyCode.encode PosKeyCode.eqb
+      [3%positive; 1%positive] (prune_rows 1))) =
+    ([], [LCons _ [] RLe 1; LCons _ [] RLe 2]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+
+Definition p9_upper_x (b : Z) : lcons positive :=
+  LCons _ [(1%positive, 1)] RLe b.
+
+Definition p9_equal_x (b : Z) : lcons positive :=
+  LCons _ [(1%positive, 1)] REq b.
+
+Definition p9_row (c : lcons positive) (strict : bool) : poly_row positive :=
+  PolyRow _ c [] strict.
+
+Definition p9_view (r : poly_row positive) : lcons positive * bool :=
+  (poly_constraint r, poly_strict r).
+
+(** A lower right-hand side wins independently of its insertion position. *)
+Example parallel_selects_strongest :
+  (map p9_view (poly_parallel_merge PosKeyCode.encode
+      [p9_row (p9_upper_x 5) false; p9_row (p9_upper_x 3) false;
+       p9_row (p9_upper_x 4) false]),
+   map p9_view (poly_parallel_merge PosKeyCode.encode
+      [p9_row (p9_upper_x 4) false; p9_row (p9_upper_x 3) false;
+       p9_row (p9_upper_x 5) false])) =
+    ([(p9_upper_x 3, false)], [(p9_upper_x 3, false)]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Strictness wins an equal-bound tie in either insertion order. *)
+Example parallel_selects_strict_tie :
+  (map p9_view (poly_parallel_merge PosKeyCode.encode
+      [p9_row (p9_upper_x 3) false; p9_row (p9_upper_x 3) true]),
+   map p9_view (poly_parallel_merge PosKeyCode.encode
+      [p9_row (p9_upper_x 3) true; p9_row (p9_upper_x 3) false])) =
+    ([(p9_upper_x 3, true)], [(p9_upper_x 3, true)]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition p9_has_equality (b : Z) (rows : list (poly_row positive)) : bool :=
+  existsb (fun r => match lrel (poly_constraint r) with
+    | REq => Z.eqb (rhs (poly_constraint r)) b
+    | RLe => false
+    end) rows.
+
+(** Distinct equality bounds remain distinct rows even at the same left-hand side. *)
+Example parallel_preserves_distinct_equalities :
+  (let rows := poly_parallel_merge PosKeyCode.encode
+      [p9_row (p9_equal_x 2) false; p9_row (p9_equal_x 3) false] in
+   (length rows, p9_has_equality 2 rows, p9_has_equality 3 rows)) =
+    (2%nat, true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The named P5 producer supplies the previous entailment result for comparison. *)
+Definition p9_reference_entails_row (P : list (lcons positive)) (c : lcons positive) : bool :=
+  match FixturePoly.entail_engine_pruned (FixturePoly.poly_normal_rows P)
+      (poly_normal_row PosKeyCode.encode c) with
+  | Some _ => true
+  | None => false
+  end.
+
+Definition p9_source : list (lcons positive) :=
+  [LCons _ [(1%positive, 1); (3%positive, 1)] RLe 3;
+   LCons _ [(1%positive, 1); (3%positive, 1)] RLe 5;
+   LCons _ [(3%positive, -1)] RLe 0].
+
+(** Both source upper bounds mention z, so the public P1 scan cannot match x alone. *)
+Example parallel_engine_success :
+  (p9_reference_entails_row p9_source (p9_upper_x 4),
+    FixturePoly.entails_row p9_source (p9_upper_x 4)) =
+    (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The stronger retained row still does not imply a target below its bound. *)
+Example parallel_engine_failure :
+  (p9_reference_entails_row p9_source (p9_upper_x 2),
+    FixturePoly.entails_row p9_source (p9_upper_x 2)) =
+    (false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition p9_initial (P : list (lcons positive)) (c : lcons positive) :=
+  poly_initial PosKeyCode.encode
+    ((poly_negate (poly_normal_row PosKeyCode.encode c), true) ::
+      map (fun r => (r, false)) (FixturePoly.poly_normal_rows P)).
+
+(** The z stage produces two parallel x rows and retains only the tighter one. *)
+Example parallel_merges_first_stage :
+  (let rows := poly_step PosKeyCode.encode PosKeyCode.eqb 3%positive
+      (p9_initial p9_source (p9_upper_x 4)) in
+   let before := filter poly_keep rows in
+   let after := poly_parallel_post PosKeyCode.encode rows in
+   (length before, length after,
+    map (fun r => rhs (poly_constraint r))
+      (filter (fun r => Z.eqb
+        (poly_coefficient PosKeyCode.eqb 1%positive (poly_constraint r)) 1) after))) =
+    (3%nat, 2%nat, [3]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A source-only contradiction must remain available for a direct equality target. *)
+Definition p9_inconsistent_inequalities : list (lcons positive) :=
+  [LCons _ [(1%positive, 1)] RLe (-1);
+   LCons _ [(1%positive, -1)] RLe 0].
+
+Example parallel_policy_preserves_equality_from_inconsistency :
+  (p9_reference_entails_row p9_inconsistent_inequalities (p9_equal_x 0),
+    FixturePoly.entails_row p9_inconsistent_inequalities (p9_equal_x 0)) =
+    (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Opposite inequalities eliminate their common variable with exact multipliers. *)
 Example eliminate_opposite_rows :
   FixturePoly.fm_elim 1%positive
@@ -52,6 +274,107 @@ Example eliminate_negative_equality :
     [LCons _ [(1%positive, -2); (2%positive, 1)] REq 4; upper_x 3] =
     [Tracked _ (LCons _ [] REq 0) [0; 0];
      Tracked _ (LCons _ [(2%positive, 1)] RLe 10) [1; 2]].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A newly combined row sheds the common factor shared with its certificate. *)
+Example gcd_elimination_reduces_row :
+  map row_of (FixturePoly.fm_elim 1%positive
+    [LCons _ [(1%positive, 2); (2%positive, 2)] RLe 6;
+     LCons _ [(1%positive, -2)] RLe (-2)]) =
+    [LCons _ [(2%positive, 2)] RLe 4].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The checked projection wrapper accepts the divided elimination row. *)
+Example gcd_havoc_checks_normalized_row :
+  FixturePoly.havoc 1%positive
+    (Reached [LCons _ [(1%positive, 2); (2%positive, 2)] RLe 6;
+      LCons _ [(1%positive, -2)] RLe (-2)]) =
+    Reached [LCons _ [(2%positive, 2)] RLe 4].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Exact division handles negative equality coefficients and right-hand sides. *)
+Example gcd_reduces_signed_equality :
+  poly_constraint (poly_gcd_normalize
+    (PolyRow positive (LCons _ [(1%positive, -6); (2%positive, 9)] REq (-12))
+      [-3; 6] false)) =
+    LCons _ [(1%positive, -2); (2%positive, 3)] REq (-4).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An indivisible multiplier prevents division even when the constraint has a common factor. *)
+Example gcd_preserves_primitive_certificate_row :
+  poly_constraint (poly_gcd_normalize
+    (PolyRow positive (LCons _ [(1%positive, 4)] RLe 8) [1] false)) =
+    LCons _ [(1%positive, 4)] RLe 8.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An indivisible right-hand side prevents any rounding into an integer cut. *)
+Example gcd_preserves_fractional_bound :
+  poly_constraint (poly_gcd_normalize
+    (PolyRow positive (LCons _ [(1%positive, 2)] RLe 1) [2] false)) =
+    LCons _ [(1%positive, 2)] RLe 1.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The all-zero strict row remains a contradiction when its gcd is zero. *)
+Example gcd_preserves_zero_strict_contradiction :
+  poly_contradiction (poly_gcd_normalize
+    (PolyRow positive (LCons _ [] RLe 0) [0; 0] true)) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Assignment divides the new equality and its certificate by their shared factor. *)
+Example gcd_assignment_divides_new_row :
+  FixturePoly.assign_linear 1%positive (Lin _ [(1%positive, 2)] 1)
+    [LCons _ [(1%positive, 4)] REq 0] =
+    [LCons _ [] REq 0; LCons _ [(1%positive, 2)] REq 2].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition gcd_assignment_term : term ZLangCode.op positive :=
+  Node ZAdd [Node ZMul [Node (ZConst 2) []; Leaf 1%positive]; Node (ZConst 1) []].
+
+(** The numeric term wrapper reaches the same normalized assignment result. *)
+Example gcd_numeric_assignment_divides_new_row :
+  GcdFixturePoly.assign 1%positive gcd_assignment_term
+    (Reached [LCons _ [(1%positive, 4)] REq 0]) =
+    Reached [LCons _ [] REq 0; LCons _ [(1%positive, 2)] REq 2].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A divided strict contradiction still yields a checked entailment certificate. *)
+Example gcd_entailment_checks_normalized_row :
+  FixturePoly.entails_row [LCons _ [(1%positive, 2)] RLe 2]
+    (LCons _ [(1%positive, 4)] RLe 4) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Dividing a projected equality preserves both exact rational endpoints. *)
+Example gcd_range_checks_normalized_row :
+  FixturePoly.range_linear [LCons _ [(1%positive, 4)] REq 0]
+    (Lin _ [(1%positive, 2)] 1) = (Fin 1, Fin 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The numeric term wrapper returns both endpoints from the divided projection. *)
+Example gcd_numeric_range_checks_normalized_row :
+  GcdFixturePoly.range gcd_assignment_term
+    (Reached [LCons _ [(1%positive, 4)] REq 0]) = (Fin 1, Fin 1).
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -96,6 +419,24 @@ Qed.
 (** The weak join retains the shared weaker bound. *)
 Example join_shared_bound :
   FixturePoly.join (Reached [upper_x 1]) (Reached [upper_x 2]) = Reached [upper_x 2].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A shared row appears once while a distinct weaker row remains in the join. *)
+Example join_drops_shared_row :
+  FixturePoly.join
+    (Reached [upper_x 3; LCons _ [(2%positive, 1)] RLe 4])
+    (Reached [upper_x 3; LCons _ [(2%positive, 1)] RLe 6]) =
+    Reached [upper_x 3; LCons _ [(2%positive, 1)] RLe 6].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Deduplication preserves the order and multiplicity of the retained left rows. *)
+Example join_keeps_left_occurrences :
+  FixturePoly.join (Reached [upper_x 3; upper_x 3]) (Reached [upper_x 3]) =
+    Reached [upper_x 3; upper_x 3].
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -147,6 +488,30 @@ Qed.
 Example range_rounds_lower :
   FixturePoly.range_linear [LCons _ [(1%positive, -2)] RLe (-5)]
     (Lin _ [(1%positive, 1)] 0) = (Fin 3, PosInf).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A weaker second candidate leaves the first finite upper endpoint unchanged. *)
+Example range_skips_weaker_upper_candidate :
+  FixturePoly.range_linear [upper_x 3; upper_x 5]
+    (Lin _ [(1%positive, 1)] 0) = (NegInf, Fin 3).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A stronger second candidate is still checked and tightens the upper endpoint. *)
+Example range_accepts_stronger_upper_candidate :
+  FixturePoly.range_linear [upper_x 5; upper_x 3]
+    (Lin _ [(1%positive, 1)] 0) = (NegInf, Fin 3).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An equality candidate retains both endpoints before redundant bounds are skipped. *)
+Example range_skips_bounds_after_equality :
+  FixturePoly.range_linear [equal_x 3; upper_x 5; lower_x 1]
+    (Lin _ [(1%positive, 1)] 0) = (Fin 3, Fin 3).
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -269,4 +634,70 @@ Example assignment_uses_the_prepared_zero_form :
     Reached [equal_x 7].
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+(** A present or weaker inequality is found before the elimination engine runs. *)
+Example syntactic_present_and_dominated :
+  (match FixturePoly.poly_fast [upper_x 3] (upper_x 3),
+      FixturePoly.poly_fast [upper_x 3] (upper_x 5) with
+   | Some _, Some _ => true
+   | _, _ => false
+   end) = true /\
+  FixturePoly.leb (Reached [upper_x 3]) (Reached [upper_x 5]) = true /\
+  FixturePoly.leb (Reached [upper_x 5]) (Reached [upper_x 3]) = false.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** An equality supplies both inequality directions and its exact equality conclusion. *)
+Example syntactic_equality_directions :
+  map (FixturePoly.entails_row [equal_x 2])
+    [upper_x 2; lower_x 2; equal_x 2] = [true; true; true] /\
+  (match FixturePoly.poly_fast [equal_x 2] (lower_x 2) with
+   | Some _ => true
+   | None => false
+   end) = true.
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** A sum consequence still falls through to certified elimination. *)
+Example syntactic_sum_uses_engine :
+  (let P := [upper_x 3; LCons _ [(2%positive, 1)] RLe 4] in
+   let c := LCons _ [(1%positive, 1); (2%positive, 1)] RLe 7 in
+   match FixturePoly.poly_fast P c with
+   | None => FixturePoly.entails_row P c
+   | Some _ => false
+   end) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Raw repeated keys retain their meaning when their identical source is selected. *)
+Example syntactic_repeated_row_checked :
+  (let c := LCons _ [(1%positive, 1); (1%positive, 2)] RLe 9 in
+   match FixturePoly.poly_fast [c] c with
+   | Some k => FixtureCertificate.check_entails [c] c k
+   | None => false
+   end) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Inclusion and widening keep shared rows through the direct certificate path. *)
+Example syntactic_subset_and_widening :
+  (let y := LCons _ [(2%positive, 1)] RLe 4 in
+   FixturePoly.leb (Reached [upper_x 3; y]) (Reached [y])) = true /\
+  FixturePoly.widen tt (Reached [upper_x 3]) (Reached [upper_x 3]) =
+    Reached [upper_x 3].
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** A failed first equality direction stops before checking the other direction. *)
+Example syntactic_equality_first_direction_fails :
+  FixturePoly.entails_row [lower_x 3] (upper_x 3) = false /\
+  FixturePoly.keep_row [lower_x 3] (equal_x 3) = false.
+Proof.
+  vm_compute. split; reflexivity.
 Qed.
