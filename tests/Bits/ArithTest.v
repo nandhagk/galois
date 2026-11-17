@@ -6,7 +6,7 @@
 
     Groups:
     - SignedTests: signed endpoints at width one and width eight.
-    - DivisionTests: signed and unsigned division and remainders, including overflow and zero divisors.
+    - DivisionTests: division and remainders, with overflow and zero divisors.
     - ArithmeticTests: products and powers of two.
     - ComparisonTests: the sign bit as a bias for comparisons.
     - ShiftTests: shifts beyond the width.
