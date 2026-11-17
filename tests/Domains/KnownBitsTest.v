@@ -77,3 +77,54 @@ Qed.
 Example contradictory_mask_is_least :
   MaskCode.pleb 2%positive (Tnum 1 1) (Tnum 2 0) = true.
 Proof. vm_compute. reflexivity. Qed.
+
+(** Full uncertainty in the amount includes every shift up to saturation. *)
+Example tnum_fast_variable_unknown_amounts :
+  MaskCode.tnum_variable Op.bvshl 8%positive (Tnum 240 15) (Tnum 0 0) = Tnum 0 0 /\
+  MaskCode.tnum_variable Op.bvlshr 8%positive (Tnum 240 15) (Tnum 0 0) = Tnum 240 0 /\
+  MaskCode.tnum_variable Op.bvashr 8%positive (Tnum 240 15) (Tnum 0 0) = Tnum 240 0 /\
+  MaskCode.tnum_variable Op.bvshl 64%positive (Tnum 240 15) (Tnum 0 0) = Tnum 0 0 /\
+  MaskCode.tnum_variable Op.bvlshr 64%positive (Tnum 240 15) (Tnum 0 0) = Tnum 0 0 /\
+  MaskCode.tnum_variable Op.bvashr 64%positive (Tnum 240 15) (Tnum 0 0) = Tnum 0 0.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** A constant one-bit amount copies the endpoint masks and the inserted zero bits. *)
+Example tnum_fast_variable_constant_amounts :
+  MaskCode.tnum_variable Op.bvshl 8%positive (Tnum 240 15) (tnum_const 8%positive 1) =
+    Tnum 225 30 /\
+  MaskCode.tnum_variable Op.bvlshr 8%positive (Tnum 240 15) (tnum_const 8%positive 1) =
+    Tnum 248 7 /\
+  MaskCode.tnum_variable Op.bvashr 8%positive (Tnum 240 15) (tnum_const 8%positive 1) =
+    Tnum 248 7 /\
+  MaskCode.tnum_variable Op.bvshl 64%positive (Tnum 240 15) (tnum_const 64%positive 1) =
+    Tnum 481 30 /\
+  MaskCode.tnum_variable Op.bvlshr 64%positive (Tnum 240 15) (tnum_const 64%positive 1) =
+    Tnum (2 ^ 63 + 120) 7 /\
+  MaskCode.tnum_variable Op.bvashr 64%positive (Tnum 240 15) (tnum_const 64%positive 1) =
+    Tnum 120 7.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Sparse amount masks retain the facts shared by their odd shift counts. *)
+Example tnum_fast_variable_sparse_amounts :
+  MaskCode.tnum_variable Op.bvshl 8%positive (Tnum 240 15) (Tnum 248 1) = Tnum 1 0 /\
+  MaskCode.tnum_variable Op.bvlshr 8%positive (Tnum 240 15) (Tnum 248 1) = Tnum 248 0 /\
+  MaskCode.tnum_variable Op.bvashr 8%positive (Tnum 240 15) (Tnum 248 1) = Tnum 248 0 /\
+  MaskCode.tnum_variable Op.bvshl 64%positive (Tnum 240 15) (Tnum 248 1) = Tnum 1 0 /\
+  MaskCode.tnum_variable Op.bvlshr 64%positive (Tnum 240 15) (Tnum 248 1) = Tnum (2 ^ 63) 0 /\
+  MaskCode.tnum_variable Op.bvashr 64%positive (Tnum 240 15) (Tnum 248 1) = Tnum 0 0.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Zero-bit cutoffs and either empty operand keep their specified boundary behavior. *)
+Example tnum_fast_variable_boundaries :
+  MaskCode.tnum_variable Op.bvshl 1%positive (Tnum 0 1) (Tnum 0 0) = Tnum 0 0 /\
+  MaskCode.tnum_variable Op.bvshl 8%positive (Tnum 7 7) (Tnum 0 0) = Tnum 255 255 /\
+  MaskCode.tnum_variable Op.bvlshr 8%positive (Tnum 0 0) (Tnum 7 7) = Tnum 255 255.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
