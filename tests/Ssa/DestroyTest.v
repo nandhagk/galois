@@ -200,16 +200,23 @@ Module CopyBlockTests.
 
   Local Open Scope positive_scope.
 
-  (** Copying a jump with two arguments gives the copies on its edge, with the temporary 5. *)
-  Example copy_block_lists_its_copies :
-    DS.copy_block (PTrieCode.set 2 [3; 4] Empty) 5
-      (Block _ _ _ [] [] (Jump 2 [4; 3])) =
-    Some (Block _ _ _ []
+  (** A jump to block 2 whose parameters are 3 and 4, passing them in swapped order. *)
+  Definition swap_parameters := PTrieCode.set 2 [3; 4] Empty.
+
+  Definition swap_block : block positive unit unit := Block _ _ _ [] [] (Jump 2 [4; 3]).
+
+  (** The copies that the swap needs, with 5 as the temporary, and the moves that they come from. *)
+  Definition swap_result :=
+    Some (Block positive unit unit []
       [(5, tt, [4]); (5, tt, [3]);
        (5, tt, [4]); (4, tt, [3]);
        (3, tt, [5])] (Jump 2 []),
       Some ([(3, 4); (4, 3)], 5,
         [(5, 4); (4, 3); (3, 5)])).
+
+  (** Copying a jump with two arguments gives the copies on its edge, with the temporary 5. *)
+  Example copy_block_lists_its_copies :
+    DS.copy_block swap_parameters 5 swap_block = swap_result.
   Proof.
     vm_compute. reflexivity.
   Qed.
