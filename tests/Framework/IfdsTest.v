@@ -4,9 +4,10 @@
     For example, an empty candidate misses an identity rule.
 
     Groups:
-    - Prepared: the prepared path rules agree with the reference rules on the call graph.
-    - Unsupported: an unsupported jump still passes the enumerated checker, and its seeds are checked.
-    - Indexed: duplicated calls, returns and facts keep their occurrence order.
+    - [PreparedTests] The prepared path rules agree with the reference rules on the call graph.
+    - [UnsupportedTests] An unsupported jump still passes the enumerated checker, and its seeds are
+      checked.
+    - [IndexedTests] Duplicated calls, returns and facts keep their occurrence order.
 
     Builds on: Framework.Ifds and Fixpoint.Query. *)
 
