@@ -513,31 +513,61 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
       + lia.
   Qed.
 
+  (** The call inventory is linear in its output. *)
   Lemma calls_bigO : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (calls p))) T_calls.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_calls).
+    intros p _; pose proof (T_calls_le p) as Htime.
+    rewrite Nat2N.inj_add in Htime; nia.
+  Qed.
 
+  (** Site enumeration is linear in the function key and the returned sites. *)
   Lemma sites_of_bigO : bigO (X := P.t * F.t) (fun _ => True)
     (fun '(p, f) => N.of_nat (F.bits f + length (sites_of p f)))
     (fun '(p, f) => T_sites_of p f).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_calls).
+    intros [p f] _; pose proof (T_sites_of_le p f) as Htime.
+    rewrite Nat2N.inj_add in Htime; nia.
+  Qed.
 
+  (** Caller lookup is linear in the site key. *)
   Lemma caller_of_bigO : bigO (X := P.t * S.t) (fun _ => True)
     (fun '(_, site) => N.of_nat (S.bits site)) (fun '(p, site) => T_caller_of p site).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_calls).
+    intros [p site] _; pose proof (T_caller_of_le p site) as Htime.
+    rewrite Nat2N.inj_add in Htime; nia.
+  Qed.
 
+  (** Resolution is linear in the site key and the returned functions. *)
   Lemma resolve_bigO : bigO (X := P.t * S.t) (fun _ => True)
     (fun '(p, site) => N.of_nat (S.bits site + length (resolve p site)))
     (fun '(p, site) => T_resolve p site).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_calls).
+    intros [p site] _; pose proof (T_resolve_le p site) as Htime.
+    rewrite Nat2N.inj_add in Htime; nia.
+  Qed.
 
+  (** The function inventory is linear in its output. *)
   Lemma functions_bigO : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (functions p))) T_functions.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_calls).
+    intros p _; pose proof (T_functions_le p) as Htime.
+    rewrite Nat2N.inj_add in Htime; nia.
+  Qed.
 
+  (** The root inventory is linear in its output. *)
   Lemma roots_bigO : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (roots p))) T_roots.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_calls).
+    intros p _; pose proof (T_roots_le p) as Htime.
+    rewrite Nat2N.inj_add in Htime; nia.
+  Qed.
 
   (** Each resolver read includes at least one charged operation. *)
   Local Lemma resolve_time_positive : forall p site, (1 <= T_resolve p site)%N.

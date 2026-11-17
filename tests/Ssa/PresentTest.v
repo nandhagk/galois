@@ -67,3 +67,45 @@ Example presentation_readers :
    View.SP.block_edge_args prepared edge) =
   ([edge], [edge], [2], [(4, 3)], [3]).
 Proof. vm_compute; reflexivity. Qed.
+
+(** Sharing a key retains nonadjacent rows in source order and keeps absent rows empty. *)
+Definition shared_key_edges : list point_edge :=
+  [PointEdge (1, 0%N) (1, 1%N) None;
+   PointEdge (2, 0%N) (2, 1%N) None;
+   PointEdge (1, 0%N) (2, 0%N) (Some edge)].
+
+Example multi_table_shared_key_preserves_rows :
+  let key := fun e => PointKey.encode (point_src e) in
+  let table := multi_table key shared_key_edges in
+  (table, index_row table (PointKey.encode (1, 0%N)),
+    index_row table (PointKey.encode (3, 0%N))) =
+  (multi_table_specification key shared_key_edges,
+    [PointEdge (1, 0%N) (1, 1%N) None;
+     PointEdge (1, 0%N) (2, 0%N) (Some edge)], []).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** The measurement fixture uses forty inputs and one reassigned local per block. *)
+Definition measurement_globals : list positive := map Pos.of_nat (seq 1 40).
+
+Definition measurement_block (instructions i : nat) : positive * block positive unit unit :=
+  let b := Pos.of_nat (S i) in
+  let local := Pos.of_nat (101 + i) in
+  (b, Block positive unit unit []
+    ((local, tt, measurement_globals) :: repeat (local, tt, [local]) (Nat.pred instructions))
+    (if Nat.eqb i 99 then Return (measurement_globals ++ [local])
+     else Jump (Pos.of_nat (S (S i))) [])).
+
+Definition measurement_program (instructions : nat) : func positive unit unit :=
+  Func positive unit unit 1 measurement_globals
+    (map (measurement_block instructions) (seq 0 100)).
+
+Example measurement_program_shape :
+  let p := measurement_program 5 in
+  (length (blocks _ _ _ p),
+    fold_right (fun item total => length (code _ _ _ (snd item)) + total)%nat
+      0%nat (blocks _ _ _ p), length (inputs _ _ _ p)) = (100%nat, 500%nat, 40%nat).
+Proof.
+  vm_compute; reflexivity.
+Qed.

@@ -55,7 +55,12 @@ Module IcfgT (P : TYPE) (N : KEY_T) (E : KEY_T)
     unfold E.bits in *; time_cbn_all; nia.
   Qed.
 
+  (** Edge classification is linear in the edge key. *)
   Lemma kind_bigO : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(_, e) => N.of_nat (E.bits e)) (fun '(p, e) => T_kind p e).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_icfg).
+    intros [p e] _; pose proof (T_kind_le p e) as Htime.
+    rewrite Nat2N.inj_add in Htime; nia.
+  Qed.
 End IcfgT.
