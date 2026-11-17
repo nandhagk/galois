@@ -37,10 +37,13 @@ Module NarrowCode (L : WLATTICE_OPS) (S : SYSTEM_OPS L) (C : CHECK_OPS L S)
   Definition narrow_pass p m :=
     let candidate := narrow_candidate p m in
     if C.check p candidate then candidate else m.
+  Definition narrow_step p m : kmap S.key L.t + kmap S.key L.t :=
+    let candidate := narrow_candidate p m in
+    if C.check p candidate then inl candidate else inr m.
   Definition refine p n m :=
-    match loop_fuel (fun st => @inl (kmap S.key L.t) unit (narrow_pass p st)) n m with
+    match loop_fuel (narrow_step p) n m with
     | inl result => result
-    | inr _ => m
+    | inr result => result
     end.
 End NarrowCode.
 
@@ -374,10 +377,25 @@ Module Narrow (L : WLATTICE) (S : SYSTEM L) (C : CHECK L S) <: NARROW L S C.
     cbn [loop_fuel]; now rewrite IH, Nat.iter_succ_r.
   Qed.
 
+  (** Once a candidate is rejected, every further pass keeps the same store. *)
+  Lemma narrow_pass_rejected_iter : forall p n m,
+    C.check p (narrow_candidate p m) = false -> Nat.iter n (narrow_pass p) m = m.
+  Proof.
+    intros p n; induction n as [|n IH]; intros m Hcheck.
+    - reflexivity.
+    - rewrite Nat.iter_succ, IH by exact Hcheck.
+      unfold narrow_pass; now rewrite Hcheck.
+  Qed.
+
   (** Refinement performs exactly the requested number of checked passes. *)
   Lemma refine_spec : forall p n m, refine p n m = Nat.iter n (narrow_pass p) m.
   Proof.
-    intros p n m; unfold refine; now rewrite refine_loop_spec.
+    intros p n; induction n as [|n IH]; intro m; [reflexivity|].
+    rewrite Nat.iter_succ_r, narrow_pass_spec.
+    unfold refine at 1; cbn [loop_fuel]; unfold narrow_step at 1.
+    destruct (C.check p (narrow_candidate p m)) eqn:Hcheck.
+    - apply IH.
+    - symmetry; now apply narrow_pass_rejected_iter.
   Qed.
 
   (** Accepted candidates and rejected passes both preserve a post-solution. *)
@@ -436,6 +454,7 @@ Module NarrowT (L : WLATTICE_T) (S : SYSTEM_T L) (C : CHECK_T L S) (B : BUDGET L
   TimeFun narrow_one.
   TimeFun narrow_candidate.
   TimeFun narrow_pass.
+  TimeFun narrow_step.
   TimeFun refine.
 
   Definition c_base : N := (C.c_chk + S.c_sys + PTrieT.c_trie + 1)%N.
@@ -1075,18 +1094,30 @@ Module NarrowT (L : WLATTICE_T) (S : SYSTEM_T L) (C : CHECK_T L S) (B : BUDGET L
     unfold c_nar, c_pass in *; nia.
   Qed.
 
-  (** Each loop callback has the same pass budget because the value invariant is preserved. *)
+  (** A rejected first pass costs the same for every positive pass budget. *)
+  Lemma T_refine_rejected : forall p n m,
+    C.check p (narrow_candidate p m) = false ->
+    T_refine p (S n) m = T_refine p 1 m.
+  Proof.
+    intros p n m Hcheck.
+    unfold T_refine; time_unfold @T_loop_fuel; unfold narrow_step.
+    now rewrite Hcheck.
+  Qed.
+
+  (** Accepted callbacks preserve the pass budget, and rejected callbacks end the loop. *)
   Lemma T_refine_loop_le : forall p k m, S.wf p -> store_inv p m ->
-    (T_loop_fuel (fun st => @inl (kmap S.key L.t) unit (narrow_pass p st))
-      (fun st => 1 + T_narrow_pass p st)%N k m <=
+    (T_loop_fuel (narrow_step p) (T_narrow_step p) k m <=
       (c_pass * pass_work p + 2) * N.of_nat k + 1)%N.
   Proof.
     intros p k; induction k as [|k IH]; intros m Hwf Hm.
     - time_step.
     - pose proof (T_narrow_pass_bound p m Hwf Hm) as Hpass.
-      specialize (IH (narrow_pass p m) Hwf (narrow_pass_inv p m Hwf Hm)).
-      time_unfold @T_loop_fuel; time_cbn.
-      clear -Hpass IH; nia.
+      change (T_narrow_step p m <= c_pass * pass_work p)%N in Hpass.
+      time_unfold @T_loop_fuel; unfold narrow_step at 1.
+      destruct (C.check p (narrow_candidate p m)) eqn:Hcheck; time_cbn.
+      + specialize (IH (narrow_candidate p m) Hwf (narrow_candidate_inv p m Hwf Hm)).
+        clear -Hpass IH; nia.
+      + clear -Hpass; nia.
   Qed.
 
   (** Every refinement pass fits the same invariant budget. *)
@@ -1100,6 +1131,7 @@ Module NarrowT (L : WLATTICE_T) (S : SYSTEM_T L) (C : CHECK_T L S) (B : BUDGET L
     assert (Hbudget : (2 <= c_pass * pass_work p)%N).
     { unfold c_pass, c_base; clear -Hpositive; nia. }
     unfold T_refine.
+    change (fun st => T_narrow_step p st) with (T_narrow_step p).
     eapply N.le_trans with (m := (2 * (c_pass * pass_work p) * (N.of_nat k + 1))%N).
     - clear -Hloop Hbudget; nia.
     - unfold c_nar, c_pass; rewrite Nat2N.inj_add; time_cbn.
@@ -1110,12 +1142,20 @@ Module NarrowT (L : WLATTICE_T) (S : SYSTEM_T L) (C : CHECK_T L S) (B : BUDGET L
   Lemma narrow_pass_bigO : bigO (X := S.prog * kmap S.key L.t)
     (fun pm => S.wf (fst pm) /\ forall x, B.inv (fst pm) (C.look (snd pm) x))
     (fun pm => pass_work (fst pm)) (fun pm => T_narrow_pass (fst pm) (snd pm)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_nar).
+    intros [p m] [Hwf Hm]; cbn [fst snd] in *.
+    pose proof (T_narrow_pass_le p m Hwf Hm) as Hpass; lia.
+  Qed.
 
   (** Refinement is linear in the pass count times the sweep measure. *)
   Lemma refine_bigO : bigO (X := S.prog * nat * kmap S.key L.t)
     (fun '(p, _, m) => S.wf p /\ forall x, B.inv p (C.look m x))
     (fun '(p, k, _) => (N.of_nat (k + 1) * pass_work p)%N)
     (fun '(p, k, m) => T_refine p k m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_nar).
+    intros [[p k] m] [Hwf Hm]; cbn [fst snd] in *.
+    pose proof (T_refine_le p k m Hwf Hm) as Hrefine; nia.
+  Qed.
 End NarrowT.

@@ -347,7 +347,12 @@ Module CheckT (L : LATTICE_T) (S : SYSTEM_T L) <: CHECK_T L S.
   (** A lookup is linear in the key bits. *)
   Lemma look_bigO : bigO (X := kmap S.key L.t * S.key) (fun _ => True)
     (fun mx => N.of_nat (S.key_bits (snd mx))) (fun mx => T_look (fst mx) (snd mx)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_chk).
+    intros [m x] _; cbn [fst snd].
+    pose proof (T_look_le m x) as Hlook.
+    rewrite Nat2N.inj_add in Hlook; nia.
+  Qed.
 
   (** Row checking is linear in the declared occurrences times the row budget. *)
   Lemma check_rows_bigO : bigO (X := S.prog * list S.row * kmap S.key L.t * nat)
@@ -357,7 +362,14 @@ Module CheckT (L : LATTICE_T) (S : SYSTEM_T L) <: CHECK_T L S.
         (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) rs) + 1)%nat) *
       (S.row_work p B + N.of_nat (S.kw p + B) + 1))%N)
     (fun '(p, rs, m, _) => T_check_rows p rs m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := (c_chk * (L.c_lat + 1))%N).
+    intros [[[p rs] m] B] [Hwf [Hrows Hsize]]; cbn [fst snd].
+    pose proof (T_check_rows_le p rs m B Hwf Hrows Hsize) as Hcheck.
+    rewrite !Nat2N.inj_add in *.
+    set (rw := S.row_work p B) in *.
+    nia.
+  Qed.
 
   (** Whole-program checking is linear in the declared occurrences times the row budget. *)
   Lemma check_bigO : bigO (X := S.prog * kmap S.key L.t * nat)
@@ -366,5 +378,12 @@ Module CheckT (L : LATTICE_T) (S : SYSTEM_T L) <: CHECK_T L S.
         (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)) + 1)%nat) *
       (S.row_work p B + N.of_nat (S.kw p + B) + 1))%N)
     (fun '(p, m, _) => T_check p m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := (c_chk * (L.c_lat + 1))%N).
+    intros [[p m] B] [Hwf Hsize]; cbn [fst snd].
+    pose proof (T_check_le p m B Hwf Hsize) as Hcheck.
+    rewrite !Nat2N.inj_add in *.
+    set (rw := S.row_work p B) in *.
+    nia.
+  Qed.
 End CheckT.

@@ -809,7 +809,12 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
       N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1) +
       N.of_nat (length (S.rows p)) * (S.row_work p 0 + 1))%N)
     (fun p => T_prepare p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_idx).
+    intros p Hwf.
+    pose proof (T_prepare_le p Hwf) as Hprepare.
+    nia.
+  Qed.
 End IndexedT.
 
 (** ** Finite inventory accounting shared by demand and edit *)
