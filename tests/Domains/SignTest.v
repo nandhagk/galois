@@ -2,6 +2,16 @@
 
     These examples exercise transfers, numeric refinement, intersection and finite height.
     For example, incompatible sign classes intersect to bottom.
+
+    Groups:
+    - MeetTests: intersection of sign classes.
+    - OneBitTests: transfers at width one.
+    - ComparisonTests: comparisons decide on signs.
+    - TransferTests: bitwise and arithmetic transfers.
+    - ExtensionTests: extensions and selection.
+    - ConstantTests: constants and tagged abstraction at width sixty-four.
+    - RefinementTests: tagged meet refines a sign.
+    - EmptyOperandTests: empty operands give empty signs.
     Builds on: Sign. *)
 
 From Stdlib Require Import ZArith List.
@@ -9,111 +19,42 @@ From Galois.Bits Require Import Word Op Expr.
 From Galois.Domains Require Import WordSig Tagged Sign SignSig BitsLang Harness.
 Import List.ListNotations Expr.
 Local Open Scope Z_scope.
+
+(** * Fixtures *)
+
 Module Payload := SignCode WordLanguageCode.
 Module Table := SignTableCode WordLanguageCode Payload.
 Module Base := TaggedCode WordLanguageCode Payload.
 Module TaggedTable := TaggedTableCode WordLanguageCode Payload Table.
 Module Domain := HarnessCode BitsLangCode Base TaggedTable.
 
+(** The forward transfer of an operation over tagged operands. *)
 Definition forward_signs o xs := Domain.forward (BOp o) xs.
+
+(** A tagged constant of width w with value z. *)
 Definition const_signs w z := TVal w (Payload.pconst w z).
+
+(** A tagged top of width w. *)
 Definition top_signs w := TVal w (Payload.ptop w).
+
+(** The payload of a tagged value at width w, with bottom and top read as payloads. *)
 Definition payload_at w (a : tagged sgn) :=
   match a with TBot => Payload.pbot w | TVal _ p => p | TAny => Payload.ptop w end.
+
+(** The payload of a forward transfer on (width, payload) operands. *)
 Definition forward_payload o xs rw :=
   payload_at rw (forward_signs o (map (fun wp => TVal (fst wp) (snd wp)) xs)).
 
-Example sign_intersection_zero :
-  Payload.pmeet 8%positive (Sgn true true false) (Sgn false true true) = Sgn false true false.
-Proof.
-  vm_compute. reflexivity.
-Qed.
-
-Example sign_intersection_disjoint :
-  Payload.pmeet 8%positive (Sgn true false false) (Sgn false false true) = Payload.pbot 8%positive.
-Proof.
-  vm_compute. reflexivity.
-Qed.
-
-(* The former height bound was 3%nat; the current interface exposes a widening rank.
-Example sign_height_bound : bound sign_height_on = 3%nat.
-Proof.
-  vm_compute. reflexivity.
-Qed.
-
-*)
+(** One-bit width. *)
 Definition w1 : width := 1%positive.
+
+(** Eight-bit width. *)
 Definition w8 : width := 8%positive.
+
+(** Sixteen-bit width. *)
 Definition w16 : width := 16%positive.
 
-Example one_bit_signed_boolean :
-  const_signs w1 1 = TVal w1 (Sgn true false false) /\
-  forward_signs bveq [const_signs w1 1; const_signs w1 1] =
-    TVal w1 (Sgn true false false).
-Proof.
-  vm_compute. split; reflexivity.
-Qed.
-
-Example signed_comparison_decisions :
-  forward_signs bvslt [TVal w8 (Sgn true false false); TVal w8 (Sgn false false true)] =
-    TVal w1 (Sgn true false false) /\
-  forward_signs bvult [TVal w8 (Sgn true false false); TVal w8 (Sgn false true true)] =
-    TVal w1 (Sgn false true false) /\
-  forward_signs bveq [TVal w8 (Sgn true false false); TVal w8 (Sgn false false true)] =
-    TVal w1 (Sgn false true false).
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
-
-Example sign_transfer_table :
-  forward_signs bvand [TVal w8 (Sgn true false false); TVal w8 (Sgn false false true)] =
-    TVal w8 (Sgn false true true) /\
-  forward_signs bvor [TVal w8 (Sgn true false false); TVal w8 (Sgn false false true)] =
-    TVal w8 (Sgn true false false) /\
-  forward_signs bvxor [TVal w8 (Sgn true false false); TVal w8 (Sgn true false false)] =
-    TVal w8 (Sgn false true true) /\
-  forward_signs bvnot [TVal w8 (Sgn true false false)] = TVal w8 (Sgn false true true) /\
-  forward_signs bvneg [const_signs w8 128] = TVal w8 (Sgn true false true).
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
-
-(* The old leaf assumption used num_assume and returned the zero sign.
-Example sign_refinement :
-  num_assume signs (fun _ => TVal w8 (Sign false true true)) (Var 0)
-    (TVal w8 (Sign true true false)) 0%nat = TVal w8 (Sign false true false).
-Proof. vm_compute. reflexivity. Qed.
-*)
-
-Example sign_refinement_meet :
-  Base.meet (TVal w8 (Sgn false true true))
-    (TVal w8 (Sgn true true false)) = TVal w8 (Sgn false true false).
-Proof.
-  vm_compute. reflexivity.
-Qed.
-
-Example sign_extensions :
-  forward_signs (bvzext w8) [TVal w8 (Sgn true false false)] =
-    TVal w16 (Sgn false true true) /\
-  forward_signs (bvsext w8) [TVal w8 (Sgn true false false)] =
-    TVal w16 (Sgn true false false) /\
-  forward_signs bvite [top_signs w1; TVal w8 (Sgn true false false);
-    TVal w8 (Sgn false false true)] = TVal w8 (Sgn true false true).
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
-
-Example sign_all_comparisons :
-  map (fun o => forward_signs o
-    [TVal w8 (Sgn true false false); TVal w8 (Sgn false false true)])
-    [bveq; bvne; bvult; bvule; bvslt; bvsle] =
-    [TVal w1 (Sgn false true false); TVal w1 (Sgn true false false);
-     TVal w1 (Sgn false true false); TVal w1 (Sgn false true false);
-     TVal w1 (Sgn true false false); TVal w1 (Sgn true false false)].
-Proof.
-  vm_compute. reflexivity.
-Qed.
-
+(** The operand table that the empty-operand examples read. *)
 Definition sign_entry_cases :=
   [(bvnot, [(w8, (Payload.ptop w8))], w8); (bvneg, [(w8, (Payload.ptop w8))], w8);
    (bvzext w8, [(w8, (Payload.ptop w8))], w16); (bvsext w8, [(w8, (Payload.ptop w8))], w16);
@@ -128,53 +69,325 @@ Definition sign_entry_cases :=
    (bvsle, [(w8, (Payload.ptop w8)); (w8, (Payload.ptop w8))], w1);
    (bvite, [(w1, (Payload.ptop w8)); (w8, (Payload.ptop w8)); (w8, (Payload.ptop w8))], w8)].
 
-Example sign_empty_entries :
-  map (fun '(o, xs, rw) => forward_payload o
-    (map (fun wp => (fst wp, Sgn false false false)) xs) rw) sign_entry_cases =
-    repeat (Sgn false false false) 14.
+(** * Meet *)
+
+Module MeetTests.
+
+  (** The meet of two sign classes keeps the sign that both contain. *)
+  Example meet_keeps_common_sign :
+    Payload.pmeet 8%positive (Sgn true true false) (Sgn false true true) =
+      Sgn false true false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The meet of two disjoint sign classes is bottom. *)
+  Example meet_of_disjoint_signs_is_bottom :
+    Payload.pmeet 8%positive (Sgn true false false) (Sgn false false true) =
+      Payload.pbot 8%positive.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+(* The former height bound was 3%nat; the current interface exposes a widening rank.
+Example sign_height_bound : bound sign_height_on = 3%nat.
 Proof.
   vm_compute. reflexivity.
 Qed.
 
-Example sign_one_bit_entries :
-  map (fun o => forward_payload o
-    [(w1, Sgn true false false); (w1, Sgn true false false)] w1)
-    [bvand; bvor; bvxor; bveq; bvne; bvult; bvule; bvslt; bvsle] =
-    [Sgn true false false; Sgn true false false; Sgn false true true;
-     Sgn true false false; Sgn false true false; Sgn false true false;
-     Sgn true false false; Sgn false true false; Sgn true false false] /\
-  forward_payload bvnot [(w1, Sgn true false false)] w1 =
-    Sgn false true true /\
-  forward_payload bvneg [(w1, Sgn true false false)] w1 =
-    Sgn true false true /\
-  forward_payload (bvzext 1%positive) [(w1, Sgn true false false)] 2%positive =
-    Sgn false true true /\
-  forward_payload (bvsext 1%positive) [(w1, Sgn true false false)] 2%positive =
-    Sgn true false false /\
-  forward_payload bvite
-    [(w1, (Payload.ptop w8)); (w1, Sgn true false false); (w1, Sgn false true false)] w1 =
-    Sgn true true false.
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
+*)
 
-(** Constant signs share one signed conversion for normalized and overflowing words. *)
-Example sign_constants_width_64 :
-  Payload.pconst 64%positive (2 ^ 64 + 5) = Sgn false false true /\
-  Payload.pconst 64%positive 5 = Sgn false false true /\
-  Payload.pconst 64%positive (-1) = Sgn true false false.
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
+End MeetTests.
 
-(** Raw tagged abstraction accepts precisely the unsigned range. *)
-Example tagged_constants_width_64 :
-  Base.abst (64%positive, 2 ^ 64 + 5) = TAny /\
-  Base.abst (64%positive, 5) = TVal 64%positive (Sgn false false true) /\
-  Base.abst (64%positive, -1) = TAny /\
-  Base.abst (64%positive, 0) = TVal 64%positive (Sgn false true false) /\
-  Base.abst (64%positive, 2 ^ 64 - 1) = TVal 64%positive (Sgn true false false) /\
-  Base.abst (64%positive, 2 ^ 64) = TAny.
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
+(** * One-bit operands *)
+
+Module OneBitTests.
+
+  (** The one-bit constant one has the negative sign. *)
+  Example one_bit_one_has_negative_sign :
+    const_signs w1 1 = TVal w1 (Sgn true false false).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Equal one-bit constants compare as true. *)
+  Example one_bit_equal_constants_compare_true :
+    forward_signs bveq [const_signs w1 1; const_signs w1 1] =
+      TVal w1 (Sgn true false false).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The binary operations on two one-bit negatives give their sign table. *)
+  Example one_bit_binary_entries :
+    map (fun o => forward_payload o
+      [(w1, Sgn true false false); (w1, Sgn true false false)] w1)
+      [bvand; bvor; bvxor; bveq; bvne; bvult; bvule; bvslt; bvsle] =
+      [Sgn true false false; Sgn true false false; Sgn false true true;
+       Sgn true false false; Sgn false true false; Sgn false true false;
+       Sgn true false false; Sgn false true false; Sgn true false false].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Bitwise not of a one-bit negative is nonnegative. *)
+  Example one_bit_not_of_negative_is_nonnegative :
+    forward_payload bvnot [(w1, Sgn true false false)] w1 = Sgn false true true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Negation of a one-bit negative is nonzero. *)
+  Example one_bit_neg_of_negative_is_nonzero :
+    forward_payload bvneg [(w1, Sgn true false false)] w1 = Sgn true false true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Zero extension of a one-bit negative to two bits is nonnegative. *)
+  Example one_bit_zero_extension_of_negative_is_nonnegative :
+    forward_payload (bvzext 1%positive) [(w1, Sgn true false false)] 2%positive =
+      Sgn false true true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Sign extension of a one-bit negative to two bits is negative. *)
+  Example one_bit_sign_extension_of_negative_is_negative :
+    forward_payload (bvsext 1%positive) [(w1, Sgn true false false)] 2%positive =
+      Sgn true false false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A one-bit selection with an unknown condition joins the two branches. *)
+  Example one_bit_ite_with_unknown_condition_joins_branches :
+    forward_payload bvite
+      [(w1, (Payload.ptop w8)); (w1, Sgn true false false); (w1, Sgn false true false)] w1 =
+      Sgn true true false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End OneBitTests.
+
+(** * Comparisons *)
+
+Module ComparisonTests.
+
+  (** Signed less than orders a negative value below a positive one. *)
+  Example signed_less_than_orders_negative_first :
+    forward_signs bvslt [TVal w8 (Sgn true false false); TVal w8 (Sgn false false true)] =
+      TVal w1 (Sgn true false false).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Unsigned less than orders a negative value as large, above a nonnegative one. *)
+  Example unsigned_less_than_orders_negative_as_large :
+    forward_signs bvult [TVal w8 (Sgn true false false); TVal w8 (Sgn false true true)] =
+      TVal w1 (Sgn false true false).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Equality of a negative and a positive value is false. *)
+  Example equality_of_negative_and_positive_is_false :
+    forward_signs bveq [TVal w8 (Sgn true false false); TVal w8 (Sgn false false true)] =
+      TVal w1 (Sgn false true false).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Every comparison of a negative and a positive value gives its fixed answer. *)
+  Example all_comparisons_of_negative_and_positive :
+    map (fun o => forward_signs o
+      [TVal w8 (Sgn true false false); TVal w8 (Sgn false false true)])
+      [bveq; bvne; bvult; bvule; bvslt; bvsle] =
+      [TVal w1 (Sgn false true false); TVal w1 (Sgn true false false);
+       TVal w1 (Sgn false true false); TVal w1 (Sgn false true false);
+       TVal w1 (Sgn true false false); TVal w1 (Sgn true false false)].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End ComparisonTests.
+
+(** * Transfers *)
+
+Module TransferTests.
+
+  (** Bitwise and of a negative and a positive value is nonnegative. *)
+  Example and_of_negative_and_positive_is_nonnegative :
+    forward_signs bvand [TVal w8 (Sgn true false false); TVal w8 (Sgn false false true)] =
+      TVal w8 (Sgn false true true).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Bitwise or of a negative and a positive value is negative. *)
+  Example or_of_negative_and_positive_is_negative :
+    forward_signs bvor [TVal w8 (Sgn true false false); TVal w8 (Sgn false false true)] =
+      TVal w8 (Sgn true false false).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Exclusive or of two negatives is nonnegative. *)
+  Example xor_of_two_negatives_is_nonnegative :
+    forward_signs bvxor [TVal w8 (Sgn true false false); TVal w8 (Sgn true false false)] =
+      TVal w8 (Sgn false true true).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Bitwise not of a negative is nonnegative. *)
+  Example not_of_negative_is_nonnegative :
+    forward_signs bvnot [TVal w8 (Sgn true false false)] = TVal w8 (Sgn false true true).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Negating the constant 128 at width eight gives a nonzero sign. *)
+  Example neg_of_constant_128_is_nonzero :
+    forward_signs bvneg [const_signs w8 128] = TVal w8 (Sgn true false true).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End TransferTests.
+
+(** * Extensions *)
+
+Module ExtensionTests.
+
+  (** Zero extension of a negative eight-bit value to sixteen bits is nonnegative. *)
+  Example zero_extension_of_negative_is_nonnegative :
+    forward_signs (bvzext w8) [TVal w8 (Sgn true false false)] =
+      TVal w16 (Sgn false true true).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Sign extension of a negative eight-bit value to sixteen bits stays negative. *)
+  Example sign_extension_of_negative_is_negative :
+    forward_signs (bvsext w8) [TVal w8 (Sgn true false false)] =
+      TVal w16 (Sgn true false false).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A selection with an unknown one-bit condition joins its two branches. *)
+  Example ite_with_unknown_condition_joins_branches :
+    forward_signs bvite [top_signs w1; TVal w8 (Sgn true false false);
+      TVal w8 (Sgn false false true)] = TVal w8 (Sgn true false true).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End ExtensionTests.
+
+(** * Constants *)
+
+Module ConstantTests.
+
+  (** A constant beyond the width's range has the sign of its residue. *)
+  Example overflowing_constant_has_sign_of_residue :
+    Payload.pconst 64%positive (2 ^ 64 + 5) = Sgn false false true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A constant in range is positive. *)
+  Example constant_in_range_is_positive :
+    Payload.pconst 64%positive 5 = Sgn false false true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Minus one is negative at width sixty-four. *)
+  Example minus_one_is_negative :
+    Payload.pconst 64%positive (-1) = Sgn true false false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Raw tagged abstraction rejects a value above the unsigned range. *)
+  Example abstraction_rejects_above_unsigned_range :
+    Base.abst (64%positive, 2 ^ 64 + 5) = TAny.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Raw tagged abstraction gives a positive sign to five. *)
+  Example abstraction_of_five_is_positive :
+    Base.abst (64%positive, 5) = TVal 64%positive (Sgn false false true).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Raw tagged abstraction rejects a negative value. *)
+  Example abstraction_rejects_negative :
+    Base.abst (64%positive, -1) = TAny.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Raw tagged abstraction gives the zero sign to zero. *)
+  Example abstraction_of_zero_is_zero_sign :
+    Base.abst (64%positive, 0) = TVal 64%positive (Sgn false true false).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Raw tagged abstraction gives a negative sign to the largest unsigned value. *)
+  Example abstraction_of_maximum_is_negative :
+    Base.abst (64%positive, 2 ^ 64 - 1) = TVal 64%positive (Sgn true false false).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Raw tagged abstraction rejects the value just above the largest unsigned value. *)
+  Example abstraction_rejects_unsigned_overflow :
+    Base.abst (64%positive, 2 ^ 64) = TAny.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End ConstantTests.
+
+(** * Refinement *)
+
+Module RefinementTests.
+
+  (** The tagged meet keeps the zero sign that both operands contain. *)
+  Example tagged_meet_keeps_common_sign :
+    Base.meet (TVal w8 (Sgn false true true)) (TVal w8 (Sgn true true false)) =
+      TVal w8 (Sgn false true false).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+(* The old leaf assumption used num_assume and returned the zero sign.
+Example sign_refinement :
+  num_assume signs (fun _ => TVal w8 (Sign false true true)) (Var 0)
+    (TVal w8 (Sign true true false)) 0%nat = TVal w8 (Sign false true false).
+Proof. vm_compute. reflexivity. Qed.
+*)
+
+End RefinementTests.
+
+(** * Empty operands *)
+
+Module EmptyOperandTests.
+
+  (** Every entry of the operand table gives the empty sign when its operands are empty. *)
+  Example empty_operands_give_empty_signs :
+    map (fun '(o, xs, rw) => forward_payload o
+      (map (fun wp => (fst wp, Sgn false false false)) xs) rw) sign_entry_cases =
+      repeat (Sgn false false false) 14.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End EmptyOperandTests.
