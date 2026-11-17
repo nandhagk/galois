@@ -4,9 +4,11 @@
     For example, an empty graph yields the bottom value.
 
     Groups:
-    - Loops: a loop gives true forward, and backward it gives true only before its boundary node.
-    - Singletons: a one-node graph gives its seed, runs out of fuel, or stays false without one.
-    - Unlisted: a boundary at a node outside the graph adds no row.
+    - [LoopTests] A loop gives true forward, and backward it gives true only before its boundary
+      node.
+    - [SingletonTests] A one-node graph gives its seed, runs out of fuel, or stays false without
+      one.
+    - [UnlistedTests] A boundary at a node outside the graph adds no row.
 
     Builds on: Framework.Dense and Framework.DenseTest. *)
 
