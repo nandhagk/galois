@@ -2,15 +2,32 @@
 
     A class queue finalises optimal constructor rows and resumes their waiting parents.
     For example, a finite nullary alternative can seed extraction through a cyclic e-graph.
+
+    Main results
+    - [inventory_spec] The computed inventory fits a sorted database whose layout gives every
+      constructor a slot in declaration order.
+    - [unfold_spec] Successful unfolding agrees with finite prefix unfolding.
+    - [check_dag_sound] Accepted certificates unfold to represented trees and report their
+      unfolded tree cost.
+    - [inventory_complexity] Building the inventory costs the layout bits times the logarithm of
+      the slot count.
+    - [best_complexity] Best rows cost the inventory, the incidences and the heap, at the
+      database unit.
+    - [check_dag_complexity] Checking costs the certificate syntax at the database unit and the
+      accepted root cost width.
+    - [extract_complexity] Extraction costs its best rows and the traversal of their witness at
+      the database unit.
+
     Builds on: ExtractSig, class tries, priority queues and bounded loops. *)
 
 From Stdlib Require Import List PArith NArith Arith Bool Lia Relations.Relation_Operators
   Sorting.Permutation.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
 From Galois.Base Require Import Trie HeapSig Heap.
 From Galois.Egglog Require Import ValueSig IndexSig DatabaseSig Syntax Model Sorts ExtractSig.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** A search row records its constructor, complete key and output class. *)
 Definition search_row (V : Type) := (positive * list (cell V) * positive)%type.
@@ -8546,10 +8563,9 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Qed.
 
   (** Inventory construction is linear in the layout bits times the slot logarithm. *)
-  Lemma inventory_complexity : bigO (fun _ => True)
-    (fun x : list decl * list (positive * list nat) =>
-      N.of_nat ((layout_bits (fst x) (snd x) + 1) * (Nat.log2 (length (snd x)) + 1)))
-    (fun x => T_inventory (fst x) (snd x)).
+  Lemma inventory_complexity :
+    T_inventory ds sl ∈ 𝑂(N.of_nat ((layout_bits ds sl + 1) * (Nat.log2 (length sl) + 1)))
+      for (ds, sl).
   Proof.
     apply bigO_intro with (c := c_ex).
     intros [ds sl] _.
@@ -8559,13 +8575,10 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Qed.
 
   (** Best-row search charges its inventory, incidences and heap at the database widths. *)
-  Lemma best_complexity : bigO
-    (fun x : list (positive * (N * nat)) * D.t =>
-      D.wf (snd x) /\ D.canonical (snd x) /\ ctor_inventory (fst x) (snd x))
-    (fun x => N.of_nat ((inventory_bits (fst x) + (R (snd x) + 1) * (a (snd x) + 1) +
-      (R (snd x) + 1) * (Nat.log2 (R (snd x)) + 1)) * (D.unit (snd x) + 1) *
-      (cost_width (snd x) + 1)))
-    (fun x => T_best (fst x) (snd x)).
+  Lemma best_complexity :
+    T_best cs db ∈ 𝑂(N.of_nat ((inventory_bits cs + (R db + 1) * (a db + 1) +
+      (R db + 1) * (Nat.log2 (R db) + 1)) * (D.unit db + 1) * (cost_width db + 1)))
+      for (cs, db) | D.wf db /\ D.canonical db /\ ctor_inventory cs db.
   Proof.
     apply bigO_intro with (c := c_ex).
     intros [cs db] [Hwf [Hcanonical Hinventory]].
@@ -8576,12 +8589,10 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Qed.
 
   (** Certificate checking is linear in the certificate size at its database and cost widths. *)
-  Lemma check_dag_complexity : bigO
-    (fun x : D.t * positive * extraction_dag V.t => D.wf (fst (fst x)))
-    (fun x => let '(db, c, g) := x in
-      N.of_nat ((cert_size V.encode g + Pos.size_nat c + 1) * (D.unit db + 1) *
-        (match check_dag db c g with Some n => N.size_nat n | None => 0 end + 1)))
-    (fun x => let '(db, c, g) := x in T_check_dag db c g).
+  Lemma check_dag_complexity :
+    T_check_dag db c g ∈ 𝑂(N.of_nat ((cert_size V.encode g + Pos.size_nat c + 1) *
+      (D.unit db + 1) * (match check_dag db c g with Some n => N.size_nat n | None => 0 end + 1)))
+      for (db, c, g) | D.wf db.
   Proof.
     apply bigO_intro with (c := c_ex).
     intros [[db c] g] Hwf.
@@ -8591,13 +8602,10 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Qed.
 
   (** Extraction adds one incidence traversal to the best-row search budget. *)
-  Lemma extract_complexity : bigO
-    (fun x : list (positive * (N * nat)) * D.t * positive =>
-      let '(cs, db, _) := x in D.wf db /\ D.canonical db /\ ctor_inventory cs db)
-    (fun x => let '(cs, db, _) := x in
-      N.of_nat ((inventory_bits cs + 2 * ((R db + 1) * (a db + 1)) +
-        (R db + 1) * (Nat.log2 (R db) + 1)) * (D.unit db + 1) * (cost_width db + 1)))
-    (fun x => let '(cs, db, c) := x in T_extract cs db c).
+  Lemma extract_complexity :
+    T_extract cs db c ∈ 𝑂(N.of_nat ((inventory_bits cs + 2 * ((R db + 1) * (a db + 1)) +
+      (R db + 1) * (Nat.log2 (R db) + 1)) * (D.unit db + 1) * (cost_width db + 1)))
+      for (cs, db, c) | D.wf db /\ D.canonical db /\ ctor_inventory cs db.
   Proof.
     apply bigO_intro with (c := c_ex).
     intros [[cs db] c] [Hwf [Hcanonical Hinventory]].
