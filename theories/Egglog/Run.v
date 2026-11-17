@@ -20862,20 +20862,47 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Lemma plan_bigO : bigO (fun _ => True)
     (fun p => N.of_nat ((size_program p + 1) * (size_program p + 1) * (size_program p + 1)))
     T_plan.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_run). intros p _.
+    pose proof (T_plan_le p) as Htime.
+    rewrite !Nat2N.inj_mul. nia.
+  Qed.
 
   (** Loading is linear in its declarations and slots, with the layout work of sorting. *)
   Lemma load_bigO : bigO (fun _ => True)
     (fun x : program V.t * compiled V.t => load_cost (fst x) (snd x))
     (fun x => T_load (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := (c_run + D.c_db)%N). intros [p cp] _.
+    cbn [fst snd].
+    pose proof (T_load_le p cp) as Hload.
+    pose proof (D.T_init_le (decls V.t p) (Syntax.slots V.t cp)) as Hinit.
+    unfold load_cost. rewrite !Nat2N.inj_add, !Nat2N.inj_mul.
+    rewrite !Nat2N.inj_add in Hinit. nia.
+  Qed.
 
   (** Plan checking is linear in the program and plan syntax at their identifier width. *)
   Lemma check_plan_bigO : bigO (fun _ => True)
     (fun x : program V.t * compiled V.t =>
       N.of_nat ((size_program (fst x) + size_compiled (snd x) + 1) * (wbits (fst x) + 1)))
     (fun x => T_check_plan (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_run). intros [p cp] _.
+    cbn [fst snd]. pose proof (T_check_plan_le p cp) as Htime.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
+
+  (** Converting the natural trace work commutes with summing its binary charges. *)
+  Lemma run_work_binary_sum : forall (xs : list (bool * D.t)) p cp,
+    fold_right N.add 0%N (map (fun st =>
+      N.of_nat (round_work p cp (fst st) (snd st) + 1)) xs) =
+    N.of_nat (fold_right Nat.add 0%nat (map (fun st =>
+      round_work p cp (fst st) (snd st) + 1) xs)).
+  Proof.
+    intro xs. induction xs as [|st rest IH]; intros p cp.
+    - reflexivity.
+    - cbn [map fold_right]. rewrite IH, !Nat2N.inj_add. reflexivity.
+  Qed.
 
   (** A run costs its trace work at the identifier width, its fuel counter and its scaled
       initial credit. *)
@@ -20886,7 +20913,14 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       (D.ids (snd (run p cp lim db)) <= B)%N /\ D.unit (snd (run p cp lim db)) <= U)
     (fun x => let '(B, U, p, cp, lim, db) := x in run_cost B U p cp lim db)
     (fun x => let '(_, _, p, cp, lim, db) := x in T_run p cp lim db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := (c_run + 1)%N).
+    intros [[[[[B U] p] cp] lim] db] [Hplans [Hwf [Hloaded [Hids Hunit]]]].
+    pose proof (T_run_le B U p cp lim db Hplans Hwf Hloaded Hids Hunit) as Htime.
+    cbn beta iota zeta. unfold run_cost, run_work.
+    rewrite run_work_binary_sum in Htime.
+    rewrite !Nat2N.inj_add in Htime |- *. nia.
+  Qed.
 
   (** A round costs its round work at the identifier width and its scaled initial credit. *)
   Lemma round_bigO : bigO
@@ -20896,5 +20930,10 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       (D.ids (round p cp nv db) <= B)%N /\ D.unit (round p cp nv db) <= U)
     (fun x => let '(B, U, p, cp, nv, db) := x in round_cost B U p cp nv db)
     (fun x => let '(_, _, p, cp, nv, db) := x in T_round p cp nv db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := (c_run + 1)%N).
+    intros [[[[[B U] p] cp] nv] db] [Hplans [Hwf [Hloaded [Hids Hunit]]]].
+    pose proof (T1_round_le B U p cp nv db Hplans Hwf Hloaded Hids Hunit) as Htime.
+    cbn beta iota zeta. unfold round_cost. nia.
+  Qed.
 End RunT.
