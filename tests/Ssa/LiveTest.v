@@ -92,3 +92,22 @@ Example grouping_records_an_entry_and_skips_an_internal_point :
   L.group_entry entries 10 (2, 1%N) (L.group_entry entries 9 (2, 0%N) Empty) =
     PTrieCode.set 2 [9] Empty.
 Proof. vm_compute. reflexivity. Qed.
+
+Example seed_reuses_its_point_encoding :
+  live_seed PointKey.encode (2, 3%N) 9 Empty =
+    live_seed_spec PointKey.encode (2, 3%N) 9 Empty.
+Proof. vm_compute. reflexivity. Qed.
+
+Example discovery_reuses_its_point_encoding :
+  let st := {| live_seen := @Empty unit; live_todo := []; live_done := [] |} in
+  live_discover PointKey.encode (2, 3%N) st =
+    live_discover_spec PointKey.encode (2, 3%N) st.
+Proof. vm_compute. reflexivity. Qed.
+
+Example predecessors_reuse_point_encodings :
+  let q := View.R.prepare entry_and_inside in
+  let n := (2, 2%N) in
+  let st := {| live_seen := @Empty unit; live_todo := []; live_done := [] |} in
+  L.add_predecessors q (L.reverse_kills q) 9 n (View.C.inc q n) st =
+    L.add_predecessors_spec q (L.reverse_kills q) 9 n (View.C.inc q n) st.
+Proof. vm_compute. reflexivity. Qed.

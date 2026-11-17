@@ -30,12 +30,26 @@ Definition live_member (key : positive) (table : ptrie unit) : bool :=
 TimeFun live_member.
 
 (** A row records its own membership index and its distinct points. *)
-Definition live_seed {A} (encode : A -> positive) (n : A) (x : positive)
+Definition live_seed_spec {A} (encode : A -> positive) (n : A) (x : positive)
     (table : ptrie (ptrie unit * list A)) : ptrie (ptrie unit * list A) :=
   let row := match trie_get x table with Some old => old | None => (Empty, []) end in
   if live_member (encode n) (fst row) then table else
     PTrieCode.set x (PTrieCode.set (encode n) tt (fst row), n :: snd row) table.
+
+Definition live_seed {A} (encode : A -> positive) (n : A) (x : positive)
+    (table : ptrie (ptrie unit * list A)) : ptrie (ptrie unit * list A) :=
+  let row := match trie_get x table with Some old => old | None => (Empty, []) end in
+  let c := encode n in
+  if live_member c (fst row) then table else
+    PTrieCode.set x (PTrieCode.set c tt (fst row), n :: snd row) table.
 TimeFun live_seed.
+
+(** Sharing a seed encoding preserves its membership row. *)
+Lemma live_seed_agrees : forall A encode n x (table : ptrie (ptrie unit * list A)),
+  live_seed encode n x table = live_seed_spec encode n x table.
+Proof.
+  reflexivity.
+Qed.
 
 Definition live_seed_batch {A B} (encode : A -> positive) (point : B -> A)
     (values : B -> list positive) (items : list B)
@@ -93,13 +107,31 @@ TimeFun live_seen.
 TimeFun live_todo.
 TimeFun live_done.
 
-Definition live_discover {A} (encode : A -> positive) (n : A) (st : live_state A)
+Definition live_discover_spec {A} (encode : A -> positive) (n : A) (st : live_state A)
     : live_state A :=
   if live_member (encode n) (live_seen st) then st else
     {| live_seen := PTrieCode.set (encode n) tt (live_seen st);
        live_todo := n :: live_todo st;
        live_done := n :: live_done st |}.
+
+Definition live_discover_code {A} (c : positive) (n : A) (st : live_state A)
+    : live_state A :=
+  if live_member c (live_seen st) then st else
+    {| live_seen := PTrieCode.set c tt (live_seen st);
+       live_todo := n :: live_todo st; live_done := n :: live_done st |}.
+TimeFun live_discover_code.
+
+Definition live_discover {A} (encode : A -> positive) (n : A) (st : live_state A)
+    : live_state A :=
+  live_discover_code (encode n) n st.
 TimeFun live_discover.
+
+(** Discovery with one shared encoding preserves the original worklist state. *)
+Lemma live_discover_agrees : forall A encode n (st : live_state A),
+  live_discover encode n st = live_discover_spec encode n st.
+Proof.
+  reflexivity.
+Qed.
 
 Definition live_initial {A} (encode : A -> positive) (seeds : list A) : live_state A :=
   fold_right (live_discover encode)
@@ -146,7 +178,7 @@ Lemma live_discover_valid : forall A (encode : A -> positive),
   live_valid encode st -> live_valid encode (live_discover encode n st).
 Proof.
   intros A encode Hinj st n [Hdone [Hseen [Htodo Hsub]]].
-  unfold live_discover. destruct (live_member (encode n) (live_seen st)) eqn:Hn.
+  unfold live_discover, live_discover_code. destruct (live_member (encode n) (live_seen st)) eqn:Hn.
   - exact (conj Hdone (conj Hseen (conj Htodo Hsub))).
   - assert (Hfresh : ~ In n (live_done st)).
     { intro Hin. apply Hseen in Hin. congruence. }
@@ -164,7 +196,7 @@ Lemma live_discover_done : forall A (encode : A -> positive) st n,
   live_valid encode st -> forall m,
   In m (live_done (live_discover encode n st)) <-> m = n \/ In m (live_done st).
 Proof.
-  intros A encode st n [_ [Hseen _]] m. unfold live_discover.
+  intros A encode st n [_ [Hseen _]] m. unfold live_discover, live_discover_code.
   destruct (live_member (encode n) (live_seen st)) eqn:Hn; cbn.
   - apply Hseen in Hn. split; [now right|intros [->|Hin]; assumption].
   - split; intros [Heq|Hin]; [left; symmetry|now right|left; symmetry|now right]; assumption.
@@ -175,7 +207,7 @@ Lemma live_discover_todo : forall A (encode : A -> positive) st n,
   In m (live_todo (live_discover encode n st)) <->
     (m = n /\ ~ In n (live_done st)) \/ In m (live_todo st).
 Proof.
-  intros A encode st n [_ [Hseen _]] m. unfold live_discover.
+  intros A encode st n [_ [Hseen _]] m. unfold live_discover, live_discover_code.
   destruct (live_member (encode n) (live_seen st)) eqn:Hn; cbn.
   - apply Hseen in Hn. tauto.
   - assert (Hfresh : ~ In n (live_done st)).
@@ -191,7 +223,7 @@ Lemma live_discover_balance : forall A (encode : A -> positive) st n,
   length (live_done (live_discover encode n st)) + length (live_todo st) =
     length (live_done st) + length (live_todo (live_discover encode n st)).
 Proof.
-  intros A encode st n. unfold live_discover.
+  intros A encode st n. unfold live_discover, live_discover_code.
   destruct (live_member (encode n) (live_seen st)); cbn; lia.
 Qed.
 
@@ -226,7 +258,7 @@ Proof.
   change (live_todo (live_discover encode n (live_initial encode rest)) =
     live_done (live_discover encode n (live_initial encode rest))).
   remember (live_initial encode rest) as st in *.
-  unfold live_discover. destruct (live_member (encode n) (live_seen st)); cbn;
+  unfold live_discover, live_discover_code. destruct (live_member (encode n) (live_seen st)); cbn;
     now rewrite IH.
 Qed.
 
@@ -919,12 +951,21 @@ Module LiveCode (O : OPS)
   Definition reverse_kills (q : Q.t) : ptrie (ptrie (ptrie unit)) :=
     reverse_index q (C.edges q).
 
-  Definition add_predecessors (q : Q.t) (kills : ptrie (ptrie (ptrie unit)))
+  Definition add_predecessors_spec (q : Q.t) (kills : ptrie (ptrie (ptrie unit)))
       (x : positive) (n : N.t) (es : list E.t) (st : live_state N.t) : live_state N.t :=
     fold_right (fun e acc =>
       let pred := C.src q e in
       if live_killed kills (N.encode pred) (N.encode n) x then acc else
         live_discover N.encode pred acc) st es.
+
+  Definition add_predecessors (q : Q.t) (kills : ptrie (ptrie (ptrie unit)))
+      (x : positive) (n : N.t) (es : list E.t) (st : live_state N.t) : live_state N.t :=
+    let cn := N.encode n in
+    fold_right (fun e acc =>
+      let pred := C.src q e in
+      let cp := N.encode pred in
+      if live_killed kills cp cn x then acc else
+        live_discover_code cp pred acc) st es.
 
   Fixpoint explore_fuel (fuel : nat) (q : Q.t) (kills : ptrie (ptrie (ptrie unit)))
       (x : positive) (st : live_state N.t) : live_state N.t :=
@@ -1017,6 +1058,13 @@ Module Live (O : OPS)
     (SP : SSA_POINTS Q PosKey BE BC N E C PosKey U)
     <: LIVE O P Q R BE E N BC C U SP.
   Include LiveCode O P Q R BE E N BC C U SP.
+
+  (** Hoisting point encodings preserves predecessor discovery exactly. *)
+  Lemma add_predecessors_agrees : forall q kills x n es st,
+    add_predecessors q kills x n es st = add_predecessors_spec q kills x n es st.
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma seed_table_valid : forall q, live_seed_valid N.encode (seed_table q).
   Proof.
@@ -1208,7 +1256,9 @@ Module Live (O : OPS)
           right; exists f; split; [now right|exact Hrest].
         * intros [Hin|[f [[->|Hf] [Hclear Hsrc]]]]; [now left|congruence|].
           right; exists f; now repeat split.
-      + rewrite live_discover_done by (now apply add_predecessors_valid).
+      + fold (live_discover N.encode (C.src q e)
+          (add_predecessors q kills x n rest st)).
+        rewrite live_discover_done by (now apply add_predecessors_valid).
         rewrite IH by exact Hvalid. split.
         * intros [Heq|[Hin|[f [Hf Hrest]]]].
           -- right; exists e; split; [now left|split; [exact He|now symmetry]].
@@ -1232,7 +1282,7 @@ Module Live (O : OPS)
       fold (add_predecessors q kills x n rest st) in Hdone, Htodo.
       destruct (live_killed kills (N.encode (C.src q e)) (N.encode n) x);
         [now apply IH with (m := m)|].
-      unfold live_discover in Hdone, Htodo.
+      unfold live_discover_code in Hdone, Htodo.
       destruct (live_member (N.encode (C.src q e))
         (live_seen (add_predecessors q kills x n rest st))).
       + now apply IH with (m := m).
@@ -1247,6 +1297,7 @@ Module Live (O : OPS)
       cbn [add_predecessors fold_right]; [lia|].
     fold (add_predecessors q kills x n rest st).
     destruct (live_killed kills (N.encode (C.src q e)) (N.encode n) x); [apply IH|].
+    fold (live_discover N.encode (C.src q e) (add_predecessors q kills x n rest st)).
     pose proof (live_discover_balance _ N.encode (add_predecessors q kills x n rest st)
       (C.src q e)). specialize (IH st). lia.
   Qed.
@@ -1993,7 +2044,7 @@ Module LiveT (O : OPS)
     assert (Htail : live_sound q x (plan_predecessors q kills x rest st)).
     { apply IH; try assumption. intros edge Hin; apply Hinc; now right. }
     destruct (live_pair_member kills x (E.encode e)) eqn:Hclear; [exact Htail|].
-    unfold live_discover. destruct (live_member (N.encode (C.src q e))
+    unfold live_discover, live_discover_code. destruct (live_member (N.encode (C.src q e))
       (live_seen (plan_predecessors q kills x rest st))); [exact Htail|].
     intros m [<-|Hin]; [|now apply Htail].
     assert (He : In e (C.edges q) /\ C.dst q e = n).
@@ -2686,18 +2737,29 @@ Module LiveT (O : OPS)
     pose proof (live_member_atom p x defs (live_variable_key p x Hx)) as Hmember. nia.
   Qed.
 
+  (** Discovery reuses the encoded point for its membership test and insertion. *)
+  Lemma live_discover_code_atom : forall p n st,
+    In n (C.nodes (R.prepare p)) ->
+    (T_live_discover_code (N.encode n) n st <= 8 * live_clock_atom p)%N.
+  Proof.
+    intros p n st Hn.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_node_key p n Hn) as Hkey.
+    pose proof (live_member_atom p (N.encode n) (live_seen st) Hkey) as Hmember.
+    pose proof (live_set_atom _ p (N.encode n) tt (live_seen st) Hkey) as Hset.
+    time_unfold @T_live_discover_code. time_simpl.
+    destruct (live_member (N.encode n) (live_seen st)); nia.
+  Qed.
+
   Lemma live_discover_atom : forall p n st,
     In n (C.nodes (R.prepare p)) ->
     (T_live_discover N.encode N.T_encode n st <= 16 * live_clock_atom p)%N.
   Proof.
     intros p n st Hn.
     pose proof (live_clock_atom_positive p) as Hpositive.
-    pose proof (live_node_key p n Hn) as Hkey.
     pose proof (live_encode_node_atom p n Hn) as Hencode.
-    pose proof (live_member_atom p (N.encode n) (live_seen st) Hkey) as Hmember.
-    pose proof (live_set_atom _ p (N.encode n) tt (live_seen st) Hkey) as Hset.
-    time_unfold @T_live_discover. time_simpl.
-    destruct (live_member (N.encode n) (live_seen st)); nia.
+    pose proof (live_discover_code_atom p n st Hn) as Hdiscover.
+    time_unfold @T_live_discover. nia.
   Qed.
 
   Lemma live_initial_atom : forall p seeds,
@@ -2725,7 +2787,8 @@ Module LiveT (O : OPS)
     intros p kills x n es st Hx Hn Hes.
     pose proof (live_clock_atom_positive p) as Hpositive.
     pose proof (proj2 (PB.prepared_wf p)) as Hwf.
-    time_unfold T_add_predecessors.
+    pose proof (live_encode_node_atom p n Hn) as Hnenc.
+    time_unfold T_add_predecessors. cbn beta zeta.
     let st := constr:(st) in let es := constr:(es) in match goal with
     | |- context [List.T_fold_right ?step ?clock st es] =>
       assert (Hfold : (List.T_fold_right step clock st es <=
@@ -2735,16 +2798,9 @@ Module LiveT (O : OPS)
       pose proof (proj1 (C.edges_nodes (R.prepare p) e Hwf (Hes e He))) as Hsrc.
       pose proof (live_src_atom p e) as Hsrcclock.
       pose proof (live_encode_node_atom p (C.src (R.prepare p) e) Hsrc) as Hpredenc.
-      pose proof (live_encode_node_atom p n Hn) as Hnenc.
       pose proof (live_killed_atom p kills (N.encode (C.src (R.prepare p) e)) (N.encode n) x
         (live_node_key p (C.src (R.prepare p) e) Hsrc) (live_node_key p n Hn) Hx) as Hkilled.
-      pose proof (live_discover_atom p (C.src (R.prepare p) e) state Hsrc) as Hdiscover.
-      change (1 + (C.T_src (R.prepare p) e +
-        (N.T_encode (C.src (R.prepare p) e) + N.T_encode n +
-          T_live_killed kills (N.encode (C.src (R.prepare p) e)) (N.encode n) x +
-          (if live_killed kills (N.encode (C.src (R.prepare p) e)) (N.encode n) x
-           then 0 else T_live_discover N.encode N.T_encode (C.src (R.prepare p) e) state))) <=
-        32 * live_clock_atom p)%N.
+      pose proof (live_discover_code_atom p (C.src (R.prepare p) e) state Hsrc) as Hdiscover.
       destruct (live_killed kills (N.encode (C.src (R.prepare p) e)) (N.encode n) x); nia. }
     rewrite Nat2N.inj_add. nia.
   Qed.
