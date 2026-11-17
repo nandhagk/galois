@@ -77,7 +77,3 @@ Module EntryTests.
   Qed.
 
 End EntryTests.
-
-(* BaseHeapTest.heap_push_ticks retires with Cost.ticks. Heap priorities now use N.
-   heap_tie and heap_decrease retain the old numeric priorities 5 and 3 through
-   that carrier change. priority reads the public live map in heap_decrease. *)
