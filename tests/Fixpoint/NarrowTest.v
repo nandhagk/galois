@@ -72,6 +72,18 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Example rejected_first_of_three_passes_keeps_old :
+  N.refine true 3 old = old.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example three_accepted_passes :
+  observe (N.refine false 3 old) = [false; false; false; true; false].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Example zero_rounds : N.refine false 0 old = old.
 Proof.
   vm_compute; reflexivity.
