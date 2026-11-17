@@ -291,4 +291,4 @@ Module Type ENV_BUDGET_SPEC (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
 End ENV_BUDGET_SPEC.
 
 (* The fallback WORKLIST_TIME.T_run_all_heads_le still requires an actual BUDGET.
-   Cut-endpoint Z intervals are the separate D1 signature target reviewed in F2. *)
+   Cut-endpoint Z intervals need a separate budget signature. *)
