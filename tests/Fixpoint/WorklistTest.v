@@ -151,6 +151,36 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Module RowsProgram <: SYSTEM_OPS BoolOps.
+  Definition prog := list positive.
+  Definition key := positive.
+  Definition row := positive.
+  Definition frame := unit.
+  Definition key_code (x : positive) := x.
+  Definition key_eqb := Pos.eqb.
+  Definition rows (p : prog) := map (fun r => r) p.
+  Definition target (_ : prog) (r : row) := r.
+  Definition start (_ : prog) (_ : row) : query key bool unit := Ask 1%positive tt.
+  Definition resume (_ : prog) (_ : unit) (a : bool) : query key bool unit := Ret a.
+  Definition deps (_ : prog) (_ : row) := [1; 2]%positive.
+  Definition sides (_ : prog) (_ : row) : list positive := [].
+End RowsProgram.
+
+Module RowsW := WorklistCode BoolOps RowsProgram P HeapCode.
+
+Definition rows200 := wl_ids_from (2 * 100) 1%positive.
+
+Example prepare_two_hundred_rows_preserves_indexes_and_queue :
+  let s := RowsW.prepare rows200 flat in
+  (length (PTrieCode.elements (ws_rows s)),
+   RowsW.readers s 1%positive, RowsW.readers s 2%positive,
+   HeapCode.size (ws_queue s), RowsW.row_at s 200%positive,
+   trie_get 200%positive (ws_ranks s)) =
+    ((2 * 100)%nat, rows200, rows200, 200%N, Some 200%positive, Some 1%positive).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 (* FixpointCheckTest's full_accept, full_reject and full_empty run above.
    index_repeated_sides runs in IndexedTest and WorklistOrderTest.
    partial_accept, partial_reject_open_read, partial_empty and partial_visits_once

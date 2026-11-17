@@ -330,6 +330,9 @@ Module WorklistCode (L : WLATTICE_OPS) (S : SYSTEM_OPS L)
   Definition row_ids p := wl_ids_from (length (S.rows p)) 1%positive.
   Definition priority (pol : policy L.wparam) c :=
     match trie_get c (prio pol) with Some n => n | None => 1%positive end.
+  Definition top_rank_of (rows : list S.row) p (pol : policy L.wparam) :=
+    Pos.succ (fold_right (fun x acc => Pos.max (priority pol (S.key_code x)) acc)
+      1%positive (flat_map (fun r => S.target p r :: S.sides p r ++ S.deps p r) rows)).
   Definition top_rank_code p (pol : policy L.wparam) :=
     Pos.succ (fold_right (fun x acc => Pos.max (priority pol (S.key_code x)) acc)
       1%positive (flat_map (fun r => S.target p r :: S.sides p r ++ S.deps p r) (S.rows p))).
@@ -364,12 +367,13 @@ Module WorklistCode (L : WLATTICE_OPS) (S : SYSTEM_OPS L)
     WorklistState (ws_store s) (ws_counters s) (fst ql) (snd ql)
       (ws_rows s) (ws_readers s) (ws_armed s) (ws_ranks s).
   Definition prepare p pol : state :=
-    let ids := row_ids p in
-    let idx := fold_right (index_row p) (Empty, Empty) (combine ids (S.rows p)) in
-    let top := top_rank_code p pol in
+    let rows := S.rows p in
+    let ids := wl_ids_from (length rows) 1%positive in
+    let idx := fold_right (index_row p) (Empty, Empty) (combine ids rows) in
+    let top := top_rank_of rows p pol in
     let ranks := fold_right (fun ir acc =>
       PTrieCode.set (fst ir) (rank_with_top p pol top (snd ir)) acc)
-      Empty (combine ids (S.rows p)) in
+      Empty (combine ids rows) in
     enqueue p pol ids
       (WorklistState Empty Empty Q.empty Empty (fst idx) (snd idx) Empty ranks).
   Definition eval_row p r m :=
@@ -470,6 +474,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   TimeFun after_pop.
   TimeFun row_ids.
   TimeFun priority.
+  TimeFun top_rank_of.
   TimeFun top_rank_code.
   TimeFun rank_with_top.
   TimeFun add_reader.
@@ -1131,6 +1136,13 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     now rewrite IH.
   Qed.
 
+  (** Reusing an enumerated row list preserves the fallback-priority scan. *)
+  Lemma top_rank_of_agrees : forall p pol,
+    top_rank_of (S.rows p) p pol = top_rank_code p pol.
+  Proof.
+    reflexivity.
+  Qed.
+
   (** The executable fallback rank agrees with the support-based specification. *)
   Lemma top_rank_code_agrees : forall p pol, top_rank_code p pol = top_rank p pol.
   Proof.
@@ -1451,7 +1463,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma prepare_eq : forall p pol,
     prepare p pol = enqueue p pol (row_ids p) (prepare_seed p pol).
   Proof.
-    reflexivity.
+    intros p pol; unfold prepare; cbn zeta.
+    rewrite top_rank_of_agrees; reflexivity.
   Qed.
 
   (** Seed row lookups agree with source row lookups. *)
@@ -4213,6 +4226,13 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     eapply N.le_trans; eassumption.
   Qed.
 
+  (** A supplied row list saves exactly the enumeration charge in the rank scan. *)
+  Lemma T_top_rank_of_rows : forall p pol,
+    (T_top_rank_of (S.rows p) p pol + S.T_rows p = T_top_rank_code p pol)%N.
+  Proof.
+    intros p pol; unfold T_top_rank_of, T_top_rank_code; ring.
+  Qed.
+
   (** Computing the fallback rank is paid by declared occurrences and row target accessors. *)
   Lemma T_top_rank_code_bound : forall p pol, S.wf p -> prio_ok p pol ->
     (T_top_rank_code p pol <=
@@ -4279,6 +4299,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     pose proof (T_prepare_list_overhead p Hwf) as Hlists.
     pose proof (T_index_rows_bound p Hwf) as Hindex.
     pose proof (T_top_rank_code_bound p pol Hwf Hprio) as Htop.
+    pose proof (T_top_rank_of_rows p pol) as Htop_rows.
     pose proof (T_rank_rows_bound p pol (top_rank_code p pol) Hwf Hprio) as Hranks.
     set (idx := fold_right (index_row p) (Empty, Empty)
       (combine (row_ids p) (S.rows p))).
@@ -4290,8 +4311,10 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     { eapply N.le_trans; [exact Hlists|].
       apply N.mul_le_mono_l; unfold mass; lia. }
     assert (Hcoefficient : (2 <= c_lookup)%N) by (unfold c_lookup; lia).
-    unfold T_prepare, prepare_seed; cbn beta zeta; fold idx.
-    clear -Hlists' Hindex Htop Hranks Hfst Hsnd Hcoefficient; nia.
+    unfold T_prepare, prepare_seed; cbn beta zeta; fold (row_ids p).
+    rewrite top_rank_of_agrees; fold idx.
+    unfold T_row_ids in Hlists'.
+    clear -Hlists' Hindex Htop Htop_rows Hranks Hfst Hsnd Hcoefficient; nia.
   Qed.
 
   (** W1 charges indexing, numbering and initial guarded enqueue to preparation. *)
