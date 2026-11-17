@@ -30,7 +30,16 @@ in
     inherit shellHook;
   };
   sessionShell = pkgs.mkShell {
-    packages = common;
+    packages = common ++ [
+      ocaml.core
+      ocaml.core_unix
+      ocaml.ppx_jane
+      ocaml.ppx_expect
+      ocaml.ppx_inline_test
+      ocaml.ppx_bench
+      ocaml.core_bench
+      ocaml.textutils
+    ];
     inherit shellHook;
   };
 }
