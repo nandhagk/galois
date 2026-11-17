@@ -4,9 +4,9 @@
     For example, a repeated edge receives distinct occurrence numbers.
 
     Groups:
-    - Occurrences: repeated edges are numbered from 0 in their order.
-    - Edges: a prepared program lists its edges, and an unprepared one has none.
-    - Adjacency: outgoing and incoming lists keep the order of the edges.
+    - [OccurrenceTests] Repeated edges are numbered from 0 in their order.
+    - [EdgeTests] A prepared program lists its edges, and an unprepared one has none.
+    - [AdjacencyTests] Outgoing and incoming lists keep the order of the edges.
 
     Builds on: Program.Cfg. *)
 
