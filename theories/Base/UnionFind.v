@@ -43,7 +43,8 @@ Module UnionFindCode <: UNION_FIND_OPS.
     UF (fold_left (fun m y => PTrieCode.set y root m) path (parents u)) (sizes u) (count u).
   TimeFun compress.
   Definition find (x : positive) (u : t) : positive * t :=
-    let r := walk x u in (fst r, compress (fst r) (snd r) u).
+    let r := walk x u in
+    (fst r, compress (fst r) (match snd r with [] => [] | _ :: rest => rest end) u).
   TimeFun find.
   Definition link (w l : positive) (u : t) : t :=
     UF (PTrieCode.set l w (parents u)) (PTrieCode.set w (size_at w u + size_at l u)%N (sizes u)) (count u).
@@ -322,6 +323,36 @@ Module UnionFind <: UNION_FIND.
     change (Nat.log2 (Pos.to_nat p) <= Pos.size_nat p).
     pose proof (proj1 (Nat.log2_lt_pow2 (Pos.to_nat p) (Pos.size_nat p)
       (Pos2Nat.is_pos p)) (Pos.size_nat_upper p)). lia.
+  Qed.
+
+  (** A walk preserves the stored edge from the path head to the current key. *)
+  Lemma walk_fuel_head_parent u fuel : forall x path r y rest,
+    (forall z tail, path = z :: tail -> PTrieCode.get z (parents u) = Some x) ->
+    (match loop_fuel (walk_step u) fuel (x, path) with
+     | inl s => s
+     | inr s => s
+     end) = (r, y :: rest) ->
+    PTrieCode.get y (parents u) = Some r.
+  Proof.
+    induction fuel as [|fuel IH]; intros x path r y rest Hhead Hrun.
+    - cbn [loop_fuel] in Hrun. injection Hrun as Hroot Hpath. subst r.
+      exact (Hhead y rest Hpath).
+    - cbn [loop_fuel] in Hrun. unfold walk_step in Hrun. cbn [fst snd] in Hrun.
+      destruct (Pos.eqb (parent_of x u) x) eqn:Heq.
+      + injection Hrun as Hroot Hpath. subst r. exact (Hhead y rest Hpath).
+      + eapply IH with (x := parent_of x u) (path := x :: path); [|exact Hrun].
+        intros z tail Hpath. injection Hpath as Hkey Htail. subst z.
+        unfold parent_of in *.
+        destruct (PTrieCode.get x (parents u)) as [p|] eqn:Hget; [reflexivity|].
+        rewrite Pos.eqb_refl in Heq. discriminate.
+  Qed.
+
+  (** The first recorded key already points to the result, even when walk fuel runs out. *)
+  Lemma walk_head_parent x u r y rest :
+    walk x u = (r, y :: rest) -> PTrieCode.get y (parents u) = Some r.
+  Proof.
+    unfold walk. eapply walk_fuel_head_parent.
+    intros z tail Hempty. discriminate.
   Qed.
 
   (** A member walk spends one increasing rank per recorded nonroot key. *)
@@ -1006,6 +1037,32 @@ Module UnionFind <: UNION_FIND.
   Qed.
   (** ** Compression and find helpers *)
 
+  (** Updating an already stored root edge does not change the compressed forest. *)
+  Lemma compress_head r y rest u :
+    PTrieCode.get y (parents u) = Some r ->
+    compress r (y :: rest) u = compress r rest u.
+  Proof.
+    intro Hget. unfold compress. cbn [fold_left].
+    assert (Hset : PTrieCode.set y r (parents u) = parents u).
+    { apply PTrie.ext. intro z. destruct (Pos.eq_dec z y) as [Heq|Hne].
+      - subst z. rewrite PTrie.get_set_same. symmetry. exact Hget.
+      - apply PTrie.get_set_other. exact Hne. }
+    rewrite Hset. reflexivity.
+  Qed.
+
+  (** The original full-path compression remains the specification of find. *)
+  Definition find_old (x : positive) (u : t) : positive * t :=
+    let r := walk x u in (fst r, compress (fst r) (snd r) u).
+
+  (** Skipping the first path entry preserves the complete result of find. *)
+  Lemma find_eq_old x u : wf u -> find x u = find_old x u.
+  Proof.
+    intros _. unfold find, find_old.
+    destruct (walk x u) as [r [|y rest]] eqn:Hwalk; cbn [fst snd].
+    - reflexivity.
+    - rewrite compress_head; [reflexivity|]. eapply walk_head_parent. exact Hwalk.
+  Qed.
+
   (** Repeated updates replace exactly the keys listed in the compression path. *)
   Lemma fold_compress_get (r : positive) (path : list positive) (z : positive) :
     forall m : PTrieCode.t positive,
@@ -1172,10 +1229,11 @@ Module UnionFind <: UNION_FIND.
     (forall z, size_of (snd (find x u)) z = size_of u z) /\
     (forall z, is_root (snd (find x u)) z <-> is_root u z).
   Proof.
-    intro Hwf. pose proof (walk_root x u Hwf) as Hroot.
+    intro Hwf. rewrite (find_eq_old x u Hwf).
+    pose proof (walk_root x u Hwf) as Hroot.
     pose proof (proj2 (walk_path x u Hwf)) as Hmembers.
     pose proof (walk_path_nonroot x u Hwf) as Hnonroot.
-    unfold find. destruct (walk x u) as [r path] eqn:Hwalk. cbn [fst snd] in *.
+    unfold find_old. destruct (walk x u) as [r path] eqn:Hwalk. cbn [fst snd] in *.
     assert (Hpath : forall y, In y path -> mem u y /\ repr u y = r /\ y <> r).
     { intros y Hy. destruct (Hmembers y Hy) as [Hmem Hrepr].
       split; [exact Hmem|]. split; [congruence | apply Hnonroot; exact Hy]. }
@@ -1744,12 +1802,17 @@ Module UnionFindT <: UNION_FIND_ALL.
   Proof.
     intro Hwf. pose proof (T3_walk x u Hwf) as Hwalk.
     destruct (F4_walk_path x u Hwf) as [Hlength Hmembers].
-    pose proof (T4_compress (fst (walk x u)) (snd (walk x u)) u Hwf
-      ltac:(intros y Hy; exact (proj1 (Hmembers y Hy)))) as Hcompress.
+    set (path := match snd (walk x u) with [] => [] | _ :: rest => rest end).
+    assert (Hsub : forall y, In y path -> In y (snd (walk x u))).
+    { unfold path. destruct (snd (walk x u)) as [|z rest]; cbn [In]; auto. }
+    assert (Hcutlength : length path <= Nat.log2 (card u)).
+    { unfold path. destruct (snd (walk x u)); cbn [length] in *; lia. }
+    pose proof (T4_compress (fst (walk x u)) path u Hwf
+      ltac:(intros y Hy; exact (proj1 (Hmembers y (Hsub y Hy))))) as Hcompress.
     pose proof (Nat.le_max_l (width u) (Pos.size_nat x)) as Hwidth.
-    apply time_of_nat_le in Hlength. apply time_of_nat_le in Hwidth.
+    apply time_of_nat_le in Hcutlength. apply time_of_nat_le in Hwidth.
     time_unfold T_find. time_unfold @Datatypes.T_fst.
-    time_unfold @Datatypes.T_snd.
+    time_unfold @Datatypes.T_snd. fold path.
     unfold k_walk, k_comp in *.
     repeat rewrite Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
   Qed.

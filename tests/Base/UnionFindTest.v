@@ -84,6 +84,14 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** A second find skips the path head whose stored parent is already the root. *)
+Example uf_find_compressed_path :
+  let u := snd (UnionFindCode.find 4%positive uf_sample) in
+  UnionFindCode.find 4%positive u = (1%positive, u).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example uf_key_order : UnionFind.support uf_sample = [4; 2; 1; 3]%positive.
 Proof.
   vm_compute. reflexivity.
