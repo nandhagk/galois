@@ -2,10 +2,19 @@
 
     Edge readers list uses before definitions and node readers list exit observations.
     For example, an assignment reads its operands before replacing its destination.
+
+    Main results
+    - [universe_spec] The universe contains exactly the syntactic variable occurrences.
+    - [uses_complexity] Edge uses are linear in the edge key and the returned variables.
+    - [defs_complexity] Edge definitions are linear in the edge key and the returned variables.
+    - [exits_complexity] Exit observations are linear in the node key and the returned variables.
+    - [universe_complexity] The universe has the aggregate reader and bit-width bound.
+
     Builds on: Program.CfgSig and Base keys. *)
 
 From Stdlib Require Import List NArith.
-From Argent Require Import Time BigO.
+From Argent Require Import Time Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Program Require Import SemanticsSig CfgSig.
 
@@ -59,14 +68,14 @@ Module Type VARS_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
   Parameter T_exits_le : forall p n,
     (T_exits p n <= c_vars * N.of_nat (N.bits n + length (exits p n) + 1))%N.
   (** Edge uses are linear in the edge key and the returned variables. *)
-  Parameter uses_complexity : bigO (X := P.t * E.t) (fun _ => True)
-    (fun '(p, e) => N.of_nat (E.bits e + length (uses p e))) (fun '(p, e) => T_uses p e).
+  Parameter uses_complexity :
+    T_uses p e ∈ 𝑂(N.of_nat (E.bits e + length (uses p e))) for (p, e).
   (** Edge definitions are linear in the edge key and the returned variables. *)
-  Parameter defs_complexity : bigO (X := P.t * E.t) (fun _ => True)
-    (fun '(p, e) => N.of_nat (E.bits e + length (defs p e))) (fun '(p, e) => T_defs p e).
+  Parameter defs_complexity :
+    T_defs p e ∈ 𝑂(N.of_nat (E.bits e + length (defs p e))) for (p, e).
   (** Exit observations are linear in the node key and the returned variables. *)
-  Parameter exits_complexity : bigO (X := P.t * N.t) (fun _ => True)
-    (fun '(p, n) => N.of_nat (N.bits n + length (exits p n))) (fun '(p, n) => T_exits p n).
+  Parameter exits_complexity :
+    T_exits p n ∈ 𝑂(N.of_nat (N.bits n + length (exits p n))) for (p, n).
   Definition universe_work p :=
     (C.T_edges p + C.T_nodes p +
       fold_right N.add 0%N (map (fun e => T_uses p e + T_defs p e)%N (C.edges p)) +
@@ -77,7 +86,7 @@ Module Type VARS_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
   (** Universe preparation charges every reader, encoding and trie traversal. *)
   Parameter T_universe_le : forall p, (T_universe p <= c_vars * universe_work p)%N.
   (** The universe has the aggregate reader and bit-width bound. *)
-  Parameter universe_complexity : bigO (fun _ : P.t => True) universe_work T_universe.
+  Parameter universe_complexity : T_universe p ∈ 𝑂(universe_work p) for p.
 End VARS_TIME.
 
 Module Type VARS_T (P : TYPE) (N : KEY_T) (E : KEY_T)
