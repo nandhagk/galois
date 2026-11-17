@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List Bool NArith PArith Arith Lia.
 From Argent Require Import Time Tactics Std Loop BigO.
-From Galois.Base Require Import KeySig Code.
+From Galois.Base Require Import KeySig Code Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import CfgSig IcfgSig.
@@ -154,6 +154,224 @@ Definition path_rules {N E F Site} (site_eqb : Site -> Site -> bool)
     | _ => nil
     end) edges) facts.
 TimeFun path_rules.
+
+(** Cache an edge's fact pairs in their original input and output order. *)
+Definition edge_pairs {E F} (flow : E -> F -> list F) (facts : list F) (e : E)
+    : list (F * F) :=
+  flat_map (fun x => map (fun y => (x, y)) (flow e x)) facts.
+TimeFun edge_pairs.
+
+(** Mapping cached pairs is the original nested mapping over flow results. *)
+Lemma edge_pairs_step {E F A} (flow : E -> F -> list F) facts e (f : F -> F -> A) :
+  map (fun '(x, y) => f x y) (edge_pairs flow facts e) =
+    flat_map (fun x => map (f x) (flow e x)) facts.
+Proof.
+  unfold edge_pairs. induction facts as [|x facts IH]; cbn [flat_map map].
+  - reflexivity.
+  - rewrite map_app, map_map, IH. reflexivity.
+Qed.
+
+(** Projecting cached outputs preserves the concatenated flow results. *)
+Lemma edge_pairs_snd {E F} (flow : E -> F -> list F) facts e :
+  map snd (edge_pairs flow facts e) = flat_map (flow e) facts.
+Proof.
+  change (map (fun '(x, y) => (fun _ y => y) x y)
+    (edge_pairs flow facts e) = flat_map (flow e) facts).
+  rewrite edge_pairs_step. apply flat_map_ext. intro x. apply map_id.
+Qed.
+
+(** Flattening a mapped list composes the two callbacks. *)
+Local Lemma path_flat_map_map {A B C} (f : B -> list C) (g : A -> B) xs :
+  flat_map f (map g xs) = flat_map (fun x => f (g x)) xs.
+Proof.
+  induction xs as [|x xs IH]; cbn [map flat_map].
+  - reflexivity.
+  - now rewrite IH.
+Qed.
+
+(** Flat-mapping cached pairs preserves both nested occurrence orders. *)
+Lemma edge_pairs_flat_map {E F A} (flow : E -> F -> list F) facts e
+    (f : F -> F -> list A) :
+  flat_map (fun '(x, y) => f x y) (edge_pairs flow facts e) =
+    flat_map (fun x => flat_map (f x) (flow e x)) facts.
+Proof.
+  unfold edge_pairs. induction facts as [|x facts IH]; cbn [flat_map].
+  - reflexivity.
+  - rewrite flat_map_app, path_flat_map_map, IH. reflexivity.
+Qed.
+
+(** An edge cache stores its classification and ordered fact pairs without callbacks. *)
+Record path_edge_info (E F Site : Type) := PathEdgeInfo {
+  info_edge : E;
+  info_kind : edge_kind Site;
+  info_pairs : list (F * F)
+}.
+Arguments PathEdgeInfo {E F Site}.
+Arguments info_edge {E F Site}.
+Arguments info_kind {E F Site}.
+Arguments info_pairs {E F Site}.
+TimeFun info_edge.
+TimeFun info_kind.
+TimeFun info_pairs.
+
+(** A missing site has no return edges. *)
+Definition return_rows {E F Site} (code : positive)
+    (index : ptrie (list (path_edge_info E F Site))) : list (path_edge_info E F Site) :=
+  match trie_get code index with
+  | Some rows => rows
+  | None => nil
+  end.
+TimeFun return_rows.
+
+(** Folding from the right preserves the source order of returns at every site. *)
+Definition return_index {E F Site} (site_code : Site -> positive)
+    (infos : list (path_edge_info E F Site)) : ptrie (list (path_edge_info E F Site)) :=
+  fold_right (fun i acc => match info_kind i with
+    | Return s =>
+      let code := site_code s in
+      PTrieCode.set code (i :: return_rows code acc) acc
+    | _ => acc
+    end) Empty infos.
+TimeFun return_index.
+
+(** Looking up a site selects exactly its return occurrences in source order. *)
+Lemma return_index_spec {E F Site} (site_code : Site -> positive)
+    (infos : list (path_edge_info E F Site)) code :
+  return_rows code (return_index site_code infos) =
+    filter (fun i => match info_kind i with
+      | Return s => Pos.eqb code (site_code s)
+      | _ => false
+      end) infos.
+Proof.
+  induction infos as [|i infos IH].
+  - unfold return_index, return_rows; cbn [fold_right filter].
+    rewrite PTrie.get_empty. reflexivity.
+  - cbn [return_index fold_right filter].
+    destruct (info_kind i) as [|site|site|site]; try exact IH.
+    destruct (Pos.eqb code (site_code site)) eqn:Hsame.
+    + apply Pos.eqb_eq in Hsame. subst code. unfold return_rows at 1.
+      rewrite PTrie.get_set_same. exact (f_equal (cons i) IH).
+    + apply Pos.eqb_neq in Hsame. unfold return_rows at 1.
+      rewrite PTrie.get_set_other by exact Hsame. exact IH.
+Qed.
+
+(** Resolve each call's return bucket once, outside the initial-fact traversal. *)
+Definition path_calls {E F Site} (site_code : Site -> positive)
+    (returns : ptrie (list (path_edge_info E F Site)))
+    (infos : list (path_edge_info E F Site))
+    : list (path_edge_info E F Site * list (path_edge_info E F Site)) :=
+  flat_map (fun call => match info_kind call with
+    | Call site => (call, return_rows (site_code site) returns) :: nil
+    | _ => nil
+    end) infos.
+TimeFun path_calls.
+
+(** Traversing cached calls agrees with selecting calls from the edge inventory. *)
+Local Lemma path_calls_flat_map {E F Site A} (site_code : Site -> positive) returns infos
+    (f : path_edge_info E F Site * list (path_edge_info E F Site) -> list A) :
+  flat_map f (path_calls site_code returns infos) =
+    flat_map (fun call => match info_kind call with
+      | Call site => f (call, return_rows (site_code site) returns)
+      | _ => nil
+      end) infos.
+Proof.
+  unfold path_calls. induction infos as [|i infos IH]; cbn [flat_map].
+  - reflexivity.
+  - destruct (info_kind i); cbn [flat_map fst snd app];
+      try exact IH; now rewrite IH.
+Qed.
+
+(** Hoist edge callbacks and use an ordered site index for matched returns. *)
+Definition path_rules_fast {N E F Site} (site_code : Site -> positive)
+    (kind : E -> edge_kind Site) (dst : E -> N) (facts : list F)
+    (flow : E -> F -> list F) (seeds : list (N * F)) (edges : list E)
+    : list (path_rule N E F) :=
+  let infos := map (fun e => PathEdgeInfo e (kind e) (edge_pairs flow facts e)) edges in
+  let returns := return_index site_code infos in
+  let calls := path_calls site_code returns infos in
+  map (fun '(n, d) => PathIdentity n d) seeds ++
+  flat_map (fun i =>
+    match i with
+    | PathEdgeInfo e k pairs =>
+      match k with
+      | Call _ =>
+        let target := dst e in
+        map (fun '(_, y) => PathIdentity target y) pairs
+      | _ => nil
+      end
+    end) infos ++
+  flat_map (fun d0 => flat_map (fun i =>
+    match i with
+    | PathEdgeInfo e k pairs =>
+      match k with
+      | Intra | CallToReturn _ => map (fun '(x, y) => PathStep d0 e x y) pairs
+      | _ => nil
+      end
+    end) infos) facts ++
+  flat_map (fun d0 => flat_map (fun '(call, rets) =>
+    match call with
+    | PathEdgeInfo call_edge _ call_pairs =>
+      flat_map (fun ret =>
+        match ret with
+        | PathEdgeInfo ret_edge _ ret_pairs =>
+          flat_map (fun '(x, a) => map (fun '(b, y) =>
+            PathReturn d0 call_edge ret_edge x a b y) ret_pairs) call_pairs
+        end) rets
+    end) calls) facts.
+TimeFun path_rules_fast.
+
+(** Filtering before flattening is equivalent to skipping the rejected occurrences. *)
+Local Lemma path_flat_map_filter {A B} (f : A -> list B) keep xs :
+  flat_map f (filter keep xs) = flat_map (fun x => if keep x then f x else nil) xs.
+Proof.
+  induction xs as [|x xs IH]; cbn [filter flat_map].
+  - reflexivity.
+  - destruct (keep x); cbn [flat_map]; now rewrite IH.
+Qed.
+
+(** Cached call and return pairs preserve the original nested fact traversal. *)
+Local Lemma path_return_pairs {N E F} (flow : E -> F -> list F) facts d0 call ret :
+  flat_map (fun '(x, a) => map (fun '(b, y) =>
+    @PathReturn N E F d0 call ret x a b y)
+    (edge_pairs flow facts ret)) (edge_pairs flow facts call) =
+  flat_map (fun x => flat_map (fun a => flat_map (fun b =>
+    map (fun y => PathReturn d0 call ret x a b y) (flow ret b)) facts)
+    (flow call x)) facts.
+Proof.
+  rewrite (edge_pairs_flat_map flow facts call (fun x a =>
+    map (fun '(b, y) => @PathReturn N E F d0 call ret x a b y)
+      (edge_pairs flow facts ret))).
+  apply flat_map_ext. intro x.
+  apply flat_map_ext. intro a. apply edge_pairs_step.
+Qed.
+
+(** The indexed builder preserves every rule occurrence and its exact order. *)
+Theorem path_rules_fast_agrees {N E F Site} (site_eqb : Site -> Site -> bool)
+    (site_code : Site -> positive) (kind : E -> edge_kind Site) (dst : E -> N)
+    (facts : list F) (flow : E -> F -> list F) (seeds : list (N * F)) (edges : list E) :
+  (forall s s', site_eqb s s' = Pos.eqb (site_code s) (site_code s')) ->
+  path_rules_fast site_code kind dst facts flow seeds edges =
+    path_rules site_eqb kind dst facts flow seeds edges.
+Proof.
+  intro Hcode. unfold path_rules_fast, path_rules.
+  apply f_equal2; [apply map_ext; intros [n d]; reflexivity|]. apply f_equal2.
+  - rewrite path_flat_map_map. apply flat_map_ext. intro e.
+    cbn [info_kind info_edge info_pairs]. destruct (kind e); try reflexivity.
+    exact (edge_pairs_step flow facts e (fun _ d => @PathIdentity N E F (dst e) d)).
+  - apply f_equal2.
+    + apply flat_map_ext. intro d0. rewrite path_flat_map_map.
+      apply flat_map_ext. intro e. cbn [info_kind info_edge info_pairs].
+      destruct (kind e); try reflexivity; apply edge_pairs_step.
+    + apply flat_map_ext. intro d0. rewrite path_calls_flat_map, path_flat_map_map.
+      apply flat_map_ext. intro call. cbn [info_kind info_edge info_pairs].
+      destruct (kind call) as [|site|site|site]; try reflexivity.
+      cbn [fst snd info_edge info_pairs].
+      rewrite return_index_spec, path_flat_map_filter, path_flat_map_map.
+      apply flat_map_ext. intro ret. cbn [info_kind info_edge info_pairs].
+      destruct (kind ret) as [|ret_site|ret_site|ret_site]; try reflexivity.
+      rewrite Hcode. destruct (Pos.eqb (site_code site) (site_code ret_site));
+        [apply path_return_pairs|reflexivity].
+Qed.
 
 (** Pending dependencies are read in order and passed to the rule evaluator. *)
 Definition path_query {N E F A} (finish : path_rule N E F -> list A -> A)

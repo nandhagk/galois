@@ -88,8 +88,16 @@ Module AffineFlow <: IDE_FLOW_OPS Prog NatKeyCode Edge Fact ZValues Translation.
     FVal (if Nat.eqb e 1 then 1%Z else 0%Z).
 End AffineFlow.
 Definition affine_rules := Eval vm_compute in
-  path_rules NatKeyCode.eqb (Icfg.kind tt) (Graph.dst tt) (AffineFlow.facts tt)
+  path_rules_fast NatKeyCode.encode (Icfg.kind tt) (Graph.dst tt) (AffineFlow.facts tt)
     (AffineFlow.flow tt) (AffineFlow.seeds tt) (Graph.edges tt).
+
+Example affine_rules_fast_agrees :
+  affine_rules = path_rules NatKeyCode.eqb (Icfg.kind tt) (Graph.dst tt)
+    (AffineFlow.facts tt) (AffineFlow.flow tt) (AffineFlow.seeds tt) (Graph.edges tt).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Module AffineRules <: IFDS_RULES_OPS Prog NatKeyCode Edge Fact.
   Definition rules (_ : unit) := affine_rules.
 End AffineRules.
