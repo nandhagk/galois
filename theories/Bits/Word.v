@@ -2,10 +2,16 @@
 
     Words are integers reduced modulo a power of two.
     For example, wrapping 260 at width eight gives 4.
+
+    Main results
+    - [modulus_complexity] Modulus construction is linear in the width.
+    - [wrap_complexity] Wrapping has the linear class in the width and the raw integer size.
+
     Builds on: Stdlib integer arithmetic and Argent time derivation. *)
 
 From Stdlib Require Import ZArith NArith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 
 Open Scope Z_scope.
 
@@ -410,8 +416,8 @@ Proof.
 Qed.
 
 (** Modulus construction is linear in the width. *)
-Theorem modulus_complexity : bigO (X := width) (fun _ => True)
-  (fun w => N.of_nat (Pos.to_nat w)) (fun w => T_modulus w).
+Theorem modulus_complexity :
+  T_modulus w ∈ 𝑂(N.of_nat (Pos.to_nat w)) for w.
 Proof.
   apply bigO_intro with (c := 8%N). intros w _.
   pose proof (modulus_time_le w) as Hmodulus.
@@ -419,9 +425,8 @@ Proof.
 Qed.
 
 (** Wrapping has the linear class in the width and the raw integer size. *)
-Theorem wrap_complexity : bigO (X := width * Z) (fun _ => True)
-  (fun x => N.of_nat (Pos.to_nat (fst x) + Z.size_nat (snd x)))
-  (fun x => T_wrap (fst x) (snd x)).
+Theorem wrap_complexity :
+  T_wrap w z ∈ 𝑂(N.of_nat (Pos.to_nat w + Z.size_nat z)) for (w, z).
 Proof.
   apply bigO_intro with (c := 32%N). intros [w z] _. cbn [fst snd].
   pose proof (wrap_time_le w z) as Hwrap.
