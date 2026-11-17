@@ -1303,20 +1303,37 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     intros q lim; time_unfold T_solve; time_simpl; unfold c_andersen, k_wrap; lia.
   Qed.
 
+  (** Seeding is linear in the input entries at the final database unit and identifier width. *)
   Lemma seed_bigO : bigO (fun _ => True)
     (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
       D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
     T_seed.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_andersen).
+    intros q _; cbn beta.
+    eapply N.le_trans; [apply T_seed_le |].
+    rewrite !Nat2N.inj_mul; nia.
+  Qed.
 
+  (** Compiling the fixed inclusion program costs a constant. *)
   Lemma compile_bigO : bigO (fun _ => True) (fun _ => 0%N) T_compile.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_andersen).
+    intros q _; cbn beta.
+    rewrite N.mul_0_r, N.add_0_l; apply T_compile_le.
+  Qed.
 
+  (** A points-to lookup is linear in the database unit and the two value widths. *)
   Lemma points_bigO : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
     (fun z => let '(db, x, a) := z in
       N.of_nat (3 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
     (fun z => let '(db, x, a) := z in T_points db x a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_andersen).
+    intros [[db x] a] Hwf; cbn [fst snd] in Hwf |- *.
+    eapply N.le_trans; [apply T_points_le; exact Hwf |].
+    rewrite !Nat2N.inj_add; nia.
+  Qed.
 
   Lemma solve_bigO : bigO
     (fun x : N * nat * pointer_input * limits =>

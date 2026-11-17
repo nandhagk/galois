@@ -853,20 +853,35 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     intros q lim; time_unfold T_solve; time_simpl; unfold c_steensgaard, k_wrap; lia.
   Qed.
 
+  (** Seeding is linear in the input count at the final database's unit and identifier width. *)
   Lemma seed_bigO : bigO (fun _ => True)
     (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
       D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
     T_seed.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_steensgaard).
+    intros q _; pose proof (T_seed_le q) as Hseed.
+    rewrite !Nat2N.inj_mul; nia.
+  Qed.
 
+  (** The fixed pointer program has a constant compilation cost. *)
   Lemma compile_bigO : bigO (fun _ => True) (fun _ => 0%N) T_compile.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_steensgaard).
+    intros q _; rewrite N.mul_0_r, N.add_0_l; apply T_compile_le.
+  Qed.
 
+  (** A points-to query costs its two encoded cells and the database lookup unit. *)
   Lemma points_bigO : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
     (fun z => let '(db, x, a) := z in
       N.of_nat (8 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
     (fun z => let '(db, x, a) := z in T_points db x a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply (bigO_intro _ _ _ c_steensgaard).
+    intros [[db x] a] Hwf; cbn [fst snd] in Hwf |- *.
+    pose proof (T_points_le db x a Hwf) as Hpoints.
+    rewrite !Nat2N.inj_add in Hpoints |- *; nia.
+  Qed.
 
   Lemma solve_bigO : bigO
     (fun x : N * nat * pointer_input * limits =>
