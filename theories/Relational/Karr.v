@@ -6015,7 +6015,30 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
       end
     end.
 
-  Definition checked_hull_row (xs : list X.t) (a b : list (lcons X.t)) (r : karr_row)
+  (** The stored coefficients contribute their common nonnegative divisor. *)
+  Fixpoint karr_hull_content_terms (ps : list (X.t * Z)) : Z :=
+    match ps with
+    | [] => 0%Z
+    | p :: rest => Z.gcd (snd p) (karr_hull_content_terms rest)
+    end.
+
+
+  (** A hull row uses the gcd of its coefficients and right-hand side. *)
+  Definition karr_hull_content (c : lcons X.t) : Z :=
+    Z.gcd (rhs c) (karr_hull_content_terms (lhs c)).
+
+
+  (** The zero row uses divisor one, while every nonzero content is retained. *)
+  Definition karr_hull_divisor (c : lcons X.t) : Z :=
+    let g := karr_hull_content c in if Z.eqb g 0 then 1%Z else g.
+
+
+  (** Exact coefficient division preserves the sparse key list and relation. *)
+  Definition karr_hull_quotient (g : Z) (c : lcons X.t) : lcons X.t :=
+    LCons _ (map (fun p => (fst p, (snd p / g)%Z)) (lhs c)) (lrel c) (rhs c / g)%Z.
+
+
+  Definition checked_hull_row_spec (xs : list X.t) (a b : list (lcons X.t)) (r : karr_row)
       : option (lcons X.t) :=
     let aux := S (length xs) in
     let zs := skipn aux (kcoeff r) in
@@ -6024,6 +6047,23 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
       C.check_entails a c (Cert (firstn (length a) (kweight r)) 1 false) &&
       C.check_entails b c (Cert (skipn (length a) (kweight r)) 1 false)
     then Some c else None.
+
+
+  (** Hull extraction checks the divided row using its positive gcd as certificate scale. *)
+  Definition checked_hull_row (xs : list X.t) (a b : list (lcons X.t)) (r : karr_row)
+      : option (lcons X.t) :=
+    let aux := S (length xs) in
+    let zs := skipn aux (kcoeff r) in
+    if forallb (Z.eqb 0) (firstn aux (kcoeff r)) then
+      if forallb (Z.eqb 0) zs then None else
+        let raw := LCons _ (sparse xs zs) REq (karr_nth (length xs) zs) in
+        let g := karr_hull_divisor raw in
+        let c := karr_hull_quotient g raw in
+        if C.check_entails a c (Cert (firstn (length a) (kweight r)) g false) then
+          if C.check_entails b c (Cert (skipn (length a) (kweight r)) g false)
+          then Some c else None
+        else None
+    else None.
 
   Definition present {A} (xs : list (option A)) : list A :=
     flat_map (fun o => match o with Some x => [x] | None => [] end) xs.
@@ -8906,15 +8946,215 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     apply dense_combine_eval_Q.
   Qed.
 
-  (** A successful hull output is satisfied by every lifted model with its zero auxiliaries. *)
-  Lemma checked_hull_row_sound_Q : forall xs a b r c aux v,
+  (** Every stored term is divisible by the coefficient-list content. *)
+  Lemma karr_hull_content_terms_divides : forall ps p,
+    In p ps -> (karr_hull_content_terms ps | snd p)%Z.
+  Proof.
+    intro ps. induction ps as [|q ps IH]; intros p Hp; [contradiction|].
+    cbn [karr_hull_content_terms]. destruct Hp as [Hsame|Hp].
+    - subst p. apply Z.gcd_divide_l.
+    - eapply Z.divide_trans; [apply Z.gcd_divide_r|now apply IH].
+  Qed.
+
+  (** A hull content divides its right-hand side and all stored coefficients. *)
+  Lemma karr_hull_content_divides : forall c,
+    (karr_hull_content c | rhs c)%Z /\
+    Forall (fun p => (karr_hull_content c | snd p)%Z) (lhs c).
+  Proof.
+    intro c. split.
+    - unfold karr_hull_content. apply Z.gcd_divide_l.
+    - apply Forall_forall. intros p Hp. unfold karr_hull_content.
+      eapply Z.divide_trans; [apply Z.gcd_divide_r|].
+      now apply karr_hull_content_terms_divides.
+  Qed.
+
+  (** The guarded content is a positive common divisor, including for zero rows. *)
+  Lemma karr_hull_divisor_spec : forall c,
+    (0 < karr_hull_divisor c)%Z /\
+    (karr_hull_divisor c | rhs c)%Z /\
+    Forall (fun p => (karr_hull_divisor c | snd p)%Z) (lhs c).
+  Proof.
+    intro c. unfold karr_hull_divisor.
+    destruct (Z.eqb (karr_hull_content c) 0) eqn:Hzero.
+    - split; [lia|]. split; [apply Z.divide_1_l|].
+      apply Forall_forall. intros p _. apply Z.divide_1_l.
+    - apply Z.eqb_neq in Hzero.
+      pose proof (Z.gcd_nonneg (rhs c) (karr_hull_content_terms (lhs c))) as Hnonnegative.
+      fold (karr_hull_content c) in Hnonnegative.
+      split; [lia|apply karr_hull_content_divides].
+  Qed.
+
+  (** Multiplication restores an exactly divided integer. *)
+  Lemma karr_hull_exact_quotient : forall g z,
+    g <> 0%Z -> (g | z)%Z -> (g * (z / g) = z)%Z.
+  Proof.
+    intros g z Hnonzero [q Hmultiple]. rewrite Hmultiple, Z.div_mul by exact Hnonzero.
+    ring.
+  Qed.
+
+  (** Scaling the quotient's stored entries reconstructs the original sparse row. *)
+  Lemma karr_hull_quotient_terms : forall c,
+    map (fun p => (fst p, (karr_hull_divisor c * snd p)%Z))
+      (lhs (karr_hull_quotient (karr_hull_divisor c) c)) = lhs c.
+  Proof.
+    intro c. destruct (karr_hull_divisor_spec c) as [Hpositive [_ Hdivide]].
+    unfold karr_hull_quotient. cbn [lhs]. rewrite map_map.
+    transitivity (map (fun p : X.t * Z => p) (lhs c)); [|apply map_id].
+    apply map_ext_in. intros [x z] Hp. cbn [fst snd]. f_equal.
+    apply karr_hull_exact_quotient; [lia|].
+    exact (proj1 (Forall_forall _ _) Hdivide (x, z) Hp).
+  Qed.
+
+  (** Every coefficient of the original row is its quotient coefficient times the content. *)
+  Lemma karr_hull_quotient_coefficient : forall c x,
+    coefficient x (lhs c) =
+      (karr_hull_divisor c *
+        coefficient x (lhs (karr_hull_quotient (karr_hull_divisor c) c)))%Z.
+  Proof.
+    intros c x. rewrite <- coefficient_scale. now rewrite karr_hull_quotient_terms.
+  Qed.
+
+  (** The original right-hand side is its exact quotient times the content. *)
+  Lemma karr_hull_quotient_rhs : forall c,
+    rhs c = (karr_hull_divisor c * rhs (karr_hull_quotient (karr_hull_divisor c) c))%Z.
+  Proof.
+    intro c. destruct (karr_hull_divisor_spec c) as [Hpositive [Hdivide _]].
+    unfold karr_hull_quotient. cbn [rhs]. symmetry.
+    apply karr_hull_exact_quotient; [lia|exact Hdivide].
+  Qed.
+
+  (** Exact positive division preserves the rational models of an equality row. *)
+  Lemma karr_hull_quotient_satQ : forall c v,
+    lrel c = REq ->
+    (satQ v c <-> satQ v (karr_hull_quotient (karr_hull_divisor c) c)).
+  Proof.
+    intros c v Hrelation.
+    assert (Hleft : (karr_eval_coef_Q v (lhs c) ==
+      inject_Z (karr_hull_divisor c) *
+        karr_eval_coef_Q v (lhs (karr_hull_quotient (karr_hull_divisor c) c)))%Q).
+    { rewrite <- karr_hull_quotient_terms at 1. apply eval_coef_scale_Q. }
+    assert (Hnonzero : karr_hull_divisor c <> 0%Z).
+    { pose proof (proj1 (karr_hull_divisor_spec c)). lia. }
+    unfold satQ. cbn [karr_hull_quotient lrel lhs rhs]. rewrite Hrelation.
+    change ((karr_eval_coef_Q v (lhs c) == inject_Z (rhs c))%Q <->
+      (karr_eval_coef_Q v (lhs (karr_hull_quotient (karr_hull_divisor c) c)) ==
+        inject_Z (rhs (karr_hull_quotient (karr_hull_divisor c) c)))%Q).
+    rewrite (karr_hull_quotient_rhs c), inject_Z_mult.
+    setoid_rewrite Hleft.
+    apply Qmult_inj_l. now apply karr_inject_nonzero.
+  Qed.
+
+  (** Exact row normalization retains every stored key. *)
+  Lemma karr_hull_quotient_keys : forall c,
+    map fst (lhs (karr_hull_quotient (karr_hull_divisor c) c)) = map fst (lhs c).
+  Proof.
+    intro c. unfold karr_hull_quotient. cbn [lhs]. now rewrite map_map.
+  Qed.
+
+  (** Dividing a scale-one conclusion multiplies its certificate scale by the row content. *)
+  Lemma karr_hull_quotient_certificate : forall P c ms,
+    equality_certificate P c ms 1 ->
+    equality_certificate P (karr_hull_quotient (karr_hull_divisor c) c) ms
+      (karr_hull_divisor c).
+  Proof.
+    intros P c ms [Hweights [_ [Hcoefficient Hright]]].
+    split; [exact Hweights|]. split.
+    - exact (proj1 (karr_hull_divisor_spec c)).
+    - split.
+      + intro x. specialize (Hcoefficient x).
+        change (C.comb_coef P ms x = (1 * coefficient x (lhs c))%Z) in Hcoefficient.
+        change (C.comb_coef P ms x =
+          (karr_hull_divisor c *
+            coefficient x (lhs (karr_hull_quotient (karr_hull_divisor c) c)))%Z).
+        rewrite <- karr_hull_quotient_coefficient. lia.
+      + change (match lrel c with
+          | REq => C.comb_rhs P ms =
+            (karr_hull_divisor c * rhs (karr_hull_quotient (karr_hull_divisor c) c))%Z
+          | RLe => (C.comb_rhs P ms <=
+            karr_hull_divisor c * rhs (karr_hull_quotient (karr_hull_divisor c) c))%Z
+          end).
+        rewrite <- karr_hull_quotient_rhs. destruct (lrel c); lia.
+  Qed.
+
+  (** A successful normalized emitter returns the exact quotient of its sparse candidate. *)
+  Lemma checked_hull_row_shape : forall xs A B r c,
+    checked_hull_row xs A B r = Some c ->
+    let raw := LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r))) in
+    c = karr_hull_quotient (karr_hull_divisor raw) raw.
+  Proof.
+    intros xs A B r c Hrow raw. unfold checked_hull_row in Hrow. fold raw in Hrow.
+    destruct (forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r))); [|discriminate].
+    destruct (forallb (Z.eqb 0) (skipn (S (length xs)) (kcoeff r))); [discriminate|].
+    destruct (C.check_entails A (karr_hull_quotient (karr_hull_divisor raw) raw)
+      (Cert (firstn (length A) (kweight r)) (karr_hull_divisor raw) false));
+      [|discriminate].
+    destruct (C.check_entails B (karr_hull_quotient (karr_hull_divisor raw) raw)
+      (Cert (skipn (length A) (kweight r)) (karr_hull_divisor raw) false));
+      [|discriminate].
+    injection Hrow as Hsame. symmetry. exact Hsame.
+  Qed.
+
+  (** A successful normalized emitter has zero auxiliary columns. *)
+  Lemma checked_hull_row_aux_zero : forall xs A B r c,
+    checked_hull_row xs A B r = Some c ->
+    forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)) = true.
+  Proof.
+    intros xs A B r c Hrow. unfold checked_hull_row in Hrow.
+    destruct (forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)));
+      [reflexivity|discriminate].
+  Qed.
+
+  (** A successful normalized emitter retains a nonzero original output block. *)
+  Lemma checked_hull_row_suffix_nonzero : forall xs A B r c,
+    checked_hull_row xs A B r = Some c ->
+    forallb (Z.eqb 0) (skipn (S (length xs)) (kcoeff r)) = false.
+  Proof.
+    intros xs A B r c Hrow. unfold checked_hull_row in Hrow.
+    destruct (forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r))); [|discriminate].
+    destruct (forallb (Z.eqb 0) (skipn (S (length xs)) (kcoeff r)));
+      [discriminate|reflexivity].
+  Qed.
+
+  (** A lifted model with zero auxiliaries satisfies the raw sparse equality. *)
+  Lemma karr_hull_raw_sound_Q : forall xs r aux v,
     length aux = S (length xs) -> length (kcoeff r) = 2 * length xs + 2 ->
     kright r = 0%Z ->
     karr_models (aux ++ (map v xs ++ [(-1)%Q])) r ->
-    checked_hull_row xs a b r = Some c -> satQ v c.
+    forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)) = true ->
+    satQ v (LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))).
+  Proof.
+    intros xs r aux v Haux Hwidth Hright Hmodel Haux_zero.
+    set (zs := skipn (S (length xs)) (kcoeff r)) in *.
+    assert (Haux_width : length aux <= length (kcoeff r)) by lia.
+    assert (Hzero : forallb (Z.eqb 0) (firstn (length aux) (kcoeff r)) = true).
+    { now rewrite Haux. }
+    pose proof (karr_eval_zero_prefix aux (map v xs ++ [(-1)%Q])
+      (kcoeff r) Haux_width Hzero) as Hsplit.
+    rewrite Haux in Hsplit. fold zs in Hsplit.
+    unfold karr_models in Hmodel. rewrite Hright in Hmodel.
+    assert (Htail : (karr_eval (map v xs ++ [(-1)%Q]) zs == 0)%Q).
+    { eapply Qeq_trans; [symmetry; exact Hsplit|exact Hmodel]. }
+    assert (Hzs : length zs = S (length (map v xs))).
+    { unfold zs. rewrite length_skipn, Hwidth, length_map. lia. }
+    pose proof (karr_eval_extra_rhs (map v xs) zs Hzs) as Hdefect.
+    rewrite length_map in Hdefect.
+    assert (Hvalue : (karr_eval (map v xs) zs == inject_Z (karr_nth (length xs) zs))%Q).
+    { setoid_rewrite Htail in Hdefect. nra. }
+    change (karr_eval_coef_Q v (sparse xs zs) == inject_Z (karr_nth (length xs) zs))%Q.
+    setoid_rewrite <- hull_sparse_eval_Q. exact Hvalue.
+  Qed.
+
+  (** A successful hull output is satisfied by every lifted model with its zero auxiliaries. *)
+  Lemma checked_hull_row_sound_Q_spec : forall xs a b r c aux v,
+    length aux = S (length xs) -> length (kcoeff r) = 2 * length xs + 2 ->
+    kright r = 0%Z ->
+    karr_models (aux ++ (map v xs ++ [(-1)%Q])) r ->
+    checked_hull_row_spec xs a b r = Some c -> satQ v c.
   Proof.
     intros xs a b r c aux v Haux Hwidth Hright Hmodel Hrow.
-    unfold checked_hull_row in Hrow.
+    unfold checked_hull_row_spec in Hrow.
     set (zs := skipn (S (length xs)) (kcoeff r)) in *.
     remember (LCons X.t (sparse xs zs) REq (karr_nth (length xs) zs)) as output.
     destruct (forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)) &&
@@ -8944,6 +9184,22 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     subst output. change (karr_eval_coef_Q v (sparse xs zs) ==
       inject_Z (karr_nth (length xs) zs))%Q.
     setoid_rewrite <- hull_sparse_eval_Q. exact Hvalue.
+  Qed.
+
+  (** Checked exact normalization preserves the lifted-model soundness contract. *)
+  Lemma checked_hull_row_sound_Q : forall xs a b r c aux v,
+    length aux = S (length xs) -> length (kcoeff r) = 2 * length xs + 2 ->
+    kright r = 0%Z ->
+    karr_models (aux ++ (map v xs ++ [(-1)%Q])) r ->
+    checked_hull_row xs a b r = Some c -> satQ v c.
+  Proof.
+    intros xs a b r c aux v Haux Hwidth Hright Hmodel Hrow.
+    rewrite (checked_hull_row_shape _ _ _ _ _ Hrow).
+    apply (proj1 (karr_hull_quotient_satQ
+      (LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+        (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))) v eq_refl)).
+    eapply karr_hull_raw_sound_Q; [exact Haux|exact Hwidth|exact Hright|exact Hmodel|].
+    now apply checked_hull_row_aux_zero with (A := a) (B := b) (c := c).
   Qed.
 
   (** Optional output collection can use an invariant restricted to its actual input list. *)
@@ -9084,12 +9340,12 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     intros p a b Hle. unfold widen. now rewrite Hle.
   Qed.
   (** A successful hull extractor returns its sparse equality row unchanged. *)
-  Lemma checked_hull_row_shape : forall xs a b r c,
-    checked_hull_row xs a b r = Some c ->
+  Lemma checked_hull_row_shape_spec : forall xs a b r c,
+    checked_hull_row_spec xs a b r = Some c ->
     c = LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
       (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r))).
   Proof.
-    intros xs a b r c Hrow. unfold checked_hull_row in Hrow.
+    intros xs a b r c Hrow. unfold checked_hull_row_spec in Hrow.
     remember (LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
       (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))) as candidate
       eqn:Hcandidate in Hrow.
@@ -9899,11 +10155,11 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
   (** Returning a hull row requires every auxiliary coefficient to be zero. *)
-  Lemma checked_hull_row_aux_zero : forall xs A B r c,
-    checked_hull_row xs A B r = Some c ->
+  Lemma checked_hull_row_aux_zero_spec : forall xs A B r c,
+    checked_hull_row_spec xs A B r = Some c ->
     forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)) = true.
   Proof.
-    intros xs A B r c Hrow. unfold checked_hull_row in Hrow.
+    intros xs A B r c Hrow. unfold checked_hull_row_spec in Hrow.
     remember (LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
       (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))) as candidate
       eqn:Hcandidate in Hrow.
@@ -9918,11 +10174,11 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
   (** Zero auxiliary columns turn exact lifted provenance into two scale-one certificates. *)
-  Lemma checked_hull_row_certificates : forall xs A B r c,
+  Lemma checked_hull_row_certificates_spec : forall xs A B r c,
     NoDup xs ->
     (forall s, In s (A ++ B) -> forall x z,
       In (x, z) (lhs (normalize_row s)) -> In x xs) ->
-    hull_tracks A B xs 0 r -> checked_hull_row xs A B r = Some c ->
+    hull_tracks A B xs 0 r -> checked_hull_row_spec xs A B r = Some c ->
     equality_certificate A c (firstn (length A) (kweight r)) 1 /\
       equality_certificate B c (skipn (length A) (kweight r)) 1.
   Proof.
@@ -9934,7 +10190,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     fold ma mb in Hma, Hmb.
     destruct (hull_coordinates_parts xs A B (kweight r)) as [Hprefix Hsuffix].
     fold ma mb in Hprefix, Hsuffix.
-    pose proof (checked_hull_row_aux_zero _ _ _ _ _ Hrow) as Hzero.
+    pose proof (checked_hull_row_aux_zero_spec _ _ _ _ _ Hrow) as Hzero.
     rewrite Hcoords, Hprefix, forallb_app in Hzero.
     apply andb_true_iff in Hzero as [Hzero Hright].
     cbn [forallb] in Hright. apply andb_true_iff in Hright as [Hright _].
@@ -9955,7 +10211,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
           apply in_map_iff. exists x. split; [reflexivity|exact Hin]. }
         apply Z.eqb_eq in Hentry. lia.
       - destruct (Houtside x Habsent) as [HA HB]. now rewrite HA, HB. }
-    pose proof (checked_hull_row_shape _ _ _ _ _ Hrow) as Hshape.
+    pose proof (checked_hull_row_shape_spec _ _ _ _ _ Hrow) as Hshape.
     rewrite Hcoords, Hsuffix, hull_nth_extra in Hshape.
     assert (Hcoefficient : forall x, C.coef_of x (lhs c) = C.comb_coef B mb x).
     { intro x. rewrite Hshape. change (coefficient x
@@ -9974,9 +10230,122 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
       + rewrite Hrelation, Hrhs. ring.
   Qed.
 
-  (** Every emitted hull row belongs to both exact input spans, even for infeasible sources. *)
+  (** Zero auxiliary columns expose scale-one certificates before either output check. *)
+  Lemma karr_hull_raw_certificates : forall xs A B r,
+    NoDup xs ->
+    (forall s, In s (A ++ B) -> forall x z,
+      In (x, z) (lhs (normalize_row s)) -> In x xs) ->
+    hull_tracks A B xs 0 r ->
+    forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)) = true ->
+    let c := LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r))) in
+    equality_certificate A c (firstn (length A) (kweight r)) 1 /\
+      equality_certificate B c (skipn (length A) (kweight r)) 1.
+  Proof.
+    intros xs A B r Hunique Hsupport [Hweights Hcoords] Hzero c.
+    cbn [repeat app] in Hcoords.
+    set (ma := firstn (length A) (kweight r)).
+    set (mb := skipn (length A) (kweight r)).
+    destruct (hull_weights_split A B (kweight r) Hweights) as [Hma Hmb].
+    fold ma mb in Hma, Hmb.
+    destruct (hull_coordinates_parts xs A B (kweight r)) as [Hprefix Hsuffix].
+    fold ma mb in Hprefix, Hsuffix.
+    rewrite Hcoords, Hprefix, forallb_app in Hzero.
+    apply andb_true_iff in Hzero as [Hzero Hright].
+    cbn [forallb] in Hright. apply andb_true_iff in Hright as [Hright _].
+    apply Z.eqb_eq in Hright.
+    assert (Houtside : forall x, ~ In x xs ->
+      C.comb_coef A ma x = 0%Z /\ C.comb_coef B mb x = 0%Z).
+    { intros x Habsent. split; apply comb_coef_zero; intros s Hs.
+      - apply hull_source_coefficient_zero with (rows := A ++ B) (xs := xs);
+          [exact Hsupport|apply in_or_app; now left|exact Habsent].
+      - apply hull_source_coefficient_zero with (rows := A ++ B) (xs := xs);
+          [exact Hsupport|apply in_or_app; now right|exact Habsent]. }
+    assert (Hsame : forall x, C.comb_coef A ma x = C.comb_coef B mb x).
+    { intro x. assert (Hdec : {In x xs} + {~ In x xs}).
+      { apply in_dec. intros y z. destruct (X.eqb_spec y z); auto. }
+      destruct Hdec as [Hin|Habsent].
+      - assert (Hentry : Z.eqb 0 (C.comb_coef A ma x - C.comb_coef B mb x) = true).
+        { apply (proj1 (forallb_forall _ _) Hzero).
+          apply in_map_iff. exists x. split; [reflexivity|exact Hin]. }
+        apply Z.eqb_eq in Hentry. lia.
+      - destruct (Houtside x Habsent) as [HA HB]. now rewrite HA, HB. }
+    assert (Hshape : c = LCons X.t
+      (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))) by reflexivity.
+    rewrite Hcoords, Hsuffix, hull_nth_extra in Hshape.
+    assert (Hcoefficient : forall x, C.coef_of x (lhs c) = C.comb_coef B mb x).
+    { intro x. rewrite Hshape. change (coefficient x
+        (sparse xs (map (fun y => C.comb_coef B mb y) xs ++ [C.comb_rhs B mb])) =
+        C.comb_coef B mb x).
+      apply hull_sparse_coefficient; [exact Hunique|].
+      intros y Habsent. exact (proj2 (Houtside y Habsent)). }
+    assert (Hrelation : lrel c = REq) by now rewrite Hshape.
+    assert (Hrhs : rhs c = C.comb_rhs B mb) by now rewrite Hshape.
+    unfold equality_certificate. split.
+    - split; [exact Hma|]. split; [lia|]. split.
+      + intro x. rewrite Hcoefficient, Hsame. ring.
+      + rewrite Hrelation, Hrhs. lia.
+    - split; [exact Hmb|]. split; [lia|]. split.
+      + intro x. rewrite Hcoefficient. ring.
+      + rewrite Hrelation, Hrhs. ring.
+  Qed.
+
+  (** Tracked normalized outputs have exact positive-scale certificates for both sources. *)
+  Lemma checked_hull_row_certificates : forall xs A B r c,
+    NoDup xs ->
+    (forall s, In s (A ++ B) -> forall x z,
+      In (x, z) (lhs (normalize_row s)) -> In x xs) ->
+    hull_tracks A B xs 0 r -> checked_hull_row xs A B r = Some c ->
+    exists sc, (0 < sc)%Z /\
+      equality_certificate A c (firstn (length A) (kweight r)) sc /\
+      equality_certificate B c (skipn (length A) (kweight r)) sc.
+  Proof.
+    intros xs A B r c Hunique Hsupport Htracks Hrow.
+    pose proof (checked_hull_row_aux_zero xs A B r c Hrow) as Haux.
+    destruct (karr_hull_raw_certificates xs A B r Hunique Hsupport Htracks Haux)
+      as [Hleft Hright].
+    rewrite (checked_hull_row_shape _ _ _ _ _ Hrow).
+    set (raw := LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))) in *.
+    exists (karr_hull_divisor raw).
+    split; [exact (proj1 (karr_hull_divisor_spec raw))|]. split;
+      apply karr_hull_quotient_certificate; assumption.
+  Qed.
+
+  (** On tracked hull rows the new emitter is exactly normalization of the old emitter. *)
+  Lemma checked_hull_row_agrees : forall xs A B r,
+    NoDup xs ->
+    (forall s, In s (A ++ B) -> forall x z,
+      In (x, z) (lhs (normalize_row s)) -> In x xs) ->
+    hull_tracks A B xs 0 r ->
+    checked_hull_row xs A B r =
+      option_map (fun c => karr_hull_quotient (karr_hull_divisor c) c)
+        (checked_hull_row_spec xs A B r).
+  Proof.
+    intros xs A B r Hunique Hsupport Htracks.
+    unfold checked_hull_row, checked_hull_row_spec.
+    destruct (forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r))) eqn:Haux;
+      cbn [andb]; [|reflexivity].
+    destruct (forallb (Z.eqb 0) (skipn (S (length xs)) (kcoeff r))) eqn:Hsuffix;
+      cbn [negb andb]; [reflexivity|].
+    set (c := LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))).
+    destruct (karr_hull_raw_certificates xs A B r Hunique Hsupport Htracks Haux)
+      as [Hleft Hright]. fold c in Hleft, Hright.
+    pose proof (equality_certificate_checked _ _ _ _ Hleft) as Hleft_check.
+    pose proof (equality_certificate_checked _ _ _ _ Hright) as Hright_check.
+    pose proof (equality_certificate_checked _ _ _ _
+      (karr_hull_quotient_certificate _ _ _ Hleft)) as Hleft_quotient.
+    pose proof (equality_certificate_checked _ _ _ _
+      (karr_hull_quotient_certificate _ _ _ Hright)) as Hright_quotient.
+    rewrite Hleft_check, Hright_check, Hleft_quotient, Hright_quotient. reflexivity.
+  Qed.
+
+  (** Every normalized hull output remains in each input's exact span. *)
   Lemma affine_hull_span : forall A B,
-    Forall (in_span A) (affine_hull A B) /\ Forall (in_span B) (affine_hull A B).
+    Forall (in_span A) (affine_hull A B) /\
+    Forall (in_span B) (affine_hull A B).
   Proof.
     intros A B. set (xs := variables (map normalize_row A ++ map normalize_row B)).
     assert (Hunique : NoDup xs) by apply variables_nodup.
@@ -9988,10 +10357,10 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     assert (Hboth : Forall (fun c => in_span A c /\ in_span B c) (affine_hull A B)).
     { unfold affine_hull. fold xs. apply present_forall_in. intros r Hr c Hrow.
       pose proof (proj1 (Forall_forall _ _) (hull_basis_tracks xs A B) r Hr) as Htracks.
-      destruct (checked_hull_row_certificates xs A B r c Hunique Hsupport Htracks Hrow)
-        as [HA HB]. split.
-      - now apply span_of_certificate with (ms := firstn (length A) (kweight r)) (sc := 1%Z).
-      - now apply span_of_certificate with (ms := skipn (length A) (kweight r)) (sc := 1%Z). }
+      destruct (checked_hull_row_certificates xs A B r c
+        Hunique Hsupport Htracks Hrow) as [sc [_ [Hleft Hright]]]. split.
+      - now apply span_of_certificate with (ms := firstn (length A) (kweight r)) (sc := sc).
+      - now apply span_of_certificate with (ms := skipn (length A) (kweight r)) (sc := sc). }
     split; apply Forall_forall; intros c Hc.
     - exact (proj1 (proj1 (Forall_forall _ _) Hboth c Hc)).
     - exact (proj2 (proj1 (Forall_forall _ _) Hboth c Hc)).
@@ -10026,11 +10395,11 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
   (** A returned hull row has a nonzero output block. *)
-  Lemma checked_hull_row_suffix_nonzero : forall xs A B r c,
-    checked_hull_row xs A B r = Some c ->
+  Lemma checked_hull_row_suffix_nonzero_spec : forall xs A B r c,
+    checked_hull_row_spec xs A B r = Some c ->
     forallb (Z.eqb 0) (skipn (S (length xs)) (kcoeff r)) = false.
   Proof.
-    intros xs A B r c Hrow. unfold checked_hull_row in Hrow.
+    intros xs A B r c Hrow. unfold checked_hull_row_spec in Hrow.
     remember (LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
       (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))) as candidate
       eqn:Hcandidate in Hrow.
@@ -10045,6 +10414,17 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
   (** Every returned hull row comes from a dense row with an actual nonzero pivot. *)
+  Lemma checked_hull_row_first_spec : forall xs A B r c,
+    checked_hull_row_spec xs A B r = Some c ->
+    exists i a, karr_first (kcoeff r) = Some (i, a).
+  Proof.
+    intros xs A B r c Hrow. apply karr_nonzero_has_first.
+    unfold karr_zero. destruct (forallb (Z.eqb 0) (kcoeff r)) eqn:Hzero; [|reflexivity].
+    pose proof (hull_zero_skipn (S (length xs)) _ Hzero) as Hsuffix.
+    rewrite (checked_hull_row_suffix_nonzero_spec _ _ _ _ _ Hrow) in Hsuffix. discriminate.
+  Qed.
+
+  (** Every returned hull row comes from a dense row with an actual nonzero pivot. *)
   Lemma checked_hull_row_first : forall xs A B r c,
     checked_hull_row xs A B r = Some c ->
     exists i a, karr_first (kcoeff r) = Some (i, a).
@@ -10056,22 +10436,22 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
   (** Sparse extraction faithfully reconstructs the complete nonzero lifted row. *)
-  Lemma checked_hull_row_embedding : forall xs A B r c,
+  Lemma checked_hull_row_embedding_spec : forall xs A B r c,
     NoDup xs ->
     (forall s, In s (A ++ B) -> forall x z,
       In (x, z) (lhs (normalize_row s)) -> In x xs) ->
-    hull_tracks A B xs 0 r -> checked_hull_row xs A B r = Some c ->
+    hull_tracks A B xs 0 r -> checked_hull_row_spec xs A B r = Some c ->
     kcoeff r = repeat 0%Z (S (length xs)) ++ (dense xs c ++ [rhs c]).
   Proof.
     intros xs A B r c Hunique Hsupport Htracks Hrow.
-    destruct (checked_hull_row_certificates xs A B r c Hunique Hsupport Htracks Hrow)
+    destruct (checked_hull_row_certificates_spec xs A B r c Hunique Hsupport Htracks Hrow)
       as [_ [Hweights [Hpositive [Hcoefficient Hrhs]]]].
-    pose proof (checked_hull_row_shape _ _ _ _ _ Hrow) as Hshape.
+    pose proof (checked_hull_row_shape_spec _ _ _ _ _ Hrow) as Hshape.
     assert (Hrelation : lrel c = REq) by now rewrite Hshape.
     rewrite Hrelation in Hrhs.
     destruct Htracks as [_ Hcoords]. cbn [repeat app] in Hcoords.
     destruct (hull_coordinates_parts xs A B (kweight r)) as [Hprefix Hsuffix].
-    pose proof (checked_hull_row_aux_zero _ _ _ _ _ Hrow) as Hzero.
+    pose proof (checked_hull_row_aux_zero_spec _ _ _ _ _ Hrow) as Hzero.
     rewrite Hcoords, Hprefix in Hzero. apply hull_zero_list in Hzero.
     rewrite length_app, length_map in Hzero. cbn [length] in Hzero.
     replace (length xs + 1) with (S (length xs)) in Hzero by lia.
@@ -10080,6 +10460,35 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - unfold dense. apply map_ext. intro x. specialize (Hcoefficient x).
       change (C.comb_coef B (skipn (length A) (kweight r)) x =
         (1 * coefficient x (lhs c))%Z) in Hcoefficient. lia.
+    - f_equal. lia.
+  Qed.
+
+  (** Zero auxiliaries reconstruct the raw sparse row directly from lifted provenance. *)
+  Lemma karr_hull_raw_embedding : forall xs A B r,
+    NoDup xs ->
+    (forall s, In s (A ++ B) -> forall x z,
+      In (x, z) (lhs (normalize_row s)) -> In x xs) ->
+    hull_tracks A B xs 0 r ->
+    forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)) = true ->
+    let raw := LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r))) in
+    kcoeff r = repeat 0%Z (S (length xs)) ++ (dense xs raw ++ [rhs raw]).
+  Proof.
+    intros xs A B r Hunique Hsupport Htracks Hzero raw.
+    destruct (karr_hull_raw_certificates xs A B r Hunique Hsupport Htracks Hzero)
+      as [_ [Hweights [Hpositive [Hcoefficient Hrhs]]]].
+    fold raw in Hcoefficient, Hrhs.
+    change (C.comb_rhs B (skipn (length A) (kweight r)) = (1 * rhs raw)%Z) in Hrhs.
+    destruct Htracks as [_ Hcoords]. cbn [repeat app] in Hcoords.
+    destruct (hull_coordinates_parts xs A B (kweight r)) as [Hprefix Hsuffix].
+    rewrite Hcoords, Hprefix in Hzero. apply hull_zero_list in Hzero.
+    rewrite length_app, length_map in Hzero. cbn [length] in Hzero.
+    replace (length xs + 1) with (S (length xs)) in Hzero by lia.
+    rewrite Hcoords. unfold hull_coordinates. rewrite Hzero. apply f_equal.
+    apply f_equal2.
+    - unfold dense. apply map_ext. intro x. specialize (Hcoefficient x).
+      change (C.comb_coef B (skipn (length A) (kweight r)) x =
+        (1 * coefficient x (lhs raw))%Z) in Hcoefficient. lia.
     - f_equal. lia.
   Qed.
 
@@ -10204,7 +10613,165 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Definition hull_output_entry (xs : list X.t) (r : lcons X.t) (i : nat) : Z :=
     karr_nth i (repeat 0%Z (S (length xs)) ++ (dense xs r ++ [rhs r])).
 
-  (** Every zero integer combination of affine-hull output rows has only zero multipliers. *)
+  (** A sparse observation may divide its dense source by a nonzero row scale. *)
+  Definition hull_scaled_observation (entry : lcons X.t -> nat -> Z)
+      (r : karr_row) (c : lcons X.t) : Prop :=
+    (exists i a, karr_first (kcoeff r) = Some (i, a)) /\
+    exists sc, sc <> 0%Z /\
+      forall i, karr_nth i (kcoeff r) = (sc * entry c i)%Z.
+
+
+  (** An aligned nonzero scaling retains every dense source pivot. *)
+  Lemma hull_scaled_observations_first : forall entry rows cs,
+    Forall2 (hull_scaled_observation entry) rows cs ->
+    Forall (fun r => exists i a, karr_first (kcoeff r) = Some (i, a)) rows.
+  Proof.
+    intros entry rows cs Hobserve. induction Hobserve as [|r c rows cs Hhead Htail IH].
+    - constructor.
+    - constructor; [exact (proj1 Hhead)|exact IH].
+  Qed.
+
+  (** A zero dense coordinate remains zero after cancellation of its nonzero row scale. *)
+  Lemma hull_scaled_observations_zero : forall entry rows cs i,
+    Forall2 (hull_scaled_observation entry) rows cs ->
+    Forall (fun r => karr_nth i (kcoeff r) = 0%Z) rows ->
+    Forall (fun c => entry c i = 0%Z) cs.
+  Proof.
+    intros entry rows cs i Hobserve.
+    induction Hobserve as [|r c rows cs Hhead Htail IH]; intro Hzero.
+    - constructor.
+    - apply Forall_cons_iff in Hzero as [Hzero Hrest].
+      destruct Hhead as [_ [sc [Hnonzero Hentry]]]. constructor.
+      + rewrite Hentry in Hzero. apply Z.mul_eq_0 in Hzero as [Hzero|Hzero].
+        * contradiction.
+        * exact Hzero.
+      + now apply IH.
+  Qed.
+
+  (** Strictly ordered pivots force every scaled-output zero combination to be trivial. *)
+  Lemma hull_scaled_ordered_zero_weights : forall entry rows cs weights,
+    karr_ordered rows ->
+    Forall2 (hull_scaled_observation entry) rows cs ->
+    length weights = length cs ->
+    (forall i, row_sum cs weights (fun c => entry c i) = 0%Z) ->
+    Forall (fun m => m = 0%Z) weights.
+  Proof.
+    intros entry rows cs weights Hordered. revert cs weights.
+    induction Hordered as [|r rows Hordered IH Hbefore];
+      intros cs weights Hobserve Hlength Hzero.
+    - inversion Hobserve; subst cs. destruct weights; cbn [length] in Hlength;
+        [constructor|discriminate].
+    - inversion Hobserve as [|r' c rows' tail Hhead Htail]; subst.
+      destruct weights as [|m weights]; cbn [length] in Hlength; [discriminate|].
+      destruct Hhead as [[i [a Hfirst]] [sc [Hnonzero Hentry]]].
+      assert (Hfirsts : Forall
+        (fun p => exists j b, karr_first (kcoeff p) = Some (j, b)) rows).
+      { now apply hull_scaled_observations_first with (entry := entry) (cs := tail). }
+      assert (Hlater : Forall (fun p => karr_nth i (kcoeff p) = 0%Z) rows).
+      { apply karr_ordered_later_zero with (p := r) (a := a).
+        - now constructor.
+        - exact Hfirsts.
+        - exact Hfirst. }
+      pose proof (hull_scaled_observations_zero entry rows tail i Htail Hlater) as Houtputs.
+      pose proof (Hzero i) as Hcoordinate.
+      change ((m * entry c i + row_sum tail weights (fun q => entry q i))%Z = 0%Z)
+        in Hcoordinate.
+      rewrite (hull_row_sum_entries_zero tail weights (fun q => entry q i) Houtputs)
+        in Hcoordinate.
+      assert (Houtput_nonzero : entry c i <> 0%Z).
+      { intro Houtput. pose proof (Hentry i) as Hscaled.
+        rewrite (karr_first_nth _ _ _ Hfirst), Houtput in Hscaled.
+        apply (karr_first_nonzero _ _ _ Hfirst). lia. }
+      assert (Hproduct : (m * entry c i)%Z = 0%Z) by lia.
+      apply Z.mul_eq_0 in Hproduct as [Hm|Hentryzero]; [|contradiction].
+      subst m. constructor; [reflexivity|].
+      apply IH with (cs := tail); [exact Htail|lia|].
+      intro j. pose proof (Hzero j) as Hj.
+      change (row_sum tail weights (fun c => entry c j) = 0%Z) in Hj. exact Hj.
+  Qed.
+
+  (** Optional emissions align their successful rows with their scaled observations. *)
+  Lemma hull_emit_scaled_observations : forall emit entry rows,
+    (forall r, In r rows -> forall c, emit r = Some c ->
+      hull_scaled_observation entry r c) ->
+    Forall2 (hull_scaled_observation entry)
+      (hull_kept emit rows) (present (map emit rows)).
+  Proof.
+    intros emit entry rows. induction rows as [|r rows IH]; intro Hobserve; [constructor|].
+    cbn [hull_kept filter map present flat_map]. destruct (emit r) as [c|] eqn:Hrow.
+    - constructor.
+      + exact (Hobserve r (or_introl eq_refl) c Hrow).
+      + apply IH. intros s Hs d Hd. exact (Hobserve s (or_intror Hs) d Hd).
+    - apply IH. intros s Hs d Hd. exact (Hobserve s (or_intror Hs) d Hd).
+  Qed.
+
+  (** Optional extraction preserves independence under nonzero row-by-row scaling. *)
+  Lemma hull_ordered_scaled_output_weights : forall emit entry rows weights,
+    karr_ordered rows ->
+    (forall r, In r rows -> forall c, emit r = Some c ->
+      hull_scaled_observation entry r c) ->
+    length weights = length (present (map emit rows)) ->
+    (forall i, row_sum (present (map emit rows)) weights (fun c => entry c i) = 0%Z) ->
+    Forall (fun m => m = 0%Z) weights.
+  Proof.
+    intros emit entry rows weights Hordered Hemit Hlength Hzero.
+    apply hull_scaled_ordered_zero_weights with (entry := entry)
+      (rows := hull_kept emit rows) (cs := present (map emit rows)).
+    - unfold hull_kept. now apply karr_ordered_filter.
+    - now apply hull_emit_scaled_observations.
+    - exact Hlength.
+    - exact Hzero.
+  Qed.
+
+  (** Scaling a finite coefficient list also scales its default-zero coordinates. *)
+  Lemma karr_hull_nth_scale : forall zs g i,
+    karr_nth i (map (fun z => (g * z)%Z) zs) = (g * karr_nth i zs)%Z.
+  Proof.
+    intro zs. induction zs as [|z zs IH]; intros g [|i];
+      cbn [map karr_nth]; try ring. apply IH.
+  Qed.
+
+  (** The complete lifted observation scales with its exact quotient row. *)
+  Lemma hull_output_entry_quotient : forall xs c i,
+    hull_output_entry xs c i =
+      (karr_hull_divisor c *
+        hull_output_entry xs (karr_hull_quotient (karr_hull_divisor c) c) i)%Z.
+  Proof.
+    intros xs c i. unfold hull_output_entry. rewrite <- karr_hull_nth_scale.
+    apply f_equal. rewrite map_app, map_repeat, Z.mul_0_r. apply f_equal.
+    rewrite map_app. apply f_equal2.
+    - unfold dense. rewrite map_map. apply map_ext. intro x.
+      apply karr_hull_quotient_coefficient.
+    - cbn [map]. f_equal. apply karr_hull_quotient_rhs.
+  Qed.
+
+  (** A normalized successful row retains the original pivot and its scaled embedding. *)
+  Lemma checked_hull_row_embedding : forall xs A B r c,
+    NoDup xs ->
+    (forall s, In s (A ++ B) -> forall x z,
+      In (x, z) (lhs (normalize_row s)) -> In x xs) ->
+    hull_tracks A B xs 0 r -> checked_hull_row xs A B r = Some c ->
+    hull_scaled_observation (hull_output_entry xs) r c.
+  Proof.
+    intros xs A B r c Hunique Hsupport Htracks Hrow.
+    pose proof (checked_hull_row_aux_zero xs A B r c Hrow) as Haux.
+    pose proof (checked_hull_row_shape xs A B r c Hrow) as Hshape.
+    set (raw := LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))) in *.
+    cbv zeta in Hshape. fold raw in Hshape. subst c.
+    split.
+    - apply karr_nonzero_has_first. unfold karr_zero.
+      destruct (forallb (Z.eqb 0) (kcoeff r)) eqn:Hzero; [|reflexivity].
+      pose proof (hull_zero_skipn (S (length xs)) _ Hzero) as Hsuffix.
+      unfold checked_hull_row in Hrow. rewrite Haux, Hsuffix in Hrow. discriminate.
+    - exists (karr_hull_divisor raw). split.
+      + pose proof (proj1 (karr_hull_divisor_spec raw)). lia.
+      + intro i. rewrite (karr_hull_raw_embedding xs A B r
+          Hunique Hsupport Htracks Haux).
+        apply hull_output_entry_quotient.
+  Qed.
+
+  (** Gcd-normalized hull outputs still have only the trivial zero combination. *)
   Lemma hull_affine_zero_weights : forall A B weights,
     length weights = length (affine_hull A B) ->
     (forall x, C.comb_coef (affine_hull A B) weights x = 0%Z) ->
@@ -10225,15 +10792,12 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     assert (Hordered : karr_ordered rows).
     { unfold rows. apply karr_echelon_ordered with (n := 2 * length xs + 2).
       apply karr_bareiss_echelon. apply hull_seed_width. }
-    apply hull_ordered_output_weights with (emit := checked_hull_row xs A B)
+    apply hull_ordered_scaled_output_weights with (emit := checked_hull_row xs A B)
       (entry := hull_output_entry xs) (rows := rows).
     - exact Hordered.
-    - intros r Hr c Hrow. split.
-      + now apply checked_hull_row_first with (xs := xs) (A := A) (B := B) (c := c).
-      + intro i. rewrite (checked_hull_row_embedding xs A B r c Hunique Hsupport).
-        * reflexivity.
-        * exact (proj1 (Forall_forall _ _) (hull_basis_tracks xs A B) r Hr).
-        * exact Hrow.
+    - intros r Hr c Hrow. apply checked_hull_row_embedding with (A := A) (B := B);
+        [exact Hunique|exact Hsupport| |exact Hrow].
+      exact (proj1 (Forall_forall _ _) (hull_basis_tracks xs A B) r Hr).
     - exact Hlength.
     - intro i. change (row_sum (affine_hull A B) weights
         (fun c => hull_output_entry xs c i) = 0%Z).
@@ -10855,6 +11419,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun is_bot.
   TimeFun hull_left.
   TimeFun hull_right.
+  TimeFun karr_hull_content_terms.
+  TimeFun karr_hull_content.
+  TimeFun karr_hull_divisor.
+  TimeFun karr_hull_quotient.
+  TimeFun checked_hull_row_spec.
   TimeFun checked_hull_row.
   TimeFun present.
   TimeFun affine_hull.
@@ -14370,7 +14939,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition karr_hull_factor : N :=
     (524288 * karr_prepare_factor + 262144 * karr_variables_factor +
       128 * karr_hull_seed_factor + 134217728000 +
-      (524288 * C.c_lc + 2064) + 260)%N.
+      (524288 * C.c_lc + 2048 * (2 * 128 * 128) + 16) + 260)%N.
 
   Definition c_karr : N :=
     (karr_subst_factor + 1 +
@@ -14449,12 +15018,12 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     cbn [normalize_row lhs]. apply normalize_coef_nodup.
   Qed.
 
-  (** Every affine-hull output has distinct coefficient keys, even for raw inputs. *)
-  Lemma normal_affine_hull : forall a b, normal (affine_hull a b).
+  (** Gcd normalization preserves the normality of sparse hull outputs. *)
+  Lemma normal_affine_hull : forall A B, normal (affine_hull A B).
   Proof.
-    intros a b. unfold normal, affine_hull. apply present_forall.
+    intros A B. unfold normal, affine_hull. apply present_forall.
     intros r c Hrow. rewrite (checked_hull_row_shape _ _ _ _ _ Hrow).
-    cbn [lhs]. apply sparse_nodup. apply variables_nodup.
+    rewrite karr_hull_quotient_keys. cbn [lhs]. apply sparse_nodup. apply variables_nodup.
   Qed.
 
   (** A successful projection extractor returns its sparse equality row unchanged. *)
@@ -16622,8 +17191,192 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - apply N.mul_le_mono_r. lia.
   Qed.
 
-  (** One final hull row pays both checkers plus linear reconstruction. *)
-  Lemma T_karr_checked_hull_row_bounded : forall xs a b r dim bits,
+  (** Exact division by a positive integer never increases binary width. *)
+  Lemma karr_hull_exact_quotient_bits : forall g z,
+    (0 < g)%Z -> (g | z)%Z -> Z.size_nat (z / g) <= Z.size_nat z.
+  Proof.
+    intros g z Hpositive Hdivide.
+    pose proof (karr_hull_exact_quotient g z ltac:(lia) Hdivide) as Hmultiple.
+    assert (Habs : Z.abs z = (g * Z.abs (z / g))%Z).
+    { rewrite <- Hmultiple at 1. rewrite Z.abs_mul, Z.abs_eq by lia. reflexivity. }
+    pose proof (Z.abs_nonneg (z / g)) as Hnonnegative.
+    pose proof (Z.size_nat_mono (Z.abs (z / g)) (Z.abs z) ltac:(nia)) as Hbits.
+    now rewrite !karr_size_abs in Hbits.
+  Qed.
+
+  (** Exact row normalization cannot increase the coefficient-width measure. *)
+  Lemma karr_hull_quotient_row_bits : forall c,
+    C.row_bits (karr_hull_quotient (karr_hull_divisor c) c) <= C.row_bits c.
+  Proof.
+    intro c. destruct (karr_hull_divisor_spec c) as [Hpositive [Hright Hterms]].
+    unfold C.row_bits at 1. cbn [karr_hull_quotient lhs rhs]. rewrite map_map.
+    apply karr_max_bound.
+    - eapply Nat.le_trans; [apply karr_hull_exact_quotient_bits; eassumption|].
+      apply karr_row_rhs_bits.
+    - apply Forall_forall. intros p Hp.
+      eapply Nat.le_trans; [apply karr_hull_exact_quotient_bits; [exact Hpositive|]|].
+      + exact (proj1 (Forall_forall _ _) Hterms p Hp).
+      + now apply karr_row_entry_bits.
+  Qed.
+
+  (** Exact row normalization leaves the key-width measure unchanged. *)
+  Lemma karr_hull_quotient_row_key_bits : forall c,
+    C.row_key_bits (karr_hull_quotient (karr_hull_divisor c) c) = C.row_key_bits c.
+  Proof.
+    intro c. unfold C.row_key_bits. cbn [karr_hull_quotient lhs]. now rewrite map_map.
+  Qed.
+
+  (** A gcd never exceeds the common binary-width bound of its operands. *)
+  Lemma karr_hull_gcd_bits : forall a b bits,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    Z.size_nat (Z.gcd a b) <= bits.
+  Proof.
+    intros a b bits Ha Hb. destruct (Z.eq_dec a 0) as [->|Hnonzero].
+    - now rewrite Z.gcd_0_l, karr_size_abs.
+    - assert (Hpositive : (0 < Z.abs a)%Z) by (apply Z.abs_pos; exact Hnonzero).
+      pose proof (Z.gcd_divide_l (Z.abs a) b) as Hdivide.
+      rewrite Z.gcd_abs_l in Hdivide.
+      pose proof (Z.divide_pos_le (Z.gcd a b) (Z.abs a) Hpositive Hdivide) as Hbound.
+      pose proof (Z.gcd_nonneg a b) as Hnonnegative.
+      pose proof (Z.size_nat_mono (Z.gcd a b) (Z.abs a) ltac:(lia)) as Hwidth.
+      rewrite karr_size_abs in Hwidth. lia.
+  Qed.
+
+  (** Folding gcd over stored coefficients preserves their uniform width. *)
+  Lemma karr_hull_content_terms_bits : forall ps bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) ps ->
+    Z.size_nat (karr_hull_content_terms ps) <= bits.
+  Proof.
+    intros ps bits Hbits. induction Hbits as [|p ps Hp Hps IH].
+    - cbn [karr_hull_content_terms Z.size_nat]. lia.
+    - cbn [karr_hull_content_terms]. now apply karr_hull_gcd_bits.
+  Qed.
+
+  Lemma karr_hull_content_bits : forall c bits,
+    C.row_bits c <= bits -> Z.size_nat (karr_hull_content c) <= bits.
+  Proof.
+    intros c bits Hbits. unfold karr_hull_content. apply karr_hull_gcd_bits.
+    - pose proof (karr_row_rhs_bits c). lia.
+    - apply karr_hull_content_terms_bits. apply Forall_forall. intros p Hp.
+      pose proof (karr_row_entry_bits c p Hp). lia.
+  Qed.
+
+  (** The zero-content fallback fits every positive bit allowance. *)
+  Lemma karr_hull_divisor_bits : forall c bits,
+    1 <= bits -> C.row_bits c <= bits ->
+    Z.size_nat (karr_hull_divisor c) <= bits.
+  Proof.
+    intros c bits Hpositive Hbits. unfold karr_hull_divisor.
+    destruct (Z.eqb (karr_hull_content c) 0).
+    - change (1 <= bits). exact Hpositive.
+    - now apply karr_hull_content_bits.
+  Qed.
+
+  (** The primitive gcd clock is quadratic in a common operand width. *)
+  Lemma T_karr_hull_gcd_bounded : forall a b bits,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    (Z.T_gcd a b <= 16 * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros a b bits Ha Hb. pose proof (Z.T_gcd_le a b) as Hgcd.
+    rewrite karr_nat_square. rewrite !Nat2N.inj_add in *.
+    cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** A content fold pays one bounded gcd per stored coefficient. *)
+  Lemma T_karr_hull_content_terms_bounded : forall ps bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) ps ->
+    (T_karr_hull_content_terms ps <=
+      32 * N.of_nat (length ps) * N.of_nat ((bits + 1)^2) + 1)%N.
+  Proof.
+    intros ps bits Hbits. induction Hbits as [|p ps Hp Hps IH].
+    - time_unfold T_karr_hull_content_terms. cbn [length]. lia.
+    - pose proof (karr_hull_content_terms_bits ps bits Hps) as Htail_bits.
+      pose proof (T_karr_hull_gcd_bounded (snd p) (karr_hull_content_terms ps)
+        bits Hp Htail_bits) as Hgcd.
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hpositive.
+      time_unfold T_karr_hull_content_terms. time_simpl. cbn [length].
+      rewrite Nat2N.inj_succ. nia.
+  Qed.
+
+  (** The row content adds one gcd for the right-hand side. *)
+  Lemma T_karr_hull_content_bounded : forall c bits,
+    C.row_bits c <= bits ->
+    (T_karr_hull_content c <=
+      32 * N.of_nat (length (lhs c) + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros c bits Hbits.
+    assert (Hterms : Forall (fun p => Z.size_nat (snd p) <= bits) (lhs c)).
+    { apply Forall_forall. intros p Hp. pose proof (karr_row_entry_bits c p Hp). lia. }
+    pose proof (T_karr_hull_content_terms_bounded (lhs c) bits Hterms) as Hfold.
+    pose proof (karr_hull_content_terms_bits (lhs c) bits Hterms) as Hfold_bits.
+    pose proof (T_karr_hull_gcd_bounded (rhs c) (karr_hull_content_terms (lhs c))
+      bits ltac:(pose proof (karr_row_rhs_bits c); lia) Hfold_bits) as Hgcd.
+    pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hpositive.
+    time_unfold T_karr_hull_content. time_simpl.
+    rewrite !Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
+
+  (** Guarding zero content preserves a linear-row quadratic-width clock. *)
+  Lemma T_karr_hull_divisor_bounded : forall c bits,
+    1 <= bits -> C.row_bits c <= bits ->
+    (T_karr_hull_divisor c <=
+      64 * N.of_nat (length (lhs c) + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros c bits Hbits_positive Hbits.
+    pose proof (T_karr_hull_content_bounded c bits Hbits) as Hcontent.
+    pose proof (T_karr_zero_test (karr_hull_content c)) as Hzero.
+    pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hpositive.
+    time_unfold T_karr_hull_divisor.
+    destruct (Z.eqb (karr_hull_content c) 0); time_simpl;
+      rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+  Qed.
+
+  (** Exact row division pays one bounded integer quotient per stored entry. *)
+  Lemma T_karr_hull_quotient_bounded : forall g c bits,
+    Z.size_nat g <= bits -> C.row_bits c <= bits ->
+    (T_karr_hull_quotient g c <=
+      128 * N.of_nat (length (lhs c) + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros g c bits Hg Hbits.
+    set (work := N.of_nat ((bits + 1)^2)).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+    pose proof (T_karr_division_bounded (rhs c) g bits
+      ltac:(pose proof (karr_row_rhs_bits c); lia) Hg) as Hright.
+    fold work in Hright |- *.
+    time_unfold T_karr_hull_quotient.
+    lazymatch goal with
+    | |- context [ListDef.T_map ?f ?Tf (lhs c)] =>
+      pose proof (karr_T_map_members (X.t * Z) (X.t * Z) f Tf
+        (68 * work)%N (lhs c)) as Hmap;
+      specialize (Hmap ltac:(
+        intros p Hp;
+        pose proof (T_karr_division_bounded (snd p) g bits
+          ltac:(pose proof (karr_row_entry_bits c p Hp); lia) Hg) as Hdivision;
+        fold work in Hdivision;
+        time_simpl; nia))
+    end.
+    revert Hmap. time_simpl. intro Hmap.
+    time_simpl. rewrite !Nat2N.inj_add. cbn [N.of_nat PosDef.Pos.of_succ_nat].
+    clear -Hmap Hright Hpositive. clearbody work. nia.
+  Qed.
+
+  (** Content calculation and coefficient division share one uniform row allowance. *)
+  Lemma T_karr_hull_normalization_bounded : forall c bits,
+    1 <= bits -> C.row_bits c <= bits ->
+    (T_karr_hull_divisor c + T_karr_hull_quotient (karr_hull_divisor c) c <=
+      192 * N.of_nat (length (lhs c) + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros c bits Hpositive Hbits.
+    pose proof (T_karr_hull_divisor_bounded c bits Hpositive Hbits) as Hdivisor.
+    pose proof (T_karr_hull_quotient_bounded (karr_hull_divisor c) c bits
+      (karr_hull_divisor_bits c bits Hpositive Hbits) Hbits) as Hquotient.
+    nia.
+  Qed.
+
+
+  (** Normalized hull certificates keep the existing uniform checker allowance. *)
+  Lemma T_karr_hull_gcd_checkers_bounded : forall xs a b r dim bits,
     1 <= bits -> length xs <= dim -> length a + length b <= dim ->
     Forall (fun x => X.bits x <= bits) xs ->
     Forall (fun row => length (lhs row) <= dim /\
@@ -16631,7 +17384,52 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     Forall (fun row => length (lhs row) <= dim /\
       C.row_key_bits row <= bits /\ C.row_bits row <= bits) b ->
     karr_row_envelope (2 * length xs + 2) (length a + length b) bits r ->
-    (T_checked_hull_row xs a b r <=
+    let zs := skipn (S (length xs)) (kcoeff r) in
+    let raw := LCons X.t (sparse xs zs) REq (karr_nth (length xs) zs) in
+    let g := karr_hull_divisor raw in
+    let c := karr_hull_quotient g raw in
+    (C.T_check_entails a c (Cert (firstn (length a) (kweight r)) g false) +
+     C.T_check_entails b c (Cert (skipn (length a) (kweight r)) g false) <=
+      2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits))%N.
+  Proof.
+    intros xs a b r dim bits Hpositive Hxs Hcount Hkeys Ha Hb Henv zs raw g c.
+    destruct (karr_hull_checked_row_envelope xs a b r bits Hpositive
+      Hkeys Henv) as [Hrawlen [Hrawkey [Hrawbits [Hfirstlen
+        [Hskiplen [Hfirstbits Hskipbits]]]]]].
+    fold zs raw in Hrawlen, Hrawkey, Hrawbits.
+    assert (Hclen : length (lhs c) <= dim).
+    { unfold c, karr_hull_quotient. cbn [lhs]. rewrite length_map. lia. }
+    assert (Hckey : C.row_key_bits c <= bits).
+    { unfold c, g. rewrite karr_hull_quotient_row_key_bits. exact Hrawkey. }
+    assert (Hcbits : C.row_bits c <= bits).
+    { unfold c, g. eapply Nat.le_trans; [apply karr_hull_quotient_row_bits|exact Hrawbits]. }
+    assert (Hscale : Z.size_nat g <= bits).
+    { now apply karr_hull_divisor_bits. }
+    pose proof (karr_checker_envelope a c
+      (Cert (firstn (length a) (kweight r)) g false)
+      dim bits bits bits ltac:(lia) Ha ltac:(cbn [mults]; lia)
+      ltac:(cbn [mults]; exact Hfirstbits) Hclen Hckey Hcbits
+      ltac:(cbn [scale]; exact Hscale)) as Hleft.
+    pose proof (karr_checker_envelope b c
+      (Cert (skipn (length a) (kweight r)) g false)
+      dim bits bits bits ltac:(lia) Hb ltac:(cbn [mults]; lia)
+      ltac:(cbn [mults]; exact Hskipbits) Hclen Hckey Hcbits
+      ltac:(cbn [scale]; exact Hscale)) as Hright.
+    unfold karr_hull_checker_charge.
+    eapply N.le_trans; [apply N.add_le_mono; [exact Hleft|exact Hright]|].
+    ring_simplify. apply N.le_refl.
+  Qed.
+
+  (** One final hull row pays both checkers plus linear reconstruction. *)
+  Lemma T_karr_checked_hull_row_bounded_spec : forall xs a b r dim bits,
+    1 <= bits -> length xs <= dim -> length a + length b <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) a ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) b ->
+    karr_row_envelope (2 * length xs + 2) (length a + length b) bits r ->
+    (T_checked_hull_row_spec xs a b r <=
       2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
       1024 * N.of_nat (dim + 1))%N.
   Proof.
@@ -16661,14 +17459,133 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     assert (Hfirst_length : length (firstn (S (length xs)) (kcoeff r)) <=
       S (length xs)).
     { rewrite length_firstn. lia. }
-    time_unfold T_checked_hull_row. time_simpl.
+    time_unfold T_checked_hull_row_spec. time_simpl.
     unfold zs, c in *. clear -Hcheck Hsparse Hnth Hfirst_coeff
       Hfirst_weight Hskip_coeff Hskip_weight Hfirst_zero Hsuffix_zero
       Hlength_xs Hlength_a Hxs Hcount Hcoeff Hzs Hfirst_length.
     rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. lia.
   Qed.
 
+  (** Gcd normalization adds only linear-row quadratic-width work to checked extraction. *)
+  Lemma T_karr_checked_hull_row_bounded : forall xs a b r dim bits,
+    1 <= bits -> length xs <= dim -> length a + length b <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) a ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) b ->
+    karr_row_envelope (2 * length xs + 2) (length a + length b) bits r ->
+    (T_checked_hull_row xs a b r <=
+      2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+      2048 * N.of_nat (dim + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros xs a b r dim bits Hpositive Hxs Hcount Hkeys Ha Hb Henv.
+    set (zs := skipn (S (length xs)) (kcoeff r)).
+    set (raw := LCons X.t (sparse xs zs) REq (karr_nth (length xs) zs)).
+    set (g := karr_hull_divisor raw).
+    set (c := karr_hull_quotient g raw).
+    pose proof (T_karr_hull_gcd_checkers_bounded xs a b r dim bits
+      Hpositive Hxs Hcount Hkeys Ha Hb Henv) as Hcheck.
+    cbv zeta in Hcheck. fold zs raw g c in Hcheck.
+    destruct (karr_hull_checked_row_envelope xs a b r bits Hpositive Hkeys Henv)
+      as [Hrawlen [_ [Hrawbits _]]].
+    fold zs raw in Hrawlen, Hrawbits.
+    pose proof (T_karr_hull_normalization_bounded raw bits Hpositive Hrawbits) as Hnorm.
+    fold g c in Hnorm.
+    assert (Hnorm_total : (T_karr_hull_divisor raw + T_karr_hull_quotient g raw <=
+      192 * N.of_nat (dim + 1) * N.of_nat ((bits + 1)^2))%N).
+    { eapply N.le_trans; [exact Hnorm|]. apply N.mul_le_mono_r.
+      apply N.mul_le_mono_l. lia. }
+    pose proof (T_karr_sparse_bounded xs zs) as Hsparse.
+    pose proof (T_karr_nth_bounded (length xs) zs) as Hnth.
+    pose proof (T_karr_firstn_bounded Z (S (length xs)) (kcoeff r)) as Hfirst_coeff.
+    pose proof (T_karr_firstn_bounded Z (length a) (kweight r)) as Hfirst_weight.
+    pose proof (T_karr_skipn_bounded Z (S (length xs)) (kcoeff r)) as Hskip_coeff.
+    pose proof (T_karr_skipn_bounded Z (length a) (kweight r)) as Hskip_weight.
+    pose proof (T_karr_zero_forallb_bounded
+      (firstn (S (length xs)) (kcoeff r))) as Hfirst_zero.
+    pose proof (T_karr_zero_forallb_bounded zs) as Hsuffix_zero.
+    pose proof (Datatypes.T_length_le xs) as Hlength_xs.
+    pose proof (Datatypes.T_length_le a) as Hlength_a.
+    destruct Henv as [Hcoeff _].
+    assert (Hzs : length zs <= 2 * length xs + 2).
+    { unfold zs. rewrite length_skipn. lia. }
+    assert (Hfirst_length : length (firstn (S (length xs)) (kcoeff r)) <=
+      S (length xs)) by (rewrite length_firstn; lia).
+    assert (Hsquare : (1 <= N.of_nat ((bits + 1)^2))%N).
+    { pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+    assert (Hsmall :
+      (2 * Datatypes.T_length xs + 2 * Datatypes.T_length a +
+       ListDef.T_skipn (S (length xs)) (kcoeff r) +
+       ListDef.T_firstn (S (length xs)) (kcoeff r) +
+       List.T_forallb (Z.eqb 0) (fun z => Z.T_eqb 0 z)
+         (firstn (S (length xs)) (kcoeff r)) +
+       List.T_forallb (Z.eqb 0) (fun z => Z.T_eqb 0 z) zs +
+       T_sparse xs zs + T_karr_nth (length xs) zs +
+       ListDef.T_firstn (length a) (kweight r) +
+       ListDef.T_skipn (length a) (kweight r) + 16 <=
+       256 * N.of_nat (dim + 1))%N).
+    { clear -Hsparse Hnth Hfirst_coeff Hfirst_weight Hskip_coeff Hskip_weight
+        Hfirst_zero Hsuffix_zero Hlength_xs Hlength_a Hxs Hcount Hzs Hfirst_length.
+      rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *.
+      cbn [N.of_nat PosDef.Pos.of_succ_nat] in *. lia. }
+    assert (Hclock :
+      (T_checked_hull_row xs a b r <=
+        C.T_check_entails a c (Cert (firstn (length a) (kweight r)) g false) +
+        C.T_check_entails b c (Cert (skipn (length a) (kweight r)) g false) +
+        T_karr_hull_divisor raw + T_karr_hull_quotient g raw +
+        256 * N.of_nat (dim + 1))%N).
+    { time_unfold T_checked_hull_row. fold zs raw g c.
+      destruct (forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)));
+        [destruct (forallb (Z.eqb 0) zs)|]; time_simpl.
+      all: repeat match goal with
+      | |- context [if C.check_entails ?P ?row ?cert then _ else _] =>
+        destruct (C.check_entails P row cert); time_simpl
+      end.
+      all: unfold c, g, raw, zs in *; clear -Hsmall; lia. }
+    assert (Hlinear : (N.of_nat (dim + 1) <=
+      N.of_nat (dim + 1) * N.of_nat ((bits + 1)^2))%N).
+    { replace (N.of_nat (dim + 1)) with (N.of_nat (dim + 1) * 1)%N at 1 by lia.
+      now apply N.mul_le_mono_l. }
+    clear -Hclock Hcheck Hnorm_total Hlinear. nia.
+  Qed.
+
   (** The final map and presence pass charge each bounded basis row once. *)
+  Lemma T_karr_hull_finish_bounded_spec : forall xs a b basis dim bits,
+    1 <= bits -> length xs <= dim -> length a + length b <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) a ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) b ->
+    Forall (karr_row_envelope (2 * length xs + 2)
+      (length a + length b) bits) basis ->
+    (ListDef.T_map (checked_hull_row_spec xs a b)
+       (T_checked_hull_row_spec xs a b) basis +
+     T_present (map (checked_hull_row_spec xs a b) basis) <=
+      (2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+        1024 * N.of_nat (dim + 1) + 16) *
+      N.of_nat (length basis + 1))%N.
+  Proof.
+    intros xs a b basis dim bits Hpositive Hxs Hcount Hkeys Ha Hb Hbasis.
+    assert (Hcallback : forall r, In r basis ->
+      (T_checked_hull_row_spec xs a b r <=
+        2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+        1024 * N.of_nat (dim + 1))%N).
+    { intros r Hr. apply T_karr_checked_hull_row_bounded_spec;
+        try assumption.
+      exact (proj1 (Forall_forall _ _) Hbasis r Hr). }
+    pose proof (karr_T_map_members karr_row (option (lcons X.t))
+      (checked_hull_row_spec xs a b) (T_checked_hull_row_spec xs a b)
+      (2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+        1024 * N.of_nat (dim + 1))%N basis Hcallback) as Hmap.
+    pose proof (T_karr_present_bounded (lcons X.t)
+      (map (checked_hull_row_spec xs a b) basis)) as Hpresent.
+    rewrite length_map in Hpresent.
+    rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
+
+  (** Mapping the normalized extractor charges each final basis row once. *)
   Lemma T_karr_hull_finish_bounded : forall xs a b basis dim bits,
     1 <= bits -> length xs <= dim -> length a + length b <= dim ->
     Forall (fun x => X.bits x <= bits) xs ->
@@ -16682,25 +17599,23 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
        (T_checked_hull_row xs a b) basis +
      T_present (map (checked_hull_row xs a b) basis) <=
       (2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
-        1024 * N.of_nat (dim + 1) + 16) *
+        2048 * N.of_nat (dim + 1) * N.of_nat ((bits + 1)^2) + 16) *
       N.of_nat (length basis + 1))%N.
   Proof.
     intros xs a b basis dim bits Hpositive Hxs Hcount Hkeys Ha Hb Hbasis.
     assert (Hcallback : forall r, In r basis ->
       (T_checked_hull_row xs a b r <=
         2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
-        1024 * N.of_nat (dim + 1))%N).
-    { intros r Hr. apply T_karr_checked_hull_row_bounded;
-        try assumption.
+        2048 * N.of_nat (dim + 1) * N.of_nat ((bits + 1)^2))%N).
+    { intros r Hr. apply T_karr_checked_hull_row_bounded; try assumption.
       exact (proj1 (Forall_forall _ _) Hbasis r Hr). }
     pose proof (karr_T_map_members karr_row (option (lcons X.t))
       (checked_hull_row xs a b) (T_checked_hull_row xs a b)
       (2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
-        1024 * N.of_nat (dim + 1))%N basis Hcallback) as Hmap.
+        2048 * N.of_nat (dim + 1) * N.of_nat ((bits + 1)^2))%N basis Hcallback) as Hmap.
     pose proof (T_karr_present_bounded (lcons X.t)
       (map (checked_hull_row xs a b) basis)) as Hpresent.
-    rewrite length_map in Hpresent.
-    rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
+    rewrite length_map in Hpresent. rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
   Qed.
 
   (** Adding one conclusion cannot introduce more than its declared variables. *)
@@ -18047,9 +18962,71 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - unfold public. ring_simplify. apply N.le_refl.
   Qed.
 
-  Definition karr_hull_finish_factor : N := (524288 * C.c_lc + 2064)%N.
+  (** All normalized-row arithmetic fits the same cubic public dimension allowance. *)
+  Lemma karr_hull_normalization_public : forall d bits v count,
+    1 <= d -> 1 <= v -> bits + 1 <= 128 * v -> count + 1 <= d ->
+    (d + 1) * (bits + 1)^2 * (count + 1) <= (2 * 128 * 128) * (d^3 * v^2).
+  Proof.
+    intros d bits v count Hd Hv Hbits Hcount.
+    assert (Hsquare : (bits + 1)^2 <= (128 * 128) * v^2).
+    { replace ((128 * 128) * v^2) with ((128 * v)^2) by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    eapply Nat.le_trans with (m := (2 * d) * ((128 * 128) * v^2) * d).
+    - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; [lia|exact Hsquare]|exact Hcount].
+    - replace ((2 * d) * ((128 * 128) * v^2) * d) with
+        ((2 * 128 * 128) * (d^2 * v^2)) by (cbn [Nat.pow]; ring).
+      apply Nat.mul_le_mono_l. apply Nat.mul_le_mono_r.
+      replace (d^3) with (d^2 * d) by (cbn [Nat.pow]; ring).
+      replace (d^2) with (d^2 * 1) at 1 by lia. now apply Nat.mul_le_mono_l.
+  Qed.
 
-  (** Checking and retaining every final row fits public elimination work. *)
+  Definition karr_hull_finish_factor : N :=
+    (524288 * C.c_lc + 2048 * (2 * 128 * 128) + 16)%N.
+
+
+  (** Checker and normalization charges combine using only their scalar public budgets. *)
+  Lemma karr_hull_finish_public_arithmetic : forall d bits v count clock,
+    1 <= d -> 1 <= v -> bits + 1 <= 128 * v -> Nat.log2 d <= v -> count + 1 <= d ->
+    (clock <= (2 * C.c_lc * N.of_nat (karr_hull_checker_charge d bits) +
+      2048 * N.of_nat (d + 1) * N.of_nat ((bits + 1)^2) + 16) *
+      N.of_nat (count + 1))%N ->
+    (clock <= karr_hull_finish_factor * N.of_nat (d^3 * v^2))%N.
+  Proof.
+    intros d bits v count clock Hd Hv Hbits Hlog Hcount Hclock.
+    pose proof (karr_hull_checker_charge_public d bits v Hd Hv Hbits Hlog) as Hcharge.
+    assert (Hcheck_volume : karr_hull_checker_charge d bits * (count + 1) <=
+      (1024 * 256) * (d^3 * v^2)).
+    { eapply Nat.le_trans with (m := ((1024 * 256) * (d^2 * v^2)) * d).
+      - apply Nat.mul_le_mono; assumption.
+      - replace (((1024 * 256) * (d^2 * v^2)) * d) with
+          ((1024 * 256) * (d^3 * v^2))
+          by (generalize (1024 * 256); intro factor; cbn [Nat.pow]; ring).
+        apply Nat.le_refl. }
+    pose proof (karr_hull_normalization_public d bits v count Hd Hv Hbits Hcount)
+      as Hnorm_volume.
+    assert (Hsquare : 1 <= v^2) by (clear -Hv; cbn [Nat.pow]; nia).
+    assert (Hcube : d <= d^3).
+    { clear -Hd. replace (d^3) with (d * (d * d)) by (cbn [Nat.pow]; ring).
+      replace d with (d * 1) at 1 by lia. apply Nat.mul_le_mono_l. nia. }
+    assert (Hvisit : count + 1 <= d^3 * v^2).
+    { eapply Nat.le_trans; [exact Hcount|]. eapply Nat.le_trans; [exact Hcube|].
+      replace (d^3) with (d^3 * 1) at 1 by lia. now apply Nat.mul_le_mono_l. }
+    assert (HcheckN : (N.of_nat (karr_hull_checker_charge d bits) * N.of_nat (count + 1) <=
+      (1024 * 256) * N.of_nat (d^3 * v^2))%N).
+    { rewrite <- Nat2N.inj_mul. replace ((1024 * 256) * N.of_nat (d^3 * v^2))%N with
+        (N.of_nat ((1024 * 256) * (d^3 * v^2)))
+        by (rewrite !Nat2N.inj_mul; reflexivity). lia. }
+    assert (HnormN : (N.of_nat (d + 1) * N.of_nat ((bits + 1)^2) *
+      N.of_nat (count + 1) <= (2 * 128 * 128) * N.of_nat (d^3 * v^2))%N).
+    { rewrite <- !Nat2N.inj_mul.
+      replace ((2 * 128 * 128) * N.of_nat (d^3 * v^2))%N with
+        (N.of_nat ((2 * 128 * 128) * (d^3 * v^2)))
+        by (rewrite !Nat2N.inj_mul; reflexivity). lia. }
+    assert (HvisitN : (N.of_nat (count + 1) <= N.of_nat (d^3 * v^2))%N) by lia.
+    unfold karr_hull_finish_factor.
+    clear -Hclock HcheckN HnormN HvisitN. nia.
+  Qed.
+  (** Normalized hull extraction fits the existing normal-input elimination class. *)
   Lemma T_karr_hull_finish_public : forall a b,
     normal a -> normal b ->
     let xs := variables (map normalize_row a ++ map normalize_row b) in
@@ -18125,65 +19102,12 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       unfold d, n. cbn [rows_of]. lia. }
     assert (Hlog : Nat.log2 d <= v).
     { unfold v, ellB. nia. }
-    pose proof (karr_hull_checker_charge_public d bits v
-      Hd Hv Hwidth Hlog) as Hcharge.
-    assert (Hwork : work = d^3 * v^2).
-    { unfold work, elimination_work, d, v, w. reflexivity. }
-    assert (Hproduct : (length basis + 1) * charge <=
-      (1024 * 256) * work).
-    { unfold charge.
-      eapply Nat.le_trans with (m := d * ((1024 * 256) * (d^2 * v^2))).
-      - apply Nat.mul_le_mono; [exact Hbasis_length|exact Hcharge].
-      - rewrite Hwork. cbn [Nat.pow]. ring_simplify. lia. }
-    assert (Hpair : (d + 1) * (length basis + 1) <= 2 * work).
-    { rewrite Hwork.
-      assert (Hdim : d + 1 <= 2 * d) by lia.
-      eapply Nat.le_trans with (m := (2 * d) * d).
-      - apply Nat.mul_le_mono; assumption.
-      - replace ((2 * d) * d) with (2 * (d * d)) by ring.
-        replace (2 * (d ^ 3 * v ^ 2)) with
-          (2 * (d * d) * (d * v * v)) by (cbn [Nat.pow]; ring).
-        replace (2 * (d * d)) with (2 * (d * d) * 1) at 1 by ring.
-        apply Nat.mul_le_mono_l. nia. }
-    assert (Hvisit : length basis + 1 <= work).
-    { eapply Nat.le_trans; [exact Hbasis_length|].
-      rewrite Hwork.
-      replace (d ^ 3 * v ^ 2) with (d * (d * d * v * v))
-        by (cbn [Nat.pow]; ring).
-      replace d with (d * 1) at 1 by ring.
-      apply Nat.mul_le_mono_l. nia. }
-    assert (HproductN : (N.of_nat charge * N.of_nat (length basis + 1) <=
-      262144 * N.of_nat work)%N).
-    { rewrite <- Nat2N.inj_mul.
-      change 262144%N with (N.of_nat (1024 * 256)). lia. }
-    assert (HpairN : (N.of_nat (d + 1) * N.of_nat (length basis + 1) <=
-      2 * N.of_nat work)%N).
-    { rewrite <- Nat2N.inj_mul. lia. }
-    assert (HvisitN : (N.of_nat (length basis + 1) <=
-      N.of_nat work)%N) by lia.
-    eapply N.le_trans; [exact Hfinish|].
-    fold charge.
-    replace ((2 * C.c_lc * N.of_nat charge +
-      1024 * N.of_nat (d + 1) + 16) *
-      N.of_nat (length basis + 1))%N with
-      (2 * C.c_lc * (N.of_nat charge * N.of_nat (length basis + 1)) +
-        1024 * (N.of_nat (d + 1) * N.of_nat (length basis + 1)) +
-        16 * N.of_nat (length basis + 1))%N by ring.
-    assert (HcheckerN : (2 * C.c_lc *
-      (N.of_nat charge * N.of_nat (length basis + 1)) <=
-      524288 * C.c_lc * N.of_nat work)%N).
-    { replace (524288 * C.c_lc * N.of_nat work)%N with
-        (2 * C.c_lc * (262144 * N.of_nat work))%N by ring.
-      now apply N.mul_le_mono_l. }
-    unfold karr_hull_finish_factor.
-    replace ((524288 * C.c_lc + 2064) * N.of_nat work)%N with
-      ((524288 * C.c_lc * N.of_nat work +
-        1024 * (2 * N.of_nat work)) +
-        16 * N.of_nat work)%N by ring.
-    apply N.add_le_mono.
-    - apply N.add_le_mono; [exact HcheckerN|].
-      now apply N.mul_le_mono_l.
-    - now apply N.mul_le_mono_l.
+    change (ListDef.T_map (checked_hull_row xs a b)
+      (T_checked_hull_row xs a b) basis +
+      T_present (map (checked_hull_row xs a b) basis) <=
+      karr_hull_finish_factor * N.of_nat (d^3 * v^2))%N.
+    eapply karr_hull_finish_public_arithmetic with (bits := bits) (count := length basis);
+      [exact Hd|exact Hv|exact Hwidth|exact Hlog|exact Hbasis_length|exact Hfinish].
   Qed.
 
   (** Normal input occurrence counts add only logarithmic raw width. *)
@@ -19253,7 +20177,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       exists source. split; assumption.
   Qed.
 
-  (** Sparse hull rows retain separate coefficient and key bounds. *)
+  (** Exact gcd normalization preserves the source-minor bound on every output row. *)
   Lemma karr_hull_output_widths_exact : forall a b dim,
     normal a -> normal b -> 1 <= dim -> length a + length b <= dim ->
     1 <= ell (Reached a) + ell (Reached b) ->
@@ -19275,8 +20199,9 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (karr_Forall_skipn _ _ (S (length xs)) _ Hcoeff) as Hsuffix.
     pose proof (karr_nth_bits (length xs) _ _ Hsuffix) as Hrhs.
     destruct (karr_sparse_row_bits xs _ _ _ _ Hkeys Hsuffix Hrhs) as [Hkey Hbits].
-    rewrite (checked_hull_row_shape _ _ _ _ _ Hrow).
-    split; assumption.
+    rewrite (checked_hull_row_shape _ _ _ _ _ Hrow). split.
+    - eapply Nat.le_trans; [apply karr_hull_quotient_row_bits|exact Hbits].
+    - rewrite karr_hull_quotient_row_key_bits. exact Hkey.
   Qed.
 
   (** A zero-width source has zero constants in all of its rows. *)
@@ -24237,7 +25162,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       now apply N.mul_le_mono_l.
   Qed.
 
-  (** Raw source occurrences fit the final hull checkers without a normality premise. *)
+  (** Normalized hull extraction fits the existing raw lattice elimination class. *)
   Lemma T_karr_hull_finish_raw : forall a b m,
     mu (Reached a) + mu (Reached b) <= m ->
     let xs := variables (map normalize_row a ++ map normalize_row b) in
@@ -24311,60 +25236,12 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       rewrite !length_map in Hleft, Hright. unfold d. lia. }
     assert (Hlog : Nat.log2 d <= v).
     { assert (Hlog' : Nat.log2 d <= d) by (apply Nat.log2_le_lin; lia). lia. }
-    assert (HdN : (1 <= N.of_nat d)%N)
-      by (exact (karr_lattice_nat_cast_le _ _ Hd)).
-    assert (HvN : (1 <= N.of_nat v)%N)
-      by (exact (karr_lattice_nat_cast_le _ _ Hv)).
-    assert (HwidthN : (N.of_nat bits + 1 <= 128 * N.of_nat v)%N).
-    { pose proof (karr_lattice_nat_cast_le _ _ Hwidth) as Hcast.
-      rewrite (Nat2N.inj_add bits 1), (Nat2N.inj_mul 128 v) in Hcast.
-      exact Hcast. }
-    pose proof (karr_lattice_nat_cast_le _ _ Hlog) as HlogN.
-    pose proof (karr_lattice_nat_cast_le _ _ Hbasis_length) as Hbasis_lengthN.
-    assert (HchargeN : (N.of_nat charge <=
-      262144 * N.of_nat (d^2 * v^2))%N).
-    { unfold charge, karr_hull_checker_charge.
-      repeat first [rewrite Nat2N.inj_add | rewrite Nat2N.inj_mul |
-        rewrite Nat2N.inj_pow].
-      cbn [N.of_nat PosDef.Pos.of_succ_nat].
-      apply karr_lattice_checker_polynomial_N; assumption. }
-    assert (Hpair : (d + 1) * (length basis + 1) <= 2 * work).
-    { eapply Nat.le_trans with (m := (2 * d) * d).
-      - apply Nat.mul_le_mono; lia.
-      - replace ((2 * d) * d) with (2 * d^2) by (cbn [Nat.pow]; ring). lia. }
-    assert (Hvisit : length basis + 1 <= work) by lia.
-    assert (HproductN : (N.of_nat charge * N.of_nat (length basis + 1) <=
-      262144 * N.of_nat work)%N).
-    { eapply N.le_trans with
-        (m := ((262144 * N.of_nat (d^2 * v^2)) * N.of_nat d)%N).
-      - apply N.mul_le_mono; [exact HchargeN|exact Hbasis_lengthN].
-      - unfold work. rewrite !Nat2N.inj_mul, !Nat2N.inj_pow.
-        change ((262144 * ((N.of_nat d)^2 * (N.of_nat v)^2)) * N.of_nat d <=
-          262144 * ((N.of_nat d)^3 * (N.of_nat v)^2))%N.
-        replace ((262144 * ((N.of_nat d)^2 * (N.of_nat v)^2)) * N.of_nat d)%N with
-          (262144 * ((N.of_nat d)^3 * (N.of_nat v)^2))%N
-          by (rewrite !(N.pow_succ_r' _ 2%N), !N.pow_2_r; ring).
-        apply N.le_refl. }
-    assert (HpairN : (N.of_nat (d + 1) * N.of_nat (length basis + 1) <=
-      2 * N.of_nat work)%N).
-    { rewrite <- Nat2N.inj_mul.
-      replace (2 * N.of_nat work)%N with (N.of_nat (2 * work))
-        by (rewrite Nat2N.inj_mul; reflexivity). lia. }
-    assert (HvisitN : (N.of_nat (length basis + 1) <= N.of_nat work)%N) by lia.
-    eapply N.le_trans; [exact Hfinish|]. fold d v charge work.
-    replace ((2 * C.c_lc * N.of_nat charge + 1024 * N.of_nat (d + 1) + 16) *
-      N.of_nat (length basis + 1))%N with
-      (2 * C.c_lc * (N.of_nat charge * N.of_nat (length basis + 1)) +
-        1024 * (N.of_nat (d + 1) * N.of_nat (length basis + 1)) +
-        16 * N.of_nat (length basis + 1))%N by ring.
-    assert (HcheckN : (2 * C.c_lc *
-      (N.of_nat charge * N.of_nat (length basis + 1)) <=
-      524288 * C.c_lc * N.of_nat work)%N).
-    { replace (524288 * C.c_lc * N.of_nat work)%N with
-        (2 * C.c_lc * (262144 * N.of_nat work))%N by ring.
-      now apply N.mul_le_mono_l. }
-    unfold karr_hull_finish_factor.
-    clear -HcheckN HpairN HvisitN. clearbody work. nia.
+    change (ListDef.T_map (checked_hull_row xs a b)
+      (T_checked_hull_row xs a b) basis +
+      T_present (map (checked_hull_row xs a b) basis) <=
+      karr_hull_finish_factor * N.of_nat (d^3 * v^2))%N.
+    eapply karr_hull_finish_public_arithmetic with (bits := bits) (count := length basis);
+      [exact Hd|exact Hv|exact Hwidth|exact Hlog|exact Hbasis_length|exact Hfinish].
   Qed.
 
   Definition karr_lattice_hull_factor : N :=

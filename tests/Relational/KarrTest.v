@@ -478,3 +478,18 @@ Example widening_retains_equivalent_consequences :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** The three-dimensional point hull divides every output by its common coefficient factor. *)
+Example affine_hull_divides_common_coefficient_factors :
+  Equalities.affine_hull
+    [LCons _ [(1%positive, 1)] REq 0;
+     LCons _ [(2%positive, 1)] REq 0;
+     LCons _ [(3%positive, 1)] REq 0]
+    [LCons _ [(1%positive, 1)] REq 2;
+     LCons _ [(2%positive, 1)] REq 4;
+     LCons _ [(3%positive, 1)] REq 6] =
+    [LCons _ [(2%positive, 1); (1%positive, -2)] REq 0;
+     LCons _ [(1%positive, -3); (3%positive, 1)] REq 0].
+Proof.
+  vm_compute. reflexivity.
+Qed.
