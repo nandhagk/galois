@@ -453,6 +453,82 @@ Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%
     | _ => lower
     end.
 
+  (** An absent copied bound removes the target column. *)
+  Definition put_bound (k : K.t) (bound : option Z) (row : M.t Z) : M.t Z :=
+    match bound with Some z => M.set k z row | None => M.remove k row end.
+
+  Definition copy_column_row (target source : K.t) (d : Z)
+      (old : option (M.t Z)) (_ : option (M.t Z)) : option (M.t Z) :=
+    match old with
+    | Some row => Some (put_bound target (edge_prefix d (M.get source row)) row)
+    | None => None
+    end.
+
+  (** Copying a literal updates its column and then its row from the same source. *)
+  Definition copy_literal (target source : K.t) (d : Z) (m : dbm) : dbm :=
+    let next := M.merge (copy_column_row target source d) m M.empty in
+    M.set target (M.merge (shift_bound d) (row_of (M.get source next)) M.empty) next.
+
+  Definition copy_literals (x : X.t) (source : K.t) (d : Z) (m : dbm) : dbm :=
+    copy_literal (x, false) (flip source) (-d)%Z
+      (copy_literal (x, true) source d m).
+
+  (** Both signed copies overwrite every old occurrence of the assigned variable. *)
+  Definition assign_copy_fast (x : X.t) (source : K.t) (d : Z) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      if K.eqb source (x, true) then Reached (shift x d m) else
+        Reached (copy_literals x source d (add_cons source source 0%Z m))
+    end.
+
+  Definition range_average (bound unary : option Z) (_ : option Z) : option Z :=
+    match bound, unary with
+    | Some a, Some b => Some (Z.div2 (a + b))
+    | _, _ => None
+    end.
+
+  Definition range_column_row (x : X.t) (lower upper : option Z)
+      (old : option (M.t Z)) (unary : option Z) : option (M.t Z) :=
+    match old with
+    | Some row =>
+      Some (put_bound (x, false) (range_average lower unary None)
+        (put_bound (x, true) (range_average upper unary None) row))
+    | None => None
+    end.
+
+  (** A missing side creates only its zero diagonal, without traversing the unary map. *)
+  Definition range_literal_row (x : X.t) (sign : bool) (bound : option Z)
+      (unaries : M.t Z) : M.t Z :=
+    let row := match bound with
+      | Some _ => M.merge (range_average bound) unaries M.empty
+      | None => M.empty
+      end in
+    M.set (x, sign) 0%Z (put_bound (x, negb sign) bound row).
+
+  (** Only the two assigned rows and their columns receive strengthened bounds. *)
+  Definition range_matrix (x : X.t) (lower upper : option Z) (m : dbm) : dbm :=
+    let unaries := M.fold (unary_maps m) m (M.empty, M.empty) in
+    let next := M.merge (range_column_row x lower upper) m (fst unaries) in
+    M.set (x, true) (range_literal_row x true lower (snd unaries))
+      (M.set (x, false) (range_literal_row x false upper (snd unaries)) next).
+
+  Definition add_range_fast (x : X.t) (bounds : bnd * bnd) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      match bounds with
+      | (Fin lo, Fin hi) =>
+        if (lo <=? hi)%Z then
+          Reached (range_matrix x (Some (-2 * lo)%Z) (Some (2 * hi)%Z) m)
+        else Unreached
+      | (Fin lo, PosInf) => Reached (range_matrix x (Some (-2 * lo)%Z) None m)
+      | (NegInf, Fin hi) => Reached (range_matrix x None (Some (2 * hi)%Z) m)
+      | (NegInf, PosInf) => s
+      | _ => Unreached
+      end
+    end.
+
   Definition assign (x : X.t) (e : term L.op X.t) (s : t) : t :=
     match s with
     | Unreached => Unreached
@@ -1864,6 +1940,16 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   TimeFun havoc.
   TimeFun assign_copy.
   TimeFun add_range.
+  TimeFun put_bound.
+  TimeFun copy_column_row.
+  TimeFun copy_literal.
+  TimeFun copy_literals.
+  TimeFun assign_copy_fast.
+  TimeFun range_average.
+  TimeFun range_column_row.
+  TimeFun range_literal_row.
+  TimeFun range_matrix.
+  TimeFun add_range_fast.
   TimeFun bot.
   TimeFun top.
   TimeFun meet.
