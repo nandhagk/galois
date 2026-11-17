@@ -1,7 +1,12 @@
 (** * Concrete step observations
 
-    Counter and completion machines retain their initial and transition boundaries.
-    For example, an administrative transition accepts an empty trace at state one.
+    Counter and completion machines keep their initial and transition boundaries.
+    For example, a counter starts at zero, and one step from zero reaches one.
+
+    Groups:
+    - Counter: the counter starts at zero, steps to its successor, and rejects other states.
+    - Completion: one step from state zero completes, and visible administration is rejected.
+
     Builds on: Program.SemanticsSig. *)
 
 From Stdlib Require Import List Bool Arith.
@@ -9,78 +14,80 @@ From Galois.Base Require Import KeySig.
 From Galois.Program Require Import SemanticsSig.
 Import List.ListNotations.
 
+(** * Fixtures *)
+
 Module Prog <: TYPE. Definition t := unit. End Prog.
+
+(** A counter machine whose states are numbers, starts at zero, and steps to its successor. *)
 Module Counter <: SEMANTICS Prog.
   Definition state := nat.
   Definition initial (_ : unit) s := Nat.eqb s 0 = true.
   Definition step (_ : unit) s t := Nat.eqb t (S s) = true.
 End Counter.
-Definition counter_lstep s (l : list unit) t := (l, t) = ([], S s).
 
-Example counter_initial : Counter.initial tt 0.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+(** * Counter *)
 
-Example counter_prefix : counter_lstep 0 [] 1.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+Module CounterTests.
 
-(* counter_rejected and counter_rejects_wrong_endpoint were negated steps.
-   Their Boolean transition observations retain rejection of (1, 1) and (0, 2). *)
-Example counter_rejected : Nat.eqb 1 (S 1) = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** The step from state s to t with an empty trace, where t is the successor of s. *)
+  Definition counter_lstep s (l : list unit) t := (l, t) = ([], S s).
 
-Example counter_rejects_wrong_endpoint : Nat.eqb 2 (S 0) = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  Example zero_is_initial : Counter.initial tt 0.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-(* counter_boundary was ~ initial counter 1. *)
-Example counter_boundary : Nat.eqb 1 0 = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** An empty trace takes state zero to its successor, one. *)
+  Example empty_trace_steps_to_successor : counter_lstep 0 [] 1.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Definition completion_stepb s (l : list unit) t :=
-  (Nat.eqb s 0 && Nat.eqb (length l) 1 && Nat.eqb t 1) ||
-  (Nat.eqb s 1 && Nat.eqb (length l) 0 && Nat.eqb t 2).
+  (** One is not the successor of one. *)
+  Example one_is_not_its_successor : Nat.eqb 1 (S 1) = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Example completes_one_step : completion_stepb 1 [] 2 = true.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** A step from zero to two is rejected, because the successor of zero is one. *)
+  Example wrong_endpoint_rejected : Nat.eqb 2 (S 0) = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-Example rejects_visible_administration : completion_stepb 1 [tt] 2 = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** One is not initial. *)
+  Example one_is_not_initial : Nat.eqb 1 0 = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
-(* stable_boundary was 2 <> 1. *)
-Example stable_boundary : Nat.eqb 2 1 = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+End CounterTests.
 
-(* ProgramStepsTest's counter_local, counter_silent, counter_induction,
-   counter_conjunction, counter_monotonicity and counter_quantified are universal
-   proof clients of on_steps and reachability. SemanticsSteps retains these laws.
-   counter_behaviour is a proof client of SemanticsTraces.same_behaviour_refl.
-   Task 3.9 adds no proofs beyond computed examples.
+(** * Completion *)
 
-   ProgramRunsTest's one_edge, two_edges, wrong_edge_rejected, empty_history and
-   history_has_run use run_edges and Link.taken. CFG_LINK now relates unlabelled
-   transitions to one listed edge. It exposes no run_edges history or taken predicate.
+Module CompletionTests.
 
-   ProgramSimulationTest's identity_counter, composed_counter,
-   transports_both_endpoints and preserves_actual_finish use simulation and
-   bisimulation transport, which Semantics.v does not export. counter_empty_run
-   is a traced_run constructor proof. Its empty event list and endpoint zero
-   are unchanged, but it is outside the computed-proof restriction.
+  (** A step from state zero with one visible action reaches two. *)
+  Definition completion_stepb s (l : list unit) t :=
+    (Nat.eqb s 0 && Nat.eqb (length l) 1 && Nat.eqb t 1) ||
+    (Nat.eqb s 1 && Nat.eqb (length l) 0 && Nat.eqb t 2).
 
-   ProgramCompletionTest's completion_laws, completed_behaviour and
-   rejects_nondeterministic_administration use administrative completion laws and
-   behaviour transport. CfgSig exports no stable/rank completion interface. *)
+  (** One step from state zero completes to state one. *)
+  Example one_step_completes : completion_stepb 1 [] 2 = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A step from state one with a visible action is rejected. *)
+  Example visible_administration_rejected : completion_stepb 1 [tt] 2 = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** Two is not the same state as one. *)
+  Example two_is_not_one : Nat.eqb 2 1 = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End CompletionTests.
