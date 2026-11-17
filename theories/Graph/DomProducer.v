@@ -46,13 +46,23 @@ Fixpoint dom_lt_key_fits (width : nat) (v : positive) : bool :=
   end.
 TimeFun dom_lt_key_fits.
 
-(** Unlisted roots are rejected before the filtered traversal can read their rows. *)
-Definition dom_lt_trace (g : prepared) (r : positive) : list event :=
+(** The reference traversal builds a separate table for its root membership test. *)
+Local Definition dom_lt_trace_spec (g : prepared) (r : positive) : list event :=
   let listed := fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty in
   if dom_lt_key_fits (graph_width (base g)) r then
     match trie_get r listed with
     | None => []
     | Some _ => prepared_search_trace (scc_graph g) [r]
+    end
+  else [].
+
+(** The filtered graph's rows also supply the root membership test. *)
+Definition dom_lt_trace (g : prepared) (r : positive) : list event :=
+  if dom_lt_key_fits (vertex_width (nodes g)) r then
+    let ready := scc_graph g in
+    match trie_get r (succ (base ready)) with
+    | None => []
+    | Some _ => prepared_search_trace ready [r]
     end
   else [].
 TimeFun dom_lt_trace.
@@ -545,6 +555,14 @@ Proof.
   change graph_max with Nat.max. intros [Heq|Hin].
   - subst x. apply Nat.le_max_l.
   - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+Qed.
+
+(** Listed vertex widths are bounded by the full graph width. *)
+Local Lemma dom_lt_vertex_width_le g :
+  vertex_width (nodes g) <= graph_width (base g).
+Proof.
+  destruct g as [[vs rows] predecessors vertices edges]. cbn [nodes base graph_width].
+  change graph_max with Nat.max. apply Nat.le_max_l.
 Qed.
 
 (** Taking a maximum examines no more than the first unary argument. *)
@@ -1213,6 +1231,44 @@ Proof.
   reflexivity.
 Qed.
 
+(** A key that fits the width is accepted by the bounded guard. *)
+Local Lemma dom_lt_key_fits_complete width v :
+  Pos.size_nat v <= width -> dom_lt_key_fits width v = true.
+Proof.
+  revert v. induction width as [|width IH]; intros [v|v|] Hwidth;
+    cbn [dom_lt_key_fits Pos.size_nat] in *; try lia; try reflexivity;
+    apply IH; lia.
+Qed.
+
+(** The filtered graph has a row exactly at each listed vertex. *)
+Local Lemma dom_lt_root_test g r :
+  (match trie_get r (succ (base (scc_graph g))) with
+  | Some _ => true
+  | None => false
+  end) = existsb (Pos.eqb r) (nodes g).
+Proof.
+  unfold scc_graph. cbn [base succ]. rewrite scc_rows_lookup, PTrie.get_empty.
+  destruct (existsb (Pos.eqb r) (nodes g)); reflexivity.
+Qed.
+
+(** Reusing the filtered rows preserves the original trace for every prepared record. *)
+Lemma dom_lt_trace_agrees g r : dom_lt_trace g r = dom_lt_trace_spec g r.
+Proof.
+  unfold dom_lt_trace, dom_lt_trace_spec. rewrite dom_lt_listed_lookup.
+  pose proof (dom_lt_root_test g r) as Hroot.
+  destruct (existsb (Pos.eqb r) (nodes g)) eqn:Hlisted.
+  - apply dom_lt_existsb_key in Hlisted.
+    assert (Hvertices : dom_lt_key_fits (vertex_width (nodes g)) r = true).
+    { apply dom_lt_key_fits_complete. now apply dom_time_width_member. }
+    assert (Hgraph : dom_lt_key_fits (graph_width (base g)) r = true).
+    { apply dom_lt_key_fits_complete. now apply dom_listed_key_width. }
+    rewrite Hvertices, Hgraph.
+    destruct (trie_get r (succ (base (scc_graph g)))); [reflexivity|discriminate Hroot].
+  - destruct (trie_get r (succ (base (scc_graph g)))); [discriminate Hroot|].
+    now destruct (dom_lt_key_fits (vertex_width (nodes g)) r);
+      destruct (dom_lt_key_fits (graph_width (base g)) r).
+Qed.
+
 (** A filtered search row is the listed source row with unlisted targets removed. *)
 Lemma dom_lt_filtered_row g u :
   succs (base (scc_graph g)) u =
@@ -1279,7 +1335,7 @@ Lemma dom_lt_trace_inventory g r :
   length (entered (dom_lt_trace g r)) <= graph_n (base g) /\
   length (entered (dom_lt_trace g r)) <= graph_e (base g) + 1.
 Proof.
-  unfold dom_lt_trace. rewrite dom_lt_listed_lookup.
+  rewrite dom_lt_trace_agrees. unfold dom_lt_trace_spec. rewrite dom_lt_listed_lookup.
   destruct (dom_lt_key_fits (graph_width (base g)) r); [|].
   2: { cbn [entered length]. split; [constructor|]. split; [intros v Hv; contradiction|lia]. }
   destruct (existsb (Pos.eqb r) (nodes g)) eqn:Hroot.
@@ -2021,7 +2077,8 @@ Lemma dom_lt_trace_events g r :
   length (dom_lt_trace g r) <= 2 * graph_n (base g) + graph_e (base g).
 Proof.
   pose proof (dom_lt_trace_inventory g r) as Htrace.
-  unfold dom_lt_trace in Htrace |- *. rewrite dom_lt_listed_lookup in Htrace |- *.
+  rewrite dom_lt_trace_agrees in Htrace |- *.
+  unfold dom_lt_trace_spec in Htrace |- *. rewrite dom_lt_listed_lookup in Htrace |- *.
   destruct (dom_lt_key_fits (graph_width (base g)) r); [|cbn; lia].
   destruct (existsb (Pos.eqb r) (nodes g)); [|cbn; lia].
   destruct Htrace as [Hunique [Hlisted [Hvertices Hedges]]].
@@ -2106,55 +2163,72 @@ Proof.
   clear -Htime. lia.
 Qed.
 
-(** The guarded trace pays its membership scan, width scan and filtered search. *)
+(** Scanning only the listed key widths fits the original graph observation budget. *)
+Local Lemma dom_time_lt_trace_width g :
+  (T_vertex_width (nodes g) <= 128 *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1)))%N.
+Proof.
+  pose proof (dom_time_vertex_width (nodes g) (graph_width (base g))
+    (dom_lt_vertex_width_le g)) as Hscan.
+  replace (length (nodes g)) with (graph_n (base g)) in Hscan by
+    (destruct g as [[vs rows] predecessors vertices edges]; reflexivity).
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+Qed.
+
+(** The guarded trace pays one filtered graph construction and one listed-width scan. *)
 Lemma dom_time_lt_trace g r :
   (T_dom_lt_trace g r <= (8 * (search_trace_coefficient + PTrieT.c_trie + 4096)) *
     N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))%N.
 Proof.
-  set (listed := fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty).
-  pose proof (dom_time_lt_listed g) as Hlisted.
-  pose proof (dom_time_graph_observations (base g)) as Hobservations.
-  pose proof (dom_time_lt_key_fits (graph_width (base g)) r) as Hguard.
-  unfold T_dom_lt_trace. time_simpl. fold listed.
-  destruct (dom_lt_key_fits (graph_width (base g)) r) eqn:Hfits.
-  - pose proof (dom_lt_key_fits_bound (graph_width (base g)) r Hfits) as Hroot_width.
+  pose proof (dom_time_lt_trace_width g) as Hscan.
+  pose proof (dom_time_lt_key_fits (vertex_width (nodes g)) r) as Hguard.
+  pose proof (dom_lt_vertex_width_le g) as Hwidth.
+  pose proof (scc_graph_time g) as Hfilter.
+  assert (Hguard_graph : (T_dom_lt_key_fits (vertex_width (nodes g)) r <=
+    N.of_nat (graph_width (base g)) + 1)%N) by lia.
+  unfold T_dom_lt_trace. time_simpl.
+  destruct (dom_lt_key_fits (vertex_width (nodes g)) r) eqn:Hfits.
+  - pose proof (dom_lt_key_fits_bound (vertex_width (nodes g)) r Hfits) as Hroot_width.
     assert (Hroot_bits : (N.of_nat (Pos.size_nat r) <=
       N.of_nat (graph_width (base g)))%N) by lia.
-    destruct (trie_get r listed) as [present|] eqn:Hroot.
+    destruct (trie_get r (succ (base (scc_graph g)))) as [row|] eqn:Hroot.
     + assert (Hr : In r (nodes g)).
-      { unfold listed in Hroot. rewrite dom_lt_listed_lookup in Hroot.
-        destruct (existsb (Pos.eqb r) (nodes g)) eqn:Hmember; [|discriminate Hroot].
-        now apply dom_lt_existsb_key. }
+      { pose proof (dom_lt_root_test g r) as Hmember. rewrite Hroot in Hmember.
+        apply dom_lt_existsb_key. now symmetry. }
       assert (Hroots : forall v, In v [r] -> In v (nodes g)).
       { intros v [<-|Hbad]; [exact Hr|contradiction]. }
       pose proof (scc_search_time g [r] Hroots) as Hsearch.
-      pose proof (scc_graph_time g) as Hfilter.
       cbn [length] in Hsearch.
       time_simpl.
       rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
-      eapply N.le_trans; [shelve|apply dom_lt_trace_budget].
-      * exact Hlisted.
-      * eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
-      * exact Hguard.
+      eapply N.le_trans; [shelve|apply dom_lt_trace_budget with (listed_work := 4%N)].
+      * nia.
+      * exact Hscan.
+      * exact Hguard_graph.
       * exact Hroot_bits.
       * now rewrite <- N.mul_assoc in Hfilter.
       * eapply N.le_trans; [apply N.le_add_l|exact Hsearch].
       Unshelve. PTrieT.trie_get_le. lia.
     + time_simpl. rewrite ?N.add_0_r.
       rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
-      eapply N.le_trans; [shelve|apply dom_lt_trace_missing_budget].
-      * exact Hlisted.
-      * eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
-      * exact Hguard.
+      eapply N.le_trans; [shelve|apply dom_lt_trace_budget with
+        (listed_work := 4%N) (search_work := 0%N)].
+      * nia.
+      * exact Hscan.
+      * exact Hguard_graph.
       * exact Hroot_bits.
+      * now rewrite <- N.mul_assoc in Hfilter.
+      * apply N.le_0_l.
       Unshelve. PTrieT.trie_get_le. lia.
   - time_simpl. rewrite ?N.add_0_r.
     rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
-    apply dom_lt_trace_rejected_budget.
-    + exact Hlisted.
-    + eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
-    + exact Hguard.
+    eapply N.le_trans; [shelve|apply dom_lt_trace_rejected_budget with (listed_work := 4%N)].
+    + nia.
+    + exact Hscan.
+    + exact Hguard_graph.
+    Unshelve. lia.
 Qed.
 
 (** Event count and callback cost scale to one layout-fold budget. *)

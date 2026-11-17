@@ -177,3 +177,31 @@ Example producer_retains_direct_root_parent_observations :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example producer_missing_root_row :
+  DomCode.build (DigraphCode.prepare (fixture_graph [1; 4] [(1, 4)])) 2 = (Empty, []).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example producer_listed_empty_row :
+  DomCode.build (DigraphCode.prepare (fixture_graph [1; 4] [(1, 4)])) 4 = (Empty, [4]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example producer_ignores_unlisted_wide_successor :
+  DomCode.build (DigraphCode.prepare (fixture_graph [1; 2] [(1, 2); (2, 1024)])) 1 =
+    (parent_map [(2, 1)], [1; 2]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Narrower width guards retain rejection of foreign order entries and parent keys. *)
+Example rejects_unlisted_wide_candidate_keys :
+  let g := DigraphCode.prepare (fixture_graph [1; 2] [(1, 2); (2, 1024)]) in
+  (DomCode.check g 1 (parent_map [(1024, 1)]) [1; 1024],
+    DomCode.check g 1 (parent_map [(2, 1024)]) [1; 2]) = (false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.

@@ -46,10 +46,24 @@ Definition dom_map_eq (expected candidate : ptrie positive) : bool :=
   end.
 TimeFun dom_map_eq.
 
-Definition dom_scan (g : prepared) : dom_scan_data :=
+(** The reference scan also measures every listed successor row. *)
+Local Definition dom_scan_spec (g : prepared) : dom_scan_data :=
   DomScanData (fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty)
     (graph_n (base g)) (graph_e (base g)) (graph_width (base g)).
+
+(** Only listed identifiers need to pass the candidate's width guard. *)
+Definition dom_scan (g : prepared) : dom_scan_data :=
+  DomScanData (fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty)
+    (graph_n (base g)) (graph_e (base g)) (vertex_width (nodes g)).
 TimeFun dom_scan.
+
+(** Measuring listed keys alone never exceeds the width of the whole graph. *)
+Local Lemma dom_vertex_width_le : forall g,
+  vertex_width (nodes g) <= graph_width (base g).
+Proof.
+  intros [[vs adjacency] predecessors count_v count_e]. cbn [nodes base graph_width].
+  change graph_max with Nat.max. apply Nat.le_max_l.
+Qed.
 
 Record dom_read_state := DomReadState {
   read_remaining : list positive;
@@ -843,6 +857,170 @@ Qed.
 Local Lemma dom_nodes_verts : forall g, nodes g = verts (base g).
 Proof.
   intros [[vs adjacency] predecessors count_v count_e]. reflexivity.
+Qed.
+
+(** Every key within the bound passes the bounded width test. *)
+Local Lemma dom_key_fits_complete width v :
+  Pos.size_nat v <= width -> dom_key_fits width v = true.
+Proof.
+  revert v. induction width as [|width IH]; intros [v|v|];
+    cbn [dom_key_fits Pos.size_nat]; intros Hwidth; try lia; try reflexivity; apply IH; lia.
+Qed.
+
+(** Changing the bound does not change a step when all listed keys fit both bounds. *)
+Local Lemma dom_read_step_width_agrees left right listed :
+  (forall v b, trie_get v listed = Some b ->
+    dom_key_fits left v = true /\ dom_key_fits right v = true) ->
+  forall state, dom_read_step left listed state = dom_read_step right listed state.
+Proof.
+  intros Hlisted [remaining budget next pos].
+  destruct remaining as [|v rest]; [reflexivity|].
+  cbn [dom_read_step]. destruct (N.eqb budget 0); [reflexivity|].
+  destruct (trie_get v listed) as [b|] eqn:Hget.
+  - destruct (Hlisted v b Hget) as [Hleft Hright]. now rewrite Hleft, Hright.
+  - destruct (dom_key_fits left v), (dom_key_fits right v); reflexivity.
+Qed.
+
+(** Pointwise equal callbacks give equal binary-fuel loop results. *)
+Local Lemma dom_width_loop_agrees {S R} (left right : S -> S + R) :
+  (forall state, left state = right state) ->
+  forall fuel state, loopN left fuel state = loopN right fuel state.
+Proof.
+  intro Hagree.
+  assert (Hloop : forall fs (access : Acc (@loopN_lt S) fs),
+    loop loopN_lt (loopN_step left) fs access = loop loopN_lt (loopN_step right) fs access).
+  { intros fs access. induction access as [[fuel state] Hacc IH] using Acc_ind_dep.
+    destruct fuel as [|p]; [reflexivity|].
+    cbn [loop loopN_step Acc_inv]. rewrite <- (Hagree state).
+    destruct (left state); [apply IH|reflexivity]. }
+  intros fuel state. unfold loopN. apply Hloop.
+Qed.
+
+(** A stopping callback returns immediately when the fuel is positive. *)
+Local Lemma dom_width_loop_stop {S R} (step : S -> S + R) fuel state result :
+  step state = inr result -> loopN step (N.succ fuel) state = inr result.
+Proof.
+  intro Hstop. unfold loopN. destruct fuel as [|p]; cbn [N.succ].
+  all: match goal with
+  | |- loop _ _ _ ?access = _ => destruct access
+  end.
+  all: cbn [loop loopN_step Acc_inv]; now rewrite Hstop.
+Qed.
+
+(** The reader rejects an unlisted first entry for every budget and key bound. *)
+Local Lemma dom_read_order_unlisted count width listed v rest next pos :
+  trie_get v listed = None ->
+  dom_read_order count width listed (v :: rest) next pos = None.
+Proof.
+  intro Hlisted. unfold dom_read_order.
+  assert (Hstop : dom_read_step width listed
+    (DomReadState (v :: rest) (N.of_nat count) next pos) = inr None).
+  { cbn [dom_read_step]. destruct (N.eqb (N.of_nat count) 0); [reflexivity|].
+    destruct (dom_key_fits width v); [now rewrite Hlisted|reflexivity]. }
+  now rewrite (dom_width_loop_stop _ _ _ _ Hstop).
+Qed.
+
+(** The root-width guard is redundant because an oversized first entry is unlisted. *)
+Local Lemma dom_read_known_guard listed count edges width r o :
+  (forall v b, trie_get v listed = Some b -> dom_key_fits width v = true) ->
+  dom_read_known (DomScanData listed count edges width) r o =
+    match o with
+    | [] => None
+    | h :: _ => if Pos.eqb h r then dom_read_order count width listed o 0 Empty else None
+    end.
+Proof.
+  intros Hlisted. destruct o as [|h rest]; [reflexivity|].
+  cbn [dom_read_known dom_width dom_count dom_listed].
+  destruct (dom_key_fits width r) eqn:Hfits; [reflexivity|].
+  destruct (Pos.eqb h r) eqn:Hroot; [|reflexivity].
+  apply Pos.eqb_eq in Hroot. subst h.
+  assert (Hmissing : trie_get r listed = None).
+  { destruct (trie_get r listed) as [b|] eqn:Hget; [|reflexivity].
+    pose proof (Hlisted r b Hget). congruence. }
+  symmetry. now apply dom_read_order_unlisted.
+Qed.
+
+(** Reading depends only on whether listed vertices fit, rather than the excess width. *)
+Local Lemma dom_read_known_width_agrees listed count edges left right r o :
+  (forall v b, trie_get v listed = Some b ->
+    dom_key_fits left v = true /\ dom_key_fits right v = true) ->
+  dom_read_known (DomScanData listed count edges left) r o =
+  dom_read_known (DomScanData listed count edges right) r o.
+Proof.
+  intro Hlisted.
+  rewrite !dom_read_known_guard by (intros v b Hget; first
+    [exact (proj1 (Hlisted v b Hget))|exact (proj2 (Hlisted v b Hget))]).
+  destruct o as [|h rest]; [reflexivity|].
+  destruct (Pos.eqb h r); [|reflexivity]. unfold dom_read_order.
+  rewrite (dom_width_loop_agrees (dom_read_step left listed)
+    (dom_read_step right listed) (dom_read_step_width_agrees left right listed Hlisted)).
+  reflexivity.
+Qed.
+
+(** Parent reconstruction ignores bounds wider than every positioned key. *)
+Local Lemma dom_rebuild_width_agrees left right r m pos :
+  (forall v i, trie_get v pos = Some i ->
+    dom_key_fits left v = true /\ dom_key_fits right v = true) ->
+  forall acc v, dom_rebuild left r m pos acc v = dom_rebuild right r m pos acc v.
+Proof.
+  intros Hpositions [built|] v; [|reflexivity].
+  cbn [dom_rebuild]. destruct (Pos.eqb v r); [reflexivity|].
+  destruct (trie_get v m) as [p|]; [|reflexivity].
+  destruct (trie_get p pos) as [i|] eqn:Hget.
+  - destruct (Hpositions p i Hget) as [Hleft Hright]. now rewrite Hleft, Hright.
+  - destruct (dom_key_fits left p), (dom_key_fits right p); reflexivity.
+Qed.
+
+(** Folding the same parent reconstruction steps preserves their final result. *)
+Local Lemma dom_rebuild_fold_width_agrees left right r m pos :
+  (forall v i, trie_get v pos = Some i ->
+    dom_key_fits left v = true /\ dom_key_fits right v = true) ->
+  forall o acc,
+    fold_left (dom_rebuild left r m pos) o acc =
+    fold_left (dom_rebuild right r m pos) o acc.
+Proof.
+  intros Hpositions o. induction o as [|v rest IH]; intro acc; [reflexivity|].
+  cbn [fold_left]. rewrite (dom_rebuild_width_agrees _ _ _ _ _ Hpositions). apply IH.
+Qed.
+
+(** Every listed key fits both the vertex-only and graph-wide scan bounds. *)
+Local Lemma dom_scan_widths_fit g v b :
+  trie_get v (dom_listed (dom_scan g)) = Some b ->
+  dom_key_fits (vertex_width (nodes g)) v = true /\
+  dom_key_fits (graph_width (base g)) v = true.
+Proof.
+  intro Hget. assert (Hin : In v (nodes g)).
+  { apply dom_scan_listed. now exists b. }
+  pose proof (dom_time_width_member (nodes g) v Hin) as Hsmall.
+  pose proof (dom_vertex_width_le g) as Hlarge.
+  split; apply dom_key_fits_complete; lia.
+Qed.
+
+(** Narrowing the scan to vertex widths preserves every order-read result. *)
+Local Lemma dom_scan_read_agrees g r o :
+  dom_read_known (dom_scan g) r o = dom_read_known (dom_scan_spec g) r o.
+Proof.
+  unfold dom_scan, dom_scan_spec. apply dom_read_known_width_agrees.
+  intros v b Hget. apply (dom_scan_widths_fit g v b Hget).
+Qed.
+
+(** Narrowing the scan also preserves the entire parent-map phase. *)
+Local Lemma dom_scan_map_agrees g r m o :
+  dom_map_check_known (dom_scan g) r m o = dom_map_check_known (dom_scan_spec g) r m o.
+Proof.
+  unfold dom_map_check_known. rewrite <- dom_scan_read_agrees.
+  destruct (dom_read_known (dom_scan g) r o) as [pos|] eqn:Hread; [|reflexivity].
+  rewrite (dom_rebuild_fold_width_agrees
+    (vertex_width (nodes g)) (graph_width (base g)) r m pos); [reflexivity|].
+  intros v i Hget.
+  pose proof (dom_read_known_positions (dom_scan g) r o pos Hread) as Hpositions.
+  rewrite Hpositions in Hget.
+  assert (Hin : In v o).
+  { apply dom_positions_domain. now exists i. }
+  destruct (dom_read_known_success g r o pos Hread) as [_ [_ [_ [Hlisted _]]]].
+  pose proof (dom_time_width_member (nodes g) v (Hlisted v Hin)) as Hsmall.
+  pose proof (dom_vertex_width_le g) as Hlarge.
+  split; apply dom_key_fits_complete; lia.
 Qed.
 
 (** Writing back a size's default value leaves every size observation unchanged. *)
@@ -1990,6 +2168,19 @@ Local Definition dom_check_spec (g : prepared) (r : positive) (m : ptrie positiv
     else false
   end.
 
+(** The original scan and edge fold give an independent reference for all checker changes. *)
+Local Definition dom_check_original (g : prepared) (r : positive) (m : ptrie positive)
+    (o : list positive) : bool :=
+  let info := dom_scan_spec g in
+  match dom_read_known info r o with
+  | None => false
+  | Some pos =>
+    if dom_map_check_known info r m o then
+      let sizes := dom_sizes m o in
+      dom_sizes_ok m pos sizes o && dom_edges_spec g r m o pos sizes
+    else false
+  end.
+
 Module DomCode <: DOM_OPS.
   Definition build := dom_build_candidate.
 
@@ -2035,6 +2226,18 @@ Proof.
   intros g r m o. unfold DomCode.check, dom_check_spec.
   destruct (dom_read_known (dom_scan g) r o) as [pos|] eqn:Hread; [|reflexivity].
   now rewrite (dom_map_check_known_pos (dom_scan g) r m o pos Hread).
+Qed.
+
+(** Reused positions, cached sources and narrower scans preserve every checker result. *)
+Local Lemma dom_check_original_agrees : forall g r m o,
+  DomCode.check g r m o = dom_check_original g r m o.
+Proof.
+  intros g r m o. rewrite dom_check_agrees.
+  unfold dom_check_spec, dom_check_original. rewrite dom_scan_read_agrees.
+  destruct (dom_read_known (dom_scan_spec g) r o) as [pos|]; [|reflexivity].
+  rewrite dom_scan_map_agrees.
+  destruct (dom_map_check_known (dom_scan_spec g) r m o); [|reflexivity].
+  now rewrite dom_edges_agrees.
 Qed.
 
 (** All accepted phases combine into the semantic low-high certificate. *)
@@ -3979,6 +4182,19 @@ Proof.
   - apply N.lt_le_incl. exact (dom_positions_bound o v i Hunique Hget).
 Qed.
 
+(** Listed identifiers also bound every position produced by the reader. *)
+Local Lemma dom_read_positions_vertex_width g r o pos :
+  dom_read_known (dom_scan g) r o = Some pos ->
+  forall v i, trie_get v pos = Some i -> N.size_nat i <= vertex_width (nodes g).
+Proof.
+  intro Hread. pose proof (dom_read_known_positions (dom_scan g) r o pos Hread) as ->.
+  destruct (dom_read_known_success g r o (dom_positions o) Hread)
+    as [Hunique [_ [_ [Hlisted _]]]].
+  intros v i Hget. apply (dom_distinct_value_width o (vertex_width (nodes g)) i Hunique).
+  - intros x Hx. apply dom_time_width_member. now apply Hlisted.
+  - apply N.lt_le_incl. exact (dom_positions_bound o v i Hunique Hget).
+Qed.
+
 (** Every interval comparison reads bounded keys and adds bounded position and size values. *)
 Local Lemma dom_time_interval pos sizes u v width :
   Pos.size_nat u <= width -> Pos.size_nat v <= width ->
@@ -4841,10 +5057,12 @@ Module DomT <: DOM_ALL.
       pose proof (proj1 (dom_time_graph_width (base g) v
         ltac:(now rewrite <- Hnodes))) as Hwidth;
       clear -Hset Hwidth; rewrite !Nat2N.inj_add in *; nia)).
+    pose proof (dom_time_vertex_width (nodes g) (graph_width (base g))
+      (dom_vertex_width_le g)) as Hwidth_time.
     unfold T_scan, T_dom_scan, scan, k_scan. time_simpl.
     assert (Hlength : length (nodes g) = graph_n (base g)).
     { rewrite Hnodes. destruct (base g). reflexivity. }
-    rewrite Hlength in Hlisted. rewrite Nat2N.inj_mul. nia.
+    rewrite Hlength in Hlisted, Hwidth_time. rewrite Nat2N.inj_mul. nia.
   Qed.
 
   Lemma T2_read : forall g r o,
@@ -4852,15 +5070,16 @@ Module DomT <: DOM_ALL.
       (graph_width (base g) + 1)))%N.
   Proof.
     intros g r o. unfold T_read, read, T_dom_read_known.
+    pose proof (dom_vertex_width_le g) as Hwidth_le.
     destruct o as [|h rest].
     - time_simpl. unfold k_read. nia.
-    - pose proof (dom_time_key_fits (graph_width (base g)) r) as Hfits_time.
+    - pose proof (dom_time_key_fits (vertex_width (nodes g)) r) as Hfits_time.
       cbn [scan dom_scan dom_width dom_count dom_listed].
-      destruct (dom_key_fits (graph_width (base g)) r) eqn:Hfits.
-      + pose proof (dom_key_fits_width (graph_width (base g)) r Hfits) as Hwidth.
+      destruct (dom_key_fits (vertex_width (nodes g)) r) eqn:Hfits.
+      + pose proof (dom_key_fits_width (vertex_width (nodes g)) r Hfits) as Hwidth.
         pose proof (dom_time_pos_eqb_right h r) as Hcompare.
         destruct (Pos.eqb h r) eqn:Hroot.
-        * pose proof (dom_time_read_order (graph_n (base g)) (graph_width (base g))
+        * pose proof (dom_time_read_order (graph_n (base g)) (vertex_width (nodes g))
             (fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty)
             (h :: rest)) as Horder.
           time_simpl. unfold k_read. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
@@ -4873,46 +5092,47 @@ Module DomT <: DOM_ALL.
       (graph_width (base g) + 1)))%N.
   Proof.
     intros g r m o. pose proof (T2_read g r o) as Hread_time.
+    pose proof (dom_vertex_width_le g) as Hwidth_le.
     unfold T_read in Hread_time. cbn beta iota zeta in Hread_time.
     unfold T_map_check, T_dom_map_check_known. time_simpl.
     destruct (dom_read_known (scan g) r o) as [pos|] eqn:Hread.
     - change (dom_read_known (dom_scan g) r o = Some pos) in Hread.
       destruct (dom_read_known_success g r o pos Hread)
         as [Hunique [Hlength [_ [Hlisted _]]]].
-      assert (Hkeys : forall v, In v o -> Pos.size_nat v <= graph_width (base g)).
-      { intros v Hv. apply dom_listed_key_width. now apply Hlisted. }
-      pose proof (dom_read_positions_width g r o pos Hread) as Hvalues.
+      assert (Hkeys : forall v, In v o -> Pos.size_nat v <= vertex_width (nodes g)).
+      { intros v Hv. apply dom_time_width_member. now apply Hlisted. }
+      pose proof (dom_read_positions_vertex_width g r o pos Hread) as Hvalues.
       cbn [scan dom_scan dom_width].
       pose proof (@dom_time_fold_left (option (ptrie positive)) positive
-        (dom_rebuild (graph_width (base g)) r m pos)
-        (T_dom_rebuild (graph_width (base g)) r m pos)
-        ((PTrieT.c_trie + 64) * N.of_nat (graph_width (base g) + 1))%N o (Some Empty)
+        (dom_rebuild (vertex_width (nodes g)) r m pos)
+        (T_dom_rebuild (vertex_width (nodes g)) r m pos)
+        ((PTrieT.c_trie + 64) * N.of_nat (vertex_width (nodes g) + 1))%N o (Some Empty)
         ltac:(intros v Hv acc; apply dom_time_rebuild; [now apply Hkeys|exact Hvalues]))
         as Hfold_time.
-      destruct (fold_left (dom_rebuild (graph_width (base g)) r m pos) o (Some Empty))
+      destruct (fold_left (dom_rebuild (vertex_width (nodes g)) r m pos) o (Some Empty))
         as [built|] eqn:Hfold.
-      + pose proof (dom_rebuild_fold_weight (graph_width (base g)) r m pos o Empty built
+      + pose proof (dom_rebuild_fold_weight (vertex_width (nodes g)) r m pos o Empty built
           Hkeys Hfold) as Hweight.
         pose proof (dom_time_map_eq built m) as Hequal.
         cbn [dom_rebuilt_weight] in Hweight.
         time_simpl. unfold k_map.
         rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
         change (fun (H : option (ptrie positive)) (H0 : positive) =>
-          T_dom_rebuild (graph_width (base g)) r m pos H H0)
-          with (T_dom_rebuild (graph_width (base g)) r m pos).
-        set (running := List.T_fold_left (dom_rebuild (graph_width (base g)) r m pos)
-          (T_dom_rebuild (graph_width (base g)) r m pos) o (Some Empty)) in *;
+          T_dom_rebuild (vertex_width (nodes g)) r m pos H H0)
+          with (T_dom_rebuild (vertex_width (nodes g)) r m pos).
+        set (running := List.T_fold_left (dom_rebuild (vertex_width (nodes g)) r m pos)
+          (T_dom_rebuild (vertex_width (nodes g)) r m pos) o (Some Empty)) in *;
           clearbody running.
-        clear -Hlength Hread_time Hfold_time Hweight Hequal. nia.
+        clear -Hlength Hread_time Hfold_time Hweight Hequal Hwidth_le. nia.
       + time_simpl. unfold k_map.
         change (fun (H : option (ptrie positive)) (H0 : positive) =>
-          T_dom_rebuild (graph_width (base g)) r m pos H H0)
-          with (T_dom_rebuild (graph_width (base g)) r m pos).
-        set (running := List.T_fold_left (dom_rebuild (graph_width (base g)) r m pos)
-          (T_dom_rebuild (graph_width (base g)) r m pos) o (Some Empty)) in *;
+          T_dom_rebuild (vertex_width (nodes g)) r m pos H H0)
+          with (T_dom_rebuild (vertex_width (nodes g)) r m pos).
+        set (running := List.T_fold_left (dom_rebuild (vertex_width (nodes g)) r m pos)
+          (T_dom_rebuild (vertex_width (nodes g)) r m pos) o (Some Empty)) in *;
           clearbody running.
         rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
-        clear -Hlength Hread_time Hfold_time. nia.
+        clear -Hlength Hread_time Hfold_time Hwidth_le. nia.
     - time_simpl. unfold k_map. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
   Qed.
 
