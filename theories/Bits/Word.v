@@ -417,3 +417,46 @@ Proof.
   pose proof (modulus_time_le w) as Hmodulus.
   rewrite Nat2N.inj_add in Hmodulus. time_cbn_all. lia.
 Qed.
+
+(** Wrapping has the linear class in the width and the raw integer size. *)
+Theorem wrap_bigO : bigO (X := width * Z) (fun _ => True)
+  (fun x => N.of_nat (Pos.to_nat (fst x) + Z.size_nat (snd x)))
+  (fun x => T_wrap (fst x) (snd x)).
+Proof.
+  apply bigO_intro with (c := 32%N). intros [w z] _. cbn [fst snd].
+  pose proof (wrap_time_le w z) as Hwrap.
+  rewrite Nat2N.inj_add in Hwrap. time_cbn_all. lia.
+Qed.
+
+(** Signed reading is linear in the width and the raw integer size. *)
+Theorem signed_time_le : forall w z,
+  (T_signed w z <= 128 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+Proof.
+  intros w z. pose proof (wrap_time_le w z) as Hwrap.
+  pose proof (half_time_le w) as Hhalf.
+  pose proof (modulus_time_le w) as Hmodulus.
+  pose proof (Z.T_ltb_le (wrap w z) (half w)) as Hcompare.
+  pose proof (Z.T_sub_le (wrap w z) (modulus w)) as Hsubtract.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w z)) as Hsize.
+  pose proof (time_of_nat_le _ _ (modulus_size_le w)) as Hmodsize.
+  time_unfold T_signed. destruct (wrap w z <? half w)%Z;
+    rewrite !Nat2N.inj_add in *; time_cbn_all; lia.
+Qed.
+
+(** Reading the sign bit costs the word size times the bit length of the width. *)
+Theorem msb_time_le : forall w z,
+  (T_msb w z <= 128 * N.of_nat
+    ((Pos.to_nat w + Z.size_nat z + 1) * (Pos.size_nat w + 1)))%N.
+Proof.
+  intros w z. pose proof (wrap_time_le w z) as Hwrap.
+  pose proof (Z.T_sub_le (Zpos w) 1) as Hsubtract.
+  pose proof (integer_testbit_time_bound (wrap w z) (Zpos w - 1)
+    (proj1 (wrap_is_word w z)) ltac:(lia)) as Hbit.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w z)) as Hsize.
+  assert (Hindex : (N.of_nat (Z.size_nat (Zpos w - 1)) <=
+    N.of_nat (Pos.size_nat w))%N).
+  { apply time_of_nat_le. apply (Z.size_nat_mono (Zpos w - 1) (Zpos w)). lia. }
+  time_unfold T_msb. change (Z.size_nat (Zpos w)) with (Pos.size_nat w) in Hsubtract.
+  rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *.
+  time_cbn_all. nia.
+Qed.
