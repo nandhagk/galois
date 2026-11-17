@@ -35,3 +35,12 @@ Example repeated_occurrences :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Binary carry propagation preserves cached counts and predecessor order. *)
+Example counts_while_indexing :
+  let g := fixture_graph [1; 2; 3; 4] [(1, 2); (1, 3); (1, 4); (2, 3); (3, 4)] in
+  let p := DigraphCode.prepare g in
+  (nv p, ne p, preds p 4) = (4%N, 5%N, [1; 3]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
