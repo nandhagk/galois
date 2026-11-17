@@ -2,10 +2,16 @@
 
     Checks describe safety tests on abstract operands.
     For example, a division check can reject a possible zero divisor.
+
+    Main results
+    - [may_fail_sound] A successful check excludes concrete errors.
+    - [may_fail_complexity] A check is linear in its operand work.
+
     Builds on: LangSig and ValueSig. *)
 
 From Stdlib Require Import List NArith.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
+Import ComplexityNotations.
 From Galois.Domains Require Import LangSig ValueSig.
 
 Record check (N K X Kd : Type) := MkCheck {
@@ -50,8 +56,7 @@ Module Type CHECKS_TIME (L : LANG_T) (V : VALUE_DOMAIN_T L) (Import C : CHECKS L
   Parameter T_may_fail_le : forall k xs, (T_may_fail k xs <= c_checks * N.of_nat ((work k xs +
     1)%nat))%N.
   (** A check is linear in its operand work. *)
-  Parameter may_fail_complexity : bigO (X := kd * list V.t) (fun _ => True)
-    (fun kx => N.of_nat (work (fst kx) (snd kx))) (fun kx => T_may_fail (fst kx) (snd kx)).
+  Parameter may_fail_complexity : T_may_fail k xs ∈ 𝑂(N.of_nat (work k xs)) for (k, xs).
 End CHECKS_TIME.
 
 Module Type CHECKS_T (L : LANG_T) (V : VALUE_DOMAIN_T L) :=

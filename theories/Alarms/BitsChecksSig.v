@@ -2,6 +2,11 @@
 
     Checks use unsigned and signed range queries to exclude concrete arithmetic errors.
     For example, a divisor range above zero excludes division by zero.
+
+    Main results
+    - [width_sound] A reported width is the width of every concrete value that the abstract
+      value describes.
+
     Builds on: ChecksSig, BitsLang and ValueSig. *)
 
 From Stdlib Require Import ZArith List Bool.
