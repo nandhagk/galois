@@ -2008,45 +2008,89 @@ Module PTrieT <: TRIE_ALL.
     rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
+  (** Lookup time is linear in the number of key bits. *)
   Lemma get_bigO : forall A, bigO (X := positive * t A) (fun _ => True)
     (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_get (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro A. exists c_trie. intros [p m] _. cbn [fst snd].
+    pose proof (T_get_le A p m) as Hget.
+    now rewrite Nat2N.inj_add in Hget.
+  Qed.
 
+  (** Insertion time is linear in the number of key bits. *)
   Lemma set_bigO : forall A, bigO (X := positive * A * t A) (fun _ => True)
     (fun x => N.of_nat (Pos.size_nat (fst (fst x))))
     (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro A. exists c_trie. intros [[p a] m] _. cbn [fst snd].
+    pose proof (T_set_le A p a m) as Hset.
+    now rewrite Nat2N.inj_add in Hset.
+  Qed.
 
+  (** Removal time is linear in the number of key bits. *)
   Lemma remove_bigO : forall A, bigO (X := positive * t A) (fun _ => True)
     (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_remove (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro A. exists c_trie. intros [p m] _. cbn [fst snd].
+    pose proof (T_remove_le A p m) as Hremove.
+    now rewrite Nat2N.inj_add in Hremove.
+  Qed.
 
+  (** A bounded-callback merge is linear in the combined input skeletons. *)
   Lemma merge_bigO : forall A B C,
     bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
       (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
       (fun '(f, T_f, _, m1, m2) => T_merge f T_f m1 m2).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B C. exists c_trie.
+    intros [[[[f T_f] k] m1] m2] Hcallback.
+    change (T_merge f T_f m1 m2 <=
+      c_trie * ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1) + 1))%N.
+    pose proof (T_merge_le A B C f T_f m1 m2 k Hcallback) as Hmerge.
+    nia.
+  Qed.
 
+  (** A bounded relation check is linear in the combined input skeletons. *)
   Lemma forall2b_bigO : forall A B,
     bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
       (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
       (fun '(f, T_f, _, m1, m2) => T_forall2b f T_f m1 m2).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B. exists c_trie.
+    intros [[[[f T_f] k] m1] m2] Hcallback.
+    change (T_forall2b f T_f m1 m2 <=
+      c_trie * ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1) + 1))%N.
+    pose proof (T_forall2b_le A B f T_f m1 m2 k Hcallback) as Hcheck.
+    nia.
+  Qed.
 
+  (** A bounded fold pays for the skeleton and the bits of its enumerated keys. *)
   Lemma fold_bigO : forall A B,
     bigO (X := (B -> positive -> A -> B) * (B -> positive -> A -> N) * N * t A * B)
       (fun '(_, T_f, k, _, _) => forall acc p a, (T_f acc p a <= k)%N)
       (fun '(_, _, k, m, _) => ((k + 1) * N.of_nat (nodes m + 1) + N.of_nat (weight m))%N)
       (fun '(f, T_f, _, m, b) => T_fold f T_f m b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B. exists c_trie.
+    intros [[[[f T_f] k] m] b] Hcallback.
+    change (T_fold f T_f m b <=
+      c_trie * ((k + 1) * N.of_nat (nodes m + 1) + N.of_nat (weight m) + 1))%N.
+    pose proof (T_fold_le A B f T_f m b k Hcallback) as Hfold.
+    nia.
+  Qed.
 
+  (** Enumeration time is linear in the total binding weight. *)
   Lemma elements_bigO : forall A, bigO (X := t A) (fun _ => True)
     (fun m => N.of_nat (weight m)) (fun m => T_elements m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro A. exists c_trie. intros m _.
+    pose proof (T_elements_le A m) as Helements.
+    now rewrite Nat2N.inj_add in Helements.
+  Qed.
 
   (** Value folding charges callbacks in enumeration order without constructing keys. *)
   Local Ltac folding_pose_values_child IH child :=
