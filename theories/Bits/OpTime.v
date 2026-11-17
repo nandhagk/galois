@@ -2,10 +2,16 @@
 
     Bitwise, additive, comparison and resizing operators have linear derived clocks.
     For example, addition has linear cost in the operand widths and raw integer sizes.
+
+    Main results
+    - [eval_op_linear_complexity] Linear operator evaluation is linear in metadata widths and
+      raw operand sizes.
+
     Builds on: Word, Fun and Op. *)
 
 From Stdlib Require Import ZArith NArith List Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Bits Require Import Word Fun Testbit Arith Op.
 Import List.ListNotations.
 
@@ -325,12 +331,11 @@ Proof.
 Qed.
 
 (** Linear operator evaluation is linear in metadata widths and raw operand sizes. *)
-Theorem eval_op_linear_complexity : bigO (X := op * list word)
-  (fun x => linear_op (fst x) = true)
-  (fun x => N.of_nat (op_widths (fst x) +
+Theorem eval_op_linear_complexity :
+  T_eval_op o xs ∈ 𝑂(N.of_nat (op_widths o +
     fold_right Nat.add 0%nat
-      (map (fun c => (Pos.to_nat (fst c) + Z.size_nat (snd c))%nat) (snd x))))
-  (fun x => T_eval_op (fst x) (snd x)).
+      (map (fun c => (Pos.to_nat (fst c) + Z.size_nat (snd c))%nat) xs)))
+  for (o, xs) | linear_op o = true.
 Proof.
   apply (bigO_intro _ _ _ 8192). intros [o xs] Hlinear. cbn [fst snd] in *.
   pose proof (eval_op_linear_time_le o xs Hlinear) as Htime.
