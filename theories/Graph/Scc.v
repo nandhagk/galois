@@ -1846,6 +1846,17 @@ Proof.
     rewrite !Nat2N.inj_add, ?time_of_nat_succ in *. clear - IH Hhead. nia.
 Qed.
 
+(** Rebuilding pays for its final count caches in addition to filtering the graph. *)
+Lemma scc_graph_cache_clock g :
+  (T_graph_n (base (scc_graph g)) +
+    TimeHelpers.N.T_of_nat (graph_n (base (scc_graph g))) +
+    T_graph_e (base (scc_graph g)) +
+    TimeHelpers.N.T_of_nat (graph_e (base (scc_graph g))) + 2 <= T_scc_graph g)%N.
+Proof.
+  time_unfold @T_scc_graph. unfold scc_graph. cbn [base].
+  unfold T_nodes, T_base. cbn beta iota zeta. lia.
+Qed.
+
 (** Rebuilding membership, filtered rows, and both count caches has the input size cost. *)
 Lemma scc_graph_time g :
   (T_scc_graph g <= 16384 * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
