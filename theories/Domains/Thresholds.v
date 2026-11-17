@@ -72,13 +72,37 @@ Module ThresholdsCode <: THRESHOLDS_OPS.
   Definition make (xs : list Z) : ttree :=
     let sorted := dedup_sorted (msort xs) in build (length sorted) sorted.
 
+  Fixpoint below_reference (tree : ttree) (z : Z) : option Z :=
+    match tree with
+    | TLeaf => None
+    | TNode lhs value rhs =>
+      if Z.leb value z then
+        match below_reference rhs z with
+        | Some x => Some (Z.max value x)
+        | None => Some value
+        end
+      else below_reference lhs z
+    end.
+
+  Fixpoint above_reference (tree : ttree) (z : Z) : option Z :=
+    match tree with
+    | TLeaf => None
+    | TNode lhs value rhs =>
+      if negb (Z.ltb value z) then
+        match above_reference lhs z with
+        | Some x => Some (Z.min value x)
+        | None => Some value
+        end
+      else above_reference rhs z
+    end.
+
   Fixpoint below (tree : ttree) (z : Z) : option Z :=
     match tree with
     | TLeaf => None
     | TNode lhs value rhs =>
       if Z.leb value z then
         match below rhs z with
-        | Some x => Some (Z.max value x)
+        | Some x => Some x
         | None => Some value
         end
       else below lhs z
@@ -90,7 +114,7 @@ Module ThresholdsCode <: THRESHOLDS_OPS.
     | TNode lhs value rhs =>
       if negb (Z.ltb value z) then
         match above lhs z with
-        | Some x => Some (Z.min value x)
+        | Some x => Some x
         | None => Some value
         end
       else above rhs z
@@ -402,14 +426,12 @@ Module Thresholds <: THRESHOLDS.
         * now apply IHright.
     - apply Z.ltb_ge in Htest. destruct (above lhs z) as [u|] eqn:Hsearch.
       + destruct IHleft as [Hin [Hbound Hleast]].
-        split.
-        * apply node_vals. destruct (Z.min_dec value u) as [Hmin | Hmin];
-            rewrite Hmin; [now left|right; now left].
-        * split; [now apply Z.min_glb|].
-          intros v Hv Hzv. apply node_vals in Hv as [<-|[Hv|Hv]].
-          -- apply Z.le_min_l.
-          -- eapply Z.le_trans; [apply Z.le_min_r|now apply Hleast].
-          -- pose proof (Z.le_min_l value u). specialize (Habove v Hv). lia.
+        pose proof (Hbelow u Hin) as Hroot.
+        split; [apply node_vals; right; now left|]. split; [exact Hbound|].
+        intros v Hv Hzv. apply node_vals in Hv as [<-|[Hv|Hv]].
+        * lia.
+        * now apply Hleast.
+        * specialize (Habove v Hv). lia.
       + split; [apply node_vals; now left|]. split; [exact Htest|].
         intros v Hv Hzv. apply node_vals in Hv as [<-|[Hv|Hv]].
         * lia.
@@ -431,14 +453,12 @@ Module Thresholds <: THRESHOLDS.
     cbn [below]. destruct (Z.leb value z) eqn:Htest.
     - apply Z.leb_le in Htest. destruct (below rhs z) as [u|] eqn:Hsearch.
       + destruct IHright as [Hin [Hbound Hgreatest]].
-        split.
-        * apply node_vals. destruct (Z.max_dec value u) as [Hmax | Hmax];
-            rewrite Hmax; [now left|right; now right].
-        * split; [now apply Z.max_lub|].
-          intros v Hv Hvz. apply node_vals in Hv as [<-|[Hv|Hv]].
-          -- apply Z.le_max_l.
-          -- pose proof (Z.le_max_l value u). specialize (Hbelow v Hv). lia.
-          -- eapply Z.le_trans; [now apply Hgreatest|apply Z.le_max_r].
+        pose proof (Habove u Hin) as Hroot.
+        split; [apply node_vals; right; now right|]. split; [exact Hbound|].
+        intros v Hv Hvz. apply node_vals in Hv as [<-|[Hv|Hv]].
+        * lia.
+        * specialize (Hbelow v Hv). lia.
+        * now apply Hgreatest.
       + split; [apply node_vals; now left|]. split; [exact Htest|].
         intros v Hv Hvz. apply node_vals in Hv as [<-|[Hv|Hv]].
         * lia.
@@ -468,10 +488,7 @@ Module Thresholds <: THRESHOLDS.
     - apply Z.ltb_ge in Htest.
       destruct (above lhs z) as [v|] eqn:Hleft.
       + injection Hresult as <-. destruct (IHleft z v Hleft) as [Hin Hbound].
-        split.
-        * destruct (Z.min_dec value v) as [Hmin | Hmin]; rewrite Hmin;
-            [right; now left|now left].
-        * apply Z.min_glb; assumption.
+        split; [now left|exact Hbound].
       + injection Hresult as <-. split; [right; now left|assumption].
   Qed.
   (** Lower search is sound even when the tree is unordered. *)
@@ -485,12 +502,41 @@ Module Thresholds <: THRESHOLDS.
     - apply Z.leb_le in Htest.
       destruct (below rhs z) as [v|] eqn:Hright.
       + injection Hresult as <-. destruct (IHright z v Hright) as [Hin Hbound].
-        split.
-        * destruct (Z.max_dec value v) as [Hmax | Hmax]; rewrite Hmax;
-            right; [now left|now right].
-        * apply Z.max_lub; assumption.
+        split; [right; now right|exact Hbound].
       + injection Hresult as <-. split; [right; now left|assumption].
     - destruct (IHleft z u Hresult) as [Hin Hbound]. split; [now left|assumption].
+  Qed.
+
+  (** An ordered lower search agrees with the comparison-based reference. *)
+  Lemma below_agrees : forall tree z, ordered tree ->
+    below tree z = below_reference tree z.
+  Proof.
+    induction tree as [|lhs IHleft value rhs IHright]; intros z Hordered.
+    - reflexivity.
+    - destruct (ordered_node lhs value rhs Hordered)
+        as [Hleft [Hright [Hbelow Habove]]].
+      cbn [below below_reference].
+      rewrite <- (IHleft z Hleft), <- (IHright z Hright).
+      destruct (Z.leb value z); [|reflexivity].
+      destruct (below rhs z) as [u|] eqn:Hsearch; [|reflexivity].
+      destruct (below_sound rhs z u Hsearch) as [Hin Hbound].
+      specialize (Habove u Hin). rewrite Z.max_r by lia. reflexivity.
+  Qed.
+
+  (** An ordered upper search agrees with the comparison-based reference. *)
+  Lemma above_agrees : forall tree z, ordered tree ->
+    above tree z = above_reference tree z.
+  Proof.
+    induction tree as [|lhs IHleft value rhs IHright]; intros z Hordered.
+    - reflexivity.
+    - destruct (ordered_node lhs value rhs Hordered)
+        as [Hleft [Hright [Hbelow Habove]]].
+      cbn [above above_reference].
+      rewrite <- (IHleft z Hleft), <- (IHright z Hright).
+      destruct (negb (Z.ltb value z)); [|reflexivity].
+      destruct (above lhs z) as [u|] eqn:Hsearch; [|reflexivity].
+      destruct (above_sound lhs z u Hsearch) as [Hin Hbound].
+      specialize (Hbelow u Hin). rewrite Z.min_r by lia. reflexivity.
   Qed.
 End Thresholds.
 
@@ -750,7 +796,7 @@ Module ThresholdsT <: THRESHOLDS_ALL.
       pose proof (Nat.le_max_l (depth lhs) (depth rhs)) as Hdepthleft.
       pose proof (Nat.le_max_r (depth lhs) (depth rhs)) as Hdepthright.
       time_unfold T_below. cbn [depth]. destruct (Z.leb value z).
-      + destruct (below rhs z) as [u|]; [pose proof (Std.Z.T_max_le value u)|]; nia.
+      + destruct (below rhs z); nia.
       + nia.
   Qed.
 
@@ -772,7 +818,7 @@ Module ThresholdsT <: THRESHOLDS_ALL.
       pose proof (Nat.le_max_r (depth lhs) (depth rhs)) as Hdepthright.
       time_unfold T_above. cbn [depth]. destruct (Z.ltb value z); cbn [negb].
       + nia.
-      + destruct (above lhs z) as [u|]; [pose proof (Std.Z.T_min_le value u)|]; nia.
+      + destruct (above lhs z); nia.
   Qed.
   (** Construction combines sorting, deduplication, and median splitting within one envelope. *)
   Lemma make_time : forall xs,

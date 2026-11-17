@@ -90,3 +90,24 @@ Proof. vm_compute. reflexivity. Qed.
 Example threshold_dedup_sorted :
   ThresholdsCode.dedup_sorted [-5; 0; 10; 10; 20] = [-5; 0; 10; 20].
 Proof. vm_compute. reflexivity. Qed.
+
+Definition seven_thresholds :=
+  ThresholdsCode.make (map (fun n => 7 * Z.of_nat n) (seq 0 101)).
+
+Example threshold_lower_seventy_seven :
+  ThresholdsCode.below seven_thresholds 77 = Some 77.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example threshold_upper_seventy_seven :
+  ThresholdsCode.above seven_thresholds 77 = Some 77.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example threshold_empty_search :
+  (ThresholdsCode.below TLeaf 77, ThresholdsCode.above TLeaf 77) = (None, None).
+Proof.
+  vm_compute. reflexivity.
+Qed.
