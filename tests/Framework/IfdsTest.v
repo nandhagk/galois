@@ -132,17 +132,23 @@ Module UnsupportedTests.
       (eval_query (Unsupported.resume tt) unsupported_lookup
         (S (length (Unsupported.deps tt r))) (Unsupported.start tt r)))
     (Unsupported.rows tt) = true.
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** The unsupported facts do not contain Some tt, so that seed is rejected. *)
   Example unsupported_facts_omit_some :
     existsb (Fact.eqb (Some tt)) (UnsupportedFlow.facts tt) = false.
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** The unsupported facts contain the None fact. *)
   Example unsupported_facts_list_none :
     existsb (Fact.eqb None) (UnsupportedFlow.facts tt) = true.
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** The unsupported rules agree with the reference path rules. *)
   Example unsupported_rules_match_reference :
