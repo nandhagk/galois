@@ -3416,27 +3416,42 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Lemma cmp_bigO : bigO (X := comparison * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_cmp (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_interval. intros [c [a b]] _. cbn [fst snd].
+    pose proof (T_cmp_le c a b). nia.
+  Qed.
   (** Backward multiplication is linear, because a preimage only reads a point. *)
   Lemma mul_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_mul_back (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (2048 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
+    pose proof (mul_back_time_linear r a b). nia.
+  Qed.
   (** Backward division is linear, because it only meets with fixed bounds. *)
   Lemma udiv_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_udiv_back (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (256 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
+    pose proof (unsigned_back_time_linear a b). unfold T_udiv_back. nia.
+  Qed.
   (** Backward remainder is linear, because it only meets with fixed bounds. *)
   Lemma urem_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_urem_back (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (256 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
+    pose proof (unsigned_back_time_linear a b). unfold T_urem_back. nia.
+  Qed.
   (** Backward comparison is linear in the result and operand sizes. *)
   Lemma ult_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_ult_back (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (2048 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
+    pose proof (ult_back_time_linear r a b). nia.
+  Qed.
   (** Signed splitting is linear in the width and the endpoints. *)
   Lemma signed_split_bigO : bigO (X := positive * itv) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + size (snd x) + 1))
@@ -3446,5 +3461,8 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Lemma forward_bigO : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val. intros [o xs] _. cbn [fst snd].
+    pose proof (T_forward_le o xs). rewrite Nat2N.inj_add in *. nia.
+  Qed.
 End IntervalT.
