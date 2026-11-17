@@ -1335,6 +1335,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     rewrite !Nat2N.inj_add; nia.
   Qed.
 
+  (** Solving composes the seed, plan and run bounds under the final database budgets. *)
   Lemma solve_bigO : bigO
     (fun x : N * nat * pointer_input * limits =>
       let '(B, U, q, lim) := x in
@@ -1346,7 +1347,23 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
         (R.size_program (compile q) + 1)) +
       R.run_cost B U (compile q) (R.plan (compile q)) lim (seed q))%N)
     (fun x => let '(_, _, q, lim) := x in T_solve q lim).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    destruct seed_bigO as [c_seed Hseed].
+    destruct R.plan_bigO as [c_plan Hplan].
+    destruct R.run_bigO as [c_run Hrun].
+    apply bigO_intro with (c := (c_andersen + c_andersen + c_seed + c_plan + c_run)%N).
+    intros [[[B U] q] lim] Hbounds; cbn beta iota zeta in Hbounds |- *.
+    rewrite solve_run in Hbounds.
+    specialize (Hseed q I).
+    specialize (Hplan (compile q) I).
+    specialize (Hrun (B, U, compile q, R.plan (compile q), lim, seed q)
+      (conj (R.plan_checked (compile q) (program_sorted q))
+        (conj (proj1 (seed_wf q)) (conj (seed_loaded q) Hbounds)))).
+    cbn beta iota zeta in Hseed, Hplan, Hrun.
+    pose proof (T_compile_le q) as Hcompile.
+    pose proof (T_solve_le q lim) as Hsolve; cbn zeta in Hsolve.
+    nia.
+  Qed.
 
   Lemma F1_source_closed : forall q, pointer_closed q (may_points q).
   Proof.
