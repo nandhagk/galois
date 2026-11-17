@@ -406,6 +406,265 @@ Proof.
   reflexivity.
 Qed.
 
+(** A supplied mask removes the repeated all-ones construction from wrapping. *)
+Lemma tnum_wrap_m_time : forall w z,
+  (T_tnum_wrap_m (Z.ones (Zpos w)) z <= T_tnum_wrap w z)%N.
+Proof.
+  intros w z. time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn. lia.
+Qed.
+TimeBound tnum_wrap_m_time.
+
+(** Sharing the mask cannot increase the conjunction clock. *)
+Lemma tnum_wand_m_time : forall w x y,
+  (T_tnum_wand_m (Z.ones (Zpos w)) x y <= T_tnum_wand w x y)%N.
+Proof.
+  intros w x y. time_unfold T_tnum_wand_m. time_unfold T_tnum_wand.
+  time_cbn. time_pose. nia.
+Qed.
+TimeBound tnum_wand_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_wor_m_time : forall w x y,
+  (T_tnum_wor_m (Z.ones (Zpos w)) x y <= T_tnum_wor w x y)%N.
+Proof.
+  intros w x y. time_unfold T_tnum_wor_m. time_unfold T_tnum_wor.
+  time_cbn.
+  rewrite ?tnum_wrap_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_wor_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_wnot_m_time : forall w x,
+  (T_tnum_wnot_m (Z.ones (Zpos w)) x <= T_tnum_wnot w x)%N.
+Proof.
+  intros w x. time_unfold T_tnum_wnot_m. time_unfold T_tnum_wnot.
+  time_cbn.
+  rewrite ?tnum_wrap_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_wnot_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_normalise_m_time : forall w t,
+  (T_tnum_normalise_m (Z.ones (Zpos w)) t <= T_tnum_normalise w t)%N.
+Proof.
+  intros w t. time_unfold T_tnum_normalise_m. time_unfold T_tnum_normalise.
+  time_cbn.
+  time_pose; nia.
+Qed.
+TimeBound tnum_normalise_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_join_m_time : forall w a b,
+  (T_tnum_join_m (Z.ones (Zpos w)) a b <= T_tnum_join w a b)%N.
+Proof.
+  intros w a b. time_unfold T_tnum_join_m. time_unfold T_tnum_join.
+  time_cbn.
+  time_pose; nia.
+Qed.
+TimeBound tnum_join_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_meet_m_time : forall w a b,
+  (T_tnum_meet_m (Z.ones (Zpos w)) a b <= T_tnum_meet w a b)%N.
+Proof.
+  intros w a b. time_unfold T_tnum_meet_m. time_unfold T_tnum_meet.
+  time_cbn.
+  time_pose; nia.
+Qed.
+TimeBound tnum_meet_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_subset_m_time : forall w a b,
+  (T_tnum_subset_m (Z.ones (Zpos w)) a b <= T_tnum_subset w a b)%N.
+Proof.
+  intros w a b. time_unfold T_tnum_subset_m. time_unfold T_tnum_subset.
+  time_cbn.
+  rewrite ?tnum_wand_m_eq, ?tnum_wrap_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_subset_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_const_m_time : forall w z,
+  (T_tnum_const_m (Z.ones (Zpos w)) z <= T_tnum_const w z)%N.
+Proof.
+  intros w z. time_unfold T_tnum_const_m. time_unfold T_tnum_const.
+  time_cbn.
+  rewrite ?tnum_wrap_m_eq.
+  rewrite ?tnum_wnot_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_const_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_min_m_time : forall w a,
+  (T_tnum_min_m (Z.ones (Zpos w)) a <= T_tnum_min w a)%N.
+Proof.
+  intros w a. time_unfold T_tnum_min_m. time_unfold T_tnum_min.
+  time_cbn.
+  rewrite ?tnum_wrap_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_min_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_max_m_time : forall w a,
+  (T_tnum_max_m (Z.ones (Zpos w)) a <= T_tnum_max w a)%N.
+Proof.
+  intros w a. time_unfold T_tnum_max_m. time_unfold T_tnum_max.
+  time_cbn.
+  rewrite ?tnum_wnot_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_max_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_mask_m_time : forall w a,
+  (T_tnum_mask_m (Z.ones (Zpos w)) a <= T_tnum_mask w a)%N.
+Proof.
+  intros w a. time_unfold T_tnum_mask_m. time_unfold T_tnum_mask.
+  time_cbn.
+  rewrite ?tnum_wor_m_eq.
+  rewrite ?tnum_wnot_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_mask_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_constant_m_time : forall w a,
+  (T_tnum_constant_m (Z.ones (Zpos w)) a <= T_tnum_constant w a)%N.
+Proof.
+  intros w a. time_unfold T_tnum_constant_m. time_unfold T_tnum_constant.
+  time_cbn.
+  rewrite ?tnum_wrap_m_eq.
+  rewrite ?tnum_wnot_m_eq.
+  rewrite ?tnum_min_m_eq.
+  destruct (tnum_wrap w (zeros a) =? tnum_wnot w (ones a));
+  time_pose; nia.
+Qed.
+TimeBound tnum_constant_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_empty_m_time : forall w a,
+  (T_tnum_empty_m (Z.ones (Zpos w)) a <= T_tnum_empty w a)%N.
+Proof.
+  intros w a. time_unfold T_tnum_empty_m. time_unfold T_tnum_empty.
+  time_cbn.
+  rewrite ?tnum_wand_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_empty_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_not_m_time : forall w a,
+  (T_tnum_not_m (Z.ones (Zpos w)) a <= T_tnum_not w a)%N.
+Proof.
+  intros w a. time_unfold T_tnum_not_m. time_unfold T_tnum_not.
+  time_cbn.
+  rewrite ?tnum_wrap_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_not_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_and_m_time : forall w a b,
+  (T_tnum_and_m (Z.ones (Zpos w)) a b <= T_tnum_and w a b)%N.
+Proof.
+  intros w a b. time_unfold T_tnum_and_m. time_unfold T_tnum_and.
+  time_cbn.
+  rewrite ?tnum_wand_m_eq.
+  rewrite ?tnum_wor_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_and_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_or_m_time : forall w a b,
+  (T_tnum_or_m (Z.ones (Zpos w)) a b <= T_tnum_or w a b)%N.
+Proof.
+  intros w a b. time_unfold T_tnum_or_m. time_unfold T_tnum_or.
+  time_cbn.
+  rewrite ?tnum_wand_m_eq.
+  rewrite ?tnum_wor_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_or_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_xor_m_time : forall w a b,
+  (T_tnum_xor_m (Z.ones (Zpos w)) a b <= T_tnum_xor w a b)%N.
+Proof.
+  intros w a b. time_unfold T_tnum_xor_m. time_unfold T_tnum_xor.
+  time_cbn.
+  rewrite ?tnum_wand_m_eq.
+  rewrite ?tnum_wor_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_xor_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_adc_uncertain_m_time : forall w a b initial,
+  (T_tnum_adc_uncertain_m (Z.ones (Zpos w)) a b initial <= T_tnum_adc_uncertain w a b initial)%N.
+Proof.
+  intros w a b initial. time_unfold T_tnum_adc_uncertain_m. time_unfold T_tnum_adc_uncertain.
+  time_cbn.
+  rewrite ?tnum_min_m_eq.
+  rewrite ?tnum_max_m_eq.
+  rewrite ?tnum_mask_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_adc_uncertain_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_adc_m_time : forall w a b initial,
+  (T_tnum_adc_m (Z.ones (Zpos w)) a b initial <= T_tnum_adc w a b initial)%N.
+Proof.
+  intros w a b initial. time_unfold T_tnum_adc_m. time_unfold T_tnum_adc.
+  time_cbn.
+  rewrite ?tnum_wrap_m_eq.
+  rewrite ?tnum_min_m_eq.
+  rewrite ?tnum_adc_uncertain_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_adc_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_add_m_time : forall w a b,
+  (T_tnum_add_m (Z.ones (Zpos w)) a b <= T_tnum_add w a b)%N.
+Proof.
+  intros w a b. time_unfold T_tnum_add_m. time_unfold T_tnum_add.
+  time_cbn.
+  rewrite ?tnum_adc_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_add_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_sub_m_time : forall w a b,
+  (T_tnum_sub_m (Z.ones (Zpos w)) a b <= T_tnum_sub w a b)%N.
+Proof.
+  intros w a b. time_unfold T_tnum_sub_m. time_unfold T_tnum_sub.
+  time_cbn.
+  rewrite ?tnum_not_m_eq.
+  rewrite ?tnum_adc_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_sub_m_time.
+
+(** Sharing the width mask cannot increase this helper's clock. *)
+Lemma tnum_neg_m_time : forall w a,
+  (T_tnum_neg_m (Z.ones (Zpos w)) a <= T_tnum_neg w a)%N.
+Proof.
+  intros w a. time_unfold T_tnum_neg_m. time_unfold T_tnum_neg.
+  time_cbn.
+  rewrite ?tnum_const_m_eq.
+  rewrite ?tnum_sub_m_eq.
+  time_pose; nia.
+Qed.
+TimeBound tnum_neg_m_time.
+
 Definition tnum_bitlen (h : Z) : Z := if h =? 0 then 0 else Z.succ (Z.log2 h).
 TimeFun tnum_bitlen.
 
