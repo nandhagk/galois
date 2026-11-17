@@ -4,9 +4,10 @@
     For example, two bindings describe different concrete values at their keys.
     Builds on: Env, Interval and ZLang. *)
 
-From Stdlib Require Import List Bool ZArith.
+From Stdlib Require Import List Bool NArith ZArith.
 From Galois.Base Require Import Key KeySig Map.
-From Galois.Domains Require Import LangSig ValueSig IntervalSig Interval Thresholds ZLang.
+From Galois.Domains Require Import LangSig ValueSig IntervalSig Interval
+  ThresholdsSig Thresholds ZLang.
 From Galois.States Require Import Env EnvSig.
 Import List.ListNotations.
 Local Open Scope Z_scope.
@@ -17,6 +18,97 @@ Module IntEnv := Env BoolKey BoolMap ZLang IntValues.
 Definition two_points : IntEnv.t :=
   Reached (BoolMap.set true (I (Fin 2) (Fin 2))
     (BoolMap.set false (I (Fin 1) (Fin 1)) BoolMap.empty)).
+
+Definition two_ranges : IntEnv.t :=
+  Reached (BoolMap.set true (I (Fin 1) (Fin 4))
+    (BoolMap.set false (I (Fin 0) (Fin 3)) BoolMap.empty)).
+
+Definition bottom_binding : IntEnv.t :=
+  Reached (BoolMap.set true (I (Fin 2) (Fin 2))
+    (BoolMap.set false IBot BoolMap.empty)).
+
+Definition raised_point : IntEnv.t :=
+  Reached (BoolMap.set true (I (Fin 2) (Fin 2))
+    (BoolMap.set false (I (Fin 3) (Fin 3)) BoolMap.empty)).
+
+(** Equal nonbottom environments pass the fused inclusion traversal. *)
+Example inclusion_equal_environments : IntEnv.leb two_points two_points = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Strict inclusion succeeds only from the point intervals into the wider ranges. *)
+Example inclusion_strictly_smaller :
+  (IntEnv.leb two_points two_ranges, IntEnv.leb two_ranges two_points) = (true, false).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** A bottom binding on the right rejects a nonbottom left environment. *)
+Example inclusion_right_bottom : IntEnv.leb two_points bottom_binding = false.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** A bottom binding on the left makes the fallback accept inclusion. *)
+Example inclusion_left_bottom_only : IntEnv.leb bottom_binding two_points = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** An unreached left environment is included without inspecting the right one. *)
+Example inclusion_unreached_left : IntEnv.leb Unreached two_points = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** A nonbottom reached environment is not included in an unreached one. *)
+Example inclusion_unreached_right : IntEnv.leb two_points Unreached = false.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** A reached bottom and an unreached state are both included in an unreached state. *)
+Example inclusion_bottom_representations :
+  (IntEnv.leb bottom_binding Unreached, IntEnv.leb Unreached Unreached) = (true, true).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** A stable widening returns the original environment exactly. *)
+Example widening_stable_environment : IntEnv.widen TLeaf two_points two_points = two_points.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** One unstable binding widens its upper endpoint and leaves the other point unchanged. *)
+Example widening_one_unstable_binding :
+  let result := IntEnv.widen TLeaf two_points raised_point in
+  (IntEnv.eval (Leaf false) result, IntEnv.eval (Leaf true) result) =
+    (I (Fin 1) PosInf, I (Fin 2) (Fin 2)).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Module TimedBoolMap := TrieMapT BoolKeyT.
+Module TimedIntValues := IntervalT ZLangT ThresholdsT.
+Module TimedIntEnv := EnvT BoolKeyT TimedBoolMap ZLangT TimedIntValues.
+
+(** The timed inclusion fixture uses the same two-size measure as the big-O theorem. *)
+Example environment_lattice_bigO_fixture :
+  (TimedIntEnv.T_leb two_points two_ranges <= TimedIntEnv.c_lat *
+    (N.of_nat (TimedIntEnv.size two_points + TimedIntEnv.size two_ranges) + 1))%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+(** Assignment satisfies the transfer measure on a nonempty environment. *)
+Example environment_transfer_bigO_fixture :
+  (TimedIntEnv.T_assign false (Leaf true) two_points <= TimedIntEnv.c_state *
+    (N.of_nat (TimedIntEnv.assign_work false (Leaf true) two_points) + 1))%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
 
 Example two_variable_control :
   IntEnv.gamma two_points (fun x => if x then 2 else 1).
