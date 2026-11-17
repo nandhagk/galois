@@ -5,9 +5,12 @@
 
     Main results
     - [universe_spec] The universe contains exactly the syntactic variable occurrences.
-    - [uses_complexity] Edge uses are linear in the edge key and the returned variables.
-    - [defs_complexity] Edge definitions are linear in the edge key and the returned variables.
-    - [exits_complexity] Exit observations are linear in the node key and the returned variables.
+    - [uses_complexity] Edge uses are linear in the edge key and the returned variables, O(|e| + k)
+      for k variables.
+    - [defs_complexity] Edge definitions are linear in the edge key and the returned variables,
+      O(|e| + k) for k variables.
+    - [exits_complexity] Exit observations are linear in the node key and the returned variables,
+      O(|n| + k) for k variables.
     - [universe_complexity] The universe has the aggregate reader and bit-width bound.
 
     Builds on: Program.CfgSig and Base keys. *)
