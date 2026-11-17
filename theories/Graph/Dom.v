@@ -5060,10 +5060,14 @@ Module DomT <: DOM_ALL.
     rewrite Nat2N.inj_mul. nia.
   Qed.
 
+  (** Tree numbering pays only for the listed vertices and their key width. *)
   Lemma tree_bigO : bigO (fun '(g, r, m, o) => check g r m o = true)
     (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))
     (fun '(g, r, m, o) => T_tree g r m o).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists k_tree. intros [[[g r] m] o] Hcheck.
+    pose proof (T6_tree g r m o Hcheck) as Htree. nia.
+  Qed.
 
   Lemma dominates_b_bigO : bigO (fun _ : domtree * positive * positive => True)
     (fun '(t, u, v) => N.of_nat (query_width t u v + 1))
