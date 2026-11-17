@@ -3643,14 +3643,24 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
     nia.
   Qed.
 
+  (** Compilation is linear in the rewrite inventory and the appended rules. *)
   Lemma compile_bigO : bigO (fun _ => True)
     (fun x : list decl * list (rewrite V.t) * list (rule V.t) =>
       let '(_, rws, ans) := x in
       N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0 rws + length ans + 1))
     (fun x => let '(ds, rws, ans) := x in T_compile ds rws ans).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_compile).
+    intros [[ds rws] ans] _.
+    eapply N.le_trans; [exact (T_compile_le ds rws ans)|]. lia.
+  Qed.
 
+  (** Compiling one rewrite is linear in its syntactic size. *)
   Lemma compile_rule_bigO : bigO (fun _ => True)
     (fun rw => N.of_nat (rewrite_size rw + 1)) T_compile_rule.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := k_compile).
+    intros rw _.
+    eapply N.le_trans; [exact (T2_compile_rule_le rw)|]. lia.
+  Qed.
 End CompileT.
