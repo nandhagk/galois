@@ -151,6 +151,18 @@ Proof.
   vm_compute. auto.
 Qed.
 
+(** The checked harness preserves known and unknown extraction results. *)
+Example kb_extract_shift_precision :
+  kb_forward (bvextract 3 0) [(4%positive, Tnum 8 1)] 4%positive = Tnum 8 1 /\
+  kb_forward (bvextract 7 4) [(8%positive, Tnum 240 15)] 4%positive = Tnum 15 0 /\
+  kb_forward (bvextract 3 0) [(8%positive, Tnum 240 15)] 4%positive = Tnum 0 15 /\
+  kb_forward (bvextract 3 0) [(4%positive, tnum_top)] 4%positive = tnum_top /\
+  kb_forward (bvextract 7 4) [(8%positive, tnum_top)] 4%positive = tnum_top /\
+  kb_forward (bvextract 3 0) [(8%positive, tnum_top)] 4%positive = tnum_top.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
 Example kb_assume_add_constant :
   kb_assume bvadd [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 1)]
     8%positive (tnum_const 8%positive 7) = [Tnum 249 6; Tnum 254 1].
@@ -377,8 +389,8 @@ Module Stages <: TNUM_CONFIG.
   Definition multiplier := MulStages.
 End Stages.
 Module StagesMasks := KnownBitsCode WordLanguageCode Stages.
-Module StagesOps := KnownBitsOpsCode WordLanguageCode Stages StagesMasks.
-Module LowOps := KnownBitsOpsCode WordLanguageCode Low W.
+Module StagesOps := KnownBitsOpsFastCode WordLanguageCode Stages StagesMasks.
+Module LowOps := KnownBitsOpsFastCode WordLanguageCode Low W.
 
 Example kb_default_multiplier :
   StagesOps.tnum_forward_raw bvmul

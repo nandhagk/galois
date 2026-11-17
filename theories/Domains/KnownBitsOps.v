@@ -42,8 +42,41 @@ Module KnownBitsOpsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     end.
 End KnownBitsOpsCode.
 
+(** The executable table extracts bits with a shift while retaining the original table above. *)
+Module KnownBitsOpsFastCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
+    (K : KNOWN_BITS_OPS L C).
+  Definition tnum_forward_raw (o : op) (wps : list (width * tnum)) (rw : width) : tnum :=
+    match o, wps with
+    | bvnot, [(_, a)] => K.tnum_not rw a
+    | bvneg, [(_, a)] => K.tnum_neg rw a
+    | (bvclz | bvctz | bvpopcnt), [_] => tnum_count rw
+    | bvadd, [(_, a); (_, b)] => K.tnum_add rw a b
+    | bvsub, [(_, a); (_, b)] => K.tnum_sub rw a b
+    | bvmul, [(w, a); (v, b)] =>
+      if Pos.eqb w rw && Pos.eqb v rw then K.tnum_mul rw a b
+      else tnum_mul rw a b
+    | bvudiv, [(_, a); (_, b)] => tnum_udiv rw a b
+    | bvurem, [(_, a); _] => tnum_urem rw a
+    | bvsrem, [(_, a); _] => tnum_srem rw a
+    | bvand, [(_, a); (_, b)] => K.tnum_and rw a b
+    | bvor, [(_, a); (_, b)] => K.tnum_or rw a b
+    | bvxor, [(_, a); (_, b)] => K.tnum_xor rw a b
+    | (bvshl | bvlshr | bvashr | bvrotl | bvrotr), [(_, a); (_, b)] =>
+      K.tnum_variable o rw a b
+    | (bveq | bvne | bvult | bvule | bvslt | bvsle), [(w, a); (_, b)] =>
+      tnum_compare o w a b
+    | bvite, [(_, c); (_, a); (_, b)] => tnum_ite rw c a b
+    | (bvzext _ | bvtrunc _), [(w, a)] => tnum_map w rw (tnum_wrap rw) a
+    | bvsext _, [(w, a)] => tnum_map w rw (fun x => tnum_wrap rw (signed w x)) a
+    | bvextract _ lo, [(w, a)] =>
+      tnum_map w rw (fun x => tnum_wrap rw (Z.shiftr x (Z.of_nat lo))) a
+    | bvconcat, [(w, a); (v, b)] => tnum_concat w v a b
+    | _, _ => tnum_top
+    end.
+End KnownBitsOpsFastCode.
+
 Module KnownBitsOpsClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BITS_T L C).
-  Include KnownBitsOpsCode L C K.
+  Include KnownBitsOpsFastCode L C K.
   TimeFun tnum_forward_raw.
 End KnownBitsOpsClock.
 
@@ -56,6 +89,22 @@ Lemma tnum_map_ext : forall sw rw f g a,
 Proof.
   intros sw rw f g a Hagree. unfold tnum_map. now rewrite !Hagree.
 Qed.
+
+Module KnownBitsOpsAgreement (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
+    (K : KNOWN_BITS_OPS L C).
+  Module Original := KnownBitsOpsCode L C K.
+  Module Fast := KnownBitsOpsFastCode L C K.
+
+  (** A right shift returns the same endpoint quotient for every natural extraction offset. *)
+  Lemma tnum_forward_raw_agrees : forall o wps rw,
+    Fast.tnum_forward_raw o wps rw = Original.tnum_forward_raw o wps rw.
+  Proof.
+    intros o wps rw. destruct o; try reflexivity.
+    destruct wps as [|[w a] [|wp wps]]; try reflexivity.
+    unfold Fast.tnum_forward_raw, Original.tnum_forward_raw.
+    apply tnum_map_ext. intro x. now rewrite Z.shiftr_div_pow2 by lia.
+  Qed.
+End KnownBitsOpsAgreement.
 
 (** A nonnegative endpoint needs at most its stored bit count as an upper-mask length. *)
 Lemma table_bitlen_size : forall h, 0 <= h ->
@@ -384,6 +433,38 @@ Proof.
   clearbody square. lia.
 Qed.
 
+(** Extraction by a checked offset shifts a nonnegative endpoint before wrapping it. *)
+Lemma table_extract_shift_callback_time : forall sw rw lo x,
+  (lo < Pos.to_nat sw)%nat -> is_word sw x ->
+  (16 + Op.Z.T_of_nat lo + Std.Z.T_shiftr x (Z.of_nat lo) +
+    T_tnum_wrap rw (Z.shiftr x (Z.of_nat lo)) <=
+    2048 * N.of_nat ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2))%N.
+Proof.
+  intros sw rw lo x Hlo Hword.
+  pose proof (tnum_word_bits sw x Hword) as Hbits.
+  pose proof (tnum_shiftr_bits x (Z.of_nat lo) (proj1 Hword) ltac:(lia)) as Hshiftbits.
+  pose proof (tnum_shiftr_time x (Z.of_nat lo) (proj1 Hword) ltac:(lia)) as Hshift.
+  rewrite Nat2Z.id in Hshift.
+  pose proof (tnum_wrap_time rw (Z.shiftr x (Z.of_nat lo))) as Hwrap.
+  pose proof (WordTime.natural_to_integer_time_bound lo) as Hconvert.
+  pose proof (WordTime.time_square_weaken _ 8 (lo + 1)
+    (Pos.to_nat sw + Pos.to_nat rw + 1) Hconvert
+    ltac:(clear - Hlo; lia)) as Hconvertwide.
+  pose proof (WordTime.time_square_floor (lo + 1)
+    (Pos.to_nat sw + Pos.to_nat rw + 1)
+    ltac:(clear - Hlo; lia) ltac:(clear; lia)) as Hshiftlinear.
+  pose proof (WordTime.time_square_floor
+    (Pos.to_nat rw + Z.size_nat (Z.shiftr x (Z.of_nat lo)) + 1)
+    (Pos.to_nat sw + Pos.to_nat rw + 1)
+    ltac:(clear - Hshiftbits Hbits; lia) ltac:(clear; lia)) as Hwraplinear.
+  pose proof (WordTime.time_square_floor 1
+    (Pos.to_nat sw + Pos.to_nat rw + 1)
+    ltac:(clear; lia) ltac:(clear; lia)) as Hpositive.
+  clear Hlo Hword Hbits Hshiftbits Hconvert.
+  set (square := N.of_nat ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2)) in *.
+  clearbody square. lia.
+Qed.
+
 Module KnownBitsForwardClockProof (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     (K : KNOWN_BITS_T L C).
   Module Raw := KnownBitsOpsClock L C K.
@@ -426,7 +507,7 @@ Module KnownBitsForwardClockProof (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
           | assert (Hlo : (lo < Pos.to_nat sw)%nat) by
               (apply (Hbounded hi lo); reflexivity);
             eapply N.le_trans;
-              [|exact (table_extract_callback_time sw dw lo x Hlo Hx)]; lia ]);
+              [|exact (table_extract_shift_callback_time sw dw lo x Hlo Hx)]; lia ]);
       pose proof (table_map_time_budget sw dw f Tf input 2048 Hmapword Hcallback) as Hmap;
       rewrite <- Hbudget in Hmap;
       clear Hbudget Hmapword Hcallback;
@@ -872,6 +953,24 @@ Module KnownBitsSuppliedForwardProof (L : WORD_LANGUAGE) (C : TNUM_CONFIG)
     - destruct o; apply tnum_top_sound.
   Qed.
 End KnownBitsSuppliedForwardProof.
+
+(** Agreement transports the existing table soundness law to the shifted executable table. *)
+Module KnownBitsFastForwardProof (L : WORD_LANGUAGE) (C : TNUM_CONFIG)
+    (K : KNOWN_BITS L C).
+  Module F := KnownBitsOpsFastCode L C K.
+  Module Original := KnownBitsSuppliedForwardProof L C K.
+  Module Agreement := KnownBitsOpsAgreement L C K.
+
+  (** Successful evaluation is retained by the table that uses shifted extraction. *)
+  Theorem tnum_forward_raw_sound : forall o wps ys rw z,
+    Forall2 tnum_payload_sound wps ys -> eval_op o ys = Some (rw, z) ->
+    tnum_gamma rw (F.tnum_forward_raw o wps rw) z.
+  Proof.
+    intros o wps ys rw z Hgamma Heval.
+    rewrite Agreement.tnum_forward_raw_agrees.
+    exact (Original.tnum_forward_raw_sound o wps ys rw z Hgamma Heval).
+  Qed.
+End KnownBitsFastForwardProof.
 
 (** The unsigned numeric view reads the normalized integer stored in a word. *)
 Module KnownBitsNumU <: NUM_VIEW BitsLang.

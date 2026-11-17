@@ -128,7 +128,7 @@ TimeFun tnum_table_bounded.
 
 Module KnownBitsTableCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     (K : KNOWN_BITS_OPS L C) <: WORD_TABLE_OPS L K.
-  Module Ops := KnownBitsOpsCode L C K.
+  Module Ops := KnownBitsOpsFastCode L C K.
   Include Ops.
   Definition wfwd (o : L.op) (rw : positive) (xs : list (positive * K.p)) : option K.p :=
     if Nat.eqb (length xs) (arity o) then
@@ -791,7 +791,7 @@ Qed.
 Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
     <: KNOWN_BITS_TABLE L C K.
   Include KnownBitsTableCode L C K.
-  Module ForwardSound := KnownBitsSuppliedForwardProof L C K.
+  Module ForwardSound := KnownBitsFastForwardProof L C K.
   (** A width-checked forward request keeps the original transfer result. *)
   Lemma wfwd_width_checked : forall o rw xs,
     L.result_width o (map fst xs) = Some rw ->

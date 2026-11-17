@@ -15,7 +15,7 @@ Module Stages <: TNUM_CONFIG.
   Definition multiplier := MulStages.
 End Stages.
 Module Masks := KnownBitsCode WordLanguageCode Stages.
-Module Ops := KnownBitsOpsCode WordLanguageCode Stages Masks.
+Module Ops := KnownBitsOpsFastCode WordLanguageCode Stages Masks.
 Module Table := KnownBitsTableCode WordLanguageCode Stages Masks.
 
 (** Before clamping, these shifts returned 1, 2 and 2 respectively. *)
@@ -29,6 +29,34 @@ Example variable_logical_shift :
   Ops.tnum_forward_raw bvshl [(8%positive, tnum_const 8%positive 1); (8%positive, Tnum 252 0)]
     8%positive = Tnum 240 0.
 Proof. vm_compute. reflexivity. Qed.
+
+(** Extraction keeps the specified low bits and zero-fills positions above the source width. *)
+Example extract_shift_known_endpoints :
+  Ops.tnum_forward_raw (bvextract 7 4) [(4%positive, Tnum 8 1)]
+    4%positive = Tnum 15 0 /\
+  Ops.tnum_forward_raw (bvextract 3 0) [(4%positive, Tnum 8 1)]
+    4%positive = Tnum 8 1 /\
+  Ops.tnum_forward_raw (bvextract 7 4) [(8%positive, Tnum 240 15)]
+    4%positive = Tnum 15 0 /\
+  Ops.tnum_forward_raw (bvextract 3 0) [(8%positive, Tnum 240 15)]
+    4%positive = Tnum 0 15.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Unknown in-range bits stay unknown, while an unchecked high extraction is zero. *)
+Example extract_shift_unknown_endpoints :
+  Ops.tnum_forward_raw (bvextract 7 4) [(4%positive, Tnum 0 0)]
+    4%positive = Tnum 15 0 /\
+  Ops.tnum_forward_raw (bvextract 3 0) [(4%positive, Tnum 0 0)]
+    4%positive = Tnum 0 0 /\
+  Ops.tnum_forward_raw (bvextract 7 4) [(8%positive, Tnum 0 0)]
+    4%positive = Tnum 0 0 /\
+  Ops.tnum_forward_raw (bvextract 3 0) [(8%positive, Tnum 0 0)]
+    4%positive = Tnum 0 0.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
 
 Module Ranges := KnownBitsRangeCode WordLanguageCode Stages Masks.
 
