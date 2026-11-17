@@ -2,10 +2,23 @@
 
     Finite rules combine caller and callee path edges at matched returns.
     For example, an internal edge propagates one fact without changing stack level.
+
+    Main results
+    - [path_number_complexity] Rule numbering is linear in its output count and initial binary
+      carry potential, O(|rules| + potential(next)).
+    - [rows_complexity] Listing the rows is linear in their number, O(n) for n rows.
+    - [start_complexity] Starting a row is linear in the row budget at the empty value.
+    - [deps_complexity] Listing the dependencies of a row is linear in their number times
+      the key width.
+    - [target_complexity] The target of a listed row fits the row budget at the empty value.
+    - [sides_complexity] Listing the sides of a row is linear in their number times the key
+      width.
+
     Builds on: Framework.IfdsSig and Fixpoint.Query. *)
 
 From Stdlib Require Import List Bool NArith PArith Arith Lia.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig Code Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -1262,8 +1275,7 @@ Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
         rewrite Hcaller in Hsize; unfold row_work; lia.
   Qed.
   (** Row enumeration is linear in the number of rows. *)
-  Lemma rows_complexity : bigO (X := prog) (fun p => wf p)
-    (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
+  Lemma rows_complexity : T_rows p ∈ 𝑂(N.of_nat (length (rows p))) for p | wf p.
   Proof.
     apply bigO_intro with (c := c_sys).
     intros p Hwf; pose proof (T_rows_le p Hwf) as Hrows.
@@ -1272,8 +1284,8 @@ Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   Qed.
 
   (** Starting a listed row fits its budget at the empty value. *)
-  Lemma start_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
+  Lemma start_complexity :
+    T_start p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys).
     intros [p r] [Hwf Hrow].
@@ -1282,9 +1294,9 @@ Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   Qed.
 
   (** Listing dependencies is linear in their number times the key width. *)
-  Lemma deps_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_deps p r).
+  Lemma deps_complexity :
+    T_deps p r ∈ 𝑂(N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys).
     intros [p r] [Hwf Hrow].
@@ -1295,8 +1307,8 @@ Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   Qed.
 
   (** Finding a listed row's target fits its budget at the empty value. *)
-  Lemma target_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
+  Lemma target_complexity :
+    T_target p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys).
     intros [p r] [Hwf Hrow].
@@ -1305,9 +1317,9 @@ Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   Qed.
 
   (** Listing side writes is linear in their number times the key width. *)
-  Lemma sides_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_sides p r).
+  Lemma sides_complexity :
+    T_sides p r ∈ 𝑂(N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys).
     intros [p r] [Hwf Hrow].
