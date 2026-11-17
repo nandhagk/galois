@@ -957,7 +957,34 @@ Module LiveCode (O : OPS)
       else rows
     end.
 
-  Definition live_in (p : P.t) : list (positive * list positive) :=
+  (** Cache only listed points, whose encodings have the public width bound. *)
+  Definition entry_block (q : Q.t) (listed : ptrie positive) (n : N.t)
+      : option positive :=
+    match live_lookup (SP.block_of_point q n) listed with
+    | None => None
+    | Some b =>
+      if N.eqb n (C.src q (SP.parameter_edge q b)) then Some b else None
+    end.
+
+  Definition entry_insert (q : Q.t) (listed : ptrie positive) (n : N.t)
+      (table : ptrie positive) : ptrie positive :=
+    match entry_block q listed n with
+    | Some b => PTrieCode.set (N.encode n) b table
+    | None => table
+    end.
+
+  Definition entry_table (q : Q.t) (bs : list positive) : ptrie positive :=
+    let listed := block_index bs in
+    fold_right (entry_insert q listed) Empty (C.nodes q).
+
+  Definition group_entry (table : ptrie positive) (x : positive) (n : N.t)
+      (rows : ptrie (list positive)) : ptrie (list positive) :=
+    match trie_get (N.encode n) table with
+    | Some b => PTrieCode.set b (x :: index_row rows b) rows
+    | None => rows
+    end.
+
+  Definition live_in_spec (p : P.t) : list (positive * list positive) :=
     let q := R.prepare p in
     let fuel := length (C.nodes q) in
     let seeds := seed_index q in
@@ -966,6 +993,18 @@ Module LiveCode (O : OPS)
     let listed := block_index bs in
     let rows := fold_right (fun x acc =>
       fold_right (group_point q listed x) acc (search fuel q seeds kills x))
+      Empty (U.universe q) in
+    map (fun b => (b, index_row rows b)) bs.
+
+  Definition live_in (p : P.t) : list (positive * list positive) :=
+    let q := R.prepare p in
+    let fuel := length (C.nodes q) in
+    let seeds := seed_index q in
+    let kills := reverse_kills q in
+    let bs := BC.nodes q in
+    let entries := entry_table q bs in
+    let rows := fold_right (fun x acc =>
+      fold_right (group_entry entries x) acc (search fuel q seeds kills x))
       Empty (U.universe q) in
     map (fun b => (b, index_row rows b)) bs.
 End LiveCode.
@@ -1414,6 +1453,150 @@ Module Live (O : OPS)
         (fold_right (fun y acc => fold_right (group_point q listed y) acc (visits y))
           Empty rest) bs Hdup). lia.
   Qed.
+
+  (** An entry lookup adds only the variable being grouped. *)
+  Lemma group_entry_values : forall table x n rows allowed,
+    In x allowed -> (forall b, incl (index_row rows b) allowed) ->
+    forall b, incl (index_row (group_entry table x n rows) b) allowed.
+  Proof.
+    intros table x n rows allowed Hx Hrows b. unfold group_entry.
+    destruct (trie_get (N.encode n) table) as [target|]; [|apply Hrows].
+    destruct (Pos.eq_dec b target) as [->|Hneq].
+    - rewrite live_index_set_same. intros y [->|Hin]; [exact Hx|now apply (Hrows target)].
+    - rewrite live_index_set_other by exact Hneq. apply Hrows.
+  Qed.
+
+  (** Grouping a point list preserves the allowed variable set. *)
+  Lemma group_entries_values : forall table x ns rows allowed,
+    In x allowed -> (forall b, incl (index_row rows b) allowed) ->
+    forall b, incl (index_row (fold_right (group_entry table x) rows ns) b) allowed.
+  Proof.
+    intros table x ns; induction ns as [|n rest IH]; intros rows allowed Hx Hrows b;
+      cbn; [apply Hrows|]. apply group_entry_values; [exact Hx|now apply IH].
+  Qed.
+
+  (** One grouping step adds at most one row entry. *)
+  Lemma group_entry_mass : forall table x n rows bs, NoDup bs ->
+    live_rows_mass bs (group_entry table x n rows) <= live_rows_mass bs rows + 1.
+  Proof.
+    intros table x n rows bs Hdup. unfold group_entry.
+    destruct (trie_get (N.encode n) table) as [target|]; [|lia].
+    now apply live_rows_mass_add.
+  Qed.
+
+  (** Grouping a point list adds at most one row entry per point. *)
+  Lemma group_entries_mass : forall table x ns rows bs, NoDup bs ->
+    live_rows_mass bs (fold_right (group_entry table x) rows ns) <=
+      live_rows_mass bs rows + length ns.
+  Proof.
+    intros table x ns; induction ns as [|n rest IH]; intros rows bs Hdup; cbn; [lia|].
+    pose proof (group_entry_mass table x n
+      (fold_right (group_entry table x) rows rest) bs Hdup).
+    specialize (IH rows bs Hdup). lia.
+  Qed.
+
+  (** The complete grouping fold emits only enumerated variables. *)
+  Lemma group_entry_variables_values : forall table xs visits,
+    forall b, incl (index_row (fold_right (fun x acc =>
+      fold_right (group_entry table x) acc (visits x)) Empty xs) b) xs.
+  Proof.
+    intros table xs visits; induction xs as [|x rest IH]; intro b; cbn.
+    - unfold index_row; rewrite PTrie.get_empty. intros y Hin; contradiction.
+    - apply group_entries_values; [now left|].
+      intros target y Hin; right; now apply (IH target).
+  Qed.
+
+  (** The complete grouping fold emits at most one entry per visited pair. *)
+  Lemma group_entry_variables_mass : forall table xs visits bs, NoDup bs ->
+    live_rows_mass bs (fold_right (fun x acc =>
+      fold_right (group_entry table x) acc (visits x)) Empty xs) <=
+      length (flat_map (fun x => map (fun n => (n, x)) (visits x)) xs).
+  Proof.
+    intros table xs visits bs Hdup; induction xs as [|x rest IH]; cbn.
+    - rewrite live_rows_mass_empty. lia.
+    - rewrite length_app, length_map.
+      pose proof (group_entries_mass table x (visits x)
+        (fold_right (fun y acc => fold_right (group_entry table y) acc (visits y))
+          Empty rest) bs Hdup). lia.
+  Qed.
+
+  (** Every cached block comes from the same entry test at a listed point. *)
+  Lemma entry_nodes_binding : forall q listed ns key b,
+    trie_get key (fold_right (entry_insert q listed) Empty ns) = Some b ->
+    exists n, In n ns /\ key = N.encode n /\ entry_block q listed n = Some b.
+  Proof.
+    intros q listed ns; induction ns as [|n rest IH]; intros key b Hget.
+    - cbn [fold_right] in Hget. rewrite PTrie.get_empty in Hget. discriminate.
+    - cbn [fold_right] in Hget. unfold entry_insert in Hget.
+      destruct (entry_block q listed n) as [target|] eqn:Hentry.
+      + destruct (Pos.eq_dec key (N.encode n)) as [->|Hneq].
+        * rewrite PTrie.get_set_same in Hget. injection Hget as <-.
+          exists n. split; [now left|]. now split.
+        * rewrite PTrie.get_set_other in Hget by exact Hneq.
+          destruct (IH key b Hget) as [m [Hm [Hkey Hb]]].
+          exists m. split; [now right|]. now split.
+      + destruct (IH key b Hget) as [m [Hm [Hkey Hb]]].
+        exists m. split; [now right|]. now split.
+  Qed.
+
+  (** A cache lookup returns the original entry decision at every listed point. *)
+  Lemma entry_nodes_agrees : forall q listed ns n, In n ns ->
+    trie_get (N.encode n) (fold_right (entry_insert q listed) Empty ns) =
+      entry_block q listed n.
+  Proof.
+    intros q listed ns; induction ns as [|m rest IH]; intros n Hin; [contradiction|].
+    cbn [fold_right]. unfold entry_insert at 1.
+    destruct (entry_block q listed m) as [b|] eqn:Hentry.
+    - destruct (Pos.eq_dec (N.encode n) (N.encode m)) as [Heq|Hneq].
+      + apply N.encode_inj in Heq. subst n. rewrite PTrie.get_set_same. symmetry; exact Hentry.
+      + rewrite PTrie.get_set_other by exact Hneq. apply IH.
+        destruct Hin as [<-|Hin]; [contradiction|exact Hin].
+    - destruct Hin as [<-|Hin]; [|now apply IH]. rewrite Hentry.
+      destruct (trie_get (N.encode m) (fold_right (entry_insert q listed) Empty rest))
+        as [b|] eqn:Hget; [|reflexivity].
+      destruct (entry_nodes_binding q listed rest (N.encode m) b Hget)
+        as [n [Hn [Hcode Hb]]].
+      apply N.encode_inj in Hcode. subst n. rewrite Hentry in Hb. discriminate.
+  Qed.
+
+  (** Replacing an entry test by its cache preserves a grouping step. *)
+  Lemma group_entry_agrees : forall q bs x n rows, In n (C.nodes q) ->
+    group_entry (entry_table q bs) x n rows = group_point q (block_index bs) x n rows.
+  Proof.
+    intros q bs x n rows Hn. unfold group_entry, entry_table.
+    rewrite entry_nodes_agrees by exact Hn. unfold entry_block, group_point.
+    destruct (live_lookup (SP.block_of_point q n) (block_index bs)) as [b|];
+      [destruct (N.eqb n (C.src q (SP.parameter_edge q b)))|]; reflexivity.
+  Qed.
+
+  (** Caching preserves a grouping fold over listed points. *)
+  Lemma group_entries_agrees : forall q bs x ns rows, incl ns (C.nodes q) ->
+    fold_right (group_entry (entry_table q bs) x) rows ns =
+      fold_right (group_point q (block_index bs) x) rows ns.
+  Proof.
+    intros q bs x ns; induction ns as [|n rest IH]; intros rows Hnodes; [reflexivity|].
+    cbn [fold_right]. rewrite IH by (intros m Hm; apply Hnodes; now right).
+    apply group_entry_agrees, Hnodes. now left.
+  Qed.
+
+  (** The cache preserves row order and contents whenever the point graph is well formed. *)
+  Lemma live_in_agrees : forall p, C.wf (R.prepare p) -> live_in p = live_in_spec p.
+  Proof.
+    intros p Hwf. unfold live_in, live_in_spec.
+    set (q := R.prepare p) in *.
+    set (bs := BC.nodes q).
+    set (visits := search (length (C.nodes q)) q (seed_index q) (reverse_kills q)).
+    assert (Hfold : forall xs rows,
+      fold_right (fun x acc => fold_right (group_entry (entry_table q bs) x)
+        acc (visits x)) rows xs =
+      fold_right (fun x acc => fold_right (group_point q (block_index bs) x)
+        acc (visits x)) rows xs).
+    { intro xs; induction xs as [|x rest IH]; intro rows; [reflexivity|].
+      cbn [fold_right]. rewrite IH. apply group_entries_agrees.
+      intros n Hn. exact (proj1 (proj1 (proj2 (search_spec q x Hwf) n) Hn)). }
+    now rewrite Hfold.
+  Qed.
+
 End Live.
 
 Module LiveT (O : OPS)
@@ -1434,6 +1617,10 @@ Module LiveT (O : OPS)
   TimeFun search.
   TimeFun block_index.
   TimeFun group_point.
+  TimeFun entry_block.
+  TimeFun entry_insert.
+  TimeFun entry_table.
+  TimeFun group_entry.
   TimeFun live_in.
   Definition live_region (p : P.t) : list (N.t * positive) :=
     let q := R.prepare p in
@@ -1468,7 +1655,7 @@ Module LiveT (O : OPS)
     set (q := R.prepare p). set (bs := BC.nodes q).
     set (visits := search (length (C.nodes q)) q (seed_index q) (reverse_kills q)).
     set (rows := fold_right (fun x acc =>
-      fold_right (group_point q (block_index bs) x) acc (visits x)) Empty (U.universe q)).
+      fold_right (group_entry (entry_table q bs) x) acc (visits x)) Empty (U.universe q)).
     assert (Hrows : forall ids table,
       rows_size (map (fun b => (b, index_row table b)) ids) =
         length ids + live_rows_mass ids table).
@@ -1480,7 +1667,7 @@ Module LiveT (O : OPS)
     rewrite Hrows.
     change (length bs + live_rows_mass bs rows <= length (blocks _ _ _ p) + live_size p).
     assert (Hmass : live_rows_mass bs rows <= length (live_region p)).
-    { apply group_variables_mass. apply BC.nodes_nodup. exact (proj1 (PB.prepared_wf p)). }
+    { apply group_entry_variables_mass. apply BC.nodes_nodup. exact (proj1 (PB.prepared_wf p)). }
     assert (Hregion : length (live_region p) <= live_size p).
     { unfold live_size. apply live_weighted_length. }
     pose proof (PB.block_nodes_le p) as Hblocks. unfold bs, q in *. lia.
@@ -2721,9 +2908,103 @@ Module LiveT (O : OPS)
     destruct (N.eqb n (C.src q (SP.parameter_edge q b))); nia.
   Qed.
 
+  (** Every entry-cache value is a listed block, including on non-SSA inputs. *)
+  Lemma entry_table_binding : forall q bs key b,
+    trie_get key (entry_table q bs) = Some b -> In b bs.
+  Proof.
+    intros q bs key b Hget. unfold entry_table in Hget.
+    destruct (entry_nodes_binding q (block_index bs) (C.nodes q) key b Hget)
+      as [n [Hn [Hkey Hentry]]].
+    unfold entry_block in Hentry.
+    destruct (live_lookup (SP.block_of_point q n) (block_index bs)) as [target|]
+      eqn:Hlookup; [|discriminate].
+    destruct (N.eqb n (C.src q (SP.parameter_edge q target))); [|discriminate].
+    injection Hentry as <-. rewrite live_lookup_correct in Hlookup.
+    exact (proj1 (block_index_binding bs _ _ Hlookup)).
+  Qed.
+
+  (** Testing one listed point for block entry fits the primitive budget. *)
+  Lemma entry_block_atom : forall p n, In n (C.nodes (R.prepare p)) ->
+    (T_entry_block (R.prepare p) (block_index (BC.nodes (R.prepare p))) n <=
+      8 * live_clock_atom p)%N.
+  Proof.
+    intros p n Hn. set (q := R.prepare p).
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (block_lookup_atom p (SP.block_of_point q n)) as Hlookup.
+    assert (Howner : (SP.T_block_of_point q n <= live_clock_atom p)%N).
+    { eapply N.le_trans; [apply SP.T_block_of_point_le|]. apply live_clock_product;
+        [unfold live_clock_scale; lia|now apply live_node_key]. }
+    time_unfold T_entry_block. fold q in Hn, Hlookup, Howner |- *.
+    destruct (live_lookup (SP.block_of_point q n) (block_index (BC.nodes q))) as [b|]
+      eqn:Hget; [|nia].
+    rewrite live_lookup_correct in Hget.
+    destruct (block_index_binding _ _ _ Hget) as [Hb Hkey].
+    assert (Hparam : (SP.T_parameter_edge q b <= live_clock_atom p)%N).
+    { eapply N.le_trans; [apply SP.T_parameter_edge_le|]. apply live_clock_product;
+        [unfold live_clock_scale; lia|now apply live_block_key]. }
+    pose proof (live_src_atom p (SP.parameter_edge q b)) as Hsrc.
+    pose proof (live_eqb_node_atom p n (C.src q (SP.parameter_edge q b)) Hn) as Heqb.
+    fold q in Hsrc. destruct (N.eqb n (C.src q (SP.parameter_edge q b))); nia.
+  Qed.
+
+  (** Caching one listed point pays for its test, encoding and insertion. *)
+  Lemma entry_insert_atom : forall p n table, In n (C.nodes (R.prepare p)) ->
+    (T_entry_insert (R.prepare p) (block_index (BC.nodes (R.prepare p))) n table <=
+      16 * live_clock_atom p)%N.
+  Proof.
+    intros p n table Hn.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (entry_block_atom p n Hn) as Hentry.
+    pose proof (live_encode_node_atom p n Hn) as Hencode.
+    pose proof (live_node_key p n Hn) as Hkey.
+    time_unfold T_entry_insert.
+    destruct (entry_block (R.prepare p) (block_index (BC.nodes (R.prepare p))) n)
+      as [b|]; [|nia].
+    pose proof (live_set_atom _ p (N.encode n) b table Hkey) as Hset. nia.
+  Qed.
+
+  (** Table preparation scans bounded points once and does not encode an unchecked endpoint. *)
+  Lemma entry_table_atom : forall p,
+    (T_entry_table (R.prepare p) (BC.nodes (R.prepare p)) <=
+      4 * live_clock_atom p * N.of_nat (length (BC.nodes (R.prepare p)) + 1) +
+      32 * live_clock_atom p * N.of_nat (length (C.nodes (R.prepare p)) + 1))%N.
+  Proof.
+    intro p. pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (block_index_atom p) as Hblocks.
+    pose proof (live_nodes_atom p) as Hnodes.
+    time_unfold T_entry_table. cbn beta zeta.
+    let p := constr:(p) in match goal with
+    | |- context [List.T_fold_right ?step ?clock Empty (C.nodes (R.prepare p))] =>
+      assert (Hfold : (List.T_fold_right step clock Empty (C.nodes (R.prepare p)) <=
+        (16 * live_clock_atom p + 1) * N.of_nat (length (C.nodes (R.prepare p))) + 1)%N)
+    end.
+    { apply live_fold_clock_uniform. intros n Hn table. now apply entry_insert_atom. }
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Grouping a cached entry pays for one encoded lookup and one row update. *)
+  Lemma group_entry_atom : forall p x n rows, In n (C.nodes (R.prepare p)) ->
+    (T_group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p))) x n rows <=
+      16 * live_clock_atom p)%N.
+  Proof.
+    intros p x n rows Hn.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_node_key p n Hn) as Hkey.
+    pose proof (live_encode_node_atom p n Hn) as Hencode.
+    pose proof (live_get_atom _ p (N.encode n)
+      (entry_table (R.prepare p) (BC.nodes (R.prepare p))) Hkey) as Hget.
+    time_unfold T_group_entry.
+    destruct (trie_get (N.encode n) (entry_table (R.prepare p) (BC.nodes (R.prepare p))))
+      as [b|] eqn:Hentry; [|nia].
+    pose proof (live_block_key p b
+      (entry_table_binding (R.prepare p) (BC.nodes (R.prepare p)) _ b Hentry)) as Hblock.
+    pose proof (live_row_atom _ p rows b Hblock) as Hrow.
+    pose proof (live_set_atom _ p b (x :: index_row rows b) rows Hblock) as Hset. nia.
+  Qed.
+
   Lemma group_search_atom : forall p x rows, In x (U.universe (R.prepare p)) ->
-    (List.T_fold_right (group_point (R.prepare p) (block_index (BC.nodes (R.prepare p))) x)
-      (fun n acc => T_group_point (R.prepare p) (block_index (BC.nodes (R.prepare p)))
+    (List.T_fold_right (group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p))) x)
+      (fun n acc => T_group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p)))
         x n acc) rows
       (search (length (C.nodes (R.prepare p))) (R.prepare p)
         (seed_index (R.prepare p)) (reverse_kills (R.prepare p)) x) <=
@@ -2735,7 +3016,7 @@ Module LiveT (O : OPS)
     pose proof (search_spec (R.prepare p) x (proj2 (PB.prepared_wf p))) as [Hdup Hspec].
     eapply N.le_trans.
     - apply live_fold_clock_uniform with (bound := (16 * live_clock_atom p)%N).
-      intros n Hn acc. apply group_point_atom. exact (proj1 (proj1 (Hspec n) Hn)).
+      intros n Hn acc. apply group_entry_atom. exact (proj1 (proj1 (Hspec n) Hn)).
     - rewrite Nat2N.inj_add. nia.
   Qed.
 
@@ -2869,14 +3150,14 @@ Module LiveT (O : OPS)
   Lemma live_all_variables_atom : forall p,
     (List.T_fold_right
       (fun x acc => fold_right
-        (group_point (R.prepare p) (block_index (BC.nodes (R.prepare p))) x) acc
+        (group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p))) x) acc
         (search (length (C.nodes (R.prepare p))) (R.prepare p)
           (seed_index (R.prepare p)) (reverse_kills (R.prepare p)) x))
       (fun x acc => 1 +
         (T_search (length (C.nodes (R.prepare p))) (R.prepare p)
           (seed_index (R.prepare p)) (reverse_kills (R.prepare p)) x +
-        List.T_fold_right (group_point (R.prepare p) (block_index (BC.nodes (R.prepare p))) x)
-          (fun n rows => T_group_point (R.prepare p) (block_index (BC.nodes (R.prepare p)))
+        List.T_fold_right (group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p))) x)
+          (fun n rows => T_group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p)))
             x n rows) acc
           (search (length (C.nodes (R.prepare p))) (R.prepare p)
             (seed_index (R.prepare p)) (reverse_kills (R.prepare p)) x)))%N
@@ -2905,7 +3186,7 @@ Module LiveT (O : OPS)
     pose proof (seed_index_atom p) as Hseeds.
     pose proof (reverse_kills_atom p) as Hkills.
     pose proof (block_nodes_atom p) as Hblocks.
-    pose proof (block_index_atom p) as Hlisted.
+    pose proof (entry_table_atom p) as Hlisted.
     pose proof (live_universe_atom p) as Huniverse.
     pose proof (live_all_variables_atom p) as Hvariables.
     pose proof (live_universe_length q) as Hvars.
@@ -2981,7 +3262,14 @@ Module LiveT (O : OPS)
       pose proof (N.le_trans _ _ _ Hkills (Hgraphscale 64%N)) as Hkill_budget.
       assert (Hblocks_budget : (BC.T_nodes q <= syntax_budget)%N).
       { eapply N.le_trans; [exact Hblocks|exact Hblockpaid]. }
-      pose proof (N.le_trans _ _ _ Hlisted (Hblockscale 4%N)) as Hlisted_budget.
+      assert (Hlisted_budget : (T_entry_table q (BC.nodes q) <=
+        4 * syntax_budget + 32 * graph_budget)%N).
+      { eapply N.le_trans; [exact Hlisted|]. apply N.add_le_mono.
+        - apply Hblockscale.
+        - replace (32 * live_clock_atom p * N.of_nat (length (C.nodes q) + 1))%N
+            with (32 * (live_clock_atom p *
+              N.of_nat (length (C.nodes q) + 1)))%N by ring.
+          apply N.mul_le_mono_l. eapply N.le_trans; [exact Hnodepaid|exact Hlift]. }
       pose proof (N.le_trans _ _ _ Hrows (Hblockscale 4%N)) as Hrows_budget.
       assert (Huniverse_budget : (U.T_universe q <= 16 * graph_budget)%N).
       { eapply N.le_trans; [exact Huniverse|]. unfold graph_budget. ring_simplify.
@@ -3153,6 +3441,6 @@ Module LiveT (O : OPS)
   Proof.
     intros p row Hin. unfold live_in in Hin. apply in_map_iff in Hin.
     destruct Hin as [b [<- Hb]]. split; [exact Hb|]. cbn.
-    apply group_variables_values.
+    apply group_entry_variables_values.
   Qed.
 End LiveT.

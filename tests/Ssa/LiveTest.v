@@ -68,3 +68,27 @@ Proof. vm_compute. reflexivity. Qed.
 Example all_parallel_edges_kill :
   live_killed (live_kill_add 1 2 [9; 8] (live_kill_add 1 2 [9] Empty)) 1 2 9 = true.
 Proof. vm_compute. reflexivity. Qed.
+
+Definition entry_and_inside : Source.t :=
+  Func positive unit unit 1 [9; 10]
+    [(1, Block positive unit unit [] [(2, tt, [9])] (Jump 2 []));
+     (2, Block positive unit unit [] [(3, tt, [9]); (4, tt, [3; 10])] (Return [4]))].
+
+Example cached_grouping_preserves_live_rows :
+  L.live_in entry_and_inside = L.live_in_spec entry_and_inside.
+Proof. vm_compute. reflexivity. Qed.
+
+Example cache_distinguishes_block_entries_and_internal_points :
+  let q := View.R.prepare entry_and_inside in
+  let entries := L.entry_table q (View.BC.nodes q) in
+  (trie_get (PointKey.encode (1, 0%N)) entries,
+   trie_get (PointKey.encode (2, 0%N)) entries,
+   trie_get (PointKey.encode (2, 1%N)) entries) = (Some 1, Some 2, None).
+Proof. vm_compute. reflexivity. Qed.
+
+Example grouping_records_an_entry_and_skips_an_internal_point :
+  let q := View.R.prepare entry_and_inside in
+  let entries := L.entry_table q (View.BC.nodes q) in
+  L.group_entry entries 10 (2, 1%N) (L.group_entry entries 9 (2, 0%N) Empty) =
+    PTrieCode.set 2 [9] Empty.
+Proof. vm_compute. reflexivity. Qed.
