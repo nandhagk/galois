@@ -25,8 +25,10 @@ Module SignCode (L : WORD_LANGUAGE_OPS) <: SIGN_OPS L.
   Definition ptop (_ : positive) : p := Sgn true true true.
   Definition pis_bot (_ : positive) (a : p) : bool :=
     negb (neg a || zero a || pos a).
-  Definition pconst (w : positive) (z : Z) : p :=
+  Definition pconst_spec (w : positive) (z : Z) : p :=
     Sgn (Word.signed w z <? 0) (Word.signed w z =? 0) (0 <? Word.signed w z).
+  Definition pconst (w : positive) (z : Z) : p :=
+    let s := Word.signed w z in Sgn (s <? 0) (s =? 0) (0 <? s).
   Definition ppoint (_ : positive) (a : p) : option Z :=
     match a with
     | Sgn false true false => Some 0
@@ -116,6 +118,12 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Include SIGN_SPEC L.
   Definition pgamma := sign_gamma.
   Definition pwrank (_ : pwparam) (_ : positive) (a : p) : nat := 3 - sign_level a.
+
+  (** Sharing the signed value preserves the three constant flags. *)
+  Lemma pconst_agrees : forall w z, pconst w z = pconst_spec w z.
+  Proof.
+    intros w z. reflexivity.
+  Qed.
 
   (** Each inhabited signed class requires its corresponding flag. *)
   Local Lemma pgamma_cases w a z : pgamma w a z <->

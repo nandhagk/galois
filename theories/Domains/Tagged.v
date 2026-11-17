@@ -64,8 +64,11 @@ Module TaggedCode (L : WORD_LANGUAGE_OPS) (W : WORD_PAYLOAD_OPS L)
     | TVal w p => match W.ppoint w p with Some z => Some (w, z) | None => None end
     | _ => None
     end.
-  Definition abst (v : BitsLangCode.val) : t :=
+  Definition abst_spec (v : BitsLangCode.val) : t :=
     if Z.eqb (Word.wrap (fst v) (snd v)) (snd v)
+    then TVal (fst v) (W.pconst (fst v) (snd v)) else TAny.
+  Definition abst (v : BitsLangCode.val) : t :=
+    if (if Z.leb 0 (snd v) then Z.ltb (snd v) (modulus (fst v)) else false)
     then TVal (fst v) (W.pconst (fst v) (snd v)) else TAny.
 End TaggedCode.
 
@@ -353,9 +356,29 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
     destruct Hgamma as [Hwidth [Hword Hpayload_gamma]]. cbn in Hwidth. subst u.
     f_equal. exact (W.ppoint_sound w p z value Hpayload Hword Hpayload_gamma).
   Qed.
+  (** Range comparisons recognize exactly the integers fixed by wrapping. *)
+  Lemma abst_test_agrees : forall w z,
+    (if Z.leb 0 z then Z.ltb z (modulus w) else false) = Z.eqb (Word.wrap w z) z.
+  Proof.
+    intros w z. apply Bool.eq_true_iff_eq.
+    change ((Z.leb 0 z && Z.ltb z (modulus w))%bool = true <->
+      Z.eqb (Word.wrap w z) z = true).
+    rewrite andb_true_iff, Z.leb_le, Z.ltb_lt, Z.eqb_eq.
+    split.
+    - apply Word.wrap_id.
+    - intro Hwrap. rewrite <- Hwrap. apply Word.wrap_is_word.
+  Qed.
+
+  (** Abstracting a raw word keeps the original wrapping-test result. *)
+  Lemma abst_agrees : forall v, abst v = abst_spec v.
+  Proof.
+    intros [w z]. unfold abst, abst_spec. cbn [fst snd].
+    rewrite abst_test_agrees. reflexivity.
+  Qed.
+
   Lemma abst_sound : forall v, gamma (abst v) v.
   Proof.
-    intros [w z]. unfold abst. cbn [fst snd].
+    intros [w z]. rewrite abst_agrees. unfold abst_spec. cbn [fst snd].
     destruct (Z.eqb (Word.wrap w z) z) eqn:Hwrap; [|exact I].
     apply Z.eqb_eq in Hwrap. cbn [gamma tagged_gamma].
     split; [reflexivity|]. split.
@@ -542,20 +565,23 @@ Module TaggedT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   Lemma T_abst_le : forall v,
     (T_abst v <= c_base * N.of_nat (abst_work v + 1))%N.
   Proof.
-    intros [w z]. pose proof (WordTime.word_wrap_time_bound w z) as Hwrap.
+    intros [w z]. pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
     pose proof (W.T_pconst_le w z) as Hconst.
-    pose proof (Z.T_eqb_le (Word.wrap w z) z) as Hcompare.
-    assert (Hsize : (N.of_nat (Z.size_nat (Word.wrap w z)) <=
+    pose proof (Z.T_leb_le 0 z) as Hlower.
+    pose proof (Z.T_ltb_le z (modulus w)) as Hupper.
+    assert (Hwidth : (N.of_nat (Pos.to_nat w + 1) <=
       N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N).
-    { apply WordTime.time_square_floor; [|lia].
-      pose proof (WordTime.word_wrap_size_bound w z). lia. }
+    { apply WordTime.time_square_floor; lia. }
+    assert (Hvalue : (N.of_nat (Z.size_nat z) <=
+      N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N).
+    { apply WordTime.time_square_floor; lia. }
     set (budget := N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2)) in *.
     change (T_abst (w, z) <= 256 * (W.c_payload + 1) *
       N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2) + 1))%N.
     rewrite Nat2N.inj_add.
     change (T_abst (w, z) <= 256 * (W.c_payload + 1) * (budget + 1))%N.
     time_unfold T_abst. unfold Datatypes.T_fst, Datatypes.T_snd.
-    time_cbn. destruct (Z.eqb (Word.wrap w z) z); nia.
+    time_cbn. destruct (Z.leb 0 z), (Z.ltb z (Z.pow_pos 2 w)); time_cbn_all; nia.
   Qed.
   (** The operation stays within the declared work budget. *)
   Lemma abst_size_le : forall v,
@@ -571,7 +597,7 @@ Module TaggedT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     rewrite Nat2N.inj_add.
     change (N.of_nat (bsize (abst (w, z))) <=
       256 * (W.c_payload + 1) * (budget + 1))%N.
-    unfold abst, bsize, tagged_size.
+    rewrite abst_agrees. unfold abst_spec, bsize, tagged_size.
     time_cbn. destruct (Z.eqb (Word.wrap w z) z);
       time_cbn; rewrite ?Nat2N.inj_add; time_cbn; nia.
   Qed.
