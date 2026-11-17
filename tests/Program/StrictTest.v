@@ -69,22 +69,30 @@ Module DiamondTests.
   (** The edge from 1 to 2 dominates node 2. *)
   Example left_arm_edge_dominates :
     dominating_edges_in diamond_context 2 = [(1, 2)].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** Neither arm dominates the join 4, so no edge dominates it. *)
   Example join_has_no_dominating_edge :
     dominating_edges_in diamond_context 4 = [].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** The entry 1 has no dominating edge. *)
   Example entry_has_no_dominating_edge :
     dominating_edges_in diamond_context 1 = [].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** A node that the diamond does not have has no dominating edge. *)
   Example unknown_node_has_no_edge :
     dominating_edges_in diamond_context 9 = [].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End DiamondTests.
 
@@ -103,7 +111,9 @@ Module LineTests.
   (** The dominating edges of node 4 are its ancestors' edges, from the root onward. *)
   Example ancestors_in_order :
     dominating_edges_in line_context 4 = [(1, 2); (2, 3); (3, 4)].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End LineTests.
 
@@ -122,7 +132,9 @@ Module LoopTests.
   (** The edges 1 to 2 and 2 to 3 dominate the loop node 3. *)
   Example preheader_edges_dominate_header :
     dominating_edges_in loop_context 3 = [(1, 2); (2, 3)].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End LoopTests.
 
@@ -141,12 +153,16 @@ Module RepeatedTests.
   (** Duplicate edges are not reported as dominating, so the answer is conservative. *)
   Example repeated_edges_give_no_dominator :
     dominating_edges_in repeated_context 2 = [].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** An empty walk from no node takes the boundary step with an empty result. *)
   Example empty_walk_step_is_empty :
     strict_walk_step diamond_context (None, []) = inr [].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End RepeatedTests.
 
@@ -190,11 +206,15 @@ Module SsaTests.
   (** The edge from 1 to 2 has the guard of the unit operation over value 0. *)
   Example edge_guard_recorded :
     DiamondSsa.guards true (1%nat, 2%nat) = [(tt, [0%nat])].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** Value 1 is defined as the parameter 0 of node 4. *)
   Example parameter_definition_recorded :
     DiamondSsa.def true 1%nat = Param 4%nat 0%nat.
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End SsaTests.
