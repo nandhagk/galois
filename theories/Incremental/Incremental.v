@@ -11390,7 +11390,11 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   (** Reading a value is linear in the key bits. *)
   Lemma value_bigO : bigO (X := state * S.key) (fun _ => True)
     (fun x => N.of_nat (S.key_bits (snd x))) (fun x => T_value (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_inc; intros [st x] _; cbn [fst snd].
+    pose proof (T_value_le st x) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 
   (** Demand is linear in the region occurrences times the width, the root bits, the fuel
       bits and the restricted solve. *)
@@ -11403,7 +11407,12 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
        N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)) +
        N.of_nat (N.size_nat fuel) + demand_solver_work p pol roots fuel st)%N)
     (fun '(p, pol, roots, fuel, st) => T_demand p pol roots fuel st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_inc; intros [[[[p pol] roots] fuel] st] [Hwf Hinv].
+    eapply N.le_trans; [exact (T_demand_le p pol roots fuel st Hwf Hinv)|].
+    rewrite !N.mul_add_distr_l, N.mul_assoc.
+    apply N.le_add_r.
+  Qed.
 
   (** An edit is linear in the influence mass, the changed rows and the widths. *)
   Lemma edit_bigO : bigO (X := S.prog * S.prog * list S.row * state)
@@ -11414,5 +11423,12 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
           length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
       N.of_nat (width p st + width p' st + kwidth st + 1))%N)
     (fun '(p, p', ch, st) => T_edit p p' ch st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_inc; intros [[[p p'] ch] st] [Hwf [Hwf' [Hstate Hlisted]]].
+    eapply N.le_trans; [exact (T_edit_le p p' ch st Hwf Hwf' Hstate Hlisted)|].
+    rewrite <- N.mul_assoc, N.mul_add_distr_l.
+    eapply N.le_trans; [|apply N.le_add_r].
+    apply N.mul_le_mono_l, N.mul_le_mono_r, nat_to_N_le.
+    apply Nat.add_le_mono_r, Nat.add_le_mono_r, Nat.le_sub_l.
+  Qed.
 End IncrementalT.
