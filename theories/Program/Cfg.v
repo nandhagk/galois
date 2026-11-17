@@ -2,9 +2,22 @@
 
     Prepare adjacency tables from a client presentation.
     For example, parallel edges remain separate entries in each adjacency list.
+
+    Main results
+    - [out_spec] Outgoing adjacency lists exactly the edges with the requested source.
+    - [inc_spec] Incoming adjacency lists exactly the edges with the requested destination.
+    - [edges_complexity] Edge enumeration is linear in its output, O(n) for n edges.
+    - [entries_complexity] Entry enumeration is linear in its output.
+    - [out_complexity] Outgoing lookup is linear in the node key and the returned edges.
+    - [inc_complexity] Incoming lookup is linear in the node key and the returned edges.
+    - [nodes_complexity] Node enumeration is linear in its output.
+    - [prepare_complexity] Preparation is linear in the entries and edges times the widest
+      endpoint key.
+
     Builds on: Program.CfgSig and Graph.Data. *)
 From Stdlib Require Import List PArith NArith Arith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie Code.
 From Galois.Graph Require Import Data.
 From Galois.Program Require Import CfgSig.
@@ -536,11 +549,11 @@ Module CfgT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_BASE_T P N E).
   Qed.
 
   (** Preparation is linear in the entries and edges times the widest endpoint key. *)
-  Lemma prepare_complexity : bigO (X := P.t) (fun _ => True)
-    (fun p => N.of_nat ((length (C.entries p) + length (C.edges p) + 1) *
+  Lemma prepare_complexity :
+    T_prepare p ∈ 𝑂(N.of_nat ((length (C.entries p) + length (C.edges p) + 1) *
       (fold_right Nat.max 0%nat (List.map N.bits (C.entries p ++
         flat_map (fun e => C.src p e :: C.dst p e :: nil) (C.edges p))) + 1)))
-    T_prepare.
+      for p.
   Proof.
     apply bigO_intro with (c := c_cfg_prep).
     intros p _. pose proof (T_prepare_le p) as Hprepare.
