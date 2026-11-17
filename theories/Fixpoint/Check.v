@@ -2,10 +2,22 @@
 
     The checker evaluates each row and checks every value written by the row.
     For example, a side contribution above its stored value rejects the candidate.
+
+    Main results
+    - [look_spec] Lookup uses bottom for absent bindings.
+    - [check_spec] Checking a program checks all its rows.
+    - [check_sound] Every accepted candidate is a post-solution.
+    - [look_complexity] A lookup is linear in the key bits, O(|k|).
+    - [check_rows_complexity] Row checking is linear in the declared occurrences times the row
+      budget.
+    - [check_complexity] Whole-program checking is linear in the declared occurrences times the
+      row budget.
+
     Builds on: Fixpoint.Query, Fixpoint.SystemSig and Base.MapSig. *)
 
 From Stdlib Require Import List NArith Lia.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
@@ -345,8 +357,8 @@ Module CheckT (L : LATTICE_T) (S : SYSTEM_T L) <: CHECK_T L S.
   Qed.
 
   (** A lookup is linear in the key bits. *)
-  Lemma look_complexity : bigO (X := kmap S.key L.t * S.key) (fun _ => True)
-    (fun mx => N.of_nat (S.key_bits (snd mx))) (fun mx => T_look (fst mx) (snd mx)).
+  Lemma look_complexity :
+    T_look m x ∈ 𝑂(N.of_nat (S.key_bits x)) for (m, x).
   Proof.
     apply bigO_intro with (c := c_chk).
     intros [m x] _; cbn [fst snd].
@@ -355,13 +367,12 @@ Module CheckT (L : LATTICE_T) (S : SYSTEM_T L) <: CHECK_T L S.
   Qed.
 
   (** Row checking is linear in the declared occurrences times the row budget. *)
-  Lemma check_rows_complexity : bigO (X := S.prog * list S.row * kmap S.key L.t * nat)
-    (fun '(p, rs, m, B) => S.wf p /\ (forall r, In r rs -> In r (S.rows p)) /\
-       forall x, L.size (look m x) <= B)
-    (fun '(p, rs, _, B) => (N.of_nat ((fold_right Nat.add 0
+  Lemma check_rows_complexity :
+    T_check_rows p rs m ∈ 𝑂((N.of_nat ((fold_right Nat.add 0
         (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) rs) + 1)%nat) *
       (S.row_work p B + N.of_nat (S.kw p + B) + 1))%N)
-    (fun '(p, rs, m, _) => T_check_rows p rs m).
+    for (p, rs, m, B) |
+      S.wf p /\ (forall r, In r rs -> In r (S.rows p)) /\ forall x, L.size (look m x) <= B.
   Proof.
     apply bigO_intro with (c := (c_chk * (L.c_lat + 1))%N).
     intros [[[p rs] m] B] [Hwf [Hrows Hsize]]; cbn [fst snd].
@@ -372,12 +383,11 @@ Module CheckT (L : LATTICE_T) (S : SYSTEM_T L) <: CHECK_T L S.
   Qed.
 
   (** Whole-program checking is linear in the declared occurrences times the row budget. *)
-  Lemma check_complexity : bigO (X := S.prog * kmap S.key L.t * nat)
-    (fun '(p, m, B) => S.wf p /\ forall x, L.size (look m x) <= B)
-    (fun '(p, _, B) => (N.of_nat ((fold_right Nat.add 0
+  Lemma check_complexity :
+    T_check p m ∈ 𝑂((N.of_nat ((fold_right Nat.add 0
         (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)) + 1)%nat) *
       (S.row_work p B + N.of_nat (S.kw p + B) + 1))%N)
-    (fun '(p, m, _) => T_check p m).
+    for (p, m, B) | S.wf p /\ forall x, L.size (look m x) <= B.
   Proof.
     apply bigO_intro with (c := (c_chk * (L.c_lat + 1))%N).
     intros [[p m] B] [Hwf Hsize]; cbn [fst snd].

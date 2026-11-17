@@ -2,6 +2,11 @@
 
     System adapters expose inline codes through the shared key interface.
     For example, a system key uses its existing code for both encoding and equality.
+
+    Main results
+    - [encode_inj] Distinct keys have distinct inline codes.
+    - [eqb_spec] Equality of codes decides equality of system keys.
+
     Builds on: Base.KeySig and Fixpoint.SystemSig. *)
 
 From Stdlib Require Import Bool PArith NArith Lia.

@@ -3,10 +3,16 @@
     A restricted program stores the original program, frozen values and selected rows.
     For example, selecting no source rows still retains any seed rows.
     Shared footprint and binding helpers support checked demand and invalidation.
+
+    Main results
+    - [restrict_complete] Original post-solutions above the seeds satisfy the restriction.
+    - [mk_complexity] Building a restriction is constant time.
+
     Builds on: RestrictSig, SystemSig, CheckSig, MapSig and Trie. *)
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
@@ -519,8 +525,7 @@ Module RestrictT (L : LATTICE_T) (S : LOCAL_SYSTEM_T L).
     Qed.
 
     (** Building a restriction is constant time. *)
-    Lemma mk_complexity : bigO (X := S.prog * list (S.key * L.t) * list S.row) (fun _ => True)
-      (fun _ => 0%N) (fun '(p, fz, rs) => T_mk p fz rs).
+    Lemma mk_complexity : T_mk p fz rs ∈ 𝑂(0%N) for (p, fz, rs).
     Proof.
       exists 1%N; intros [[p fz] rs] _.
       time_unfold @T_mk; reflexivity.

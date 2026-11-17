@@ -2,10 +2,16 @@
 
     Restrictions select rows and seed the values supplied by the frozen domain.
     For example, a selected row can read a previously solved predecessor through a seed.
+
+    Main results
+    - [restrict_complete] Original post-solutions above the seeds satisfy the restriction.
+    - [mk_complexity] Building a restriction is constant time.
+
     Builds on: LatticeSig and SystemSig. *)
 
 From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time BigO.
+From Argent Require Import Time Complexity.
+Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
 
@@ -70,8 +76,7 @@ Module Type RESTRICT_TIME (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)
        fold_right Nat.add 0
         (map (fun xv => S.key_bits (fst xv) + L.size (snd xv) + 1) fz) + 1)%nat))%N.
   (** Building a restriction is constant time. *)
-  Parameter mk_complexity : bigO (X := S.prog * list (S.key * L.t) * list S.row) (fun _ => True)
-    (fun _ => 0%N) (fun '(p, fz, rs) => T_mk p fz rs).
+  Parameter mk_complexity : T_mk p fz rs ∈ 𝑂(0%N) for (p, fz, rs).
 End RESTRICT_TIME.
 
 Module Type RESTRICT_T (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)

@@ -2,10 +2,15 @@
 
     Prepared systems number rows and index all keys that rows may write.
     For example, a row with one side contribution appears in two write-index lists.
+
+    Main results
+    - [prepare_complexity] Preparation is linear in rows and occurrences times the key width.
+
     Builds on: Fixpoint.SystemSig and Base.Trie. *)
 
 From Stdlib Require Import List PArith Arith NArith.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -85,13 +90,13 @@ Module Type INDEXED_TIME (L : LATTICE_T) (S : SYSTEM_T L) (Import I : INDEXED L 
       N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1) +
       N.of_nat (length (S.rows p)) * (S.row_work p 0 + 1)))%N.
   (** Preparation is linear in rows and occurrences times the key width. *)
-  Parameter prepare_complexity : bigO (X := S.prog) (fun p => S.wf p)
-    (fun p => (N.of_nat ((length (S.rows p) +
+  Parameter prepare_complexity :
+    T_prepare p ∈ 𝑂((N.of_nat ((length (S.rows p) +
         fold_right Nat.add 0 (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
           (S.rows p)) + 1)%nat) *
       N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1) +
       N.of_nat (length (S.rows p)) * (S.row_work p 0 + 1))%N)
-    (fun p => T_prepare p).
+    for p | S.wf p.
 End INDEXED_TIME.
 
 Module Type INDEXED_T (L : LATTICE_T) (S : SYSTEM_T L) :=

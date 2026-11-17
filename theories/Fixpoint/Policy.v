@@ -2,10 +2,17 @@
 
     Policy updates select joins or widening at configured heads.
     For example, a stable contribution keeps the counter unchanged.
+
+    Main results
+    - [update_spec] Updates follow the policy's delay and widening head.
+    - [update_complexity] An update is linear in the key, both values, the counter and the
+      widening cost.
+
     Builds on: Fixpoint.PolicySig. *)
 
 From Stdlib Require Import List PArith Arith NArith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import PolicySig.
@@ -238,11 +245,11 @@ Module PolicyT (L : WLATTICE_T) <: POLICY_T L.
   Qed.
 
   (** An update is linear in the key, both values, the counter and the widening cost. *)
-  Lemma update_complexity : bigO (X := policy L.wparam * positive * N * L.t * L.t)
-    (fun _ => True)
-    (fun '(pol, x, cnt, a, b) => N.of_nat (Pos.size_nat x + L.size a + L.size b +
+  Lemma update_complexity :
+    T_update pol x cnt a b ∈
+      𝑂(N.of_nat (Pos.size_nat x + L.size a + L.size b +
         N.size_nat cnt + (L.wunits a + L.wunits b + 1) * L.wsize (wp pol)))
-    (fun '(pol, x, cnt, a, b) => T_update pol x cnt a b).
+    for (pol, x, cnt, a, b).
   Proof.
     apply bigO_intro with (c := (c_pol * (L.c_lat + 1))%N).
     intros [[[[pol x] cnt] a] b] _; cbn [fst snd].

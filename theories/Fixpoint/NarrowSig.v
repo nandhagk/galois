@@ -2,10 +2,20 @@
 
     Narrowing refines a candidate and falls back when checking fails.
     For example, a failed candidate check keeps the input store.
+
+    Main results
+    - [narrow_candidate_spec] The candidate narrows joined contributions only when they lie below
+      the old value.
+    - [narrow_pass_spec] A pass accepts the candidate precisely when its check succeeds.
+    - [refine_spec] Refinement performs the requested number of checked passes.
+    - [narrow_pass_complexity] One pass is linear in the sweep measure of the program.
+    - [refine_complexity] Refinement is linear in the pass count times the sweep measure.
+
     Builds on: Fixpoint.CheckSig and Fixpoint.SystemSig. *)
 
 From Stdlib Require Import List NArith PArith.
-From Argent Require Import BigO.
+From Argent Require Import Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
@@ -92,14 +102,13 @@ Module Type NARROW_TIME (L : WLATTICE_T) (S : SYSTEM_T L) (C : CHECK_T L S)
     (forall x, B.inv p (C.look m x)) ->
     (T_refine p k m <= c_nar * N.of_nat (k + 1) * pass_work p)%N.
   (** One pass is linear in the sweep measure of the program. *)
-  Parameter narrow_pass_complexity : bigO (X := S.prog * kmap S.key L.t)
-    (fun pm => S.wf (fst pm) /\ forall x, B.inv (fst pm) (C.look (snd pm) x))
-    (fun pm => pass_work (fst pm)) (fun pm => T_narrow_pass (fst pm) (snd pm)).
+  Parameter narrow_pass_complexity :
+    T_narrow_pass p m ∈ 𝑂(pass_work p)
+    for (p, m) | S.wf p /\ forall x, B.inv p (C.look m x).
   (** Refinement is linear in the pass count times the sweep measure. *)
-  Parameter refine_complexity : bigO (X := S.prog * nat * kmap S.key L.t)
-    (fun '(p, _, m) => S.wf p /\ forall x, B.inv p (C.look m x))
-    (fun '(p, k, _) => (N.of_nat (k + 1) * pass_work p)%N)
-    (fun '(p, k, m) => T_refine p k m).
+  Parameter refine_complexity :
+    T_refine p k m ∈ 𝑂((N.of_nat (k + 1) * pass_work p)%N)
+    for (p, k, m) | S.wf p /\ forall x, B.inv p (C.look m x).
 End NARROW_TIME.
 
 Module Type NARROW_T (L : WLATTICE_T) (S : SYSTEM_T L) (C : CHECK_T L S) (B : BUDGET L S) :=

@@ -2,10 +2,20 @@
 
     Incremental states retain values between demands and edits.
     For example, an initial state has no stored values.
+
+    Main results
+    - [demand_least] Widening-free demand keeps every stored value below all post-solutions.
+    - [edit_least] Covered edits keep the least-value property on the retained domain.
+    - [value_complexity] Reading a value is linear in the key bits.
+    - [demand_complexity] Demand is linear in the region occurrences times the width, the root
+      bits, the fuel bits and the restricted solve.
+    - [edit_complexity] An edit is linear in the influence mass, the changed rows and the widths.
+
     Builds on: IncrementalSig. *)
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import Code MapSig Trie Loop.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig SolverSig CheckSig PolicySig Indexed.
@@ -11477,8 +11487,8 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Qed.
 
   (** Reading a value is linear in the key bits. *)
-  Lemma value_complexity : bigO (X := state * S.key) (fun _ => True)
-    (fun x => N.of_nat (S.key_bits (snd x))) (fun x => T_value (fst x) (snd x)).
+  Lemma value_complexity :
+    T_value st x ∈ 𝑂(N.of_nat (S.key_bits x)) for (st, x).
   Proof.
     exists c_inc; intros [st x] _; cbn [fst snd].
     pose proof (T_value_le st x) as Hbound.
@@ -11487,15 +11497,13 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
 
   (** Demand is linear in the region occurrences times the width, the root bits, the fuel
       bits and the restricted solve. *)
-  Lemma demand_complexity : bigO (X := S.prog * policy L.wparam * list S.key * N * state)
-    (fun '(p, _, _, _, st) => S.wf p /\ inv p st)
-    (fun '(p, pol, roots, fuel, st) =>
-      (N.of_nat ((fold_right Nat.add 0%nat
+  Lemma demand_complexity :
+    T_demand p pol roots fuel st ∈ 𝑂((N.of_nat ((fold_right Nat.add 0%nat
           (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st)) +
         length roots + 1)%nat) * N.of_nat (width p st + 1) +
        N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)) +
        N.of_nat (N.size_nat fuel) + demand_solver_work p pol roots fuel st)%N)
-    (fun '(p, pol, roots, fuel, st) => T_demand p pol roots fuel st).
+    for (p, pol, roots, fuel, st) | S.wf p /\ inv p st.
   Proof.
     exists c_inc; intros [[[[p pol] roots] fuel] st] [Hwf Hinv].
     eapply N.le_trans; [exact (T_demand_le p pol roots fuel st Hwf Hinv)|].
@@ -11504,14 +11512,13 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Qed.
 
   (** An edit is linear in the influence mass, the changed rows and the widths. *)
-  Lemma edit_complexity : bigO (X := S.prog * S.prog * list S.row * state)
-    (fun '(p, p', ch, st) => S.wf p /\ S.wf p' /\ state_ok st /\
-       forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p'))
-    (fun '(p, p', ch, st) => (N.of_nat ((infl_mass st +
+  Lemma edit_complexity :
+    T_edit p p' ch st ∈ 𝑂((N.of_nat ((infl_mass st +
         fold_right Nat.add 0%nat (map (fun r => length (S.writes p r) + length (S.writes p' r) +
           length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
       N.of_nat (width p st + width p' st + kwidth st + 1))%N)
-    (fun '(p, p', ch, st) => T_edit p p' ch st).
+    for (p, p', ch, st) | S.wf p /\ S.wf p' /\ state_ok st /\
+       forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p').
   Proof.
     exists c_inc; intros [[[p p'] ch] st] [Hwf [Hwf' [Hstate Hlisted]]].
     eapply N.le_trans; [exact (T_edit_le p p' ch st Hwf Hwf' Hstate Hlisted)|].

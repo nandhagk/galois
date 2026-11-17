@@ -2,6 +2,16 @@
 
     Systems describe rows and the keys each row may read or write.
     For example, a row can read a predecessor and contribute to its target and an alarm key.
+
+    Main results
+    - [key_eqb_spec] Key equality decides equality of system keys.
+    - [rows_of_spec] The index lists exactly the rows that may write the requested key.
+
+    Glossary
+    - [vsize] A bound on the size of every value that satisfies the client's invariant.
+    - [wunits] A bound on the widened components of every such value.
+    - [wmax] A bound on the widening rank of every such value, for each widening parameter.
+
     Builds on: Fixpoint.Query and Lattice.LatticeSig. *)
 
 From Stdlib Require Import List PArith NArith Bool.

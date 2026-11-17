@@ -2,10 +2,18 @@
 
     Certification checks solved candidates before applying checked narrowing.
     For example, a failed initial check returns [Rejected Check_failed].
+
+    Main results
+    - [analyze_spec] Certification checks solved candidates and keeps the other solver outcomes.
+    - [analyze_sound] Every certified solved candidate is a post-solution.
+    - [analyze_complexity] Certification is linear in the solver clock and the work of a solved
+      candidate.
+
     Builds on: Fixpoint.SolverSig, Fixpoint.CheckSig and Fixpoint.NarrowSig. *)
 
 From Stdlib Require Import NArith.
-From Argent Require Import BigO.
+From Argent Require Import Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig PolicySig SolverSig CheckSig NarrowSig.
@@ -54,9 +62,9 @@ Module Type CERTIFIED_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
     (T_analyze p pol fuel <= c_cert *
       (V.T_run p pol fuel + candidate_work p pol fuel + 1))%N.
   (** Certification is linear in the solver clock and the work of a solved candidate. *)
-  Parameter analyze_complexity : bigO (X := S.prog * policy L.wparam * N) (fun _ => True)
-    (fun '(p, pol, fuel) => (V.T_run p pol fuel + candidate_work p pol fuel)%N)
-    (fun '(p, pol, fuel) => T_analyze p pol fuel).
+  Parameter analyze_complexity :
+    T_analyze p pol fuel ∈ 𝑂((V.T_run p pol fuel + candidate_work p pol fuel)%N)
+    for (p, pol, fuel).
 End CERTIFIED_TIME.
 
 Module Type CERTIFIED_T (L : WLATTICE_T) (S : SYSTEM_T L)
