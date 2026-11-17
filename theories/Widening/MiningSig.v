@@ -4,7 +4,7 @@
     For example, a literal 4 contributes 3, 4 and 5.
 
     Main results
-    - [lits_complexity] Literal collection is linear in the term size.
+    - [lits_complexity] Literal collection is linear in the term size, O(tsize e).
     - [mine_complexity] Mining is linear in the terms and seeds plus the cost of building the
       thresholds.
 
