@@ -2,15 +2,34 @@
 
     Polyhedra check Fourier-Motzkin producer results before using them as constraints.
     For example, widening keeps old constraints certified by the new state.
+
+    Main results
+    - [fm_elim_complexity] One elimination is quadratic in the rows.
+    - [entail_cert_complexity] Certificate production follows the Fourier-Motzkin recurrence.
+    - [leb_complexity] Inclusion is one certified check per conclusion.
+    - [join_complexity] Join is two filters of certified checks.
+    - [widen_complexity] Widening is one filter of certified checks.
+
+    Glossary
+    - [n] The number of rows plus the number of distinct variables of a constraint list.
+    - [ell] The largest bit length of a coefficient or constant plus the largest bit length of a
+      variable key, over the rows of a constraint list.
+    - [terms] The number of coefficients stored in all rows of a state.
+    - [nell] ell plus the bit length of the term count.
+    - [mu] The measure of a state, the sum of its terms, n and nell.
+    - [lat] The lattice work for a total measure, which bounds one inclusion, join, widening or
+      narrowing of two states.
+
     Builds on: EnvSig, NumStateSig and LinCertSig. *)
 
 From Stdlib Require Import List ZArith QArith.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig LinCertSig.
+Import ComplexityNotations.
 
 Local Open Scope nat_scope.
 
@@ -94,17 +113,15 @@ Module Type POLY_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         (n P + length (lhs c)) (length P + 1)
         (ell P + C.row_bits c + C.row_key_bits c)))%N.
   (** One elimination is quadratic in the rows. *)
-  Parameter fm_elim_complexity : bigO (fun x : X.t * list (lcons X.t) => normal (snd x))
-    (fun x => N.of_nat (((length (snd x) + 1)^2 * (n (snd x) + length (snd x) + 1) *
-      (ell (snd x) + 1)^2)%nat))
-    (fun x => T_fm_elim (fst x) (snd x)).
+  Parameter fm_elim_complexity :
+    T_fm_elim x cs ∈ 𝑂(N.of_nat (((length cs + 1)^2 * (n cs + length cs + 1) *
+      (ell cs + 1)^2)%nat)) for (x, cs) | normal cs.
   (** Certificate production follows the Fourier-Motzkin recurrence. *)
-  Parameter entail_cert_complexity : bigO
-    (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
-    (fun x => N.of_nat (fmcost (n (fst x) + length (lhs (snd x))) (length (fst x) + 1)
-      (n (fst x) + length (lhs (snd x))) (length (fst x) + 1)
-      (ell (fst x) + C.row_bits (snd x) + C.row_key_bits (snd x))))
-    (fun x => T_entail_cert (fst x) (snd x)).
+  Parameter entail_cert_complexity :
+    T_entail_cert P c ∈ 𝑂(N.of_nat (fmcost (n P + length (lhs c)) (length P + 1)
+      (n P + length (lhs c)) (length P + 1)
+      (ell P + C.row_bits c + C.row_key_bits c)))
+      for (P, c) | normal P /\ normal (c :: nil).
 End POLY_TIME.
 
 Module Type POLY_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
@@ -237,17 +254,14 @@ Module Type POLY_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter T_narrow_plan_le : forall a b,
     (T_narrow a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   (** Inclusion is one certified check per conclusion. *)
-  Parameter leb_complexity : bigO (fun _ : t * t => True)
-    (fun x => N.of_nat (lat (mu (fst x) + mu (snd x))))
-    (fun x => T_leb (fst x) (snd x)).
+  Parameter leb_complexity :
+    T_leb p q ∈ 𝑂(N.of_nat (lat (mu p + mu q))) for (p, q).
   (** Join is two filters of certified checks. *)
-  Parameter join_complexity : bigO (fun _ : t * t => True)
-    (fun x => N.of_nat (lat (mu (fst x) + mu (snd x))))
-    (fun x => T_join (fst x) (snd x)).
+  Parameter join_complexity :
+    T_join p q ∈ 𝑂(N.of_nat (lat (mu p + mu q))) for (p, q).
   (** Widening is one filter of certified checks. *)
-  Parameter widen_complexity : bigO (fun _ : wparam * t * t => True)
-    (fun x => N.of_nat (lat (mu (snd (fst x)) + mu (snd x))))
-    (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter widen_complexity :
+    T_widen w p q ∈ 𝑂(N.of_nat (lat (mu p + mu q))) for (w, p, q).
   (** A range endpoint fits its declared work. *)
   Parameter range_bits_def : forall e s, range_bits e s = range_work e s.
   (** Range work charges the numeric query and its linearization. *)

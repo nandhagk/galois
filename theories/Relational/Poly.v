@@ -2,14 +2,25 @@
 
     Fourier-Motzkin elimination tracks combinations of the input constraints.
     For example, eliminating x from x + y <= 3 and -x <= -1 gives y <= 2.
+
+    Main results
+    - [fm_elim_complexity] One elimination is quadratic in the rows.
+    - [entail_cert_complexity] Certificate production follows the Fourier-Motzkin recurrence.
+    - [leb_complexity] Inclusion is one certified check per conclusion.
+    - [join_complexity] Join is two filters of certified checks.
+    - [widen_complexity] Widening is one filter of certified checks.
+    - [leb_present_complexity] Each already-present target row contributes the direct
+      source-scan bound.
+
     Builds on: PolySig, LinCertSig and the concrete binary trie. *)
 From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring ArithRing Lqa Wf_nat.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig LinCertSig LinCert PolySig.
+Import ComplexityNotations.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 
@@ -6815,18 +6826,16 @@ Module PolyClockLinearize (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
   Qed.
   (** Linearization of a term is linear in its size and bit measure. *)
-  Lemma lin_of_complexity : bigO (fun _ : term L.op X.t => True)
-    (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
-    (fun e => T_lin_of e).
+  Lemma lin_of_complexity :
+    T_lin_of e ∈ 𝑂(N.of_nat ((tsize e * (bits_e e + 1))%nat)) for e.
   Proof.
     apply bigO_intro with (c := 1%N). intros e _.
     time_unfold T_lin_of. lia.
   Qed.
   (** Guard linearization is linear in the operand sizes and bit measure. *)
-  Lemma atoms_of_complexity : bigO (fun _ : L.guard * list (term L.op X.t) => True)
-    (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
-      (bits_es (fst x) (snd x) + 1))%nat))
-    (fun x => T_atoms_of (fst x) (snd x)).
+  Lemma atoms_of_complexity :
+    T_atoms_of g es ∈ 𝑂(N.of_nat (((fold_right Nat.add 0 (map tsize es) + 1) *
+      (bits_es g es + 1))%nat)) for (g, es).
   Proof.
     apply bigO_intro with (c := 1%N). intros [g es] _.
     time_unfold T_atoms_of. lia.
@@ -23132,82 +23141,73 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     reflexivity.
   Qed.
   (** Assignment is linear in its stated numeric work. *)
-  Lemma assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
-    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assign_complexity :
+    T_assign x e s ∈ 𝑂(N.of_nat (assign_work x e s)) for (x, e, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [[x e] s] _.
     pose proof (T_assign_le x e s) as Htime.
     rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
   Qed.
   (** Havoc is linear in its stated numeric work. *)
-  Lemma havoc_complexity : bigO (fun _ : X.t * t => True)
-    (fun x => N.of_nat (havoc_work (fst x) (snd x)))
-    (fun x => T_havoc (fst x) (snd x)).
+  Lemma havoc_complexity :
+    T_havoc x s ∈ 𝑂(N.of_nat (havoc_work x s)) for (x, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [x s] _.
     pose proof (T_havoc_le x s) as Htime.
     rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
   Qed.
   (** Assumption is linear in its stated numeric work. *)
-  Lemma assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
-    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assume_complexity :
+    T_assume g es s ∈ 𝑂(N.of_nat (assume_work g es s)) for (g, es, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [[g es] s] _.
     pose proof (T_assume_le g es s) as Htime.
     rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
   Qed.
   (** A range query is linear in its stated numeric work. *)
-  Lemma range_complexity : bigO (fun _ : term L.op X.t * t => True)
-    (fun x => N.of_nat (range_work (fst x) (snd x)))
-    (fun x => T_range (fst x) (snd x)).
+  Lemma range_complexity :
+    T_range e s ∈ 𝑂(N.of_nat (range_work e s)) for (e, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [e s] _.
     pose proof (T_range_le e s) as Htime.
     rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
   Qed.
   (** One elimination is quadratic in the rows. *)
-  Lemma fm_elim_complexity : bigO (fun x : X.t * list (lcons X.t) => normal (snd x))
-    (fun x => N.of_nat (((length (snd x) + 1)^2 * (n (snd x) + length (snd x) + 1) *
-      (ell (snd x) + 1)^2)%nat))
-    (fun x => T_fm_elim (fst x) (snd x)).
+  Lemma fm_elim_complexity :
+    T_fm_elim x P ∈ 𝑂(N.of_nat (((length P + 1)^2 * (n P + length P + 1) *
+      (ell P + 1)^2)%nat)) for (x, P) | normal P.
   Proof.
     apply bigO_intro with (c := c_poly). intros [x P] Hnormal.
     pose proof (T_fm_elim_le x P Hnormal) as Htime.
     cbn [fst snd]. rewrite !Nat2N.inj_mul. nia.
   Qed.
   (** Certificate production follows the Fourier-Motzkin recurrence. *)
-  Lemma entail_cert_complexity : bigO
-    (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
-    (fun x => N.of_nat (fmcost (n (fst x) + length (lhs (snd x))) (length (fst x) + 1)
-      (n (fst x) + length (lhs (snd x))) (length (fst x) + 1)
-      (ell (fst x) + C.row_bits (snd x) + C.row_key_bits (snd x))))
-    (fun x => T_entail_cert (fst x) (snd x)).
+  Lemma entail_cert_complexity :
+    T_entail_cert P c ∈ 𝑂(N.of_nat (fmcost (n P + length (lhs c)) (length P + 1)
+      (n P + length (lhs c)) (length P + 1)
+      (ell P + C.row_bits c + C.row_key_bits c)))
+      for (P, c) | normal P /\ normal (c :: nil).
   Proof.
     apply bigO_intro with (c := c_poly). intros [P c] [HP Hc].
     pose proof (T_entail_cert_le P c HP Hc) as Htime. cbn [fst snd]. nia.
   Qed.
   (** Inclusion is one certified check per conclusion. *)
-  Lemma leb_complexity : bigO (fun _ : t * t => True)
-    (fun x => N.of_nat (lat (mu (fst x) + mu (snd x))))
-    (fun x => T_leb (fst x) (snd x)).
+  Lemma leb_complexity :
+    T_leb p q ∈ 𝑂(N.of_nat (lat (mu p + mu q))) for (p, q).
   Proof.
     apply bigO_intro with (c := k_poly). intros [a b] _.
     pose proof (T_leb_plan_le a b) as Htime. cbn [fst snd]. lia.
   Qed.
   (** Join is two filters of certified checks. *)
-  Lemma join_complexity : bigO (fun _ : t * t => True)
-    (fun x => N.of_nat (lat (mu (fst x) + mu (snd x))))
-    (fun x => T_join (fst x) (snd x)).
+  Lemma join_complexity :
+    T_join p q ∈ 𝑂(N.of_nat (lat (mu p + mu q))) for (p, q).
   Proof.
     apply bigO_intro with (c := k_poly). intros [a b] _.
     pose proof (T_join_plan_le a b) as Htime. cbn [fst snd]. lia.
   Qed.
   (** Widening is one filter of certified checks. *)
-  Lemma widen_complexity : bigO (fun _ : wparam * t * t => True)
-    (fun x => N.of_nat (lat (mu (snd (fst x)) + mu (snd x))))
-    (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma widen_complexity :
+    T_widen w p q ∈ 𝑂(N.of_nat (lat (mu p + mu q))) for (w, p, q).
   Proof.
     apply bigO_intro with (c := k_poly). intros [[p a] b] _.
     pose proof (T_widen_plan_le p a b) as Htime. cbn [fst snd]. lia.
