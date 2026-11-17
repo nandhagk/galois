@@ -11,10 +11,13 @@
     - [ShiftTests] Left, logical and arithmetic shifts at and beyond the width.
     - [ComparisonTests] Unsigned and signed comparisons at boundaries.
     - [PopcountTests] Population counts, and the steps of the digit traversal.
+    - [OperationTests] Division by zero, shifts by the width and population counts at fixed widths.
+    - [WidthOneTests] Negation, signed value and bit counts at width one.
     - [SymbolicTests] General facts about the operations, for any width. *)
 
-From Stdlib Require Import ZArith.
+From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Word Fun.
+Import List.ListNotations.
 
 Open Scope Z_scope.
 
@@ -228,84 +231,34 @@ End DivisionTests.
 
 Module ShiftTests.
 
-  (** Shifting left by zero keeps the word. *)
-  Example width8_shl_by_zero : wshl 8%positive 129 0 = 129.
+  (** Left shifts at width eight, as (word, amount, result). An amount is reduced to the width
+      range, so -1 clears the word, 256 shifts by zero and 257 shifts by one. *)
+  Definition shl_cases : list (Z * Z * Z) :=
+    [(129, 0, 129); (129, 7, 128); (129, 8, 0); (-1, -1, 0); (257, 256, 1); (257, 257, 2)].
+
+  (** Logical right shifts at width eight, as (word, amount, result). *)
+  Definition lshr_cases : list (Z * Z * Z) :=
+    [(129, 0, 129); (129, 7, 1); (129, 8, 0); (-1, -1, 0); (257, 256, 1); (258, 257, 1)].
+
+  (** Arithmetic right shifts at width eight, as (word, amount, result). A negative word fills
+      with ones, a positive word with zeros, and an amount is reduced as for the other shifts. *)
+  Definition ashr_cases : list (Z * Z * Z) :=
+    [(-127, 0, 129); (-127, 7, 255); (-127, 8, 255); (127, 8, 0); (-1, -1, 255); (127, -1, 0);
+     (384, 256, 128); (384, 257, 192)].
+
+  (** Left shift agrees with every case of its table. *)
+  Example left_shift_boundaries :
+    forallb (fun c => let '(x, n, r) := c in Z.eqb (wshl 8%positive x n) r) shl_cases = true.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Shifting left by seven keeps only the lowest bit. *)
-  Example width8_shl_by_seven : wshl 8%positive 129 7 = 128.
+  (** Logical right shift agrees with every case of its table. *)
+  Example logical_right_shift_boundaries :
+    forallb (fun c => let '(x, n, r) := c in Z.eqb (wlshr 8%positive x n) r) lshr_cases = true.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Shifting left by the width clears the word. *)
-  Example width8_shl_by_width_clears : wshl 8%positive 129 8 = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A negative shift amount normalizes to a large amount that clears the word. *)
-  Example width8_shl_negative_amount_clears : wshl 8%positive (-1) (-1) = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A shift amount of 256 normalizes to zero. *)
-  Example width8_shl_by_256_is_no_shift : wshl 8%positive 257 256 = 1.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A shift amount of 257 normalizes to one. *)
-  Example width8_shl_by_257_shifts_once : wshl 8%positive 257 257 = 2.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Logical right shift by zero keeps the word. *)
-  Example width8_lshr_by_zero : wlshr 8%positive 129 0 = 129.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Logical right shift by seven keeps the top bit as one. *)
-  Example width8_lshr_by_seven : wlshr 8%positive 129 7 = 1.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Logical right shift by the width clears the word. *)
-  Example width8_lshr_by_width_clears : wlshr 8%positive 129 8 = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A negative logical shift amount normalizes to a clearing amount. *)
-  Example width8_lshr_negative_amount_clears : wlshr 8%positive (-1) (-1) = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A logical shift by 256 normalizes to zero. *)
-  Example width8_lshr_by_256_is_no_shift : wlshr 8%positive 257 256 = 1.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A logical shift by 257 normalizes to one. *)
-  Example width8_lshr_by_257_shifts_once : wlshr 8%positive 258 257 = 1.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Arithmetic right shift by zero keeps the negative word. *)
-  Example width8_ashr_by_zero_keeps_negative : washr 8%positive (-127) 0 = 129.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Arithmetic right shift by seven fills the word with the sign bit. *)
-  Example width8_ashr_by_seven_fills_sign : washr 8%positive (-127) 7 = 255.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Arithmetic right shift by the width fills a negative word with the sign bit. *)
-  Example width8_ashr_by_width_fills_sign : washr 8%positive (-127) 8 = 255.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Arithmetic right shift by the width clears a positive word. *)
-  Example width8_ashr_by_width_clears_positive : washr 8%positive 127 8 = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A negative arithmetic shift amount normalizes to a sign-filling amount. *)
-  Example width8_ashr_negative_amount_fills_sign : washr 8%positive (-1) (-1) = 255.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** A positive word shifted by a negative amount normalizes to a clearing amount. *)
-  Example width8_ashr_positive_negative_amount_clears : washr 8%positive 127 (-1) = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** An arithmetic shift by 256 normalizes to zero. *)
-  Example width8_ashr_by_256_is_no_shift : washr 8%positive 384 256 = 128.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** An arithmetic shift by 257 normalizes to one. *)
-  Example width8_ashr_by_257_shifts_once : washr 8%positive 384 257 = 192.
+  (** Arithmetic right shift agrees with every case of its table. *)
+  Example arithmetic_right_shift_boundaries :
+    forallb (fun c => let '(x, n, r) := c in Z.eqb (washr 8%positive x n) r) ashr_cases = true.
   Proof. vm_compute. reflexivity. Qed.
 
   (** Width one left shift by one clears the word. *)
@@ -320,7 +273,7 @@ Module ShiftTests.
   Example width1_ashr_by_one_keeps_word : washr 1%positive 1 1 = 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A shift by the width or more with a symbolic amount is checked in the symbolic tests. *)
+  (** Left and logical right shifts of 129 by the width clear the word. *)
   Example shift_by_amounts_over_width_fill_or_clear :
     wshl 8%positive 129 8 = 0 /\ wlshr 8%positive 129 8 = 0.
   Proof. vm_compute. repeat split. Qed.
@@ -331,68 +284,41 @@ End ShiftTests.
 
 Module ComparisonTests.
 
-  (** Unsigned less-than orders one below two. *)
-  Example width8_ult_ordinary : wult 8%positive 1 2 = true.
+  (** Unsigned less-than at width eight, as (left, right, result). Negative and above-modulus
+      operands are normalized before comparing, so -1 is 255 and 256 is 0. *)
+  Definition ult_cases : list (Z * Z * bool) :=
+    [(1, 2, true); (-1, 0, false); (256, 257, true); (255, -1, false)].
+
+  (** Unsigned less-or-equal at width eight, as (left, right, result). *)
+  Definition ule_cases : list (Z * Z * bool) :=
+    [(1, 2, true); (-1, 0, false); (255, -1, true); (256, 0, true)].
+
+  (** Signed less-than at width eight, as (left, right, result). The word 128 is the minimum. *)
+  Definition slt_cases : list (Z * Z * bool) :=
+    [(-1, 0, true); (127, 128, false); (384, 127, true); (255, -1, false)].
+
+  (** Signed less-or-equal at width eight, as (left, right, result). *)
+  Definition sle_cases : list (Z * Z * bool) :=
+    [(-1, 0, true); (127, 128, false); (255, -1, true); (256, 0, true)].
+
+  (** Unsigned less-than agrees with every case of its table. *)
+  Example unsigned_less_than_boundaries :
+    forallb (fun c => let '(x, y, r) := c in Bool.eqb (wult 8%positive x y) r) ult_cases = true.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Unsigned less-than normalizes negative one to 255, which is not below zero. *)
-  Example width8_ult_negative_one_not_below_zero : wult 8%positive (-1) 0 = false.
+  (** Unsigned less-or-equal agrees with every case of its table. *)
+  Example unsigned_less_or_equal_boundaries :
+    forallb (fun c => let '(x, y, r) := c in Bool.eqb (wule 8%positive x y) r) ule_cases = true.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Unsigned less-than normalizes above-modulus operands before comparing. *)
-  Example width8_ult_normalizes_above_modulus : wult 8%positive 256 257 = true.
+  (** Signed less-than agrees with every case of its table. *)
+  Example signed_less_than_boundaries :
+    forallb (fun c => let '(x, y, r) := c in Bool.eqb (wslt 8%positive x y) r) slt_cases = true.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Unsigned 255 is not below negative one, which normalizes to 255. *)
-  Example width8_ult_255_not_below_negative_one : wult 8%positive 255 (-1) = false.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Unsigned less-or-equal orders one below two. *)
-  Example width8_ule_ordinary : wule 8%positive 1 2 = true.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Unsigned less-or-equal rejects negative one against zero. *)
-  Example width8_ule_negative_one_not_below_zero : wule 8%positive (-1) 0 = false.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Unsigned 255 is at most negative one, which normalizes to 255. *)
-  Example width8_ule_255_at_most_negative_one : wule 8%positive 255 (-1) = true.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Unsigned 256 normalizes to zero, which is at most zero. *)
-  Example width8_ule_256_at_most_zero : wule 8%positive 256 0 = true.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Signed less-than puts negative one below zero. *)
-  Example width8_slt_negative_below_zero : wslt 8%positive (-1) 0 = true.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Signed less-than puts 127 above the minimum 128. *)
-  Example width8_slt_127_not_below_minimum : wslt 8%positive 127 128 = false.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Signed less-than normalizes an above-modulus operand before comparing. *)
-  Example width8_slt_normalizes_above_modulus : wslt 8%positive 384 127 = true.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Signed 255 is not below signed negative one. *)
-  Example width8_slt_255_not_below_negative_one : wslt 8%positive 255 (-1) = false.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Signed less-or-equal puts negative one at or below zero. *)
-  Example width8_sle_negative_at_most_zero : wsle 8%positive (-1) 0 = true.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Signed less-or-equal puts 127 above the minimum 128. *)
-  Example width8_sle_127_not_at_most_minimum : wsle 8%positive 127 128 = false.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Signed 255 is at most signed negative one. *)
-  Example width8_sle_255_at_most_negative_one : wsle 8%positive 255 (-1) = true.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Signed 256 normalizes to zero, which is at most zero. *)
-  Example width8_sle_256_at_most_zero : wsle 8%positive 256 0 = true.
+  (** Signed less-or-equal agrees with every case of its table. *)
+  Example signed_less_or_equal_boundaries :
+    forallb (fun c => let '(x, y, r) := c in Bool.eqb (wsle 8%positive x y) r) sle_cases = true.
   Proof. vm_compute. reflexivity. Qed.
 
   (** Width one unsigned order puts zero below one. *)
@@ -509,10 +435,6 @@ Module WidthOneTests.
   Example width1_not_one_is_zero : wnot 1%positive 1 = 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Negation of one at width one is one. *)
-  Example width1_neg_one_is_one : wneg 1%positive 1 = 1.
-  Proof. vm_compute. reflexivity. Qed.
-
   (** The signed value of the word one at width one is negative one. *)
   Example width1_one_signed_is_negative_one : signed 1%positive 1 = -1.
   Proof. vm_compute. reflexivity. Qed.
@@ -523,10 +445,6 @@ Module WidthOneTests.
 
   (** Count of trailing zeros of one at width one is zero. *)
   Example width1_ctz_of_one_is_zero : wctz 1%positive 1 = 0.
-  Proof. vm_compute. reflexivity. Qed.
-
-  (** Population count of one at width one is one. *)
-  Example width1_popcount_of_one_is_one : wpopcnt 1%positive 1 = 1.
   Proof. vm_compute. reflexivity. Qed.
 
 End WidthOneTests.
