@@ -2,6 +2,10 @@
 
     A widening-free run retains values below every post-solution of its monotone system.
     For example, arbitrary priorities can change visit order without changing this bound.
+
+    Main results
+    - [run_least] A solved widening-free candidate lies below every post-solution.
+
     Builds on: WorklistCode, SolverSig, PolicySig, LatticeSig, Trie and Argent.Loop. *)
 
 From Stdlib Require Import List Bool PArith NArith.

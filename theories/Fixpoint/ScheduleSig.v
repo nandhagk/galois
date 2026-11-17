@@ -4,8 +4,9 @@
     For example, a self-dependency requires its target to be a head.
 
     Main results
-    - [plan_spec] Planning accepts a built WTO only when its checker accepts it.
-    - [cuts_spec] Every non-increasing dependency edge enters a configured head.
+    - [plan_spec] Planning returns the converted WTO exactly when the checker accepts the built WTO.
+    - [cuts_spec] A policy cuts exactly when every non-increasing dependency edge enters a
+      configured head.
     - [dep_graph_complexity] Dependency graph construction is linear in occurrences and edges.
     - [cuts_complexity] Cut checking is linear in occurrences times the key and priority widths.
     - [plan_complexity] Planning is linear in occurrences and edges times the nesting depth.
@@ -71,13 +72,13 @@ Module Type SCHEDULE_LAWS (L : WLATTICE) (S : SYSTEM L)
   Parameter of_wto_wp : forall w cfg wp n, PolicySig.wp (of_wto w cfg wp n) = wp.
   (** Schedule construction retains the requested narrowing pass count. *)
   Parameter of_wto_passes : forall w cfg wp n, passes (of_wto w cfg wp n) = n.
-  (** Planning accepts a built WTO only when its checker accepts it. *)
+  (** Planning returns the converted WTO exactly when the checker accepts the built WTO. *)
   Parameter plan_spec : forall p cfg wp n,
     let g := G.prepare (dep_graph p) in
     let roots := verts (dep_graph p) in
     let w := W.build g roots in
     plan p cfg wp n = if W.check g roots w then Some (of_wto w cfg wp n) else None.
-  (** Every non-increasing dependency edge enters a configured head. *)
+  (** A policy cuts exactly when every non-increasing dependency edge enters a configured head. *)
   Parameter cuts_spec : forall p pol,
     cuts p pol = true <-> forall u v, dependency_edge p u v ->
       (priority pol u < priority pol v)%positive \/

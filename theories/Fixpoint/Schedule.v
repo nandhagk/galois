@@ -4,8 +4,9 @@
     For example, a self-dependency requires its target to be a widening head.
 
     Main results
-    - [plan_spec] Planning accepts a built WTO only when its checker accepts it.
-    - [cuts_spec] Every non-increasing dependency edge enters a configured head.
+    - [plan_spec] Planning returns the converted WTO exactly when the checker accepts the built WTO.
+    - [cuts_spec] A policy cuts exactly when every non-increasing dependency edge enters a
+      configured head.
     - [dep_graph_complexity] Dependency graph construction is linear in occurrences and edges.
     - [cuts_complexity] Cut checking is linear in occurrences times the key and priority widths.
     - [plan_complexity] Planning is linear in occurrences and edges times the nesting depth.
@@ -1085,7 +1086,7 @@ Module Schedule (L : WLATTICE) (S : SYSTEM L) (G : DIGRAPH) (W : WTO)
   Proof.
     reflexivity.
   Qed.
-  (** Planning accepts a built WTO only when its checker accepts it. *)
+  (** Planning returns the converted WTO exactly when the checker accepts the built WTO. *)
   Lemma plan_spec : forall p cfg wp n,
     let g := G.prepare (dep_graph p) in
     let roots := verts (dep_graph p) in
@@ -1094,7 +1095,7 @@ Module Schedule (L : WLATTICE) (S : SYSTEM L) (G : DIGRAPH) (W : WTO)
   Proof.
     reflexivity.
   Qed.
-  (** Every non-increasing dependency edge enters a configured head. *)
+  (** A policy cuts exactly when every non-increasing dependency edge enters a configured head. *)
   Lemma cuts_spec : forall p pol,
     cuts p pol = true <-> forall u v, dependency_edge p u v ->
       (priority pol u < priority pol v)%positive \/

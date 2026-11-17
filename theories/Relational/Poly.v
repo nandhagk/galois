@@ -6621,7 +6621,8 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
   Proof.
-    intros a b Hle. split; [|exact Hle]. apply leb_complete_rational. intros v Hmodels. exact Hmodels.
+    intros a b Hle. split; [|exact Hle].
+    apply leb_complete_rational. intros v Hmodels. exact Hmodels.
   Qed.
   Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
   Proof.
@@ -23526,16 +23527,14 @@ Module PolyPresent (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition poly_present_factor : N := (poly_present_keep_factor + 8)%N.
 
   (** Each already-present target row contributes the direct source-scan bound. *)
-  Theorem leb_present_complexity : bigO
-    (fun x : Core.t * Core.t => match fst x, snd x with
-      | Unreached, _ => True
-      | Reached P, Reached Q => incl Q P
-      | Reached _, Unreached => False
-      end)
-    (fun x => N.of_nat ((length (Core.prows (snd x)) + 1) *
-      (Core.terms (fst x) + length (Core.prows (fst x)) + 1) *
-      (Core.nell (fst x) + Core.nell (snd x) + 1)))
-    (fun x => Core.T_leb (fst x) (snd x)).
+  Theorem leb_present_complexity :
+    Core.T_leb a b ∈ 𝑂(N.of_nat ((length (Core.prows b) + 1) *
+      (Core.terms a + length (Core.prows a) + 1) * (Core.nell a + Core.nell b + 1)))
+      for (a, b) | (match a, b with
+        | Unreached, _ => True
+        | Reached P, Reached Q => incl Q P
+        | Reached _, Unreached => False
+        end).
   Proof.
     apply bigO_intro with (c := poly_present_factor).
     intros [[|P] [|Q]] Hin; cbn [fst snd] in Hin |- *; try contradiction.

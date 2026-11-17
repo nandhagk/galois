@@ -471,8 +471,6 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Qed.
 
   (** An unstable widening from a nonbottom strictly decreases rank. *)
-  (* F2-22 replaced the former twoStateDisj aligned-pair rank route with uncovered
-     alternatives, and F2-30 supplies the size and widening-unit capabilities it needs. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
   Proof.

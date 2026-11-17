@@ -2,8 +2,9 @@
 
     The solver prepares row and reader indexes and tracks live queue entries.
     For example, repeated reads by one row enqueue that row once per change.
+
     Main results
-    - [run_complexity] Running at sufficient fuel has the published work bound.
+    - [run_complexity] Running at sufficient fuel costs O(work) on fitting inputs.
 
     Builds on: Fixpoint.WorklistSig and Base.Loop. *)
 
@@ -2289,7 +2290,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       end = loopN (reference_step p pol) fuel (wl_view (prepare p pol))).
     { apply (loopN_view (step p pol) (reference_step p pol) wl_view (prepared p pol)).
       - intros s Hprepared; exact (step_reference_agrees p pol s Hprepared).
-      - intros s s1 Hprepared Hstep; exact (proj1 (step_prepared_preserved p pol s s1 Hprepared Hstep)).
+      - intros s s1 Hprepared Hstep;
+        exact (proj1 (step_prepared_preserved p pol s s1 Hprepared Hstep)).
       - apply prepare_prepared. }
     unfold run; rewrite <- Hview.
     destruct (loopN (step p pol) fuel (prepare p pol)); reflexivity.
@@ -2602,7 +2604,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     now apply Hranks.
   Qed.
   (** Every continuing callback keeps the structural and client value invariants. *)
-  Lemma step_invariant_preserved : forall p pol s s1, S.wf p -> prio_ok p pol -> invariant p pol s ->
+  Lemma step_invariant_preserved : forall p pol s s1,
+    S.wf p -> prio_ok p pol -> invariant p pol s ->
     step p pol s = inl s1 -> invariant p pol s1.
   Proof.
     intros p pol s s1 Hwf Hprio Hinv Hstep.
@@ -2623,7 +2626,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - constructor; assumption.
   Qed.
   (** Each intermediate primary or side update keeps the same invariant. *)
-  Lemma update_one_invariant_preserved : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
+  Lemma update_one_invariant_preserved : forall p pol s x a,
+    S.wf p -> prio_ok p pol -> invariant p pol s ->
     B.inv p a -> In (S.key_code x) (key_support p) ->
     invariant p pol (update_one p pol s (x, a)).
   Proof.
@@ -4358,7 +4362,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     clear -Hlists' Hindex Htop Htop_rows Hranks Hfst Hsnd Hcoefficient; nia.
   Qed.
 
-  (** W1 charges indexing, numbering and initial guarded enqueue to preparation. *)
+  (** Preparation pays for indexing, numbering and the initial guarded enqueue. *)
   Lemma T_prepare_le : forall p pol, S.wf p -> prio_ok p pol ->
     (T_prepare p pol <= k_prepare * (N.of_nat (prep p) + N.of_nat (C p) * unit p + 1))%N.
   Proof.
@@ -4401,7 +4405,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       + clear -Hcost Hmul; nia.
       + apply N.mul_le_mono_r, N.mul_le_mono_r; unfold c_enqueue, k_prepare; nia.
   Qed.
-  (** W2 charges every dependency-resume occurrence on invariant stores. *)
+  (** Evaluating a row charges each dependency that it resumes, on invariant stores. *)
   Lemma T_eval_row_le : forall p pol r s, S.wf p -> In r (S.rows p) -> invariant p pol s ->
     (T_eval_row p r (ws_store s) <=
       k_eval * N.of_nat (length (S.deps p r) + length (S.sides p r) + 1) * unit p)%N.
@@ -4447,7 +4451,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     eapply N.le_trans; [exact Hcost|].
     unfold c_enqueue, k_update; nia.
   Qed.
-  (** W3 keeps the value invariant and charges reader pushes against queue potential. *)
+  (** An update keeps the value invariant and pays for reader pushes from the queue potential. *)
   Lemma T_update_one_amort : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
     B.inv p a -> In (S.key_code x) (key_support p) ->
     B.inv p (look (update_one p pol s (x, a)) x) /\
@@ -4456,7 +4460,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       k_update * strict_head_work pol s x a + queue_phi p s)%N.
   Proof.
     intros p pol s x a Hwf Hprio Hinv Ha Hsupport; split.
-    - exact (proj1 (proj2 (update_one_invariant_preserved p pol s x a Hwf Hprio Hinv Ha Hsupport)) x).
+    - exact (proj1 (proj2
+        (update_one_invariant_preserved p pol s x a Hwf Hprio Hinv Ha Hsupport)) x).
     - now apply T_update_queue_bound.
   Qed.
   (** Callback accounting retains every emitted occurrence and every intermediate update cost. *)
@@ -5087,8 +5092,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - rewrite credit_sum_scale; apply Nat.mul_le_mono_l; apply support_incidence_bound.
   Qed.
 
-  (** W4 spends weighted rank credit for each callback in a widening-free run. *)
-  Lemma T_step_height_credit : forall p pol rk h s s1, S.wf p -> prio_ok p pol -> widening_free pol ->
+  (** In a widening-free run, each step spends weighted rank credit for its callbacks. *)
+  Lemma T_step_height_credit : forall p pol rk h s s1,
+    S.wf p -> prio_ok p pol -> widening_free pol ->
     (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
       rk a < rk b /\ rk b <= h) ->
     reachable p pol s -> step p pol s = inl s1 ->
@@ -5368,7 +5374,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - destruct (heads_unchanged_fold_cons p pol (x, a) outs s Hstable)
         as [Hfirst Htail].
       cbn [fold_left] in Hlive.
-      destruct (IH (update_one p pol s (x, a)) (update_one_prepared_preserved p pol s (x, a) Hprepared)
+      destruct (IH (update_one p pol s (x, a))
+        (update_one_prepared_preserved p pol s (x, a) Hprepared)
         Htail id pr Hlive) as [[old Hold]|[y [b [Hin [Hhead Hreader]]]]].
       + destruct (update_queue_sources p pol s x a id old Hprepared Hold)
           as [Hbefore|[Hstrict Hreader]].
@@ -6201,7 +6208,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     unfold k_round; clear -Hcost Hrow_cost Hscan_cost; nia.
   Qed.
 
-  (** W5 uses cuts to bound each numbered row's visits between strict head updates. *)
+  (** Between strict head updates, cuts bound the visits of each numbered row. *)
   Lemma stable_segment_round_cost : forall p pol s xs last,
     fits p pol -> reachable p pol s ->
     wl_path (step p pol) s xs last -> stable_segment p pol xs ->
@@ -6398,7 +6405,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       specialize (IH Htail); lia.
   Qed.
 
-  (** W6 bounds every finite prefix's strict head events by the advertised round count. *)
+  (** The strict head events of every finite prefix are at most the advertised round count. *)
   Lemma head_events_le_rounds : forall p pol xs last, S.wf p -> prio_ok p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     head_events pol (prepare p pol) last + 1 <= rounds p pol /\
@@ -7025,7 +7032,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     Qed.
   End TraceComposition.
 
-  (** W7 charges arbitrary finite prefixes by partitioning at strict head events. *)
+  (** Partitioning a finite prefix at its strict head events bounds its cost by the work bound. *)
   Lemma trace_cost_le_work : forall p pol xs last, fits p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
@@ -7334,7 +7341,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma fuel_for_def : forall p pol,
     (fuel_for p pol = k_fuel * N.of_nat ((C p + D p) * rounds p pol + 1))%N.
   Proof. reflexivity. Qed.
-  (** W7 connects the derived solver time to preparation and the derived binary-loop time. *)
+  (** The derived solver time splits into preparation and the derived binary-loop time. *)
   Lemma T_run_split : forall p pol fuel,
     (T_run p pol fuel <= k_loop * (T_prepare p pol +
       T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) + 1))%N.
@@ -7477,7 +7484,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma reachable_head_capped : forall p pol s, S.wf p -> prio_ok p pol ->
     reachable p pol s -> head_capped p pol s.
   Proof.
-    intros p pol s Hwf Hprio [xs Hpath]; exact (proj2 (head_events_le_rounds p pol xs s Hwf Hprio Hpath)).
+    intros p pol s Hwf Hprio [xs Hpath];
+      exact (proj2 (head_events_le_rounds p pol xs s Hwf Hprio Hpath)).
   Qed.
 
   (** Other support codes retain their remaining head-update allowance. *)
