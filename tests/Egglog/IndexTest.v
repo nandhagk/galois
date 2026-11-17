@@ -1,4 +1,4 @@
-(** * Stored tuple index regressions
+(** * Stored tuple index observations
 
     These examples exercise prefix sharing, duplicate insertion and deletion.
     For example, deleting one tuple leaves another tuple with the same first cell live.
@@ -98,8 +98,8 @@ Module InsertTests.
   (** The two triples that share a prefix, and the index that holds both. *)
   Definition triple_first := [Val 2; Val 3; Val 7].
   Definition triple_second := [Val 2; Val 5; Val 11].
-  Definition triple_index :=
-    RuntimeIndex.insert triple_second (RuntimeIndex.insert triple_first RuntimeIndex.empty).
+  Definition triple_first_index := RuntimeIndex.insert triple_first RuntimeIndex.empty.
+  Definition triple_index := RuntimeIndex.insert triple_second triple_first_index.
 
   (** The first triple is a member of the index after both insertions. *)
   Example first_triple_is_member :
@@ -171,11 +171,10 @@ Module InsertTests.
 
   (** The fresh two-cell suffix gives the same state as the step-by-step walk. *)
   Example fresh_suffix_matches_step_reference :
-    RuntimeIndex.insert triple_second (RuntimeIndex.insert triple_first RuntimeIndex.empty) =
-      RuntimeIndex.insert_finish triple_second
-        (RuntimeIndex.insert triple_first RuntimeIndex.empty)
+    triple_index =
+      RuntimeIndex.insert_finish triple_second triple_first_index
         (fold_left RuntimeIndex.insert_step_st triple_second
-          (RuntimeIndex.start (RuntimeIndex.insert triple_first RuntimeIndex.empty))).
+          (RuntimeIndex.start triple_first_index)).
   Proof.
     vm_compute. reflexivity.
   Qed.
