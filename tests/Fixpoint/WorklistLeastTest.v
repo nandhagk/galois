@@ -2,6 +2,12 @@
 
     A repeated-row Boolean system checks the leastness certificate and concrete solver results.
     For example, repeated side contributions stay below every accepting post-solution.
+
+    Groups:
+    - Fixtures: a Boolean lattice with its laws, and a system with repeated side contributions.
+    - Leastness contract: the certificate's laws and the bound that an importing client gets.
+    - Solver: the concrete solver results on the system, with and without fuel.
+
     Builds on: WorklistLeast, Worklist, Policy and Heap. *)
 
 From Stdlib Require Import List Bool PArith NArith Lia.
@@ -12,6 +18,8 @@ From Galois.Fixpoint Require Import Query SystemSig PolicySig SolverSig Policy W
   WorklistLeast.
 
 Import List.ListNotations.
+
+(** * Fixtures *)
 
 Module LeastBool <: WLATTICE.
   Definition t := bool.
@@ -190,6 +198,8 @@ Module LeastPolicy := Policy LeastBool.
 Module LeastProof := WorklistCodeLeast LeastBool LeastBoolLub RepeatedSides LeastPolicy HeapCode.
 Module LeastSolver := LeastProof.V.
 
+(** * Leastness contract *)
+
 (** The certificate implements the frozen interface for its concrete solver instance. *)
 Module LeastContract <: SOLVER_LEAST LeastBool LeastBoolLub RepeatedSides LeastSolver.
   Include LeastProof.Certificate.
@@ -207,34 +217,41 @@ Proof.
   intro c; apply PTrie.get_empty.
 Qed.
 
-Definition least_observe (result : outcome (kmap positive bool)) :=
-  match result with
-  | Solved m => Some (map (look_or RepeatedSides.key_code LeastBool.bot m) [1; 2; 3]%positive)
-  | _ => None
-  end.
+(** * Solver *)
 
-(** Repeated rows and side outputs produce true only at their declared destinations. *)
-Example least_repeated_side_values :
-  least_observe (LeastSolver.run true least_large_priorities 8%N) =
-    Some [true; true; false].
-Proof.
-  vm_compute; reflexivity.
-Qed.
+Module SolverTests.
 
-(** Bottom contributions preserve the initial bottom store. *)
-Example least_bottom_values :
-  least_observe (LeastSolver.run false least_large_priorities 8%N) =
-    Some [false; false; false].
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** The values of keys 1, 2 and 3 in a solved result, and None otherwise. *)
+  Definition least_observe (result : outcome (kmap positive bool)) :=
+    match result with
+    | Solved m => Some (map (look_or RepeatedSides.key_code LeastBool.bot m) [1; 2; 3]%positive)
+    | _ => None
+    end.
 
-(** Zero solver fuel returns the actual empty partial store. *)
-Example least_zero_fuel :
-  LeastSolver.run true least_large_priorities 0%N = OutOfFuel PTrieCode.empty.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** Repeated rows and side outputs produce true only at their declared destinations. *)
+  Example repeated_side_values_are_true_at_destinations :
+    least_observe (LeastSolver.run true least_large_priorities 8%N) =
+      Some [true; true; false].
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** Bottom contributions preserve the initial bottom store. *)
+  Example bottom_contributions_keep_bottom_store :
+    least_observe (LeastSolver.run false least_large_priorities 8%N) =
+      Some [false; false; false].
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** Zero solver fuel returns the actual empty partial store. *)
+  Example zero_fuel_returns_empty_store :
+    LeastSolver.run true least_large_priorities 0%N = OutOfFuel PTrieCode.empty.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End SolverTests.
 
 (** Constant query outputs are monotone independently of their lookup argument. *)
 Lemma repeated_sides_monotone : forall p, RepeatedSides.monotone p.
