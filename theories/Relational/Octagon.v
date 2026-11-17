@@ -1773,6 +1773,286 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
       repeat (apply refine_sound; [|unfold vl; cbn [fst snd]; lia]); exact Hmodel.
   Qed.
 
+  (** Optional insertion has the same pointwise equation for finite and absent bounds. *)
+  Lemma get_put_bound : forall k bound row j,
+    M.get j (put_bound k bound row) =
+      if K.eqb j k then bound else M.get j row.
+  Proof.
+    intros k [z|] row j; unfold put_bound;
+      destruct (K.eqb_spec j k) as [Heq|Hneq].
+    - subst j. apply M.get_set_same.
+    - now apply M.get_set_other.
+    - subst j. apply M.get_remove_same.
+    - now apply M.get_remove_other.
+  Qed.
+
+  Lemma entry_copy_columns : forall target source d m i j,
+    entry (M.merge (copy_column_row target source d) m M.empty) i j =
+      if K.eqb j target then edge_prefix d (entry m i source) else entry m i j.
+  Proof.
+    intros target source d m i j. unfold entry.
+    rewrite M.get_merge by reflexivity. rewrite M.get_empty.
+    destruct (M.get i m) as [row|]; cbn [copy_column_row].
+    - apply get_put_bound.
+    - destruct (K.eqb j target); reflexivity.
+  Qed.
+
+  Definition copy_coordinate (target source i : K.t) : K.t :=
+    if K.eqb i target then source else i.
+
+  Lemma entry_copy_literal : forall target source d m i j,
+    entry (copy_literal target source d m) i j =
+      if K.eqb i target then
+        if K.eqb j target then entry m source source else
+          option_map (fun z => (z - d)%Z) (entry m source j)
+      else if K.eqb j target then
+        option_map (fun z => (z + d)%Z) (entry m i source)
+      else entry m i j.
+  Proof.
+    intros target source d m i j. unfold copy_literal.
+    destruct (K.eqb_spec i target) as [Heq|Hneq].
+    - subst i. unfold entry at 1. rewrite M.get_set_same.
+      rewrite M.get_merge by reflexivity. rewrite M.get_empty, get_row_of.
+      change (shift_bound d
+        (entry (M.merge (copy_column_row target source d) m M.empty) source j) None =
+          if K.eqb j target then entry m source source else
+            option_map (fun z => (z - d)%Z) (entry m source j)).
+      rewrite entry_copy_columns. destruct (K.eqb j target).
+      + destruct (entry m source source); cbn [shift_bound edge_prefix];
+          [f_equal; lia|reflexivity].
+      + destruct (entry m source j); reflexivity.
+    - unfold entry at 1. rewrite M.get_set_other by exact Hneq.
+      fold (entry (M.merge (copy_column_row target source d) m M.empty) i j).
+      rewrite entry_copy_columns. destruct (K.eqb j target);
+        [destruct (entry m i source)|]; reflexivity.
+  Qed.
+
+  (** A literal copy substitutes one coordinate and translates each incident bound. *)
+  Lemma entry_copy_literal_linear : forall target source d m i j,
+    entry (copy_literal target source d m) i j =
+      option_map (fun z =>
+        (z + literal_offset target d j - literal_offset target d i)%Z)
+      (entry m (copy_coordinate target source i) (copy_coordinate target source j)).
+  Proof.
+    intros target source d m i j. rewrite entry_copy_literal.
+    unfold literal_offset, copy_coordinate.
+    destruct (K.eqb i target), (K.eqb j target).
+    - destruct (entry m source source); cbn [option_map]; try reflexivity; f_equal; ring.
+    - destruct (entry m source j); cbn [option_map]; try reflexivity; f_equal; ring.
+    - destruct (entry m i source); cbn [option_map]; try reflexivity; f_equal; ring.
+    - destruct (entry m i j); cbn [option_map]; try reflexivity; f_equal; ring.
+  Qed.
+
+  Definition copied_literal (x : X.t) (source i : K.t) : K.t :=
+    if X.eqb (fst i) x then if snd i then source else flip source else i.
+
+  Lemma copy_coordinate_pair : forall x source i, fst source <> x ->
+    copy_coordinate (x, true) source (copy_coordinate (x, false) (flip source) i) =
+      copied_literal x source i.
+  Proof.
+    intros x [y polarity] [z sign] Hsource.
+    unfold copy_coordinate, copied_literal, flip. cbn [fst snd] in *.
+    destruct (X.eqb_spec z x) as [Hz|Hz];
+      destruct (K.eqb_spec (z, sign) (x, false)) as [Hneg|Hneg].
+    - inversion Hneg; subst z sign.
+      destruct (K.eqb_spec (y, negb polarity) (x, true)); congruence.
+    - destruct (K.eqb_spec (z, sign) (x, true)); destruct sign; congruence.
+    - inversion Hneg. contradiction.
+    - destruct (K.eqb_spec (z, sign) (x, true)); [congruence|reflexivity].
+  Qed.
+
+  Lemma copied_literal_offset : forall x source d i, fst source <> x ->
+    literal_offset (x, true) d (copy_coordinate (x, false) (flip source) i) =
+      literal_offset (x, true) d i.
+  Proof.
+    intros x source d i Hsource. unfold copy_coordinate, literal_offset.
+    destruct (K.eqb_spec i (x, false)) as [Heq|Hneq]; [subst i|reflexivity].
+    destruct (K.eqb_spec (x, false) (x, true)); [discriminate|].
+    destruct (K.eqb_spec (flip source) (x, true)) as [Hflip|Hflip]; [|reflexivity].
+    destruct source as [y sign]. unfold flip in Hflip. cbn [fst snd] in *. congruence.
+  Qed.
+
+  (** The signed pair performs one simultaneous variable substitution. *)
+  Lemma entry_copy_literals : forall x source d m i j, fst source <> x ->
+    entry (copy_literals x source d m) i j =
+      option_map (fun z => (z + variable_offset x d j - variable_offset x d i)%Z)
+        (entry m (copied_literal x source i) (copied_literal x source j)).
+  Proof.
+    intros x source d m i j Hsource. unfold copy_literals.
+    rewrite !entry_copy_literal_linear, !copy_coordinate_pair by exact Hsource.
+    rewrite !copied_literal_offset by exact Hsource.
+    destruct (entry m (copied_literal x source i) (copied_literal x source j)) as [z|];
+      [|reflexivity]. cbn [option_map].
+    rewrite <- (signed_offsets x d i), <- (signed_offsets x d j). f_equal. ring.
+  Qed.
+
+  Lemma vl_update_copy : forall x source d st c i,
+    N.num c = (vl (fun y => N.num (st y)) source + d)%Z ->
+    vl (fun y => N.num (upd X.eqb st x c y)) i =
+      (vl (fun y => N.num (st y)) (copied_literal x source i) +
+        variable_offset x d i)%Z.
+  Proof.
+    intros x source d st c [y sign] Hvalue.
+    unfold copied_literal, variable_offset, upd. cbn [fst snd].
+    destruct (X.eqb_spec y x) as [Heq|Hneq].
+    - subst y. destruct sign; cbn [snd]; rewrite ?vl_flip;
+        unfold vl at 1; cbn [fst snd];
+        destruct (X.eqb_spec x x); try congruence; lia.
+    - unfold vl at 1. cbn [fst snd].
+      destruct (X.eqb_spec y x); [contradiction|].
+      destruct sign; cbn [vl fst snd]; lia.
+  Qed.
+
+  Lemma copy_literals_models : forall x source d m st c,
+    fst source <> x -> models m (fun y => N.num (st y)) ->
+    N.num c = (vl (fun y => N.num (st y)) source + d)%Z ->
+    models (copy_literals x source d m) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x source d m st c Hsource Hmodel Hvalue i j bound Hentry.
+    rewrite entry_copy_literals in Hentry by exact Hsource.
+    destruct (entry m (copied_literal x source i) (copied_literal x source j))
+      as [z|] eqn:Hz; [|discriminate Hentry].
+    inversion Hentry; subst bound.
+    pose proof (Hmodel _ _ z Hz) as Hbound.
+    rewrite (vl_update_copy x source d st c i Hvalue),
+      (vl_update_copy x source d st c j Hvalue). lia.
+  Qed.
+
+  (** Fast assignment retains the original soundness contract for both signed copies. *)
+  Lemma assign_copy_fast_sound : forall x source d s st c,
+    copy_allowed x source = true ->
+    ngamma s (fun y => N.num (st y)) ->
+    N.num c = (vl (fun y => N.num (st y)) source + d)%Z ->
+    ngamma (assign_copy_fast x source d s) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x source d [|m] st c Hallowed Hmodel Hvalue; [exact Hmodel|].
+    unfold assign_copy_fast. destruct (K.eqb_spec source (x, true)) as [Heq|Hneq].
+    - subst source. now apply shift_models.
+    - apply copy_literals_models; [| |exact Hvalue].
+      + destruct (copy_allowed_spec x source Hallowed); [contradiction|assumption].
+      + apply models_add_cons; [exact Hmodel|lia].
+  Qed.
+
+  Lemma range_average_comm : forall a b,
+    range_average a b None = range_average b a None.
+  Proof.
+    intros [a|] [b|]; cbn [range_average]; try reflexivity.
+    now rewrite Z.add_comm.
+  Qed.
+
+  Lemma get_range_literal_row : forall x sign bound unaries j,
+    M.get j (range_literal_row x sign bound unaries) =
+      if K.eqb j (x, sign) then Some 0%Z else
+      if K.eqb j (x, negb sign) then bound else
+        range_average bound (M.get j unaries) None.
+  Proof.
+    intros x sign bound unaries j. unfold range_literal_row.
+    rewrite get_set_cases, get_put_bound.
+    destruct (K.eqb j (x, sign)); [reflexivity|].
+    destruct (K.eqb j (x, negb sign)); [reflexivity|].
+    destruct bound as [a|]; cbn [range_average].
+    - rewrite M.get_merge by reflexivity. rewrite M.get_empty. reflexivity.
+    - apply M.get_empty.
+  Qed.
+
+  (** A finite average is justified by its two signed unary inequalities. *)
+  Lemma range_average_holds : forall v i j bound unary z,
+    (forall a, bound = Some a -> (vl v (flip i) - vl v i <= a)%Z) ->
+    (forall b, unary = Some b -> (vl v j - vl v (flip j) <= b)%Z) ->
+    range_average bound unary None = Some z -> (vl v j - vl v i <= z)%Z.
+  Proof.
+    intros v i j [a|] [b|] z Ha Hb Haverage; try discriminate Haverage.
+    inversion Haverage; subst z. apply strengthen_bound_holds;
+      [apply Ha|apply Hb]; reflexivity.
+  Qed.
+
+  Lemma range_literal_row_holds : forall x sign bound unaries v,
+    (forall a, bound = Some a ->
+      (vl v (flip (x, sign)) - vl v (x, sign) <= a)%Z) ->
+    (forall j b, M.get j unaries = Some b ->
+      (vl v j - vl v (flip j) <= b)%Z) ->
+    row_holds v (x, sign) (range_literal_row x sign bound unaries).
+  Proof.
+    intros x sign bound unaries v Hbound Hunaries j z Hentry.
+    rewrite get_range_literal_row in Hentry.
+    destruct (K.eqb_spec j (x, sign)) as [Heq|Hneq].
+    - subst j. inversion Hentry; subst z. lia.
+    - destruct (K.eqb_spec j (x, negb sign)) as [Heq|Hother].
+      + subst j. exact (Hbound z Hentry).
+      + eapply range_average_holds; [exact Hbound| |exact Hentry].
+        intros b Hb. now apply (Hunaries j b).
+  Qed.
+
+  Lemma range_column_row_holds : forall x lower upper row unary v i,
+    row_holds v i row ->
+    (forall a, unary = Some a -> (vl v (flip i) - vl v i <= a)%Z) ->
+    (forall a, lower = Some a -> (vl v (x, false) - vl v (x, true) <= a)%Z) ->
+    (forall a, upper = Some a -> (vl v (x, true) - vl v (x, false) <= a)%Z) ->
+    row_holds v i (row_of (range_column_row x lower upper (Some row) unary)).
+  Proof.
+    intros x lower upper row unary v i Hrow Hunary Hlower Hupper j z Hentry.
+    cbn [range_column_row row_of] in Hentry. rewrite !get_put_bound in Hentry.
+    destruct (K.eqb_spec j (x, false)) as [Heq|Hneq].
+    - subst j. rewrite range_average_comm in Hentry.
+      eapply range_average_holds; [exact Hunary|exact Hlower|exact Hentry].
+    - destruct (K.eqb_spec j (x, true)) as [Heq|Hother].
+      + subst j. rewrite range_average_comm in Hentry.
+        eapply range_average_holds; [exact Hunary|exact Hupper|exact Hentry].
+      + now apply Hrow.
+  Qed.
+
+  (** Sparse interval assignment adds only consequences of the supplied bounds. *)
+  Lemma range_matrix_models : forall x lower upper m v,
+    models m v ->
+    (forall a, lower = Some a -> (vl v (x, false) - vl v (x, true) <= a)%Z) ->
+    (forall a, upper = Some a -> (vl v (x, true) - vl v (x, false) <= a)%Z) ->
+    models (range_matrix x lower upper m) v.
+  Proof.
+    intros x lower upper m v Hmodel Hlower Hupper.
+    pose proof (collect_unary_models m v Hmodel) as [Hleft Hright].
+    unfold range_matrix. set (unaries := M.fold (unary_maps m) m (M.empty, M.empty)).
+    fold unaries in Hleft, Hright.
+    intros i j d Hentry. unfold entry at 1 in Hentry.
+    rewrite !get_set_cases in Hentry.
+    destruct (K.eqb_spec i (x, true)) as [Heq|Hneq].
+    - subst i. exact (range_literal_row_holds x true lower (snd unaries) v
+        Hlower Hright j d Hentry).
+    - destruct (K.eqb_spec i (x, false)) as [Heq|Hother].
+      + subst i. exact (range_literal_row_holds x false upper (snd unaries) v
+          Hupper Hright j d Hentry).
+      + rewrite M.get_merge in Hentry by reflexivity.
+        destruct (M.get i m) as [row|] eqn:Hrow; cbn [range_column_row] in Hentry;
+          [|discriminate Hentry].
+        apply (range_column_row_holds x lower upper row (M.get i (fst unaries)) v i
+          (row_models m v i row Hmodel Hrow) (Hleft i) Hlower Hupper j d).
+        exact Hentry.
+  Qed.
+
+  Lemma add_range_fast_sound : forall x bounds s v, ngamma s v ->
+    in_bnd (fst bounds) (snd bounds) (v x) -> ngamma (add_range_fast x bounds s) v.
+  Proof.
+    intros x [lo hi] [|m] v Hmodel Hbounds; [exact Hmodel|].
+    unfold add_range_fast, in_bnd in *. cbn [fst snd] in *.
+    destruct Hbounds as [Hlo Hhi].
+    destruct lo as [|lo|], hi as [|hi|]; cbn in Hlo, Hhi; try contradiction.
+    - apply range_matrix_models; [exact Hmodel| |].
+      + intros a Ha. discriminate Ha.
+      + intros a Ha. injection Ha as Ha. subst a.
+        change (v x - - v x <= 2 * hi)%Z. lia.
+    - exact Hmodel.
+    - destruct (lo <=? hi)%Z eqn:Horder.
+      + apply range_matrix_models; [exact Hmodel| |].
+        * intros a Ha. injection Ha as Ha. subst a.
+          change (- v x - v x <= -2 * lo)%Z. lia.
+        * intros a Ha. injection Ha as Ha. subst a.
+          change (v x - - v x <= 2 * hi)%Z. lia.
+      + apply Z.leb_gt in Horder. lia.
+    - apply range_matrix_models; [exact Hmodel| |].
+      + intros a Ha. injection Ha as Ha. subst a.
+        change (- v x - v x <= -2 * lo)%Z. lia.
+      + intros a Ha. discriminate Ha.
+  Qed.
+
   Lemma assign_sound : forall x e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
@@ -5446,6 +5726,128 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof.
     intros x [lo hi] s Hcoh. destruct lo, hi; cbn [add_range fst snd];
       repeat apply coh_refine; exact Hcoh.
+  Qed.
+
+  Lemma copied_literal_flip : forall x source i,
+    copied_literal x source (flip i) = flip (copied_literal x source i).
+  Proof.
+    intros x source [y sign]. unfold copied_literal, flip. cbn [fst snd].
+    destruct (X.eqb y x), sign; cbn [fst snd negb];
+      [reflexivity|destruct source as [z polarity]; destruct polarity; reflexivity|
+        reflexivity|reflexivity].
+  Qed.
+
+  Lemma coherent_copy_literals : forall x source d m, fst source <> x ->
+    coherent m -> coherent (copy_literals x source d m).
+  Proof.
+    intros x source d m Hsource Hcoh i j.
+    change (entry (copy_literals x source d m) i j =
+      entry (copy_literals x source d m) (flip j) (flip i)).
+    rewrite !entry_copy_literals by exact Hsource.
+    rewrite !variable_offset_flip, !copied_literal_flip.
+    rewrite (coherent_entry m Hcoh (copied_literal x source i) (copied_literal x source j)).
+    destruct (entry m (flip (copied_literal x source j))
+      (flip (copied_literal x source i))); cbn [option_map];
+      [f_equal; ring|reflexivity].
+  Qed.
+
+  Lemma coh_assign_copy_fast : forall x source d s,
+    copy_allowed x source = true -> coh s -> coh (assign_copy_fast x source d s).
+  Proof.
+    intros x source d [|m] Hallowed Hcoh; [exact I|]. cbn [assign_copy_fast].
+    destruct (K.eqb_spec source (x, true)) as [Heq|Hneq].
+    - cbn [coh]. now apply coherent_shift.
+    - cbn [coh]. apply coherent_copy_literals.
+      + destruct (copy_allowed_spec x source Hallowed); [contradiction|assumption].
+      + now apply coherent_add_cons.
+  Qed.
+
+  Lemma collect_unary_row_none : forall m i, M.get i m = None ->
+    M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty))) = None.
+  Proof.
+    intros m i Hnone.
+    destruct (M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty))))
+      as [d|] eqn:Hget; [|reflexivity].
+    apply collect_unary_left in Hget. unfold entry in Hget.
+    rewrite Hnone in Hget. discriminate Hget.
+  Qed.
+
+  Lemma literal_key_eqb : forall x y sign polarity,
+    K.eqb (x, sign) (y, polarity) =
+      if X.eqb x y then Bool.eqb sign polarity else false.
+  Proof.
+    intros x y sign polarity.
+    destruct (X.eqb_spec x y), (K.eqb_spec (x, sign) (y, polarity));
+      destruct sign, polarity; cbn; congruence.
+  Qed.
+
+  Lemma entry_range_columns : forall x lower upper m i j,
+    entry (M.merge (range_column_row x lower upper) m
+      (fst (M.fold (unary_maps m) m (M.empty, M.empty)))) i j =
+    if X.eqb (fst j) x then
+      range_average (if snd j then upper else lower)
+        (M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty)))) None
+    else entry m i j.
+  Proof.
+    intros x lower upper m i [y sign].
+    unfold entry at 1. rewrite M.get_merge by reflexivity.
+    destruct (M.get i m) as [row|] eqn:Hrow.
+    - cbn [range_column_row]. rewrite !get_put_bound, !literal_key_eqb.
+      unfold entry. rewrite Hrow. cbn [fst snd].
+      destruct (X.eqb y x), sign; reflexivity.
+    - cbn [range_column_row]. rewrite (collect_unary_row_none m i Hrow).
+      unfold entry. rewrite Hrow. cbn [fst snd].
+      destruct (X.eqb y x), sign, lower, upper; reflexivity.
+  Qed.
+
+  (** The new matrix retains old edges away from the assigned variable. *)
+  Lemma entry_range_matrix : forall x lower upper m i j,
+    let unaries := M.fold (unary_maps m) m (M.empty, M.empty) in
+    entry (range_matrix x lower upper m) i j =
+      if X.eqb (fst i) x then
+        if X.eqb (fst j) x then
+          if Bool.eqb (snd i) (snd j) then Some 0%Z
+          else if snd i then lower else upper
+        else range_average (if snd i then lower else upper) (M.get j (snd unaries)) None
+      else if X.eqb (fst j) x then
+        range_average (if snd j then upper else lower) (M.get i (fst unaries)) None
+      else entry m i j.
+  Proof.
+    intros x lower upper m [a sa] [b sb]. cbn [fst snd].
+    unfold range_matrix, entry at 1. rewrite !get_set_cases, !literal_key_eqb.
+    destruct (X.eqb a x) eqn:Ha; destruct sa; cbn [Bool.eqb].
+    - rewrite get_range_literal_row, !literal_key_eqb. cbn [negb].
+      destruct (X.eqb b x), sb; reflexivity.
+    - rewrite get_range_literal_row, !literal_key_eqb. cbn [negb].
+      destruct (X.eqb b x), sb; reflexivity.
+    - fold (entry (M.merge (range_column_row x lower upper) m
+        (fst (M.fold (unary_maps m) m (M.empty, M.empty)))) (a, true) (b, sb)).
+      apply entry_range_columns.
+    - fold (entry (M.merge (range_column_row x lower upper) m
+        (fst (M.fold (unary_maps m) m (M.empty, M.empty)))) (a, false) (b, sb)).
+      apply entry_range_columns.
+  Qed.
+
+  Lemma coherent_range_matrix : forall x lower upper m,
+    coherent m -> coherent (range_matrix x lower upper m).
+  Proof.
+    intros x lower upper m Hcoh i j.
+    change (entry (range_matrix x lower upper m) i j =
+      entry (range_matrix x lower upper m) (flip j) (flip i)).
+    rewrite !entry_range_matrix.
+    pose proof (collect_unary_twins m) as Htwins. unfold unary_twins in Htwins.
+    rewrite !Htwins, !flip_involutive.
+    destruct i as [a sa], j as [b sb]. cbn [flip fst snd].
+    destruct (X.eqb a x), (X.eqb b x); destruct sa, sb;
+      cbn [negb Bool.eqb]; try reflexivity; apply Hcoh.
+  Qed.
+
+  Lemma coh_add_range_fast : forall x bounds s, coh s -> coh (add_range_fast x bounds s).
+  Proof.
+    intros x [lo hi] [|m] Hcoh; [exact I|].
+    destruct lo as [|lo|], hi as [|hi|]; cbn [add_range_fast coh];
+      try exact I; try exact Hcoh; try (now apply coherent_range_matrix).
+    destruct (lo <=? hi)%Z; [now apply coherent_range_matrix|exact I].
   Qed.
 
   Lemma coh_assign : forall x e s, coh s -> coh (assign x e s).
