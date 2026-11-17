@@ -115,6 +115,14 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+(** Sharing preparation preserves both an accepted and a rejected SSA check. *)
+Example shared_preparation_agrees :
+  (V.check_ssa translated, V.check_ssa use_before_definition) =
+  (V.check_ssa_ref translated, V.check_ssa_ref use_before_definition).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Module W := Validate Ops PosKey PosKey Source View.Q View.R BlockEdge
   View.BC View.S Digraph Dom View.Link.
 

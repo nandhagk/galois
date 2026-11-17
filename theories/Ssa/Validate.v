@@ -2273,11 +2273,29 @@ Module ValidateCode (O : OPS)
       else false
     end.
 
-  Definition check_ssa (s : P.t) : bool :=
+  Definition check_ssa_ref (s : P.t) : bool :=
     if ssa_precheck s then
       let g := DG.prepare (cfg_graph (C.nodes (R.prepare s))
         (C.edges (R.prepare s)) (C.src (R.prepare s)) (C.dst (R.prepare s))) in
       let '(m, order) := dom_cert s in
+      if D.check g (entry _ _ _ s) m order then
+        let tree := D.tree g (entry _ _ _ s) m order in
+        let homes := val_index (val_home_rows (blocks _ _ _ s)) in
+        let inputs := val_set (inputs _ _ _ s) in
+        forallb (fun item => ssa_local tree homes (fst item)
+          (val_add (params _ _ _ (snd item)) inputs) (code _ _ _ (snd item))
+          (exit_uses (term _ _ _ (snd item)))) (blocks _ _ _ s)
+      else false
+    else false.
+
+  Definition check_ssa_graph (q : Q.t) :=
+    DG.prepare (cfg_graph (C.nodes q) (C.edges q) (C.src q) (C.dst q)).
+
+  Definition check_ssa (s : P.t) : bool :=
+    if ssa_precheck s then
+      let q := R.prepare s in
+      let g := check_ssa_graph q in
+      let '(m, order) := D.build g (entry _ _ _ s) in
       if D.check g (entry _ _ _ s) m order then
         let tree := D.tree g (entry _ _ _ s) m order in
         let homes := val_index (val_home_rows (blocks _ _ _ s)) in
@@ -2298,6 +2316,19 @@ Module Validate (O : OPS)
     <: VALIDATE O K G P Q R E C S DG D B.
   Include ValidateCode O K G P Q R E C S DG D.
   Include VALIDATE_SPEC O K G P Q R E C S DG D.
+
+  (** Sharing the prepared program and graph preserves the original SSA check. *)
+  Lemma check_ssa_agrees s : check_ssa s = check_ssa_ref s.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** The shared graph yields the certificate pinned by the public interface. *)
+  Lemma check_ssa_dom_cert s :
+    D.build (check_ssa_graph (R.prepare s)) (entry _ _ _ s) = dom_cert s.
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma tables_agree : forall p s c b,
     trie_get b (source_bodies (tables p s c)) = find_block b (blocks _ _ _ p) /\
@@ -2816,7 +2847,7 @@ Module Validate (O : OPS)
 
   Lemma check_ssa_sound : forall s, check_ssa s = true -> ssa_wf s.
   Proof.
-    intros s Hcheck; unfold check_ssa in Hcheck.
+    intros s Hcheck; rewrite check_ssa_agrees in Hcheck; unfold check_ssa_ref in Hcheck.
     destruct (ssa_precheck s) eqn:Hpre; [|discriminate]; fold (graph s) in Hcheck.
     destruct (dom_cert s) as [m order] eqn:Hcert.
     destruct (D.check (graph s) (entry _ _ _ s) m order) eqn:Hdom; [|discriminate].
@@ -2873,6 +2904,7 @@ Module ValidateT (O : OPS)
   TimeFun ssa_precheck.
   TimeFun ssa_cross.
   TimeFun ssa_local.
+  TimeFun check_ssa_graph.
   TimeFun check_ssa.
   TimeFun graph.
   Definition val_block_cost : N :=
@@ -4338,6 +4370,24 @@ Module ValidateT (O : OPS)
     - pose proof (ssa_graph_width s); lia.
   Qed.
 
+  (** The SSA check prepares the source and control-flow graph only once. *)
+  Lemma ssa_check_shared_clock_parts s :
+    (T_check_ssa s <= T_ssa_precheck s + R.T_prepare s +
+      T_check_ssa_graph (R.prepare s) + D.T_build (graph s) (entry _ _ _ s) +
+      D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
+      (if D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) then
+        D.T_tree (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
+        T_ssa_scan s (D.tree (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)))
+       else 0) + 32)%N.
+  Proof.
+    time_unfold T_check_ssa. time_unfold T_ssa_scan. time_simpl.
+    unfold check_ssa_graph, graph.
+    destruct (ssa_precheck s); [|lia].
+    fold (dom_cert s); destruct (dom_cert s) as [m order]; cbn [fst snd].
+    destruct (D.check (DG.prepare (cfg_graph (C.nodes (R.prepare s)) (C.edges (R.prepare s))
+      (C.src (R.prepare s)) (C.dst (R.prepare s)))) (entry _ _ _ s) m order); lia.
+  Qed.
+
   Lemma ssa_check_clock_parts s :
     (T_check_ssa s <= T_ssa_precheck s + T_graph s + T_dom_cert s +
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
@@ -4346,12 +4396,10 @@ Module ValidateT (O : OPS)
         T_ssa_scan s (D.tree (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)))
        else 0) + 32)%N.
   Proof.
-    time_unfold T_check_ssa. time_unfold T_graph. time_unfold T_ssa_scan. time_simpl.
-    unfold graph.
-    destruct (ssa_precheck s); [|lia].
-    destruct (dom_cert s) as [m order]; cbn [fst snd].
-    destruct (D.check (DG.prepare (cfg_graph (C.nodes (R.prepare s)) (C.edges (R.prepare s))
-      (C.src (R.prepare s)) (C.dst (R.prepare s)))) (entry _ _ _ s) m order); lia.
+    pose proof (ssa_check_shared_clock_parts s) as Hshared.
+    revert Hshared; time_unfold T_check_ssa_graph.
+    time_unfold T_graph. time_unfold T_dom_cert. time_simpl.
+    unfold graph; lia.
   Qed.
 
 
@@ -4538,7 +4586,7 @@ Module ValidateT (O : OPS)
   Lemma F8_dom_checked : forall s, check_ssa s = true ->
     D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) = true.
   Proof.
-    intros s Hcheck; unfold check_ssa in Hcheck.
+    intros s Hcheck; rewrite check_ssa_agrees in Hcheck; unfold check_ssa_ref in Hcheck.
     destruct (ssa_precheck s); [|discriminate]; fold (graph s) in Hcheck.
     destruct (dom_cert s) as [m order]; cbn [fst snd].
     destruct (D.check (graph s) (entry _ _ _ s) m order); [reflexivity|discriminate].
