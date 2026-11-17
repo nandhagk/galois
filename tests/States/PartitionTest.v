@@ -7,9 +7,9 @@
 From Stdlib Require Import List NArith ZArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Key Map.
-From Galois.Lattice Require Import LatticeSig Simple JoinWidening.
+From Galois.Lattice Require Import LatticeSig Simple JoinWidening Disjunction.
 From Galois.Domains Require Import LangSig ValueSig IntervalSig Interval ThresholdsSig Thresholds ZLang.
-From Galois.States Require Import StateSig DisjunctionSig EnvSig Env Partition.
+From Galois.States Require Import StateSig DisjunctionSig EnvSig Env Disjunction Partition.
 Import List.ListNotations.
 
 Module Vars := TrieMap BoolKey.
@@ -220,4 +220,88 @@ Example timed_partition_eval : forall e a,
     TimedParts.c_state * N.of_nat (TimedParts.eval_work e a + 1))%N.
 Proof.
   exact TimedParts.T_eval_le.
+Qed.
+
+(** The two-part fixture includes a bottom component and a live component. *)
+Definition timed_parts := TimedParts.fit [(Some false, false); (Some true, true)].
+
+(** Inclusion satisfies the published linear measure on a full partition. *)
+Example partition_inclusion_bigO_fixture :
+  (TimedParts.T_leb timed_parts timed_parts <= TimedParts.c_lat *
+    (N.of_nat (TimedParts.size timed_parts + TimedParts.size timed_parts) + 1))%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+(** Widening uses the same size and parameter measure as its big-O field. *)
+Example partition_widen_bigO_fixture :
+  (TimedParts.T_widen tt TimedParts.bot timed_parts <= TimedParts.c_lat *
+    (N.of_nat ((TimedParts.wunits TimedParts.bot + TimedParts.wunits timed_parts) *
+      TimedParts.wsize tt +
+      (TimedParts.size TimedParts.bot + TimedParts.size timed_parts + TimedParts.wsize tt)) + 1))%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+(** Assignment is bounded by its transfer work on both parts. *)
+Example partition_transfer_bigO_fixture :
+  (TimedParts.T_assign true (Leaf false) timed_parts <= TimedParts.c_state *
+    (N.of_nat (TimedParts.assign_work true (Leaf false) timed_parts) + 1))%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+(** Retagging pays for the new token and all parts that it collapses. *)
+Example partition_retag_bigO_fixture :
+  (TimedParts.T_retag true timed_parts <= TimedParts.c_partition *
+    (N.of_nat (BoolKeyT.bits true + TimedParts.size timed_parts) + 1))%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+Module TimedShared := DisjunctionT LiveStateT LiveJoinSize Cap.
+Module TimedDisjunction :=
+  StateDisjunctionT BoolKeyT ZLangT TimedValues LiveStateT
+    LiveJoinSize LiveJoinUnits Cap TimedShared.
+
+Definition timed_alternatives := TimedShared.clip [false; true].
+
+(** The disjunction widening bound includes the component parameter cost. *)
+Example disjunction_widen_bigO_fixture :
+  (TimedDisjunction.T_widen tt TimedDisjunction.bot timed_alternatives <=
+    TimedDisjunction.c_lat * (N.of_nat
+      ((TimedDisjunction.wunits TimedDisjunction.bot +
+        TimedDisjunction.wunits timed_alternatives) * TimedDisjunction.wsize tt +
+        (TimedDisjunction.size TimedDisjunction.bot + TimedDisjunction.size timed_alternatives +
+          TimedDisjunction.wsize tt)) + 1))%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+(** Narrowing satisfies the two-size measure on a full disjunction. *)
+Example disjunction_narrow_bigO_fixture :
+  (TimedDisjunction.T_narrow timed_alternatives timed_alternatives <=
+    TimedDisjunction.c_lat *
+      (N.of_nat (TimedDisjunction.size timed_alternatives +
+        TimedDisjunction.size timed_alternatives) + 1))%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+(** Assignment pays for each alternative through the transfer work measure. *)
+Example disjunction_transfer_bigO_fixture :
+  (TimedDisjunction.T_assign true (Leaf false) timed_alternatives <=
+    TimedDisjunction.c_state *
+      (N.of_nat (TimedDisjunction.assign_work true (Leaf false) timed_alternatives) + 1))%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+(** Collapse satisfies its measure at the permitted cap-plus-one boundary. *)
+Example disjunction_collapse_bigO_fixture :
+  (TimedDisjunction.T_collapse [false; true; false] <= TimedDisjunction.c_disjunction *
+    (N.of_nat (fold_right Nat.add 0%nat (map LiveStateT.size [false; true; false]) +
+      length [false; true; false]) + 1))%N.
+Proof.
+  vm_compute; discriminate.
 Qed.
