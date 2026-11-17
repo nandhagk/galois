@@ -2,10 +2,23 @@
 
     Inventories and resolver tables retain site and target order.
     For example, repeated targets produce repeated graph successors.
+
+    Main results
+    - [calls_spec] The call inventory of a well-formed presentation retains function, site and
+      resolver order.
+    - [calls_complexity] Call enumeration is linear in its output, O(n) for n calls.
+    - [sites_of_complexity] Site lookup is linear in the function key and the returned sites.
+    - [caller_of_complexity] Caller lookup is linear in the site key.
+    - [resolve_complexity] Resolution is linear in the site key and the returned targets.
+    - [functions_complexity] The function inventory is linear in its output.
+    - [roots_complexity] The root inventory is linear in its output.
+    - [call_graph_complexity] Call graphs have the aggregate inventory and bit-width bound.
+
     Builds on: Program.CallsSig and Base.Trie. *)
 
 From Stdlib Require Import List Arith NArith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Graph Require Import Data Spec.
 From Galois.Program Require Import SemanticsSig CallsSig.
@@ -514,8 +527,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** The call inventory is linear in its output. *)
-  Lemma calls_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (calls p))) T_calls.
+  Lemma calls_complexity : T_calls p ∈ 𝑂(N.of_nat (length (calls p))) for p.
   Proof.
     apply bigO_intro with (c := c_calls).
     intros p _; pose proof (T_calls_le p) as Htime.
@@ -523,9 +535,8 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** Site enumeration is linear in the function key and the returned sites. *)
-  Lemma sites_of_complexity : bigO (X := P.t * F.t) (fun _ => True)
-    (fun '(p, f) => N.of_nat (F.bits f + length (sites_of p f)))
-    (fun '(p, f) => T_sites_of p f).
+  Lemma sites_of_complexity :
+    T_sites_of p f ∈ 𝑂(N.of_nat (F.bits f + length (sites_of p f))) for (p, f).
   Proof.
     apply bigO_intro with (c := c_calls).
     intros [p f] _; pose proof (T_sites_of_le p f) as Htime.
@@ -533,8 +544,8 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** Caller lookup is linear in the site key. *)
-  Lemma caller_of_complexity : bigO (X := P.t * S.t) (fun _ => True)
-    (fun '(_, site) => N.of_nat (S.bits site)) (fun '(p, site) => T_caller_of p site).
+  Lemma caller_of_complexity :
+    T_caller_of p site ∈ 𝑂(N.of_nat (S.bits site)) for (p, site).
   Proof.
     apply bigO_intro with (c := c_calls).
     intros [p site] _; pose proof (T_caller_of_le p site) as Htime.
@@ -542,9 +553,8 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** Resolution is linear in the site key and the returned functions. *)
-  Lemma resolve_complexity : bigO (X := P.t * S.t) (fun _ => True)
-    (fun '(p, site) => N.of_nat (S.bits site + length (resolve p site)))
-    (fun '(p, site) => T_resolve p site).
+  Lemma resolve_complexity :
+    T_resolve p site ∈ 𝑂(N.of_nat (S.bits site + length (resolve p site))) for (p, site).
   Proof.
     apply bigO_intro with (c := c_calls).
     intros [p site] _; pose proof (T_resolve_le p site) as Htime.
@@ -552,8 +562,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** The function inventory is linear in its output. *)
-  Lemma functions_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (functions p))) T_functions.
+  Lemma functions_complexity : T_functions p ∈ 𝑂(N.of_nat (length (functions p))) for p.
   Proof.
     apply bigO_intro with (c := c_calls).
     intros p _; pose proof (T_functions_le p) as Htime.
@@ -561,8 +570,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** The root inventory is linear in its output. *)
-  Lemma roots_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (roots p))) T_roots.
+  Lemma roots_complexity : T_roots p ∈ 𝑂(N.of_nat (length (roots p))) for p.
   Proof.
     apply bigO_intro with (c := c_calls).
     intros p _; pose proof (T_roots_le p) as Htime.
@@ -772,7 +780,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** Call graph construction has the aggregate reader and bit-width bound. *)
-  Lemma call_graph_complexity : bigO (fun _ : P.t => True) call_graph_work T_call_graph.
+  Lemma call_graph_complexity : T_call_graph p ∈ 𝑂(call_graph_work p) for p.
   Proof.
     exists c_calls; intros p Htrue; pose proof (T_call_graph_le p); nia.
   Qed.

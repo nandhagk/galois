@@ -2,10 +2,16 @@
 
     Edge effects are stored in a trie keyed by edge identity.
     For example, an absent binding gives an empty effect sequence.
+
+    Main results
+    - [effects_complexity] Effect lookup is linear in the edge key and the returned effect
+      sequence.
+
     Builds on: Program.MemorySig and Base.Trie. *)
 
 From Stdlib Require Import List NArith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie Code.
 From Galois.Program Require Import CfgSig SemanticsSig MemorySig.
 Import Code.List.
@@ -62,9 +68,8 @@ Module MemoryT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Effect lookup is linear in the edge key and the returned effect sequence. *)
-  Lemma effects_complexity : bigO (X := P.t * E.t) (fun _ => True)
-    (fun '(p, e) => N.of_nat (EKey.bits e + length (effects p e)))
-    (fun '(p, e) => T_effects p e).
+  Lemma effects_complexity :
+    T_effects p e ∈ 𝑂(N.of_nat (EKey.bits e + length (effects p e))) for (p, e).
   Proof.
     apply bigO_intro with (c := c_effects).
     intros [p e] _. pose proof (T_effects_le p e) as Heffects.

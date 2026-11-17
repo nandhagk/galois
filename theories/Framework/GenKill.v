@@ -2,10 +2,18 @@
 
     This file constructs may and must lattices and dense transfers.
     For example, a generated fact survives a simultaneous kill.
+
+    Main results
+    - [boundary_complexity] Reading the initial facts is linear in the gen-kill problem size,
+      O(gk_work p) for the flow of p.
+    - [transfer_complexity] A transfer is linear in the gen-kill problem and input fact sizes,
+      O(gk_work p + |a|) for the flow p and fact a.
+
     Builds on: Framework.GenKillSig and Framework.Dense. *)
 
 From Stdlib Require Import List Bool NArith Arith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig SetSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -986,8 +994,8 @@ Module GenKillMayFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Reading the initial facts is linear in the gen-kill problem size. *)
-  Lemma boundary_complexity : bigO (X := P.t * N.t) (fun _ => True)
-    (fun '(p, _) => N.of_nat (G.gk_work p)) (fun '(p, n) => T_boundary p n).
+  Lemma boundary_complexity :
+    T_boundary p n ∈ 𝑂(N.of_nat (G.gk_work p)) for (p, n).
   Proof.
     apply bigO_intro with (c := c_flow); intros [p n] _.
     pose proof (T_boundary_le p n) as Htime.
@@ -996,9 +1004,8 @@ Module GenKillMayFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** A transfer is linear in the gen-kill problem and input fact sizes. *)
-  Lemma transfer_complexity : bigO (X := P.t * E.t * L.t) (fun _ => True)
-    (fun '(p, _, a) => N.of_nat (G.gk_work p + L.size a))
-    (fun '(p, e, a) => T_transfer p e a).
+  Lemma transfer_complexity :
+    T_transfer p e a ∈ 𝑂(N.of_nat (G.gk_work p + L.size a)) for (p, e, a).
   Proof.
     apply bigO_intro with (c := c_flow); intros [[p e] a] _.
     pose proof (T_transfer_le p e a) as Htime; unfold flow_work in Htime.
@@ -1059,8 +1066,8 @@ Module GenKillMustFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Reading the initial facts is linear in the gen-kill problem size. *)
-  Lemma boundary_complexity : bigO (X := P.t * N.t) (fun _ => True)
-    (fun '(p, _) => N.of_nat (G.gk_work p)) (fun '(p, n) => T_boundary p n).
+  Lemma boundary_complexity :
+    T_boundary p n ∈ 𝑂(N.of_nat (G.gk_work p)) for (p, n).
   Proof.
     apply bigO_intro with (c := c_flow); intros [p n] _.
     pose proof (T_boundary_le p n) as Htime.
@@ -1069,9 +1076,8 @@ Module GenKillMustFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** A transfer is linear in the gen-kill problem and input fact sizes. *)
-  Lemma transfer_complexity : bigO (X := P.t * E.t * L.t) (fun _ => True)
-    (fun '(p, _, a) => N.of_nat (G.gk_work p + L.size a))
-    (fun '(p, e, a) => T_transfer p e a).
+  Lemma transfer_complexity :
+    T_transfer p e a ∈ 𝑂(N.of_nat (G.gk_work p + L.size a)) for (p, e, a).
   Proof.
     apply bigO_intro with (c := c_flow); intros [[p e] a] _.
     pose proof (T_transfer_le p e a) as Htime; unfold flow_work in Htime.

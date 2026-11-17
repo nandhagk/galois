@@ -2,10 +2,25 @@
 
     Path edges retain an origin fact, a destination point and a destination fact.
     For example, a return combines a caller path edge with a balanced callee path edge.
+
+    Main results
+    - [key_code_spec] The system encodes all three path-edge components.
+    - [rows_spec] The row inventory contains exactly the enabled finite rules.
+    - [target_spec] Rule targets follow their destination edge or identity point.
+    - [eval_spec] Boolean rules combine the caller and callee at a matched return.
+    - [rows_complexity] Listing the rows is linear in their number, O(n) for n rows.
+    - [start_complexity] Starting a row is linear in the row budget at the empty value.
+    - [deps_complexity] Listing the dependencies of a row is linear in their number times
+      the key width.
+    - [target_complexity] The target of a listed row fits the row budget at the empty value.
+    - [sides_complexity] Listing the sides of a row is linear in their number times the key
+      width.
+
     Builds on: Program.IcfgSig, Base.Code and Fixpoint.SystemSig. *)
 
 From Stdlib Require Import List Bool NArith.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig Code.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig.
@@ -229,22 +244,21 @@ Module Type IFDS_TIME (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
       N.of_nat (length (rows p) + s + L.size true + 1)
     with Definition kw := path_kw.
   (** Listing the rows is linear in their number. *)
-  Parameter rows_complexity : bigO (X := prog) (fun p => wf p)
-    (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
+  Parameter rows_complexity : T_rows p ∈ 𝑂(N.of_nat (length (rows p))) for p | wf p.
   (** Starting a row is linear in the row budget at the empty value. *)
-  Parameter start_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
+  Parameter start_complexity :
+    T_start p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   (** Listing the dependencies of a row is linear in their number times the key width. *)
-  Parameter deps_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_deps p r).
+  Parameter deps_complexity :
+    T_deps p r ∈ 𝑂(N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
   (** The target of a listed row fits the row budget at the empty value. *)
-  Parameter target_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
+  Parameter target_complexity :
+    T_target p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   (** Listing the sides of a row is linear in their number times the key width. *)
-  Parameter sides_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_sides p r).
+  Parameter sides_complexity :
+    T_sides p r ∈ 𝑂(N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
 End IFDS_TIME.
 
 Module Type IFDS_T (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)

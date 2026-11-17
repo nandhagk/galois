@@ -2,10 +2,23 @@
 
     Presentations expose entries, edges and optional adjacency indexes.
     For example, incoming adjacency lists the edges whose destination is the requested node.
+
+    Main results
+    - [out_spec] Outgoing adjacency lists exactly the edges with the requested source.
+    - [inc_spec] Incoming adjacency lists exactly the edges with the requested destination.
+    - [edges_complexity] Edge enumeration is linear in its output, O(n) for n edges.
+    - [entries_complexity] Entry enumeration is linear in its output.
+    - [out_complexity] Outgoing lookup is linear in the node key and the returned edges.
+    - [inc_complexity] Incoming lookup is linear in the node key and the returned edges.
+    - [nodes_complexity] Node enumeration is linear in its output.
+    - [prepare_complexity] Preparation is linear in the entries and edges times the widest
+      endpoint key.
+
     Builds on: Base.KeySig and Program.SemanticsSig. *)
 
 From Stdlib Require Import List NArith.
-From Argent Require Import BigO.
+From Argent Require Import Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Program Require Import SemanticsSig.
 
@@ -64,11 +77,9 @@ Module Type CFG_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
   (** Destination projection has bounded cost. *)
   Parameter T_dst_le : forall p e, (T_dst p e <= c_cfg)%N.
   (** Edge enumeration is linear in its output. *)
-  Parameter edges_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (edges p))) T_edges.
+  Parameter edges_complexity : T_edges p ∈ 𝑂(N.of_nat (length (edges p))) for p.
   (** Entry enumeration is linear in its output. *)
-  Parameter entries_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (entries p))) T_entries.
+  Parameter entries_complexity : T_entries p ∈ 𝑂(N.of_nat (length (entries p))) for p.
 End CFG_TIME.
 
 Module Type CFG_ADJ_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
@@ -86,14 +97,13 @@ Module Type CFG_ADJ_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
   Parameter T_inc_le : forall p n,
     (T_inc p n <= c_cfg_adj * N.of_nat (N.bits n + length (inc p n) + 1))%N.
   (** Outgoing lookup is linear in the node key and the returned edges. *)
-  Parameter out_complexity : bigO (X := P.t * N.t) (fun _ => True)
-    (fun '(p, n) => N.of_nat (N.bits n + length (out p n))) (fun '(p, n) => T_out p n).
+  Parameter out_complexity :
+    T_out p n ∈ 𝑂(N.of_nat (N.bits n + length (out p n))) for (p, n).
   (** Incoming lookup is linear in the node key and the returned edges. *)
-  Parameter inc_complexity : bigO (X := P.t * N.t) (fun _ => True)
-    (fun '(p, n) => N.of_nat (N.bits n + length (inc p n))) (fun '(p, n) => T_inc p n).
+  Parameter inc_complexity :
+    T_inc p n ∈ 𝑂(N.of_nat (N.bits n + length (inc p n))) for (p, n).
   (** Node enumeration is linear in its output. *)
-  Parameter nodes_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (nodes p))) T_nodes.
+  Parameter nodes_complexity : T_nodes p ∈ 𝑂(N.of_nat (length (nodes p))) for p.
 End CFG_ADJ_TIME.
 
 Module Type CFG_BASE_T (P : TYPE) (N : KEY_T) (E : TYPE) :=
@@ -126,9 +136,9 @@ Module Type CFG_PREPARE_TIME (P PT : TYPE) (N : KEY_T) (E : TYPE)
       N.of_nat (fold_right Nat.max 0%nat (List.map N.bits (entries p ++
         flat_map (fun e => src p e :: dst p e :: nil) (edges p))) + 1))%N.
   (** Preparation is linear in the entries and edges times the widest endpoint key. *)
-  Parameter prepare_complexity : bigO (X := P.t) (fun _ => True)
-    (fun p => N.of_nat ((length (entries p) + length (edges p) + 1) *
+  Parameter prepare_complexity :
+    T_prepare p ∈ 𝑂(N.of_nat ((length (entries p) + length (edges p) + 1) *
       (fold_right Nat.max 0%nat (List.map N.bits (entries p ++
         flat_map (fun e => src p e :: dst p e :: nil) (edges p))) + 1)))
-    T_prepare.
+      for p.
 End CFG_PREPARE_TIME.

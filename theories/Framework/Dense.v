@@ -2,10 +2,21 @@
 
     Dense rows seed boundary facts and transfer them along graph edges.
     For example, a forward flow reads its source and contributes to its destination.
+
+    Main results
+    - [rows_complexity] Listing the rows is linear in their number, O(n) for n rows.
+    - [start_complexity] Starting a row is linear in the row budget at the empty value.
+    - [deps_complexity] Listing the dependencies of a row is linear in their number times
+      the key width.
+    - [target_complexity] The target of a listed row fits the row budget at the empty value.
+    - [sides_complexity] Listing the sides of a row is linear in their number times the key
+      width.
+
     Builds on: Framework.DenseSig, Fixpoint.SystemSig and Program.SemanticsSig. *)
 
 From Stdlib Require Import List Relation_Operators Bool PeanoNat NArith Lia.
-From Argent Require Import Loop Time Tactics Std BigO.
+From Argent Require Import Loop Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -304,8 +315,7 @@ Module DenseT (P : TYPE) (N : KEY_T) (E : TYPE)
       apply T.flow_work_mono; apply Hsize.
   Qed.
   (** Listing the rows is linear in their number. *)
-  Lemma rows_complexity : bigO (X := prog) (fun p => wf p)
-    (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
+  Lemma rows_complexity : T_rows p ∈ 𝑂(N.of_nat (length (rows p))) for p | wf p.
   Proof.
     eapply bigO_intro with (c := c_sys).
     intros p Hwf.
@@ -315,8 +325,8 @@ Module DenseT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Starting a listed row fits its work budget at the empty value. *)
-  Lemma start_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
+  Lemma start_complexity :
+    T_start p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   Proof.
     eapply bigO_intro with (c := c_sys).
     intros [p r] [Hwf Hrow].
@@ -325,9 +335,9 @@ Module DenseT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Listing dependencies is linear in their number times the key width. *)
-  Lemma deps_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_deps p r).
+  Lemma deps_complexity :
+    T_deps p r ∈ 𝑂(N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
   Proof.
     eapply bigO_intro with (c := c_sys).
     intros [p r] [Hwf Hrow].
@@ -338,8 +348,8 @@ Module DenseT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Finding a listed row's target fits its work budget at the empty value. *)
-  Lemma target_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
+  Lemma target_complexity :
+    T_target p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   Proof.
     eapply bigO_intro with (c := c_sys).
     intros [p r] [Hwf Hrow].
@@ -348,9 +358,9 @@ Module DenseT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Listing side writes is linear in their number times the key width. *)
-  Lemma sides_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_sides p r).
+  Lemma sides_complexity :
+    T_sides p r ∈ 𝑂(N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
   Proof.
     eapply bigO_intro with (c := c_sys).
     intros [p r] [Hwf Hrow].

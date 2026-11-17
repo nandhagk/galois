@@ -2,10 +2,19 @@
 
     Edge and exit readers use first-order tables keyed by encoded identities.
     For example, an absent edge binding has no uses or definitions.
+
+    Main results
+    - [universe_spec] The universe contains exactly the syntactic variable occurrences.
+    - [uses_complexity] Edge uses are linear in the edge key and the returned variables.
+    - [defs_complexity] Edge definitions are linear in the edge key and the returned variables.
+    - [exits_complexity] Exit observations are linear in the node key and the returned variables.
+    - [universe_complexity] The universe has the aggregate reader and bit-width bound.
+
     Builds on: Program.VarsSig and Base.Trie. *)
 
 From Stdlib Require Import List Arith PArith NArith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie Code.
 From Galois.Program Require Import CfgSig VarsSig.
 Import Code.List.
@@ -257,8 +266,8 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Edge uses are linear in the edge key and the returned variables. *)
-  Lemma uses_complexity : bigO (X := P.t * E.t) (fun _ => True)
-    (fun '(p, e) => N.of_nat (E.bits e + length (uses p e))) (fun '(p, e) => T_uses p e).
+  Lemma uses_complexity :
+    T_uses p e ∈ 𝑂(N.of_nat (E.bits e + length (uses p e))) for (p, e).
   Proof.
     apply bigO_intro with (c := c_vars).
     intros [p e] _; pose proof (T_uses_le p e) as Htime.
@@ -266,8 +275,8 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Edge definitions are linear in the edge key and the returned variables. *)
-  Lemma defs_complexity : bigO (X := P.t * E.t) (fun _ => True)
-    (fun '(p, e) => N.of_nat (E.bits e + length (defs p e))) (fun '(p, e) => T_defs p e).
+  Lemma defs_complexity :
+    T_defs p e ∈ 𝑂(N.of_nat (E.bits e + length (defs p e))) for (p, e).
   Proof.
     apply bigO_intro with (c := c_vars).
     intros [p e] _; pose proof (T_defs_le p e) as Htime.
@@ -275,8 +284,8 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Exit observations are linear in the node key and the returned variables. *)
-  Lemma exits_complexity : bigO (X := P.t * N.t) (fun _ => True)
-    (fun '(p, n) => N.of_nat (N.bits n + length (exits p n))) (fun '(p, n) => T_exits p n).
+  Lemma exits_complexity :
+    T_exits p n ∈ 𝑂(N.of_nat (N.bits n + length (exits p n))) for (p, n).
   Proof.
     apply bigO_intro with (c := c_vars).
     intros [p n] _; pose proof (T_exits_le p n) as Htime.
@@ -525,7 +534,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** The universe bound includes every reader, encoding and occurrence width. *)
-  Lemma universe_complexity : bigO (fun _ : P.t => True) universe_work T_universe.
+  Lemma universe_complexity : T_universe p ∈ 𝑂(universe_work p) for p.
   Proof.
     exists c_vars; intros p _; pose proof (T_universe_le p); nia.
   Qed.

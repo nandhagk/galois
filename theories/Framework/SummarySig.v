@@ -2,10 +2,23 @@
 
     Local rows and lifted callee rows describe activity in every active function.
     For example, a recursive call reads its callee summary and contributes its entry fact.
+
+    Main results
+    - [key_code_spec] Function keys use the client's encoding.
+    - [rows_spec] Local rows precede calls in function, site and resolver order.
+    - [rows_complexity] Listing the rows is linear in their number, O(n) for n rows.
+    - [start_complexity] Starting a row is linear in the row budget at the empty value.
+    - [deps_complexity] Listing the dependencies of a row is linear in their number times
+      the key width.
+    - [target_complexity] The target of a listed row fits the row budget at the empty value.
+    - [sides_complexity] Listing the sides of a row is linear in their number times the key
+      width.
+
     Builds on: Program.CallsSig and Fixpoint.SystemSig. *)
 
 From Stdlib Require Import List NArith.
-From Argent Require Import BigO.
+From Argent Require Import Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig.
@@ -105,22 +118,21 @@ Module Type SUMMARY_TIME (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
       (map (fun sg => Site.bits (fst sg)) (CL.calls p))))%N
     with Definition kw := CL.function_width.
   (** Listing the rows is linear in their number. *)
-  Parameter rows_complexity : bigO (X := prog) (fun p => wf p)
-    (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
+  Parameter rows_complexity : T_rows p ∈ 𝑂(N.of_nat (length (rows p))) for p | wf p.
   (** Starting a row is linear in the row budget at the empty value. *)
-  Parameter start_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
+  Parameter start_complexity :
+    T_start p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   (** Listing the dependencies of a row is linear in their number times the key width. *)
-  Parameter deps_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_deps p r).
+  Parameter deps_complexity :
+    T_deps p r ∈ 𝑂(N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
   (** The target of a listed row fits the row budget at the empty value. *)
-  Parameter target_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
+  Parameter target_complexity :
+    T_target p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   (** Listing the sides of a row is linear in their number times the key width. *)
-  Parameter sides_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_sides p r).
+  Parameter sides_complexity :
+    T_sides p r ∈ 𝑂(N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
 End SUMMARY_TIME.
 
 Module Type SUMMARY_T (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)

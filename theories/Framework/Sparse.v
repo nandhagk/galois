@@ -2,10 +2,24 @@
 
     Sparse rows collect operand values before applying an abstract operation.
     For example, an incoming operand is copied to its destination parameter.
+
+    Main results
+    - [key_code_spec] Value keys retain the supplied key encoding.
+    - [rows_spec] On a well-formed presentation, rows retain entry, definition and
+      incoming-operand occurrence order.
+    - [rows_complexity] Listing the rows is linear in their number, O(n) for n rows.
+    - [start_complexity] Starting a row is linear in the row budget at the empty value.
+    - [deps_complexity] Listing the dependencies of a row is linear in their number times
+      the key width.
+    - [target_complexity] The target of a listed row fits the row budget at the empty value.
+    - [sides_complexity] Listing the sides of a row is linear in their number times the key
+      width.
+
     Builds on: Framework.SparseSig and Fixpoint.Query. *)
 
 From Stdlib Require Import List Bool Arith NArith Lia.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -564,25 +578,24 @@ Module SparseT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
       change (N.of_nat 1) with 1%N; clear -Hy; nia.
   Qed.
   (** Listing the rows is linear in their number. *)
-  Lemma rows_complexity : bigO (X := prog) (fun p => wf p)
-    (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
+  Lemma rows_complexity : T_rows p ∈ 𝑂(N.of_nat (length (rows p))) for p | wf p.
   Proof.
     apply bigO_intro with (c := c_sys); intros p Hwf.
     pose proof (T_rows_le p Hwf) as Htime.
     rewrite Nat2N.inj_add in Htime; nia.
   Qed.
   (** Starting a listed row fits the empty-value row budget. *)
-  Lemma start_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
+  Lemma start_complexity :
+    T_start p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys); intros [p r] [Hwf Hin].
     pose proof (T_start_le p r Hwf Hin) as Htime.
     change (T_start p r <= c_sys * row_work p 0 + c_sys)%N; nia.
   Qed.
   (** Dependencies cost their number times the key width. *)
-  Lemma deps_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_deps p r).
+  Lemma deps_complexity :
+    T_deps p r ∈ 𝑂(N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys); intros [p r] [Hwf Hin].
     pose proof (T_deps_le p r Hwf Hin) as Htime.
@@ -591,17 +604,17 @@ Module SparseT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     rewrite Nat2N.inj_mul; nia.
   Qed.
   (** Finding the target fits the empty-value row budget. *)
-  Lemma target_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
+  Lemma target_complexity :
+    T_target p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys); intros [p r] [Hwf Hin].
     pose proof (T_target_le p r Hwf Hin) as Htime.
     change (T_target p r <= c_sys * row_work p 0 + c_sys)%N; nia.
   Qed.
   (** Side keys cost their number times the key width. *)
-  Lemma sides_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_sides p r).
+  Lemma sides_complexity :
+    T_sides p r ∈ 𝑂(N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys); intros [p r] [Hwf Hin].
     pose proof (T_sides_le p r Hwf Hin) as Htime.
