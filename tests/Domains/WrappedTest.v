@@ -6,6 +6,7 @@
 
 From Stdlib Require Import ZArith List.
 From Galois.Domains Require Import WrappedSig Wrapped BitsLang.
+Import List.ListNotations.
 Local Open Scope Z_scope.
 Module W := WrappedCode WordLanguageCode.
 Local Abbreviation w8 := 8%positive.
@@ -45,6 +46,77 @@ Proof. vm_compute. reflexivity. Qed.
 Example wrapped_raw_widen_stable :
   W.pwiden tt 4%positive (WItv 16 0) (WItv 0 0) = WItv 16 0.
 Proof. vm_compute. reflexivity. Qed.
+
+Definition wrapped_mask_observation (w : positive) (a b : wrapped) :=
+  (W.pleb w a b, W.pjoin w a b, W.pwiden tt w a b, W.pnarrow w a b).
+
+Example wrapped_mask_cross_zero :
+  map (fun w => wrapped_mask_observation w (WItv 250 3) (WItv 1 9))
+    [8%positive; 64%positive] =
+  [(false, WItv 250 9, WItv 240 13, WItv 250 3);
+   (false, WItv 250 9, WFull, WItv 250 3)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mask_disjoint :
+  map (fun w => wrapped_mask_observation w (WItv 10 11) (WItv 20 21))
+    [8%positive; 64%positive] =
+  [(false, WItv 10 21, WItv 8 21, WItv 10 11);
+   (false, WItv 10 21, WItv 8 21, WItv 10 11)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mask_bottom_left :
+  map (fun w => wrapped_mask_observation w WBot (WItv 250 3))
+    [8%positive; 64%positive] =
+  [(true, WItv 250 3, WItv 250 3, WBot);
+   (true, WItv 250 3, WItv 250 3, WBot)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mask_bottom_right :
+  map (fun w => wrapped_mask_observation w (WItv 250 3) WBot)
+    [8%positive; 64%positive] =
+  [(false, WItv 250 3, WItv 250 3, WItv 250 3);
+   (false, WItv 250 3, WItv 250 3, WItv 250 3)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mask_full_left :
+  map (fun w => wrapped_mask_observation w WFull (WItv 250 3))
+    [8%positive; 64%positive] =
+  [(false, WFull, WFull, WItv 250 3);
+   (false, WFull, WFull, WItv 250 3)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mask_full_right :
+  map (fun w => wrapped_mask_observation w (WItv 250 3) WFull)
+    [8%positive; 64%positive] =
+  [(true, WFull, WFull, WItv 250 3);
+   (true, WFull, WFull, WItv 250 3)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mask_raw_widen_stable :
+  map (fun w => W.pwiden tt w (WItv (2 ^ Zpos w) 0) (WItv 0 0))
+    [8%positive; 64%positive] = [WItv 256 0; WItv (2 ^ 64) 0].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mask_raw_endpoints :
+  wrapped_mask_observation w8 (WItv (-6) 259) (WItv 250 3) =
+  (true, WItv 250 3, WItv (-6) 259, WItv 250 3).
+Proof.
+  vm_compute. reflexivity.
+Qed.
 
 Example wrapped_mul_unsigned : wrapped_mul w8 (WItv 10 12) (WItv 2 3) = WItv 20 36.
 Proof. vm_compute. reflexivity. Qed.
