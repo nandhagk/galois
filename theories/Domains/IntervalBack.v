@@ -2198,11 +2198,12 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     intros rw wa wb a b.
     change (interval_bits (interval_shl rw
       (PayloadBounds.interval_clip wa a) (PayloadBounds.interval_clip wb b)) <= Pos.to_nat rw).
+    rewrite Sound.interval_shl_agrees.
     destruct (PayloadBounds.interval_clip_shape wa a)
       as [Ha|[la [ha [Ha [Ha_nonneg [Ha_order _]]]]]];
       destruct (PayloadBounds.interval_clip_shape wb b)
       as [Hb|[lb [hb [Hb [Hb_nonneg [Hb_order _]]]]]];
-      rewrite Ha, Hb; cbn [interval_shl interval_finite_helper];
+      rewrite Ha, Hb; cbn [Sound.interval_shl_ref interval_finite_helper];
       try exact (PayloadBounds.payload_top_bits rw).
     destruct (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Z.pos rw)) eqn:Hrange;
       [|exact (PayloadBounds.payload_top_bits rw)].
@@ -2219,11 +2220,12 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     intros rw wa wb a b.
     change (interval_bits (interval_lshr rw
       (PayloadBounds.interval_clip wa a) (PayloadBounds.interval_clip wb b)) <= Pos.to_nat rw).
+    rewrite Sound.interval_lshr_agrees.
     destruct (PayloadBounds.interval_clip_shape wa a)
       as [Ha|[la [ha [Ha [Ha_nonneg [Ha_order _]]]]]];
       destruct (PayloadBounds.interval_clip_shape wb b)
       as [Hb|[lb [hb [Hb [Hb_nonneg [Hb_order _]]]]]];
-      rewrite Ha, Hb; cbn [interval_lshr interval_finite_helper];
+      rewrite Ha, Hb; cbn [Sound.interval_lshr_ref interval_finite_helper];
       try exact (PayloadBounds.payload_top_bits rw).
     destruct (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Z.pos rw)) eqn:Hrange;
       [|exact (PayloadBounds.payload_top_bits rw)].
@@ -3296,7 +3298,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Local Lemma table_lshr_raw_bits : forall w a b,
     interval_bits (interval_lshr w a b) <= Pos.to_nat w + 2 * interval_bits a.
   Proof.
-    intros w a b. unfold interval_lshr.
+    intros w a b. rewrite Sound.interval_lshr_agrees. unfold Sound.interval_lshr_ref.
     destruct (interval_finite_helper a) as [[la ha]|] eqn:Ha;
       destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hb;
       try (apply Nat.le_trans with (m := Pos.to_nat w);
@@ -3305,6 +3307,8 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       [|apply Nat.le_trans with (m := Pos.to_nat w);
         [apply PayloadBounds.payload_top_bits|lia]].
     destruct (table_finite_bits a la ha Ha) as [Hla Hha].
+    change (interval_bits (interval_checked w (la / 2 ^ hb) (ha / 2 ^ lb)) <=
+      Pos.to_nat w + 2 * interval_bits a).
     pose proof (table_checked_raw_bits w (la / 2 ^ hb) (ha / 2 ^ lb)) as Hchecked.
     pose proof (table_integer_div_bits la (2 ^ hb)).
     pose proof (table_integer_div_bits ha (2 ^ lb)).
@@ -5010,6 +5014,24 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     exact HsquareN.
   Qed.
 
+  Local Lemma table_shift_time : forall x k s,
+    (Z.size_nat x <= s)%nat -> (0 <= k <= Z.of_nat s)%Z ->
+    (1 <= s)%nat ->
+    (Std.Z.T_shiftl x k <= 10 * N.of_nat (s * s))%N /\
+    (Std.Z.T_shiftr x k <= 10 * N.of_nat (s * s))%N.
+  Proof.
+    intros x k s Hx Hk Hs.
+    pose proof (Std.Z.T_shiftl_le x k) as Hleft.
+    pose proof (Std.Z.T_shiftr_le x k) as Hright.
+    pose proof (table_nat_to_N_le _ _ Hx) as HxN.
+    pose proof (table_nat_to_N_le _ _ Hs) as HsN.
+    assert (HkN : (Z.abs_N k <= N.of_nat s)%N).
+    { apply N2Z.inj_le. rewrite N2Z.inj_abs_N, nat_N_Z.
+      rewrite Z.abs_eq by lia. lia. }
+    rewrite Nat2N.inj_mul.
+    split; nia.
+  Qed.
+
   Local Lemma table_shl_time : forall rw wa a wb b,
     (T_interval_shl rw (interval_clip wa a) (interval_clip wb b) <=
       1000 * N.of_nat
@@ -5078,6 +5100,10 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         lia
       end).
     apply andb_true_iff in Hguard as [Hnonneg Hlt].
+    assert (Hhb : (0 <= hb)%Z) by lia.
+    assert (Hhb_test : Z.leb 0 hb = true) by (apply Z.leb_le; lia).
+    rewrite Hhb_test.
+    rewrite !Z.shiftl_mul_pow2 by lia.
     pose proof (table_shift_power_bounds rw wb b lb hb Hb Hlt)
       as [Hpow_lb [Hpow_hb [Hbits_lb Hbits_hb]]].
     pose proof (table_integer_mul_bits la (2 ^ lb)) as Hsize_lo.
@@ -5100,11 +5126,14 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       by (unfold s; lia).
     assert (Hpow_hb_s : (Z.size_nat (2 ^ hb) <= s)%nat)
       by (unfold s; lia).
-    pose proof (table_shift_mul_time la (2 ^ lb) s Hla_s Hpow_lb_s Hpositive)
-      as Hmul_lo.
-    pose proof (table_shift_mul_time ha (2 ^ hb) s Hha_s Hpow_hb_s Hpositive)
-      as Hmul_hi.
-    rewrite Nat.pow_2_r in Hmul_lo, Hmul_hi.
+    assert (Hlb_s : (0 <= lb <= Z.of_nat s)%Z).
+    { apply Z.ltb_lt in Hlt. unfold s. rewrite !Nat2Z.inj_add, positive_nat_Z. lia. }
+    assert (Hhb_s : (0 <= hb <= Z.of_nat s)%Z).
+    { apply Z.ltb_lt in Hlt. unfold s. rewrite !Nat2Z.inj_add, positive_nat_Z. lia. }
+    pose proof (table_shift_time la lb s Hla_s Hlb_s Hpositive) as [Hshift_lo _].
+    pose proof (table_shift_time ha hb s Hha_s Hhb_s Hpositive) as [Hshift_hi _].
+    pose proof (Std.Z.T_leb_le 0 hb) as Hhb_cost.
+    cbn [Z.size_nat N.of_nat] in Hhb_cost.
     assert (Hchecked_nat :
       (Pos.to_nat rw + Z.size_nat (la * 2 ^ lb) +
         Z.size_nat (ha * 2 ^ hb) + 1 <= 3 * s)%nat)
@@ -5135,8 +5164,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     assert (Hbudget_nat : (1 <= s * s)%nat)
       by (clear - Hpositive; nia).
     pose proof (table_nat_to_N_le _ _ Hbudget_nat) as Hbudget.
-    clear - Hmul_lo Hmul_hi Hchecked_budget Hguard_budget Hpow_lb_budget
-      Hpow_hb_budget Hbudget.
+    clear - Hshift_lo Hshift_hi Hchecked_budget Hguard_budget Hhb_cost Hbudget.
     rewrite Nat.mul_1_r.
     lia.
   Qed.
@@ -5208,6 +5236,10 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         lia
       end).
     apply andb_true_iff in Hguard as [_ Hlt].
+    assert (Hhb : (0 <= hb)%Z) by lia.
+    assert (Hhb_test : Z.leb 0 hb = true) by (apply Z.leb_le; lia).
+    rewrite Hhb_test.
+    rewrite !Z.shiftr_div_pow2 by lia.
     pose proof (table_shift_power_bounds rw wb b lb hb Hb Hlt)
       as [Hpow_lb [Hpow_hb [Hbits_lb Hbits_hb]]].
     pose proof (table_integer_div_bits la (2 ^ hb)) as Hsize_lo.
@@ -5230,10 +5262,14 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       by (unfold s; lia).
     assert (Hpow_hb_s : (Z.size_nat (2 ^ hb) <= s)%nat)
       by (unfold s; lia).
-    pose proof (table_shift_div_time la (2 ^ hb) s Hla_s Hpow_hb_s Hpositive)
-      as Hdiv_lo.
-    pose proof (table_shift_div_time ha (2 ^ lb) s Hha_s Hpow_lb_s Hpositive)
-      as Hdiv_hi.
+    assert (Hlb_s : (0 <= lb <= Z.of_nat s)%Z).
+    { apply Z.ltb_lt in Hlt. unfold s. rewrite !Nat2Z.inj_add, positive_nat_Z. lia. }
+    assert (Hhb_s : (0 <= hb <= Z.of_nat s)%Z).
+    { apply Z.ltb_lt in Hlt. unfold s. rewrite !Nat2Z.inj_add, positive_nat_Z. lia. }
+    pose proof (table_shift_time la hb s Hla_s Hhb_s Hpositive) as [_ Hshift_lo].
+    pose proof (table_shift_time ha lb s Hha_s Hlb_s Hpositive) as [_ Hshift_hi].
+    pose proof (Std.Z.T_leb_le 0 hb) as Hhb_cost.
+    cbn [Z.size_nat N.of_nat] in Hhb_cost.
     assert (Hchecked_nat :
       (Pos.to_nat rw + Z.size_nat (la / 2 ^ hb) +
         Z.size_nat (ha / 2 ^ lb) + 1 <= 3 * s)%nat)
@@ -5264,8 +5300,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     assert (Hbudget_nat : (1 <= s * s)%nat)
       by (clear - Hpositive; nia).
     pose proof (table_nat_to_N_le _ _ Hbudget_nat) as Hbudget.
-    clear - Hdiv_lo Hdiv_hi Hchecked_budget Hguard_budget Hpow_lb_budget
-      Hpow_hb_budget Hbudget.
+    clear - Hshift_lo Hshift_hi Hchecked_budget Hguard_budget Hhb_cost Hbudget.
     rewrite Nat.mul_1_r.
     lia.
   Qed.

@@ -390,3 +390,41 @@ Example interval_ite_uses_prepared_tree :
     [(1%positive, Itv (Fin 0) (Fin 1)); (8%positive, Itv (Fin 2) (Fin 4));
      (8%positive, Itv (Fin 11) (Fin 12))] 8%positive = Itv (Fin 2) (Fin 12).
 *)
+
+Example interval_word_shift_shl_widths : map (fun w => Ops.interval_shl w
+  (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 3))) [8%positive;64%positive] =
+  [I (Fin 4) (Fin 32); I (Fin 4) (Fin 32)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_lshr_widths : map (fun w => Ops.interval_lshr w
+  (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 3))) [8%positive;64%positive] =
+  [I (Fin 0) (Fin 1); I (Fin 0) (Fin 1)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_shl_fallback : Ops.interval_shl 8%positive
+  (I (Fin 0) (Fin 255)) (I (Fin 0) (Fin 7)) = I (Fin 0) (Fin 255).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_lshr_fallback : Ops.interval_lshr 8%positive
+  (I (Fin 0) (Fin 255)) (I (Fin 0) (Fin 7)) = I (Fin 0) (Fin 255).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_shl_negative_high_count : Ops.interval_shl 8%positive
+  (I (Fin 1) (Fin 4)) (I (Fin 0) (Fin (-1))) = I (Fin 1) (Fin 0).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_lshr_negative_high_count : Ops.interval_lshr 8%positive
+  (I (Fin 1) (Fin 4)) (I (Fin 0) (Fin (-1))) = I (Fin 0) (Fin 4).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_lshr_negative_high_endpoint : Ops.interval_lshr 8%positive
+  (I (Fin 1) (Fin (-4))) (I (Fin 2) (Fin 3)) = I (Fin 0) (Fin (-1)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
