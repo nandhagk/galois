@@ -546,21 +546,41 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
   (** Evaluation is linear in the work of both components. *)
   Lemma eval_bigO : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (eval_work (fst x) (snd x))) (fun x => T_eval (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_state).
+    intros [e s] _. cbn [fst snd].
+    pose proof (T_eval_le e s) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
   (** Assignment is linear in the work of both components. *)
   Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_state).
+    intros [[x e] s] _. cbn [fst snd].
+    pose proof (T_assign_le x e s) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
   (** Havoc is linear in the work of both components. *)
   Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x))) (fun x => T_havoc (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_state).
+    intros [x s] _. cbn [fst snd].
+    pose proof (T_havoc_le x s) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
   (** Assumption is linear in the work of both components. *)
   Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_state).
+    intros [[g es] s] _. cbn [fst snd].
+    pose proof (T_assume_le g es s) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
   (** Relational environments denote the intersection of their two meanings. *)
   Lemma F1_gamma : forall r s st,
     gamma (r, s) st <-> R.ngamma r (fun x => N.num (st x)) /\ E.gamma s st.
