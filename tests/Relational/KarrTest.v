@@ -493,3 +493,71 @@ Example affine_hull_divides_common_coefficient_factors :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Fused exact division preserves every row field and the public elimination results. *)
+Example fused_division_accepts_negative_divisor :
+  karr_divide_fused (-2) (KRow [6; -4] 10 [2; -6] 2) =
+    KRow [-3; 2] (-5) [-1; 3] (-1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A nonzero remainder in a later weight restores the complete original row. *)
+Example fused_division_keeps_an_inexact_weight :
+  karr_divide_fused 2 (KRow [2; -4] 6 [3; 0] 10) = KRow [2; -4] 6 [3; 0] 10.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The zero-divisor guard retains the original row without attempting division. *)
+Example fused_division_keeps_a_zero_divisor :
+  karr_divide_fused 0 (KRow [2; -4] 6 [8; 0] 10) = KRow [2; -4] 6 [8; 0] 10.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A triangular system exercises exact division during successive elimination stages. *)
+Definition fused_triangular_equalities : list (lcons positive) :=
+  [LCons _ [(1%positive, 2); (2%positive, 1)] REq 0;
+   LCons _ [(2%positive, 2); (3%positive, 1)] REq 0;
+   LCons _ [(3%positive, 2)] REq 0].
+
+(** Fused elimination preserves coefficients, multiplier vectors, scales, and row order. *)
+Example fused_basis_keeps_fraction_free_rows :
+  Equalities.equality_basis [1; 2; 3]%positive fused_triangular_equalities =
+    [KRow [2; 1; 0] 0 [1; 0; 0] 0;
+     KRow [0; 4; 2] 0 [0; 2; 0] 0;
+     KRow [0; 0; 8] 0 [0; 0; 4] 0].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Projection through the fused basis retains the original complete integer result. *)
+Example fused_projection_keeps_integer_row :
+  Equalities.project 1%positive
+    [LCons _ [(1%positive, 1); (2%positive, 1)] REq 0;
+     LCons _ [(1%positive, 1); (2%positive, -1)] REq 0] =
+    [LCons _ [(2%positive, -2)] REq 0].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The origin supplies the first point state for the fused hull fixture. *)
+Definition fused_hull_origin : list (lcons positive) :=
+  [LCons _ [(1%positive, 1)] REq 0;
+   LCons _ [(2%positive, 1)] REq 0;
+   LCons _ [(3%positive, 1)] REq 0].
+
+(** A point with even coordinates supplies the second state for the fused hull fixture. *)
+Definition fused_hull_even_point : list (lcons positive) :=
+  [LCons _ [(1%positive, 1)] REq 2;
+   LCons _ [(2%positive, 1)] REq 4;
+   LCons _ [(3%positive, 1)] REq 6].
+
+(** The fused hull keeps the entire gcd-normalized output of its specification. *)
+Example fused_hull_preserves_complete_output :
+  Equalities.affine_hull fused_hull_origin fused_hull_even_point =
+    Equalities.affine_hull_spec fused_hull_origin fused_hull_even_point.
+Proof.
+  vm_compute. reflexivity.
+Qed.
