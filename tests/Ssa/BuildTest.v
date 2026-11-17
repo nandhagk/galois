@@ -179,3 +179,16 @@ Proof. vm_compute; discriminate. Qed.
 Example build_large_universe_is_ssa :
   option_map TestValidate.check_ssa (TestInputBuild.build build_large_universe) = Some true.
 Proof. vm_compute; reflexivity. Qed.
+
+Module TestRejectValidate.
+  Definition check (_ _ : TestSource.t) (_ : cert) : bool := false.
+  Definition check_ssa := TestValidate.check_ssa.
+End TestRejectValidate.
+Module TestRejectBuild := BuildCode TestOps PosKeyCode PosKeyCode TestSource
+  TestView.Q TestView.R BlockEdge PointEdge PointKey TestView.BC TestView.C TestView.U
+  TestView.SP TestView.S DigraphCode DomCode FrontierCode TestLive TestRejectValidate.
+
+(** Failure of the translation validator rejects an otherwise valid produced candidate. *)
+Example build_short_circuit_rejects_candidate :
+  TestRejectBuild.produce build_diamond <> None /\ TestRejectBuild.build build_diamond = None.
+Proof. vm_compute; split; [discriminate|reflexivity]. Qed.
