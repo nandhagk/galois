@@ -32,98 +32,46 @@ Module LiftedRank := JoinWidening LiftedBoolLat LiftedHeight.
 
 Module BooleanTests.
 
-  (** Widening false with false gives false. *)
-  Example widen_false_false : BoolWide.widen tt false false = false.
+  (** The widening of two booleans, as (old, new, result). It is the join. *)
+  Definition widen_cases : list (bool * bool * bool) :=
+    [(false, false, false); (false, true, true); (true, false, true); (true, true, true)].
+
+  (** The narrowing of two booleans, as (old, new, result). It keeps the old value. *)
+  Definition narrow_cases : list (bool * bool * bool) :=
+    [(false, false, false); (false, true, false); (true, false, true); (true, true, true)].
+
+  (** The boolean order, as (left, right, whether left is below right). False is below true. *)
+  Definition leb_cases : list (bool * bool * bool) :=
+    [(false, false, true); (false, true, true); (true, false, false); (true, true, true)].
+
+  (** The boolean join, as (left, right, result). It is the disjunction. *)
+  Definition join_cases : list (bool * bool * bool) :=
+    [(false, false, false); (false, true, true); (true, false, true); (true, true, true)].
+
+  (** Widening agrees with every case of its table. *)
+  Example widen_table :
+    forallb (fun c => let '(x, y, r) := c in Bool.eqb (BoolWide.widen tt x y) r) widen_cases = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Narrowing false with false gives false. *)
-  Example narrow_false_false : BoolWide.narrow false false = false.
+  (** Narrowing agrees with every case of its table. *)
+  Example narrow_table :
+    forallb (fun c => let '(x, y, r) := c in Bool.eqb (BoolWide.narrow x y) r) narrow_cases = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Widening false with true gives true. *)
-  Example widen_false_true : BoolWide.widen tt false true = true.
+  (** The order agrees with every case of its table. *)
+  Example order_table :
+    forallb (fun c => let '(x, y, r) := c in Bool.eqb (BoolLatCode.leb x y) r) leb_cases = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Narrowing false with true gives false. *)
-  Example narrow_false_true : BoolWide.narrow false true = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** Widening true with false gives true. *)
-  Example widen_true_false : BoolWide.widen tt true false = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** Narrowing true with false gives true. *)
-  Example narrow_true_false : BoolWide.narrow true false = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** Widening true with true gives true. *)
-  Example widen_true_true : BoolWide.widen tt true true = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** Narrowing true with true gives true. *)
-  Example narrow_true_true : BoolWide.narrow true true = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** False is below false in the boolean order. *)
-  Example bool_order_false_false : BoolLatCode.leb false false = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The join of false with itself is false. *)
-  Example bool_join_false_false : BoolLatCode.join false false = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** False is below true in the boolean order. *)
-  Example bool_order_false_true : BoolLatCode.leb false true = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The join of false and true is true. *)
-  Example bool_join_false_true : BoolLatCode.join false true = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** True is not below false in the boolean order. *)
-  Example bool_order_true_false : BoolLatCode.leb true false = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The join of true and false is true. *)
-  Example bool_join_true_false : BoolLatCode.join true false = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** True is below itself in the boolean order. *)
-  Example bool_order_true_true : BoolLatCode.leb true true = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The join of true with itself is true. *)
-  Example bool_join_true_true : BoolLatCode.join true true = true.
+  (** The join agrees with every case of its table. *)
+  Example join_table :
+    forallb (fun c => let '(x, y, r) := c in Bool.eqb (BoolLatCode.join x y) r) join_cases = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -136,30 +84,6 @@ Module BooleanTests.
 
   (** Top is not below false in the boolean domain. *)
   Example bool_domain_top_not_below_false : BoolLatCode.leb BoolLatCode.top false = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The threshold widening keeps false when both arguments are false. *)
-  Example threshold_false_false : BoolWide.widen tt false false = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The threshold widening reaches true from false to true. *)
-  Example threshold_false_true : BoolWide.widen tt false true = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The threshold widening keeps true when the old value is true. *)
-  Example threshold_true_false : BoolWide.widen tt true false = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The threshold widening keeps true when both arguments are true. *)
-  Example threshold_true_true : BoolWide.widen tt true true = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -206,79 +130,58 @@ End UnitTests.
 
 Module LiftTests.
 
-  (** Widening none with none gives none. *)
-  Example lift_widen_none_none : LiftedWide.widen tt None None = None.
+  (** Equality of lifted booleans, where [None] is the fresh bottom. *)
+  Definition lifted_eqb (x y : option bool) : bool :=
+    match x, y with
+    | None, None => true
+    | Some a, Some b => Bool.eqb a b
+    | _, _ => false
+    end.
+
+  (** The widening of two lifted booleans, as (old, new, result). *)
+  Definition widen_cases : list (option bool * option bool * option bool) :=
+    [(None, None, None); (Some false, Some true, Some true)].
+
+  (** The narrowing of two lifted booleans, as (old, new, result). *)
+  Definition narrow_cases : list (option bool * option bool * option bool) :=
+    [(None, None, None); (Some false, None, Some false); (Some true, Some false, Some true)].
+
+  (** The lifted order, as (left, right, whether left is below right). None is the bottom. *)
+  Definition leb_cases : list (option bool * option bool * bool) :=
+    [(None, None, true); (None, Some false, true); (Some false, None, false);
+     (Some true, Some false, false)].
+
+  (** The lifted join, as (left, right, result). *)
+  Definition join_cases : list (option bool * option bool * option bool) :=
+    [(None, None, None); (None, Some false, Some false); (Some false, Some true, Some true)].
+
+  (** Widening agrees with every case of its table. *)
+  Example lift_widen_table :
+    forallb (fun c => let '(x, y, r) := c in lifted_eqb (LiftedWide.widen tt x y) r) widen_cases
+      = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Narrowing none with none gives none. *)
-  Example lift_narrow_none_none : LiftedWide.narrow None None = None.
+  (** Narrowing agrees with every case of its table. *)
+  Example lift_narrow_table :
+    forallb (fun c => let '(x, y, r) := c in lifted_eqb (LiftedWide.narrow x y) r) narrow_cases
+      = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Narrowing a known false with none gives the known false. *)
-  Example lift_narrow_some_false_with_none : LiftedWide.narrow (Some false) None = Some false.
+  (** The order agrees with every case of its table. *)
+  Example lift_order_table :
+    forallb (fun c => let '(x, y, r) := c in Bool.eqb (LiftedBool.leb x y) r) leb_cases = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Widening a known false with a known true gives the known true. *)
-  Example lift_widen_some_false_some_true :
-    LiftedWide.widen tt (Some false) (Some true) = Some true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** Narrowing a known true with a known false gives the known true. *)
-  Example lift_narrow_some_true_some_false :
-    LiftedWide.narrow (Some true) (Some false) = Some true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** None is below none in the lifted order. *)
-  Example lift_none_below_none : LiftedBool.leb None None = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The join of none with none is none. *)
-  Example lift_join_none_none : LiftedBool.join None None = None.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** None is below a known false. *)
-  Example lift_none_below_some_false : LiftedBool.leb None (Some false) = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A known false is not below none. *)
-  Example lift_some_false_not_below_none : LiftedBool.leb (Some false) None = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The join of none with a known false is that known false. *)
-  Example lift_join_none_with_some_false :
-    LiftedBool.join None (Some false) = Some false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A known true is not below a known false. *)
-  Example lift_some_true_not_below_some_false :
-    LiftedBool.leb (Some true) (Some false) = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The join of a known false and a known true is a known true. *)
-  Example lift_join_some_false_some_true :
-    LiftedBool.join (Some false) (Some true) = Some true.
+  (** The join agrees with every case of its table. *)
+  Example lift_join_table :
+    forallb (fun c => let '(x, y, r) := c in lifted_eqb (LiftedBool.join x y) r) join_cases
+      = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -309,24 +212,3 @@ Module LiftTests.
   Qed.
 
 End LiftTests.
-
-(* LatticeSimpleTest.lift_empty_meaning uses the retired lift_bot_gamma dictionary.
-   WithBot exports the lattice operations. It exports no concretisation adapter.
-   The Cost.ticks coordinates of unit_boundary, lift_none_none, lift_none_some and
-   lift_some_some retire with Cost. The value coordinates are checked above. *)
-
-(* LatticeCoreTest.of_pure_values is the public boolean implementation above.
-   threshold_keeps_order_join uses the unchanged BoolLat operations, while
-   threshold_boundaries uses the public JoinWidening adapter. The boolean
-   threshold function has the same table as this adapter.
-   threshold_laws and costed_replacement_laws prove laws of the deleted
-   with_widen and with_widen_c dictionaries.
-   of_pure_ticks and the tick coordinate of threshold_boundaries retire with Cost.
-   costed_replacement_ticks expects (7%N, 1%N, true, false). It replaces a stored
-   widen_c closure while keeping join_c. Lattice operations and widening now
-   belong to separate modules, so the with_widen_c dictionary replacement retires.
-   bool_domain_computes keeps the underlying join/top/order observations above.
-   domain_of_simple assembly and its bool_domain_laws proof client retire with the
-   domain dictionary. weak_join_laws and weak_join_is_not_least are symbolic proof
-   clients of the deleted simple and lub_laws dictionaries.
-   LatticeTacticsTest tests the deleted order_solver tactic, as core section 4 specifies. *)
