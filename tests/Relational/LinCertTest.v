@@ -154,3 +154,12 @@ Example distinct_keys_do_not_cancel :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example cached_gather_checks_repeated_keys :
+  Certificates.check_entails
+    [LCons _ [(1%positive, 2); (1%positive, -1); (2%positive, 3)] REq 7]
+    (LCons _ [(2%positive, 1); (1%positive, 1); (2%positive, 2)] REq 7)
+    (Cert [1] 1 false) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.

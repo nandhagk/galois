@@ -125,16 +125,101 @@ Module LinCertCode (X : KEY_OPS) <: LINCERT_OPS X.
       | REq, RLe => false
       end.
 
-  Definition check_entails (P : list (lcons X.t)) (c : lcons X.t) (k : cert) : bool :=
+  (** The original checker is retained as the reference for cached gathering. *)
+  Definition check_entails_spec (P : list (lcons X.t)) (c : lcons X.t) (k : cert) : bool :=
     match combine P (mults k) with
     | Some s => if empty_row s then true else check_row s c k
     | None => false
     end.
+
+  (** A prepared coefficient trie avoids rebuilding the contradiction input. *)
+  Definition empty_row_in (tr : PTrieCode.t (Z * Z)) (s : lcons X.t) : bool :=
+    if PTrieCode.forall2b zero_entry tr (@PTrieCode.empty unit) then
+      match lrel s with
+      | REq => negb (rhs s =? 0)%Z
+      | RLe => (rhs s <? 0)%Z
+      end
+    else false.
+
+  (** Coefficient equality continues insertion from the already gathered source. *)
+  Definition linear_equal_in (tr : PTrieCode.t (Z * Z)) (sc : Z)
+      (ys : list (X.t * Z)) : bool :=
+    PTrieCode.forall2b zero_entry
+      (fold_left insert_term (scale_terms (-sc)%Z ys) tr) (@PTrieCode.empty unit).
+
+  (** Scale and coefficient guards stop before the remaining row checks. *)
+  Definition check_row_in (tr : PTrieCode.t (Z * Z)) (s c : lcons X.t) (k : cert) : bool :=
+    if (0 <? scale k)%Z then
+      if linear_equal_in tr (scale k) (lhs c) then
+        match lrel c, lrel s with
+        | REq, REq => (rhs s =? scale k * rhs c)%Z
+        | RLe, _ =>
+          if cut k then (rhs s / scale k <=? rhs c)%Z
+          else (rhs s <=? scale k * rhs c)%Z
+        | REq, RLe => false
+        end
+      else false
+    else false.
+
+  (** A successful combination shares one gather between both certificate checks. *)
+  Definition check_entails_fast (P : list (lcons X.t)) (c : lcons X.t) (k : cert) : bool :=
+    match combine P (mults k) with
+    | Some s =>
+      let tr := gather (lhs s) in
+      if empty_row_in tr s then true else check_row_in tr s c k
+    | None => false
+    end.
+
+  (** The public checker uses the shared coefficient trie. *)
+  Definition check_entails (P : list (lcons X.t)) (c : lcons X.t) (k : cert) : bool :=
+    check_entails_fast P c k.
+
 End LinCertCode.
 
 Module LinCert (X : KEY) <: LINCERT X.
   Include LinCertCode X.
   Include LINCERT_SPEC X.
+
+  (** The cached contradiction check agrees with the original row test. *)
+  Lemma empty_row_in_gather : forall s,
+    empty_row_in (gather (lhs s)) s = empty_row s.
+  Proof.
+    intro s. unfold empty_row_in, empty_row, linear_zero.
+    destruct (PTrieCode.forall2b zero_entry (gather (lhs s)) (@PTrieCode.empty unit));
+      reflexivity.
+  Qed.
+
+  (** Continuing the fold equals gathering the concatenated occurrence list. *)
+  Lemma linear_equal_in_gather : forall xs sc ys,
+    linear_equal_in (gather xs) sc ys = linear_equal sc xs ys.
+  Proof.
+    intros xs sc ys. unfold linear_equal_in, linear_equal, linear_zero, gather.
+    rewrite fold_left_app. reflexivity.
+  Qed.
+
+  (** The guarded row checker preserves the original Boolean result. *)
+  Lemma check_row_in_gather : forall s c k,
+    check_row_in (gather (lhs s)) s c k = check_row s c k.
+  Proof.
+    intros s c k. unfold check_row_in, check_row. rewrite linear_equal_in_gather.
+    destruct (0 <? scale k)%Z, (linear_equal (scale k) (lhs s) (lhs c)); reflexivity.
+  Qed.
+
+  (** Sharing the gathered source preserves acceptance for every certificate. *)
+  Lemma check_entails_fast_agrees : forall P c k,
+    check_entails_fast P c k = check_entails_spec P c k.
+  Proof.
+    intros P c k. unfold check_entails_fast, check_entails_spec.
+    destruct (combine P (mults k)) as [s|]; [|reflexivity].
+    rewrite empty_row_in_gather, check_row_in_gather. reflexivity.
+  Qed.
+
+  (** The public checker preserves the retained reference computation. *)
+  Lemma check_entails_agrees : forall P c k,
+    check_entails P c k = check_entails_spec P c k.
+  Proof.
+    apply check_entails_fast_agrees.
+  Qed.
 
   (** Omitting zero-weight rows never enlarges the certificate input measure. *)
   Lemma csize_nz_le : forall P ms, csize_nz P ms <= csize P ms.
@@ -689,7 +774,8 @@ Module LinCert (X : KEY) <: LINCERT X.
   Lemma check_entails_sound : forall P c k, check_entails P c k = true ->
     forall v, Forall (sat v) P -> sat v c.
   Proof.
-    intros P c k Hcheck v Hmodels. unfold check_entails in Hcheck.
+    intros P c k Hcheck v Hmodels.
+    rewrite check_entails_agrees in Hcheck. unfold check_entails_spec in Hcheck.
     destruct (combine P (mults k)) as [s|] eqn:Hsum; [|discriminate].
     pose proof (combine_valid P (mults k) s Hsum v Hmodels) as Hsat.
     destruct (empty_row s) eqn:Hempty.
@@ -824,7 +910,8 @@ Module LinCert (X : KEY) <: LINCERT X.
     check_entails P c k = true -> cut k = false ->
     forall v, Forall (satQ v) P -> satQ v c.
   Proof.
-    intros P c k Hcheck Hcut v Hmodels. unfold check_entails in Hcheck.
+    intros P c k Hcheck Hcut v Hmodels.
+    rewrite check_entails_agrees in Hcheck. unfold check_entails_spec in Hcheck.
     destruct (combine P (mults k)) as [s|] eqn:Hsum; [|discriminate].
     pose proof (combine_valid_Q P (mults k) s Hsum v Hmodels) as Hsat.
     destruct (empty_row s) eqn:Hempty.
@@ -843,7 +930,8 @@ Module LinCert (X : KEY) <: LINCERT X.
   Lemma check_entails_empty : forall P c k,
     check_empty P (mults k) = true -> check_entails P c k = true.
   Proof.
-    intros P c k Hempty. unfold check_empty, check_entails in *.
+    intros P c k Hempty.
+    rewrite check_entails_agrees. unfold check_empty, check_entails_spec in *.
     destruct (combine P (mults k)) as [s|]; [now rewrite Hempty|discriminate].
   Qed.
   (** Admissible multipliers combine to the weighted sum of the rows. *)
@@ -878,7 +966,7 @@ Module LinCert (X : KEY) <: LINCERT X.
   Proof.
     intros P c ms sc Hadmissible Hscale Hcoef Hbound.
     destruct (combine_spec P ms Hadmissible) as [s [Hsum [Hcoeff [Hrhs Hrel]]]].
-    unfold check_entails. cbn [mults]. rewrite Hsum.
+    rewrite check_entails_agrees. unfold check_entails_spec. cbn [mults]. rewrite Hsum.
     destruct (empty_row s); [reflexivity|]. unfold check_row.
     cbn [scale cut]. apply andb_true_iff. split.
     - apply andb_true_iff. split; [now apply Z.ltb_lt|].
@@ -925,6 +1013,10 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   TimeFun empty_row.
   TimeFun check_empty.
   TimeFun check_row.
+  TimeFun empty_row_in.
+  TimeFun linear_equal_in.
+  TimeFun check_row_in.
+  TimeFun check_entails_fast.
   TimeFun check_entails.
   (** The number of set bits pays for carry chains in nonnegative accumulation. *)
   Fixpoint lc_ones (p : positive) : N :=
@@ -2151,6 +2243,119 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     - destruct (cut k); time_simpl; nia.
   Qed.
 
+  (** The cached contradiction test charges one trie scan and the bound width. *)
+  Lemma T_empty_row_in_weighted : forall s,
+    (T_empty_row_in (gather (lhs s)) s <=
+      4 * PTrieT.c_trie * (lc_terms_weight (lhs s) + 1) +
+      N.of_nat (Z.size_nat (rhs s)) + 12)%N.
+  Proof.
+    intro s. pose proof (T_zero_trie (gather (lhs s))) as Hzero.
+    pose proof (gather_storage (lhs s)) as Hstorage.
+    pose proof (Z.T_eqb_le (rhs s) 0) as Heq.
+    pose proof (Z.T_ltb_le (rhs s) 0) as Hlt.
+    time_unfold T_empty_row_in.
+    change (fun a b => T_zero_entry a b) with T_zero_entry.
+    destruct (PTrieCode.forall2b zero_entry (gather (lhs s)) (@PTrieCode.empty unit));
+      destruct (lrel s); time_simpl; nia.
+  Qed.
+
+  (** A combination supplies the nonzero certificate bound for its cached zero test. *)
+  Lemma T_empty_row_in_combined_nz : forall P ms s, combine P ms = Some s ->
+    (T_empty_row_in (gather (lhs s)) s <=
+      (4 * PTrieT.c_trie + 13) * N.of_nat (csize_nz P ms + 1))%N.
+  Proof.
+    intros P ms s Hsum. pose proof (T_empty_row_in_weighted s) as Hrow.
+    pose proof (combine_terms_weight_nz P ms s Hsum) as Hterms.
+    pose proof (combine_rhs_coarse_size_nz P ms s Hsum) as Hrhs. nia.
+  Qed.
+
+  (** Initial gathering and continuation share the insertion potential. *)
+  Lemma T_linear_equal_in_weighted : forall sc xs c,
+    (T_gather xs + T_linear_equal_in (gather xs) sc (lhs c) <=
+      (lc_zero_factor + 20) *
+      (lc_terms_weight xs + N.of_nat ((Z.size_nat sc + 1) * lsize c) + 1))%N.
+  Proof.
+    intros sc xs c.
+    pose proof (T_scale_conclusion (-sc)%Z c) as Hscale.
+    pose proof (lc_terms_weight_conclusion (-sc)%Z c) as Hweight.
+    rewrite lc_size_opp in Hscale, Hweight.
+    pose proof (T_gather_from_ones xs PTrieCode.empty lc_empty_good) as Hfirst.
+    change (List.T_fold_left insert_term T_insert_term xs PTrieCode.empty +
+      lc_trie_sum lc_pair_ones (gather xs) <=
+      (lc_insert_factor + 1) * lc_terms_weight xs + 0 + 1)%N in Hfirst.
+    pose proof (T_gather_from_ones (scale_terms (-sc)%Z (lhs c))
+      (gather xs) (gather_good xs)) as Hrest.
+    pose proof (gather_from_storage (scale_terms (-sc)%Z (lhs c))
+      (gather xs) (gather_good xs)) as Hrest_storage.
+    pose proof (gather_storage xs) as Hfirst_storage.
+    pose proof (T_zero_trie
+      (fold_left insert_term (scale_terms (-sc)%Z (lhs c)) (gather xs))) as Hzero.
+    assert (HfoldW :
+      (List.T_fold_left insert_term T_insert_term xs PTrieCode.empty +
+        List.T_fold_left insert_term T_insert_term (scale_terms (-sc)%Z (lhs c))
+          (gather xs) <= (lc_insert_factor + 1) *
+        (lc_terms_weight xs + N.of_nat ((Z.size_nat sc + 1) * lsize c)) + 2)%N) by nia.
+    assert (HzeroW :
+      (PTrieT.T_forall2b zero_entry T_zero_entry
+        (fold_left insert_term (scale_terms (-sc)%Z (lhs c)) (gather xs))
+        (@PTrieCode.empty unit) <= 4 * PTrieT.c_trie *
+        (lc_terms_weight xs + N.of_nat ((Z.size_nat sc + 1) * lsize c) + 1))%N) by nia.
+    clear Hfirst Hrest Hweight Hrest_storage Hfirst_storage Hzero.
+    pose proof (Z.T_opp_le sc) as Hopp.
+    time_unfold T_gather. time_unfold T_linear_equal_in.
+    change (fun a b => T_insert_term a b) with T_insert_term.
+    change (fun a b => T_zero_entry a b) with T_zero_entry.
+    unfold lc_zero_factor. time_simpl. nia.
+  Qed.
+
+  (** The guarded row check includes the single initial gather in its weighted bound. *)
+  Lemma T_check_row_in_weighted : forall s c k b,
+    (Z.size_nat (rhs s) <= b)%nat ->
+    (T_gather (lhs s) + T_check_row_in (gather (lhs s)) s c k <=
+      (lc_zero_factor + 110) *
+      (lc_terms_weight (lhs s) +
+        N.of_nat ((Z.size_nat (scale k) + 1) * (lsize c + b + 1))))%N.
+  Proof.
+    intros s c k b Hbits.
+    set (w := (lc_terms_weight (lhs s) +
+      N.of_nat ((Z.size_nat (scale k) + 1) * (lsize c + b + 1)))%N).
+    assert (Hw : (1 <= w)%N) by (unfold w; nia).
+    pose proof (T_linear_equal_in_weighted (scale k) (lhs s) c) as Hequal.
+    assert (HequalW : (T_gather (lhs s) +
+      T_linear_equal_in (gather (lhs s)) (scale k) (lhs c) <=
+      (lc_zero_factor + 20) * w)%N).
+    { eapply N.le_trans; [exact Hequal|]. apply N.mul_le_mono_l. unfold w. nia. }
+    pose proof (T_gather_weighted (lhs s)) as Hbuild.
+    assert (HbuildW : (T_gather (lhs s) <= (lc_zero_factor + 3) * w)%N).
+    { unfold lc_zero_factor. clear -Hbuild Hw. unfold w in *. nia. }
+    pose proof (T_Z_mul_bilinear (scale k) (rhs c)) as Hmul.
+    pose proof (lsize_rhs c) as Hcsize.
+    assert (HmulW : (Z.T_mul (scale k) (rhs c) <= 8 * w)%N)
+      by (clear -Hmul Hcsize; unfold w; nia).
+    pose proof (T_Z_div_bilinear (rhs s) (scale k)) as Hdiv.
+    assert (HdivW : (Z.T_div (rhs s) (scale k) <= 65 * w)%N)
+      by (clear -Hdiv Hbits; unfold w; nia).
+    pose proof (lc_size_div (rhs s) (scale k)) as Hquotient.
+    pose proof (Z.T_leb_le (rhs s / scale k) (rhs c)) as Hcut.
+    assert (HcutW : (Z.T_leb (rhs s / scale k) (rhs c) <= 5 * w)%N)
+      by (clear -Hcut Hquotient Hbits; unfold w; nia).
+    pose proof (Z.T_eqb_le (rhs s) (scale k * rhs c)) as Heq.
+    pose proof (Z.T_leb_le (rhs s) (scale k * rhs c)) as Hle.
+    assert (HeqW : (Z.T_eqb (rhs s) (scale k * rhs c) <= 5 * w)%N)
+      by (clear -Heq Hbits; unfold w; nia).
+    assert (HleW : (Z.T_leb (rhs s) (scale k * rhs c) <= 5 * w)%N)
+      by (clear -Hle Hbits; unfold w; nia).
+    pose proof (Z.T_ltb_le 0 (scale k)) as Hpositive.
+    change (Z.T_ltb 0 (scale k) <= 4)%N in Hpositive.
+    clear Hequal Hbuild Hmul Hcsize Hdiv Hquotient Hcut Heq Hle Hbits.
+    time_unfold T_check_row_in. fold w.
+    destruct (0 <? scale k)%Z;
+      [destruct (linear_equal_in (gather (lhs s)) (scale k) (lhs c))|].
+    - destruct (lrel c), (lrel s); try (destruct (cut k)); time_simpl; nia.
+    - time_simpl. nia.
+    - time_simpl. nia.
+  Qed.
+
   (** A common constant covers combination, two trie scans and scaled bound checks. *)
   Definition c_lc : N := (512 + 4 * X.c_key + 16 * PTrieT.c_trie)%N.
   Lemma T_combine_le_nz : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize_nz P ms +
@@ -2180,18 +2385,20 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     pose proof (T_combine_weighted_nz P (mults k)) as Hcombine.
     assert (HcombineW : (T_combine P (mults k) <= 112 * N.of_nat w)%N).
     { eapply N.le_trans; [exact Hcombine|]. apply N.mul_le_mono_l. unfold w. nia. }
-    clear Hcombine. time_unfold T_check_entails.
+    clear Hcombine. time_unfold T_check_entails. time_unfold T_check_entails_fast.
     destruct (combine P (mults k)) as [s|] eqn:Hsum.
-    - pose proof (T_empty_row_combined_nz P (mults k) s Hsum) as Hempty.
-      assert (HemptyW : (T_empty_row s <= (lc_zero_factor + 13) * N.of_nat w)%N).
+    - pose proof (T_empty_row_in_combined_nz P (mults k) s Hsum) as Hempty.
+      assert (HemptyW : (T_empty_row_in (gather (lhs s)) s <=
+        (4 * PTrieT.c_trie + 13) * N.of_nat w)%N).
       { eapply N.le_trans; [exact Hempty|]. apply N.mul_le_mono_l. unfold w. nia. }
       pose proof (combine_rhs_size P (mults k) s Hsum) as Hrhs.
       pose proof (combine_terms_weight_nz P (mults k) s Hsum) as Hterms.
-      pose proof (T_check_row_weighted s c k (cbits P (mults k)) Hrhs) as Hrow.
-      assert (HrowW : (T_check_row s c k <= (lc_zero_factor + 110) * N.of_nat w)%N).
+      pose proof (T_check_row_in_weighted s c k (cbits P (mults k)) Hrhs) as Hrow.
+      assert (HrowW : (T_gather (lhs s) + T_check_row_in (gather (lhs s)) s c k <=
+        (lc_zero_factor + 110) * N.of_nat w)%N).
       { eapply N.le_trans; [exact Hrow|]. apply N.mul_le_mono_l. unfold w. nia. }
       clear Hempty Hrhs Hterms Hrow Hsum.
-      destruct (empty_row s); time_simpl;
+      destruct (empty_row_in (gather (lhs s)) s); time_simpl;
         unfold c_lc, lc_zero_factor, lc_insert_factor in *; nia.
     - time_simpl. unfold c_lc. nia.
   Qed.
