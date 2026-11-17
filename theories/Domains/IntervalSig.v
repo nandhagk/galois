@@ -2,13 +2,46 @@
 
     Integer intervals use infinite endpoints and threshold widening.
     For example, thresholds 0 and 8 let an increasing upper bound jump from 3 to 8.
+
+    Main results
+    - [interval_leb_complexity] Scalar inclusion has the published endpoint-bit class.
+    - [interval_join_complexity] Scalar join has the published endpoint-bit class.
+    - [interval_meet_complexity] Scalar meet has the published endpoint-bit class.
+    - [interval_stable_widen_complexity] Scalar widening has the published bits-plus-search-path
+      class.
+    - [mul_complexity] Multiplication has the published quadratic endpoint bound.
+    - [add_complexity] Addition is linear in the endpoint sizes, O(size a + size b + 1).
+    - [sub_complexity] Subtraction is linear in the endpoint sizes, O(size a + size b + 1).
+    - [udiv_complexity] Unsigned division has the published quadratic endpoint class.
+    - [urem_complexity] Unsigned remainder has the published quadratic endpoint class.
+    - [shl_complexity] Shift has the published quadratic endpoint class.
+    - [widen_complexity] Threshold widening has the published bits-plus-search-path class.
+    - [add_back_complexity] Backward addition is linear in the result and operand sizes.
+    - [sub_back_complexity] Backward subtraction is linear in the result and operand sizes.
+    - [bitand_complexity] Bitwise conjunction is linear, because the result is a minimum of
+      upper endpoints.
+    - [bitor_complexity] Bitwise disjunction is linear, because the result is a mask of one
+      bit length.
+    - [cmp_complexity] Comparison has the published linear class.
+    - [mul_back_complexity] Backward multiplication is linear, because a preimage only reads a
+      point.
+    - [udiv_back_complexity] Backward division is linear, because it only meets with fixed
+      bounds.
+    - [urem_back_complexity] Backward remainder is linear, because it only meets with fixed
+      bounds.
+    - [ult_back_complexity] Backward comparison is linear in the result and operand sizes.
+    - [signed_split_complexity] Signed splitting is linear in the width and the endpoints.
+    - [forward_complexity] Forward transfer is bounded by the operator work,
+      O(work + 1) for the operator and its operands.
+
     Builds on: ValueSig, WordSig and ThresholdsSig. *)
 
 From Stdlib Require Import ZArith List.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Bits Require Import Word.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig WordSig ThresholdsSig.
+Import ComplexityNotations.
 
 Local Open Scope nat_scope.
 
@@ -221,22 +254,20 @@ Module Type INTERVAL_SCALAR_TIME (T : THRESHOLDS_T) (Import S : INTERVAL_SCALAR_
     interval_bits (interval_stable_widen ts a b) <=
       interval_bits a + interval_bits b + T.tree_bits ts.
   (** Scalar inclusion has the published endpoint-bit class. *)
-  Parameter interval_leb_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
-    (fun x => T_interval_leb (fst x) (snd x)).
+  Parameter interval_leb_complexity :
+    T_interval_leb a b ∈ 𝑂(N.of_nat (interval_bits a + interval_bits b + 1)) for (a, b).
   (** Scalar join has the published endpoint-bit class. *)
-  Parameter interval_join_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
-    (fun x => T_interval_join (fst x) (snd x)).
+  Parameter interval_join_complexity :
+    T_interval_join a b ∈ 𝑂(N.of_nat (interval_bits a + interval_bits b + 1)) for (a, b).
   (** Scalar meet has the published endpoint-bit class. *)
-  Parameter interval_meet_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
-    (fun x => T_interval_meet (fst x) (snd x)).
+  Parameter interval_meet_complexity :
+    T_interval_meet a b ∈ 𝑂(N.of_nat (interval_bits a + interval_bits b + 1)) for (a, b).
   (** Scalar widening has the published bits-plus-search-path class. *)
-  Parameter interval_stable_widen_complexity : bigO (X := ttree * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (interval_bits (fst (snd x)) + interval_bits (snd (snd x)) +
-      (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
-    (fun x => T_interval_stable_widen (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter interval_stable_widen_complexity :
+    T_interval_stable_widen ts a b
+      ∈ 𝑂(N.of_nat (interval_bits a + interval_bits b +
+        (T.depth ts + 1) * (T.tree_bits ts + 1) + 1))
+      for (ts, (a, b)).
 End INTERVAL_SCALAR_TIME.
 
 Module Type INTERVAL_SCALAR_T (T : THRESHOLDS_T) :=
@@ -376,73 +407,61 @@ Module Type INTERVAL_TIME (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
     c_interval * N.of_nat
       ((size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1)%nat))%N.
   (** Multiplication has the published quadratic endpoint bound. *)
-  Parameter mul_complexity : (bigO (fun _ => True)
-    (fun ab => N.of_nat ((binary_work (fst ab) (snd ab))%nat))
-    (fun ab => T_mul (fst ab) (snd ab)))%N.
+  Parameter mul_complexity :
+    (T_mul a b ∈ 𝑂(N.of_nat ((binary_work a b)%nat)) for (a, b))%N.
   (** Addition has the published linear class. *)
-  Parameter add_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
-    (fun x => T_add (fst x) (snd x)).
+  Parameter add_complexity :
+    T_add a b ∈ 𝑂(N.of_nat (size a + size b + 1)) for (a, b).
   (** Subtraction has the published linear class. *)
-  Parameter sub_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
-    (fun x => T_sub (fst x) (snd x)).
+  Parameter sub_complexity :
+    T_sub a b ∈ 𝑂(N.of_nat (size a + size b + 1)) for (a, b).
   (** Unsigned division has the published quadratic endpoint class. *)
-  Parameter udiv_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_udiv (fst x) (snd x)).
+  Parameter udiv_complexity :
+    T_udiv a b ∈ 𝑂(N.of_nat (binary_work a b)) for (a, b).
   (** Unsigned remainder has the published quadratic endpoint class. *)
-  Parameter urem_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_urem (fst x) (snd x)).
+  Parameter urem_complexity :
+    T_urem a b ∈ 𝑂(N.of_nat (binary_work a b)) for (a, b).
   (** Shift has the published quadratic endpoint class. *)
-  Parameter shl_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_shl (fst x) (snd x)).
+  Parameter shl_complexity :
+    T_shl a b ∈ 𝑂(N.of_nat (binary_work a b)) for (a, b).
   (** Threshold widening has the published bits-plus-search-path class. *)
-  Parameter widen_complexity : bigO (X := ttree * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) +
-      (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
-    (fun x => T_widen (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter widen_complexity :
+    T_widen ts a b
+      ∈ 𝑂(N.of_nat (size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1))
+      for (ts, (a, b)).
   (** Backward addition is linear in the result and operand sizes. *)
-  Parameter add_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_add_back (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter add_back_complexity :
+    T_add_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   (** Backward subtraction is linear in the result and operand sizes. *)
-  Parameter sub_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_sub_back (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter sub_back_complexity :
+    T_sub_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   (** Bitwise conjunction is linear, because the result is a minimum of upper endpoints. *)
-  Parameter bitand_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitand (fst x) (snd x)).
+  Parameter bitand_complexity :
+    T_bitand a b ∈ 𝑂(N.of_nat (size a + size b + 1)) for (a, b).
   (** Bitwise disjunction is linear, because the result is a mask of one bit length. *)
-  Parameter bitor_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitor (fst x) (snd x)).
+  Parameter bitor_complexity :
+    T_bitor a b ∈ 𝑂(N.of_nat (size a + size b + 1)) for (a, b).
   (** Comparison has the published linear class. *)
-  Parameter cmp_complexity : bigO (X := comparison * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_cmp (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter cmp_complexity :
+    T_cmp c a b ∈ 𝑂(N.of_nat (size a + size b + 1)) for (c, (a, b)).
   (** Backward multiplication is linear, because a preimage only reads a point. *)
-  Parameter mul_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_mul_back (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter mul_back_complexity :
+    T_mul_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   (** Backward division is linear, because it only meets with fixed bounds. *)
-  Parameter udiv_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_udiv_back (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter udiv_back_complexity :
+    T_udiv_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   (** Backward remainder is linear, because it only meets with fixed bounds. *)
-  Parameter urem_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_urem_back (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter urem_back_complexity :
+    T_urem_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   (** Backward comparison is linear in the result and operand sizes. *)
-  Parameter ult_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_ult_back (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter ult_back_complexity :
+    T_ult_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   (** Signed splitting is linear in the width and the endpoints. *)
-  Parameter signed_split_complexity : bigO (X := positive * itv) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + size (snd x) + 1))
-    (fun x => T_signed_split (fst x) (snd x)).
+  Parameter signed_split_complexity :
+    T_signed_split w a ∈ 𝑂(N.of_nat (Pos.to_nat w + size a + 1)) for (w, a).
   (** Forward transfer has the published operator-work class. *)
-  Parameter forward_complexity : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
-    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Parameter forward_complexity :
+    (T_forward o xs ∈ 𝑂(N.of_nat ((work o xs)%nat)) for (o, xs))%N.
 End INTERVAL_TIME.
 
 Module Type INTERVAL_T (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) :=
