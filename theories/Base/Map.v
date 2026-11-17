@@ -723,33 +723,60 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
     nia.
   Qed.
 
+  (** Lookup is linear in the encoded key width. *)
   Lemma get_bigO : forall A, bigO (X := K.t * t A) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_get (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro A. exists c_map. intros [k m] _. cbn [fst snd].
+    pose proof (T_get_le A k m) as Hget.
+    rewrite Nat2N.inj_add in Hget. exact Hget.
+  Qed.
 
+  (** Setting a binding is linear in the encoded key width. *)
   Lemma set_bigO : forall A, bigO (X := K.t * A * t A) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst (fst x))))
     (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro A. exists c_map. intros [[k a] m] _. cbn [fst snd].
+    pose proof (T_set_le A k a m) as Hset.
+    rewrite Nat2N.inj_add in Hset. exact Hset.
+  Qed.
 
+  (** Removing a binding is linear in the encoded key width. *)
   Lemma remove_bigO : forall A, bigO (X := K.t * t A) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_remove (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro A. exists c_map. intros [k m] _. cbn [fst snd].
+    pose proof (T_remove_le A k m) as Hremove.
+    rewrite Nat2N.inj_add in Hremove. exact Hremove.
+  Qed.
 
+  (** Merging has linear skeleton cost when callback costs are bounded. *)
   Lemma merge_bigO : forall A B C,
     bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
       (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
       (fun '(f, T_f, _, m1, m2) => T_merge f T_f m1 m2).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B C. exists c_map. intros [[[[f T_f] k] m1] m2] Hbound.
+    cbn [fst snd] in Hbound |- *.
+    pose proof (T_merge_le A B C f T_f m1 m2 k Hbound) as Hmerge.
+    nia.
+  Qed.
 
+  (** Relational checking has linear skeleton cost when callback costs are bounded. *)
   Lemma forall2b_bigO : forall A B,
     bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
       (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
       (fun '(f, T_f, _, m1, m2) => T_forall2b f T_f m1 m2).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B. exists c_map. intros [[[[f T_f] k] m1] m2] Hbound.
+    cbn [fst snd] in Hbound |- *.
+    pose proof (T_forall2b_le A B f T_f m1 m2 k Hbound) as Hcheck.
+    nia.
+  Qed.
 
 End TrieMapT.

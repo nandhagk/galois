@@ -245,9 +245,64 @@ Module PTrieCode <: TRIE_OPS.
     | Nodes n => forall2_ne rel n u
     end.
 
-  Definition forall2b {A B} (f : option A -> option B -> bool) (tr : t A) (u : t B) :=
-    forall2 (fun a b => f (Some a) b) tr u &&
-      forall2 (fun b a => match a with None => f None (Some b) | Some _ => true end) u tr.
+  (** Two absent value slots do not call the relation. *)
+  Definition test_values {A B} (f : option A -> option B -> bool) a b : bool :=
+    match a, b with
+    | None, None => true
+    | _, _ => f a b
+    end.
+
+  (** Shared nodes are checked together, stopping before a later segment after failure. *)
+  Fixpoint forall2b_ne {A B} (f : option A -> option B -> bool)
+      (n : ne A) (u : t B) : bool :=
+    match u with
+    | Empty => forall2_ne (fun a _ => f (Some a) None) n (@empty B)
+    | Nodes _ =>
+      match n with
+      | N001 r =>
+        if forall2 (fun b _ => f None (Some b)) (left u) (@empty A) then
+          if test_values f None (value u) then forall2b_ne f r (right u) else false
+        else false
+      | N010 v =>
+        if forall2 (fun b _ => f None (Some b)) (left u) (@empty A) then
+          if f (Some v) (value u) then
+            forall2 (fun b _ => f None (Some b)) (right u) (@empty A)
+          else false
+        else false
+      | N011 v r =>
+        if forall2 (fun b _ => f None (Some b)) (left u) (@empty A) then
+          if f (Some v) (value u) then forall2b_ne f r (right u) else false
+        else false
+      | N100 l =>
+        if forall2b_ne f l (left u) then
+          if test_values f None (value u) then
+            forall2 (fun b _ => f None (Some b)) (right u) (@empty A)
+          else false
+        else false
+      | N101 l r =>
+        if forall2b_ne f l (left u) then
+          if test_values f None (value u) then forall2b_ne f r (right u) else false
+        else false
+      | N110 l v =>
+        if forall2b_ne f l (left u) then
+          if f (Some v) (value u) then
+            forall2 (fun b _ => f None (Some b)) (right u) (@empty A)
+          else false
+        else false
+      | N111 l v r =>
+        if forall2b_ne f l (left u) then
+          if f (Some v) (value u) then forall2b_ne f r (right u) else false
+        else false
+      end
+    end.
+
+  (** A missing left trie delegates to the existing one-sided traversal. *)
+  Definition forall2b {A B} (f : option A -> option B -> bool)
+      (tr : t A) (u : t B) : bool :=
+    match tr with
+    | Empty => forall2 (fun b _ => f None (Some b)) u (@empty A)
+    | Nodes n => forall2b_ne f n u
+    end.
 
   Definition existsb {A} (f : A -> bool) (tr : t A) :=
     negb (forall2 (fun a (_ : option unit) => negb (f a)) tr (@empty unit)).
@@ -578,22 +633,63 @@ Module PTrie <: TRIE.
              rewrite get_node. exact Hget.
   Qed.
 
+  (** An absent right trie leaves only the existing left-side check. *)
+  Local Lemma forall2b_ne_empty {A B} (f : option A -> option B -> bool) (n : ne A) :
+    forall2b_ne f n (@empty B) =
+      forall2_ne (fun a _ => f (Some a) None) n (@empty B).
+  Proof.
+    destruct n; reflexivity.
+  Qed.
+
+  (** The paired traversal checks the two children and the root once each. *)
+  Local Lemma forall2b_node {A B} (f : option A -> option B -> bool)
+      (l r : t A) o (u : t B) :
+    forall2b f (node l o r) u =
+      forall2b f l (left u) &&
+        (test_values f o (value u) && forall2b f r (right u)).
+  Proof.
+    destruct l as [|ln], o as [v|], r as [|rn], u as [|un];
+      try destruct un;
+      cbn [node forall2b forall2b_ne forall2 forall2_ne test_values test_value
+        left value right trie_left trie_value trie_right empty];
+      rewrite ?forall2b_ne_empty, ?andb_true_r.
+    all: repeat match goal with
+      | |- context [if ?test then _ else _] => destruct test
+      end; reflexivity.
+  Qed.
+
+  (** The paired traversal checks the relation at every key of either trie. *)
   Lemma forall2b_spec : forall A B (f : option A -> option B -> bool) m1 m2,
     f None None = true ->
     (forall2b f m1 m2 = true <-> forall p, f (get p m1) (get p m2) = true).
   Proof.
-    intros A B f m1 m2 Hnone. unfold forall2b.
-    rewrite andb_true_iff, !forall2_spec. split.
-    - intros [Hl Hr] p.
-      destruct (get p m1) as [a|] eqn:Hleft.
-      + exact (Hl p a Hleft).
-      + destruct (get p m2) as [b|] eqn:Hright; [|exact Hnone].
-        specialize (Hr p b Hright). now rewrite Hleft in Hr.
-    - intro Htest. split.
-      + intros p a Hget. specialize (Htest p). now rewrite Hget in Htest.
-      + intros p b Hget. specialize (Htest p). rewrite Hget in Htest.
-        destruct (get p m1); [reflexivity|exact Htest].
+    intros A B f m1 m2 Hnone. revert m2.
+    induction m1 as [|l o r IHl IHr] using node_ind; intro m2.
+    - cbn [forall2b]. rewrite forall2_spec. split.
+      + intros Htest p. rewrite get_empty.
+        destruct (get p m2) as [b|] eqn:Hlookup.
+        * exact (Htest p b Hlookup).
+        * exact Hnone.
+      + intros Htest p b Hlookup. specialize (Htest p).
+        rewrite get_empty, Hlookup in Htest. exact Htest.
+    - rewrite forall2b_node, !andb_true_iff, IHl, IHr.
+      assert (Hvalue : test_values f o (value m2) = f o (value m2)).
+      { destruct o, (value m2); cbn [test_values]; try reflexivity.
+        symmetry. exact Hnone. }
+      rewrite Hvalue. split.
+      + intros [Hl [Hroot Hr]] [p|p|].
+        * rewrite get_node, get_xI. exact (Hr p).
+        * rewrite get_node, get_xO. exact (Hl p).
+        * rewrite get_node, get_xH. exact Hroot.
+      + intro Htest. split.
+        * intro p. specialize (Htest (xO p)).
+          rewrite get_node, get_xO in Htest. exact Htest.
+        * split.
+          -- specialize (Htest xH). rewrite get_node, get_xH in Htest. exact Htest.
+          -- intro p. specialize (Htest (xI p)).
+             rewrite get_node, get_xI in Htest. exact Htest.
   Qed.
+
   Lemma get_map : forall A B (f : A -> B) m p,
     get p (map f m) = option_map f (get p m).
   Proof.
@@ -888,6 +984,8 @@ Module PTrieT <: TRIE_ALL.
   TimeFun test_value.
   TimeFun forall2_ne.
   TimeFun forall2.
+  TimeFun test_values.
+  TimeFun forall2b_ne.
   TimeFun forall2b.
   TimeFun existsb.
   TimeFun emit.
@@ -1472,12 +1570,74 @@ Module PTrieT <: TRIE_ALL.
         Hcallback Hleft Hright n u) as Hmerge.
       unfold k_merge. time_step.
   Qed.
+
+  (** Constant one-sided handlers let either input skeleton pay for the traversal. *)
+  Local Lemma merge_ne_clock_sides {A B C} (f : option A -> option B -> option C)
+      T_f (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr c
+      (Hcallback : forall a b, (T_f a b <= c)%N)
+      (Hleft : forall a, (T_fl a <= c)%N)
+      (Hright : forall b, (T_fr b <= c)%N)
+      (n : ne A) : forall u,
+    (T_merge_ne f T_f fl T_fl fr T_fr n u <=
+      16 * (c + 1) * N.of_nat (nodes_ne n) + c + 1)%N /\
+    (T_merge_ne f T_f fl T_fl fr T_fr n u <=
+      16 * (c + 1) * N.of_nat (nodes u) + c + 1)%N.
+  Proof.
+    remember (16 * (c + 1))%N as budget eqn:Hbudget.
+    assert (Hroot : (3 * c + 16 <= budget)%N) by nia.
+    clear Hbudget.
+    induction n; intros [|other].
+    all: try solve [split; time_unfold @T_merge_ne; time_pose;
+      cbn [nodes]; time_cbn; nia].
+    all: try destruct (IHn (left (Nodes other))) as [Hll Hlr].
+    all: try destruct (IHn (right (Nodes other))) as [Hrl Hrr].
+    all: try destruct (IHn1 (left (Nodes other))) as [Hll Hlr].
+    all: try destruct (IHn2 (right (Nodes other))) as [Hrl Hrr].
+    all: pose proof (f_equal (fun count => budget * N.of_nat count)%N
+      (nodes_components_ne other)) as Hnodes.
+    all: split; time_unfold @T_merge_ne.
+    all: unfold T_merge_value, T_left, T_value, T_right,
+      T_trie_left, T_trie_value, T_trie_right; time_simpl; time_pose.
+    all: cbn [nodes nodes_ne] in *;
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *; time_cbn_all.
+    all: repeat rewrite N.mul_add_distr_l in *.
+    all: lia.
+  Qed.
+
+  (** A merge with constant handlers visits at most the smaller input skeleton. *)
+  Lemma T_merge_with_min : forall A B C (f : option A -> option B -> option C) T_f
+      (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr m u c,
+    ((forall a b, T_f a b <= c) ->
+    (forall a, T_fl a <= c) -> (forall b, T_fr b <= c) ->
+    T_merge_with f T_f fl T_fl fr T_fr m u <=
+      2 * k_merge * (c + 1) * N.of_nat (Nat.min (nodes m) (nodes u) + 1))%N.
+  Proof.
+    intros A B C f T_f fl T_fl fr T_fr [|n] u c Hcallback Hleft Hright.
+    - pose proof (Hright u). unfold k_merge. time_step.
+    - destruct (merge_ne_clock_sides f T_f fl T_fl fr T_fr c
+        Hcallback Hleft Hright n u) as [Hleft_bound Hright_bound].
+      unfold k_merge. time_unfold @T_merge_with. cbn [nodes].
+      destruct (Nat.le_ge_cases (nodes_ne n) (nodes u)) as [Hle|Hge].
+      + rewrite Nat.min_l by exact Hle.
+        rewrite Nat2N.inj_add. time_cbn_all. nia.
+      + rewrite Nat.min_r by exact Hge.
+        rewrite Nat2N.inj_add. time_cbn_all. nia.
+  Qed.
+
   (** Merging charges the callbacks at shared and one-sided bindings. *)
   Local Lemma merging_sum_app (xs ys : list N) :
     fold_right N.add 0%N (xs ++ ys) =
       (fold_right N.add 0 xs + fold_right N.add 0 ys)%N.
   Proof.
     induction xs as [|x xs IH]; cbn [app fold_right]; rewrite ?IH; lia.
+  Qed.
+
+  Local Lemma merging_sum_add {X} (w : X -> N) (xs : list X) :
+    fold_right N.add 0%N (List.map (fun x => 1 + w x)%N xs) =
+      (N.of_nat (length xs) + fold_right N.add 0 (List.map w xs))%N.
+  Proof.
+    induction xs as [|x xs IH]; cbn [List.map fold_right length];
+      rewrite ?Nat2N.inj_succ, ?IH; nia.
   Qed.
 
   Local Lemma merging_lookup_entries {A} (m : t A) (w : positive -> option A -> N) :
@@ -1690,6 +1850,100 @@ Module PTrieT <: TRIE_ALL.
       time_unfold @T_forall2. unfold k_check. time_cbn_all.
       rewrite Nat2N.inj_add. nia.
   Qed.
+
+  (** A one-sided check pays for its callback wrapper at each stored binding. *)
+  Local Lemma checking_one_side_sum {A B} (f : A -> bool) T_f (m : t A) :
+    (T_forall2 (fun a (_ : option B) => f a) (fun a _ => 1 + T_f a)%N
+       m (@empty B) <=
+     32 * N.of_nat (nodes m + 1) +
+     16 * fold_right N.add 0
+       (List.map (fun ka => T_f (snd ka)) (entries m)))%N.
+  Proof.
+    pose proof (@T5_forall2_sum A B (fun a _ => f a)
+      (fun a _ => 1 + T_f a)%N m (@empty B)) as Hcheck.
+    cbn beta in Hcheck.
+    rewrite (merging_sum_add (fun ka => T_f (snd ka)) (elements m)) in Hcheck.
+    pose proof (elements_length_nodes m) as Hbindings.
+    apply time_of_nat_le in Hbindings. unfold k_check in Hcheck.
+    rewrite elements_entries in Hcheck, Hbindings.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
+
+  (** The lockstep recursion charges callbacks only at keys present in either trie. *)
+  Local Lemma T_forall2b_ne_sum {A B} (f : option A -> option B -> bool) T_f
+      (n : ne A) : forall u,
+    (T_forall2b_ne f T_f n u <=
+      64 * N.of_nat (nodes_ne n + nodes u) + 32 *
+      (fold_right N.add 0 (List.map
+         (fun ka => T_f (Some (snd ka)) (get (fst ka) u)) (entries_ne n)) +
+       fold_right N.add 0 (List.map
+         (fun kb => T_f (get (fst kb) (Nodes n)) (Some (snd kb))) (entries u))))%N.
+  Proof.
+    induction n; intros [|other]; time_unfold @T_forall2b_ne.
+    all: try solve [
+      match goal with
+      | |- context [T_forall2_ne _ _ ?tree _] =>
+        pose proof (@checking_one_side_sum A B (fun a => f (Some a) None)
+          (fun a => T_f (Some a) None) (Nodes tree)) as Honly;
+        assert (Hpositive : (1 <= N.of_nat (nodes_ne tree))%N) by
+          (cbn [nodes_ne]; rewrite ?Nat2N.inj_add; lia);
+        unfold T_forall2 in Honly;
+        rewrite merging_empty_right;
+        cbn [nodes entries List.map fold_right] in Honly |- *;
+        rewrite ?Nat.add_0_r, ?Nat2N.inj_add in *;
+        time_cbn_all; nia
+      end].
+    all: try pose proof (IHn (left (Nodes other))) as Hleft.
+    all: try pose proof (IHn (right (Nodes other))) as Hright.
+    all: try pose proof (IHn1 (left (Nodes other))) as Hleft.
+    all: try pose proof (IHn2 (right (Nodes other))) as Hright.
+    all: pose proof (@checking_one_side_sum B A (fun b => f None (Some b))
+      (fun b => T_f None (Some b)) (left (Nodes other))) as Honlyleft.
+    all: pose proof (@checking_one_side_sum B A (fun b => f None (Some b))
+      (fun b => T_f None (Some b)) (right (Nodes other))) as Honlyright.
+    all: unfold T_test_values, T_left, T_value, T_right,
+      T_trie_left, T_trie_value, T_trie_right; time_simpl.
+    all: destruct other; cbn [nodes nodes_ne entries entries_ne] in *;
+      rewrite ?map_app, ?map_map, ?merging_sum_app in *;
+      cbn [List.map fold_right fst snd get trie_get left right value
+        trie_left trie_right trie_value] in *;
+      rewrite ?map_app, ?map_map, ?merging_sum_app in *;
+      rewrite ?merging_empty_left, ?merging_empty_right in *;
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *;
+      time_cbn_all.
+    all: repeat match goal with
+      | |- context [if ?test then _ else _] => destruct test
+      end; time_cbn.
+    all: repeat progress (
+      rewrite ?map_app, ?map_map, ?merging_sum_app in *;
+      cbn [List.map fold_right fst snd get trie_get left right value
+        trie_left trie_right trie_value] in *;
+      rewrite ?merging_empty_left, ?merging_empty_right in *).
+    all: repeat rewrite N.mul_add_distr_l in *; lia.
+  Qed.
+
+  (** Paired checking pays for both skeletons and the callbacks at their stored keys. *)
+  Local Lemma T_forall2b_sum {A B} (f : option A -> option B -> bool) T_f
+      (m : t A) (u : t B) :
+    (T_forall2b f T_f m u <=
+      64 * N.of_nat (nodes m + nodes u + 1) +
+      32 * fold_right N.add 0 (List.map (fun p => T_f (get p m) (get p u))
+        (List.map fst (elements m) ++ List.map fst (elements u))))%N.
+  Proof.
+    rewrite map_app, merging_sum_app.
+    rewrite (merging_lookup_entries m (fun p a => T_f a (get p u))).
+    rewrite (merging_lookup_entries u (fun p b => T_f (get p m) b)).
+    destruct m as [|n].
+    - pose proof (@checking_one_side_sum B A (fun b => f None (Some b))
+        (fun b => T_f None (Some b)) u) as Honly.
+      rewrite !elements_entries. time_unfold @T_forall2b.
+      rewrite merging_empty_left. cbn [entries nodes List.map fold_right].
+      rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+    - pose proof (T_forall2b_ne_sum f T_f n u) as Hsum.
+      rewrite !elements_entries. time_unfold @T_forall2b.
+      cbn [entries nodes]. rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
+
   Lemma T6_fold_path : forall A B (f : B -> positive -> A -> B) T_f path T_path m b c d,
     ((forall acc p a, T_f acc p a <= c) -> (forall p, T_path p <= d) ->
     T_fold_path f T_f path T_path m b <=
@@ -1769,24 +2023,29 @@ Module PTrieT <: TRIE_ALL.
     rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
   Qed.
 
-  Lemma T_forall2b_le : forall A B (f : option A -> option B -> bool) T_f m1 m2 k,
+  (** A bounded relation check is linear in the combined input skeletons. *)
+  Lemma T_forall2b_le : forall A B
+      (f : option A -> option B -> bool) T_f m1 m2 k,
     ((forall a b, T_f a b <= k) ->
-    T_forall2b f T_f m1 m2 <= c_trie * (k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N.
+    T_forall2b f T_f m1 m2 <=
+      c_trie * (k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N.
   Proof.
     intros A B f T_f m1 m2 k Hcallback.
-    pose proof (T5_forall2 A B (fun a b => f (Some a) b)
-      (fun a b => 1 + T_f (Some a) b)%N m1 m2 (k + 1)%N
-      ltac:(intros a b; pose proof (Hcallback (Some a) b); time_cbn; nia)) as Hforward.
-    pose proof (T5_forall2 B A
-      (fun b a => match a with None => f None (Some b) | Some _ => true end)
-      (fun b a => 1 + match a with None => T_f None (Some b) | Some _ => 0 end)%N
-      m2 m1 (k + 1)%N
-      ltac:(intros b [a|]; pose proof (Hcallback None (Some b)); time_cbn; nia)) as Hreverse.
-    unfold k_check in Hforward, Hreverse. unfold c_trie.
-    time_unfold @T_forall2b. time_simpl.
-    repeat match goal with
-    | |- context [if ?test then _ else _] => destruct test
-    end; rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+    pose proof (T_forall2b_sum f T_f m1 m2) as Hcheck.
+    assert (Hwork : forall ps : list positive,
+      (fold_right N.add 0
+        (List.map (fun p => T_f (get p m1) (get p m2)) ps) <=
+       k * N.of_nat (length ps))%N).
+    { induction ps as [|p ps IH]; cbn [List.map fold_right length].
+      - nia.
+      - pose proof (Hcallback (get p m1) (get p m2)) as Hhead.
+        rewrite Nat2N.inj_succ. nia. }
+    specialize (Hwork (List.map fst (elements m1) ++ List.map fst (elements m2))).
+    rewrite length_app, !length_map in Hwork.
+    pose proof (elements_length_nodes m1) as Hleft.
+    pose proof (elements_length_nodes m2) as Hright.
+    apply time_of_nat_le in Hleft. apply time_of_nat_le in Hright.
+    unfold c_trie. rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
   Lemma T_existsb_le : forall A (f : A -> bool) T_f m k,
@@ -1812,14 +2071,6 @@ Module PTrieT <: TRIE_ALL.
     unfold k_filter in Hfilter. unfold c_trie.
     time_unfold @T_map. time_simpl.
     rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
-  Qed.
-
-  Local Lemma merging_sum_add {X} (w : X -> N) (xs : list X) :
-    fold_right N.add 0%N (List.map (fun x => 1 + w x)%N xs) =
-      (N.of_nat (length xs) + fold_right N.add 0 (List.map w xs))%N.
-  Proof.
-    induction xs as [|x xs IH]; cbn [List.map fold_right length];
-      rewrite ?Nat2N.inj_succ, ?IH; nia.
   Qed.
 
   Local Lemma merging_filter_sum {A B} (f : A -> option B) T_f (m : t A) :
@@ -1868,55 +2119,19 @@ Module PTrieT <: TRIE_ALL.
       rewrite Nat2N.inj_succ. nia.
   Qed.
 
-  Lemma T_forall2b_sum_le : forall A B (f : option A -> option B -> bool) T_f m1 m2,
+  (** Callback costs are charged at the corresponding keys of either input. *)
+  Lemma T_forall2b_sum_le : forall A B
+      (f : option A -> option B -> bool) T_f m1 m2,
     (T_forall2b f T_f m1 m2 <= c_trie *
       ((T_f None None + 1) * N.of_nat (nodes m1 + nodes m2 + 1) +
        fold_right N.add 0 (List.map (fun p => T_f (get p m1) (get p m2))
          (List.map fst (elements m1) ++ List.map fst (elements m2)))))%N.
   Proof.
     intros A B f T_f m1 m2.
-    pose proof (@T5_forall2_sum A B (fun a b => f (Some a) b)
-      (fun a b => (1 + T_f (Some a) b)%N) m1 m2) as Hforward.
-    pose proof (@T5_forall2_sum B A
-      (fun b a => match a with None => f None (Some b) | Some _ => true end)
-      (fun b a => (1 + match a with None => T_f None (Some b) | Some _ => 0 end)%N)
-      m2 m1) as Hreverse.
-    assert (Hforward_sum :
-      (fold_right N.add 0 (List.map
-        (fun ka => 1 + T_f (Some (snd ka)) (get (fst ka) m2)) (elements m1)) <=
-       N.of_nat (length (elements m1)) + fold_right N.add 0
-        (List.map (fun ka => T_f (get (fst ka) m1) (get (fst ka) m2))
-          (elements m1)))%N).
-    { eapply N.le_trans.
-      - apply (checking_sum_bound (elements m1)
-          (fun ka => (1 + T_f (Some (snd ka)) (get (fst ka) m2))%N)
-          (fun ka => T_f (get (fst ka) m1) (get (fst ka) m2)) 1%N).
-        intros [p a] Hin. apply elements_spec in Hin. cbn [fst snd]. rewrite Hin. lia.
-      - nia. }
-    assert (Hreverse_sum :
-      (fold_right N.add 0 (List.map (fun kb => 1 +
-        match get (fst kb) m1 with
-        | None => T_f None (Some (snd kb)) | Some _ => 0
-        end) (elements m2)) <=
-       N.of_nat (length (elements m2)) + fold_right N.add 0
-        (List.map (fun kb => T_f (get (fst kb) m1) (get (fst kb) m2))
-          (elements m2)))%N).
-    { eapply N.le_trans.
-      - apply (checking_sum_bound (elements m2)
-          (fun kb => (1 + match get (fst kb) m1 with
-            | None => T_f None (Some (snd kb)) | Some _ => 0 end)%N)
-          (fun kb => T_f (get (fst kb) m1) (get (fst kb) m2)) 1%N).
-        intros [p b] Hin. apply elements_spec in Hin. cbn [fst snd]. rewrite Hin.
-        destruct (get p m1); nia.
-      - nia. }
-    pose proof (elements_length_nodes m1) as Hbindings1.
-    pose proof (elements_length_nodes m2) as Hbindings2.
-    apply time_of_nat_le in Hbindings1. apply time_of_nat_le in Hbindings2.
-    time_unfold @T_forall2b. time_simpl.
-    rewrite map_app, checking_sum_app, !map_map.
-    unfold k_check in Hforward, Hreverse. unfold c_trie.
-    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+    pose proof (T_forall2b_sum f T_f m1 m2) as Hcheck.
+    unfold c_trie. nia.
   Qed.
+
   Lemma T_existsb_sum_le : forall A (f : A -> bool) T_f m,
     (T_existsb f T_f m <= c_trie * (N.of_nat (nodes m + 1) +
       fold_right N.add 0 (List.map (fun p =>
@@ -1954,45 +2169,89 @@ Module PTrieT <: TRIE_ALL.
     rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
+  (** Lookup time is linear in the number of key bits. *)
   Lemma get_bigO : forall A, bigO (X := positive * t A) (fun _ => True)
     (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_get (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro A. exists c_trie. intros [p m] _. cbn [fst snd].
+    pose proof (T_get_le A p m) as Hget.
+    now rewrite Nat2N.inj_add in Hget.
+  Qed.
 
+  (** Insertion time is linear in the number of key bits. *)
   Lemma set_bigO : forall A, bigO (X := positive * A * t A) (fun _ => True)
     (fun x => N.of_nat (Pos.size_nat (fst (fst x))))
     (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro A. exists c_trie. intros [[p a] m] _. cbn [fst snd].
+    pose proof (T_set_le A p a m) as Hset.
+    now rewrite Nat2N.inj_add in Hset.
+  Qed.
 
+  (** Removal time is linear in the number of key bits. *)
   Lemma remove_bigO : forall A, bigO (X := positive * t A) (fun _ => True)
     (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_remove (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro A. exists c_trie. intros [p m] _. cbn [fst snd].
+    pose proof (T_remove_le A p m) as Hremove.
+    now rewrite Nat2N.inj_add in Hremove.
+  Qed.
 
+  (** A bounded-callback merge is linear in the combined input skeletons. *)
   Lemma merge_bigO : forall A B C,
     bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
       (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
       (fun '(f, T_f, _, m1, m2) => T_merge f T_f m1 m2).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B C. exists c_trie.
+    intros [[[[f T_f] k] m1] m2] Hcallback.
+    change (T_merge f T_f m1 m2 <=
+      c_trie * ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1) + 1))%N.
+    pose proof (T_merge_le A B C f T_f m1 m2 k Hcallback) as Hmerge.
+    nia.
+  Qed.
 
+  (** A bounded relation check is linear in the combined input skeletons. *)
   Lemma forall2b_bigO : forall A B,
     bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
       (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
       (fun '(f, T_f, _, m1, m2) => T_forall2b f T_f m1 m2).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B. exists c_trie.
+    intros [[[[f T_f] k] m1] m2] Hcallback.
+    change (T_forall2b f T_f m1 m2 <=
+      c_trie * ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1) + 1))%N.
+    pose proof (T_forall2b_le A B f T_f m1 m2 k Hcallback) as Hcheck.
+    nia.
+  Qed.
 
+  (** A bounded fold pays for the skeleton and the bits of its enumerated keys. *)
   Lemma fold_bigO : forall A B,
     bigO (X := (B -> positive -> A -> B) * (B -> positive -> A -> N) * N * t A * B)
       (fun '(_, T_f, k, _, _) => forall acc p a, (T_f acc p a <= k)%N)
       (fun '(_, _, k, m, _) => ((k + 1) * N.of_nat (nodes m + 1) + N.of_nat (weight m))%N)
       (fun '(f, T_f, _, m, b) => T_fold f T_f m b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B. exists c_trie.
+    intros [[[[f T_f] k] m] b] Hcallback.
+    change (T_fold f T_f m b <=
+      c_trie * ((k + 1) * N.of_nat (nodes m + 1) + N.of_nat (weight m) + 1))%N.
+    pose proof (T_fold_le A B f T_f m b k Hcallback) as Hfold.
+    nia.
+  Qed.
 
+  (** Enumeration time is linear in the total binding weight. *)
   Lemma elements_bigO : forall A, bigO (X := t A) (fun _ => True)
     (fun m => N.of_nat (weight m)) (fun m => T_elements m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro A. exists c_trie. intros m _.
+    pose proof (T_elements_le A m) as Helements.
+    now rewrite Nat2N.inj_add in Helements.
+  Qed.
 
   (** Value folding charges callbacks in enumeration order without constructing keys. *)
   Local Ltac folding_pose_values_child IH child :=

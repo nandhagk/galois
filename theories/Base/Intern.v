@@ -238,20 +238,35 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
     repeat rewrite Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
   Qed.
 
+  (** Interning is linear in the key width and allocation frontier width. *)
   Lemma intern_bigO : bigO (X := K.t * t) (fun xs => wf (snd xs))
     (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
     (fun xs => T_intern (fst xs) (snd xs)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_intern. intros [k s] Hwf. cbn [fst snd] in Hwf |- *.
+    pose proof (T_intern_le k s Hwf) as Hintern.
+    rewrite Nat2N.inj_add in Hintern. exact Hintern.
+  Qed.
 
+  (** Forward lookup fits the key and allocation frontier width budget. *)
   Lemma find_bigO : bigO (X := K.t * t) (fun _ => True)
     (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
     (fun xs => T_find (fst xs) (snd xs)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_intern. intros [k s] _. cbn [fst snd].
+    pose proof (T_find_le k s) as Hfind.
+    rewrite Nat2N.inj_add in Hfind. exact Hfind.
+  Qed.
 
+  (** Inverse lookup fits the identifier and allocation frontier width budget. *)
   Lemma name_bigO : bigO (X := positive * t) (fun _ => True)
     (fun xs => N.of_nat (Pos.size_nat (fst xs) + N.size_nat (size (snd xs))))
     (fun xs => T_name (fst xs) (snd xs)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_intern. intros [i s] _. cbn [fst snd].
+    pose proof (T_name_le i s) as Hname.
+    rewrite Nat2N.inj_add in Hname. exact Hname.
+  Qed.
 End InternT.
 
 (** A bucket lookup returns the values associated with the encoded key. *)
