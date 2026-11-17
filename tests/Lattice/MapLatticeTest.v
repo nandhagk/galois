@@ -13,6 +13,8 @@ Module PosMap := TrieMapCode PosKeyCode.
 Module Env := MapLatticeCode PosKeyCode PosMap BoolLatCode.
 Module EnvWide := JoinWideningCode Env.
 Module LiftedEnv := WithBotCode Env.
+Module TimedPosMap := TrieMapT PosKeyT.
+Module TimedEnv := MapLatticeT PosKeyT TimedPosMap BoolLatT.
 Definition e0 : PosMap.t bool := PosMap.empty.
 Definition e1 := PosMap.set 1%positive true e0.
 Definition e2 := PosMap.set 2%positive true e0.
@@ -48,6 +50,29 @@ Qed.
 Example singleton_self_join : PosMap.elements (Env.join e1 e1) = [(1%positive, true)].
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+(** Comparison charges the sum of the public sizes, including missing-key defaults. *)
+Example map_inclusion_bigO_bound :
+  (TimedEnv.T_leb e1 e2 <=
+    TimedEnv.c_lat * (N.of_nat (TimedEnv.size e1 + TimedEnv.size e2) + 1))%N.
+Proof.
+  apply N.leb_le. vm_compute. reflexivity.
+Qed.
+
+(** Joining disjoint singletons fits the same two-map size measure. *)
+Example map_join_bigO_bound :
+  (TimedEnv.T_join e1 e2 <=
+    TimedEnv.c_lat * (N.of_nat (TimedEnv.size e1 + TimedEnv.size e2) + 1))%N.
+Proof.
+  apply N.leb_le. vm_compute. reflexivity.
+Qed.
+
+(** The bottom test fits the size of one nonempty map. *)
+Example map_bottom_bigO_bound :
+  (TimedEnv.T_is_bot e1 <= TimedEnv.c_lat * (N.of_nat (TimedEnv.size e1) + 1))%N.
+Proof.
+  apply N.leb_le. vm_compute. reflexivity.
 Qed.
 
 (* LatticeEnvTest.bottom_default_operations is split between

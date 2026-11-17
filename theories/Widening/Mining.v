@@ -192,7 +192,10 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
   (** Literal collection is linear in the term size. *)
   Lemma lits_bigO : bigO (X := term L.op X.t) (fun _ => True)
     (fun e => N.of_nat (tsize e)) (fun e => T_lits e).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_mining). intros e _.
+    pose proof (T_lits_le e) as Hbound. nia.
+  Qed.
 
   (** Mining is linear in the terms and seeds plus the cost of building the thresholds. *)
   Lemma mine_bigO : bigO (X := list (term L.op X.t) * list Z) (fun _ => True)
@@ -201,7 +204,13 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
         ((length (expanded es extra) * (Nat.log2 (length (expanded es extra)) + 1) + 1) *
           (T.zb (expanded es extra) + 1))))
     (fun '(es, extra) => T_mine es extra).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := (c_mining * (T.c_thresholds + 1))%N).
+    intros [es extra] _. cbn beta iota zeta.
+    pose proof (T_mine_le es extra) as Hmine.
+    pose proof (T.T_make_le (expanded es extra)) as Hmake.
+    rewrite Nat2N.inj_add, Nat2N.inj_mul. nia.
+  Qed.
 
   (** A syntax node pays for literal recognition and the surrounding fold. *)
   Definition k_mining : N := (L.c_lang + 4)%N.

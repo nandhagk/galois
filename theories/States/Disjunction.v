@@ -1340,29 +1340,72 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
+
+  (** Widening pays for the state sizes and the units times the parameter size. *)
   Lemma widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
     (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
     (fun '(p, a, b) => T_widen p a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_lat; intros [[p a] b] _.
+    pose proof (T_widen_le p a b) as Hbound.
+    repeat rewrite Nat2N.inj_add in Hbound |- *; nia.
+  Qed.
+
+  (** Narrowing is linear in both disjunction sizes for the fixed cap. *)
   Lemma narrow_bigO : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_narrow (fst ab) (snd ab)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_lat; intros [a b] _.
+    pose proof (T_narrow_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
+
+  (** Assignment is linear in its alternative work measure. *)
   Lemma assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
     (fun '(x, e, d) => N.of_nat (assign_work x e d)) (fun '(x, e, d) => T_assign x e d).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_state; intros [[x e] a] _.
+    pose proof (T_assign_le x e a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
+
+  (** Havoc is linear in its alternative work measure. *)
   Lemma havoc_bigO : bigO (X := X.t * t) (fun _ => True)
     (fun '(x, d) => N.of_nat (havoc_work x d)) (fun '(x, d) => T_havoc x d).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_state; intros [x a] _.
+    pose proof (T_havoc_le x a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
+
+  (** Assumption is linear in its alternative work measure. *)
   Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
     (fun '(gd, es, d) => N.of_nat (assume_work gd es d)) (fun '(gd, es, d) => T_assume gd es d).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_state; intros [[g es] a] _.
+    pose proof (T_assume_le g es a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
+
+  (** Evaluation is linear in its alternative work measure. *)
   Lemma eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
     (fun '(e, d) => N.of_nat (eval_work e d)) (fun '(e, d) => T_eval e d).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_state; intros [e a] _.
+    pose proof (T_eval_le e a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
+
+  (** Collapsing at most the cap plus one alternatives is linear in their sizes. *)
   Lemma collapse_bigO : bigO (fun xs : list S.t => length xs <= C.k + 1)
     (fun xs => N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs)) T_collapse.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_disjunction; intros xs Hcap.
+    pose proof (T_collapse_le xs Hcap) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
+
   Lemma wsize_component : forall p, wsize p = S.wsize p.
   Proof.
     reflexivity.

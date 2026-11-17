@@ -169,16 +169,31 @@ Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
 
   Lemma inv_at_bigO : bigO (X := MN.t S.t * N.t) (fun _ => True)
     (fun x => N.of_nat (N.bits (snd x))) (fun x => T_inv_at (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_alarms). intros [inv n] _.
+    change (T_inv_at inv n <= c_alarms * N.of_nat (N.bits n) + c_alarms)%N.
+    pose proof (T_inv_at_le inv n) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
   Lemma alarm_bigO : bigO (X := MN.t S.t * check N.t L.op X.t C.kd) (fun _ => True)
     (fun x => N.of_nat (check_work (fst x) (snd x))) (fun x => T_alarm (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_alarms). intros [inv k] _.
+    change (T_alarm inv k <= c_alarms * N.of_nat (check_work inv k) + c_alarms)%N.
+    pose proof (T_alarm_le inv k) as Hbound. nia.
+  Qed.
 
   Lemma alarms_bigO : bigO (X := MN.t S.t * list (check N.t L.op X.t C.kd)) (fun _ => True)
     (fun x => N.of_nat (fold_right Nat.add 0 (map (check_work (fst x)) (snd x))))
     (fun x => T_alarms (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_alarms). intros [inv ks] _.
+    change (T_alarms inv ks <=
+      c_alarms * N.of_nat (fold_right Nat.add 0%nat (map (check_work inv) ks)) + c_alarms)%N.
+    pose proof (T_alarms_le inv ks) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 End AlarmsT.
 
 Module AlarmsPoint (N X : KEY) (MN : MAP N) (L : LANG)

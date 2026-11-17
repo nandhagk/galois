@@ -881,7 +881,12 @@ Module BitsChecksT (V : VALUE_DOMAIN_T BitsLangT)
   (** A check is linear in its operand work. *)
   Lemma may_fail_bigO : bigO (X := kd * list V.t) (fun _ => True)
     (fun kx => N.of_nat (work (fst kx) (snd kx))) (fun kx => T_may_fail (fst kx) (snd kx)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_checks). intros [k xs] _.
+    change (T_may_fail k xs <= c_checks * N.of_nat (work k xs) + c_checks)%N.
+    pose proof (T_may_fail_le k xs) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
   (** A zero alarm charges its range query and the returned endpoint bits. *)
   Lemma T_divzero_le : forall d,

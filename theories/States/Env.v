@@ -39,12 +39,24 @@ Module EnvCode (X : KEY_OPS) (M : MAP_OPS X) (L : LANG_OPS)
     | None, Some b => V.leb V.top b
     | Some a, Some b => V.leb a b
     end.
-  Definition leb (a b : t) :=
+  Definition leb_ref (a b : t) :=
     orb (is_bot a) (andb (negb (is_bot b))
       (match a, b with
        | Reached a, Reached b => M.forall2b option_leb a b
        | _, _ => false
        end)).
+  Definition leb_entry (a b : option V.t) : bool :=
+    match b with
+    | Some v => if V.is_bot v then false else option_leb a b
+    | None => option_leb a b
+    end.
+  Definition leb (a b : t) :=
+    match a, b with
+    | Unreached, _ => true
+    | Reached ma, Unreached => M.existsb V.is_bot ma
+    | Reached ma, Reached mb =>
+      if M.forall2b leb_entry ma mb then true else M.existsb V.is_bot ma
+    end.
   Definition join_map a b :=
     M.merge (fun x y => match x, y with
       | Some a, Some b =>
@@ -189,6 +201,46 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
       specialize (Hclean p a Hfind). congruence.
   Qed.
 
+  (** The fused map comparison checks the right map and the pointwise order together. *)
+  Lemma map_leb_entry_spec : forall a b,
+    M.forall2b leb_entry a b = true <->
+      M.existsb V.is_bot b = false /\ M.forall2b option_leb a b = true.
+  Proof.
+    intros a b.
+    rewrite (M.forall2b_spec V.t V.t leb_entry a b eq_refl).
+    rewrite (M.forall2b_spec V.t V.t option_leb a b eq_refl), map_nonbot_spec.
+    split.
+    - intro Hentry. split.
+      + intros p v Hfind. specialize (Hentry p).
+        unfold leb_entry in Hentry. rewrite Hfind in Hentry.
+        destruct (V.is_bot v) eqn:Hbot; [discriminate|reflexivity].
+      + intro p. specialize (Hentry p). unfold leb_entry in Hentry.
+        destruct (M.find p b) as [v|]; [destruct (V.is_bot v)|];
+          try discriminate; exact Hentry.
+    - intros [Hclean Horder] p. unfold leb_entry.
+      specialize (Horder p).
+      destruct (M.find p b) as [v|] eqn:Hfind.
+      + rewrite (Hclean p v Hfind). exact Horder.
+      + exact Horder.
+  Qed.
+
+  (** One fused comparison preserves the original environment inclusion test. *)
+  Lemma leb_agree : forall a b, leb a b = leb_ref a b.
+  Proof.
+    intros [|a] [|b]; try reflexivity.
+    - unfold leb, leb_ref, is_bot. now destruct (M.existsb V.is_bot a).
+    - unfold leb, leb_ref, is_bot.
+      destruct (M.forall2b leb_entry a b) eqn:Hentry.
+      + apply map_leb_entry_spec in Hentry as [Hclean Horder].
+        rewrite Hclean, Horder. now destruct (M.existsb V.is_bot a).
+      + destruct (M.existsb V.is_bot a); [reflexivity|].
+        destruct (M.existsb V.is_bot b) eqn:Hclean; cbn; [reflexivity|].
+        destruct (M.forall2b option_leb a b) eqn:Horder; [|reflexivity].
+        assert (Htrue : M.forall2b leb_entry a b = true).
+        { apply map_leb_entry_spec. split; assumption. }
+        congruence.
+  Qed.
+
   (** The empty map has no recognized bottom binding. *)
   Lemma map_empty_nonbot : M.existsb V.is_bot (@M.empty V.t) = false.
   Proof.
@@ -198,14 +250,14 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   (** Every environment is below itself, including recognized bottom maps. *)
   Lemma leb_refl : forall a, leb a a = true.
   Proof.
-    intros [|m]; [reflexivity|]. unfold leb. cbn [is_bot].
+    intros [|m]; [reflexivity|]. rewrite leb_agree. unfold leb_ref. cbn [is_bot].
     destruct (M.existsb V.is_bot m); cbn; [reflexivity|].
     apply map_leb_spec. intro p. apply V.leb_refl.
   Qed.
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
   Proof.
-    intros a b c Hab Hbc. unfold leb in *.
+    intros a b c Hab Hbc. rewrite !leb_agree in *. unfold leb_ref in *.
     destruct (is_bot a) eqn:Ha; [reflexivity|]. cbn in Hab |- *.
     apply andb_true_iff in Hab as [Hb Hab]. apply negb_true_iff in Hb.
     rewrite Hb in Hbc. cbn in Hbc.
@@ -228,7 +280,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
   Proof.
-    intros a b Hbot. unfold leb. now rewrite Hbot.
+    intros a b Hbot. rewrite leb_agree. unfold leb_ref. now rewrite Hbot.
   Qed.
 
   (** Pointwise inclusion into a map without bottom bindings lifts to environments. *)
@@ -237,7 +289,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
     (forall p, V.leb (option_value (M.find p a)) (option_value (M.find p b)) = true) ->
     leb (Reached a) (Reached b) = true.
   Proof.
-    intros a b Hclean Hpoint. unfold leb. cbn [is_bot].
+    intros a b Hclean Hpoint. rewrite leb_agree. unfold leb_ref. cbn [is_bot].
     rewrite Hclean. destruct (M.existsb V.is_bot a); cbn; [reflexivity|].
     now apply map_leb_spec.
   Qed.
@@ -283,7 +335,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
 
   Lemma top_greatest : forall a, leb a top = true.
   Proof.
-    intros [|m]; [reflexivity|]. unfold leb, top. cbn [is_bot].
+    intros [|m]; [reflexivity|]. rewrite leb_agree. unfold leb_ref, top. cbn [is_bot].
     rewrite map_empty_nonbot. destruct (M.existsb V.is_bot m); cbn; [reflexivity|].
     apply map_leb_spec. intro p. rewrite M.find_empty. apply V.top_greatest.
   Qed.
@@ -463,7 +515,8 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
     unfold wrank. apply rank_sum_strict.
     - intros c _. now apply rank_widen_pointwise.
     - assert (Horder : M.forall2b option_leb b a = false).
-      { unfold leb in Hba. cbn [is_bot] in Hba. rewrite Ha in Hba.
+      { rewrite leb_agree in Hba. unfold leb_ref in Hba. cbn [is_bot] in Hba.
+        rewrite Ha in Hba.
         destruct (M.existsb V.is_bot b); cbn in Hba; [discriminate|exact Hba]. }
       destruct (rank_order_failure a b Horder) as [c [x [Hc [Hx Hbad]]]].
       exists c. split; [exact Hc|]. rewrite Hx, rank_widen_find, Hx.
@@ -515,7 +568,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Proof.
     intros a b Hba. unfold narrow. destruct (is_bot b) eqn:Hb.
     - split; [apply leb_refl|exact Hba].
-    - unfold leb in Hba. rewrite Hb in Hba. cbn in Hba.
+    - rewrite leb_agree in Hba. unfold leb_ref in Hba. rewrite Hb in Hba. cbn in Hba.
       apply andb_true_iff in Hba as [Ha Hba]. apply negb_true_iff in Ha.
       destruct a as [|a], b as [|b]; try discriminate.
       cbn [is_bot] in Ha, Hb. cbn in Hba.
@@ -546,9 +599,11 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Lemma gamma_mono : forall a b st, leb a b = true -> gamma a st -> gamma b st.
   Proof.
     intros [|a] [|b] st Hle Hgamma; try contradiction.
-    - destruct Hgamma as [Hclean Hpoint]. unfold leb in Hle. cbn [is_bot] in Hle.
+    - destruct Hgamma as [Hclean Hpoint]. rewrite leb_agree in Hle.
+      unfold leb_ref in Hle. cbn [is_bot] in Hle.
       rewrite Hclean in Hle. discriminate.
-    - destruct Hgamma as [Hclean Hpoint]. unfold leb in Hle. cbn [is_bot] in Hle.
+    - destruct Hgamma as [Hclean Hpoint]. rewrite leb_agree in Hle.
+      unfold leb_ref in Hle. cbn [is_bot] in Hle.
       rewrite Hclean in Hle. cbn in Hle.
       apply andb_true_iff in Hle as [Hnonbot Horder]. apply negb_true_iff in Hnonbot.
       split; [exact Hnonbot|]. intro x.
@@ -981,6 +1036,7 @@ Module EnvTimingHelpers (X : KEY_T) (M : MAP_T X) (L : LANG_T)
   TimeFun top.
   TimeFun is_bot.
   TimeFun option_leb.
+  TimeFun leb_entry.
   TimeFun leb.
   TimeFun join_map.
   TimeFun join.
@@ -1008,6 +1064,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   TimeFun top.
   TimeFun is_bot.
   TimeFun option_leb.
+  TimeFun leb_entry.
   TimeFun leb.
   TimeFun join_map.
   TimeFun join.
@@ -1403,6 +1460,22 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     pose proof time_factor_square. nia.
   Qed.
 
+  (** A fused entry pays for a right-bottom test and one optional comparison. *)
+  Lemma time_leb_entry : forall x y,
+    (T_leb_entry x y <= 2 * time_value_factor * N.of_nat
+      (time_option_weight x + time_option_weight y + (0 + 1)))%N.
+  Proof.
+    intros x y. pose proof (time_option_comparison x y) as Hcompare.
+    pose proof time_factor_linear as Hfactor.
+    pose proof time_factor_positive as Hpositive.
+    unfold T_leb_entry. destruct y as [b|]; cbn [time_option_weight] in Hcompare |- *.
+    - pose proof (V.T_is_bot_le b) as Hbot. destruct (V.is_bot b);
+        autorewrite with env_time_nat in Hcompare, Hbot |- *;
+        change (N.succ (N.of_nat 0)) with 1%N in Hcompare, Hbot |- *; nia.
+    - autorewrite with env_time_nat in Hcompare |- *.
+      change (N.succ (N.of_nat 0)) with 1%N in Hcompare |- *. nia.
+  Qed.
+
   (** One map unit bounds environment bottom testing. *)
   Lemma time_bot_unit : forall a,
     (T_is_bot a <= time_map_unit * N.of_nat (size a + 1))%N.
@@ -1425,24 +1498,49 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     rewrite Nat.mul_0_r, Nat.add_0_l in Hmap. unfold time_map_unit. nia.
   Qed.
 
+  (** Fusing the right-bottom test into comparison takes at most eight map units. *)
+  Lemma time_forall2_entry : forall a b,
+    (M.T_forall2b leb_entry T_leb_entry a b <=
+      8 * time_map_unit * N.of_nat (size (Reached a) + size (Reached b) + 1))%N.
+  Proof.
+    intros a b.
+    pose proof (M.T_forall2b_sum_le V.t V.t leb_entry T_leb_entry a b) as Hmap.
+    pose proof (time_callback_sum a b T_leb_entry 0 (2 * time_value_factor)%N
+      time_leb_entry) as Hsum.
+    change (T_leb_entry None None) with 2%N in Hmap.
+    rewrite Nat.mul_0_r, Nat.add_0_r in Hsum.
+    rewrite !time_size_reached.
+    autorewrite with env_time_nat in Hmap, Hsum |- *.
+    change (N.succ (N.of_nat 0)) with 1%N in Hmap, Hsum |- *.
+    change (N.succ (N.succ (N.succ (N.of_nat 0)))) with 3%N in Hsum.
+    pose proof time_factor_positive as Hpositive. unfold time_map_unit. nia.
+  Qed.
+
   (** Inclusion retains a sixteen-unit bound for use inside widening. *)
   Lemma time_leb_raw : forall a b,
     (T_leb a b <= 16 * time_map_unit * N.of_nat (size a + size b + 1))%N.
   Proof.
-    intros a b. pose proof (time_bot_unit a) as Ha. pose proof (time_bot_unit b) as Hb.
+    intros a b. pose proof (time_bot_unit a) as Ha.
     pose proof time_map_unit_positive as Hu.
-    assert (Hmaps :
-      ((match a, b with
-        | Reached ma, Reached mb => M.T_forall2b option_leb T_option_leb ma mb
-        | _, _ => 0
-        end) <= 4 * time_map_unit * N.of_nat (size a + size b + 1))%N).
-    { destruct a as [|a], b as [|b]; try nia. apply time_forall2_raw. }
-    time_unfold T_leb.
-    unfold Std.Datatypes.T_negb, Std.Datatypes.T_andb, Std.Datatypes.T_orb.
-    change (fun x y : option V.t => T_option_leb x y) with T_option_leb.
-    autorewrite with env_time_nat in Ha, Hb, Hmaps |- *.
-    change (N.succ (N.of_nat 0)) with 1%N in Ha, Hb, Hmaps |- *.
-    nia.
+    destruct a as [|a], b as [|b].
+    - change (1 <= 16 * time_map_unit * 1)%N. nia.
+    - change (1 <= 16 * time_map_unit * N.of_nat (0 + size (Reached b) + 1))%N.
+      autorewrite with env_time_nat. change (N.succ (N.of_nat 0)) with 1%N. nia.
+    - change (1 + M.T_existsb V.is_bot V.T_is_bot a <=
+        16 * time_map_unit * N.of_nat (size (Reached a) + 0 + 1))%N.
+      change (1 + M.T_existsb V.is_bot V.T_is_bot a <=
+        time_map_unit * N.of_nat (size (Reached a) + 1))%N in Ha.
+      autorewrite with env_time_nat in Ha |- *.
+      change (N.succ (N.of_nat 0)) with 1%N in Ha |- *. nia.
+    - pose proof (time_forall2_entry a b) as Hmaps.
+      change (1 + M.T_existsb V.is_bot V.T_is_bot a <=
+        time_map_unit * N.of_nat (size (Reached a) + 1))%N in Ha.
+      time_unfold T_leb.
+      change (fun x y : option V.t => T_leb_entry x y) with T_leb_entry.
+      change (fun x : V.t => V.T_is_bot x) with V.T_is_bot.
+      destruct (M.forall2b leb_entry a b);
+        autorewrite with env_time_nat in Ha, Hmaps |- *;
+        change (N.succ (N.of_nat 0)) with 1%N in Ha, Hmaps |- *; nia.
   Qed.
 
   (** An operation and a bottom test share the operation's result-size bound. *)
@@ -1690,48 +1788,91 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     unfold c_env, c_state. lia.
   Qed.
 
+  (** Inclusion is linear in the combined environment sizes. *)
   Lemma leb_bigO : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_leb (fst ab) (snd ab)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_lat). intros [a b] _.
+    change (T_leb a b <= c_lat * N.of_nat (size a + size b) + c_lat)%N.
+    pose proof (T_leb_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Join is linear in the combined environment sizes. *)
   Lemma join_bigO : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_join (fst ab) (snd ab)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_lat). intros [a b] _.
+    change (T_join a b <= c_lat * N.of_nat (size a + size b) + c_lat)%N.
+    pose proof (T_join_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Widening charges environment sizes and the parameter work of each binding. *)
   Lemma widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
     (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
     (fun '(p, a, b) => T_widen p a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_lat). intros [[p a] b] _.
+    change (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)) + c_lat)%N.
+    pose proof (T_widen_le p a b) as Hbound.
+    rewrite !Nat2N.inj_add in Hbound |- *. nia.
+  Qed.
 
+  (** Assignment is linear in its annotation and insertion work. *)
   Lemma assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
     (fun '(x, e, s) => N.of_nat (assign_work x e s))
     (fun '(x, e, s) => T_assign x e s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_state). intros [[x e] s] _.
+    change (T_assign x e s <= c_state * N.of_nat (assign_work x e s) + c_state)%N.
+    pose proof (T_assign_le x e s) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Havoc is linear in its environment and encoded-key work. *)
   Lemma havoc_bigO : bigO (X := X.t * t) (fun _ => True)
     (fun '(x, s) => N.of_nat (havoc_work x s))
     (fun '(x, s) => T_havoc x s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_state). intros [x s] _.
+    change (T_havoc x s <= c_state * N.of_nat (havoc_work x s) + c_state)%N.
+    pose proof (T_havoc_le x s) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
-  Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
-    (fun '(gd, es, s) => N.of_nat (assume_work gd es s))
-    (fun '(gd, es, s) => T_assume gd es s).
-  Proof. Admitted. (* STUB *)
-
+  (** Evaluation is linear in the work of one annotation pass. *)
   Lemma eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
     (fun '(e, s) => N.of_nat (eval_work e s))
     (fun '(e, s) => T_eval e s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_state). intros [e s] _.
+    change (T_eval e s <= c_state * N.of_nat (eval_work e s) + c_state)%N.
+    pose proof (T_eval_le e s) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Bottom recognition is linear in the environment size. *)
   Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_lat). intros a _.
+    pose proof (T_is_bot_le a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Narrowing is linear in the combined environment sizes. *)
   Lemma narrow_bigO : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_narrow (fst ab) (snd ab)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_lat). intros [a b] _.
+    change (T_narrow a b <= c_lat * N.of_nat (size a + size b) + c_lat)%N.
+    pose proof (T_narrow_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
   Lemma F_wunits_unreached : wunits Unreached = 0.
   Proof.
@@ -2197,6 +2338,18 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_l.
     rewrite Nat2N.inj_add. lia.
   Qed.
+
+  (** Assumption is linear in its annotation, guard and refinement work. *)
+  Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+    (fun '(gd, es, s) => N.of_nat (assume_work gd es s))
+    (fun '(gd, es, s) => T_assume gd es s).
+  Proof.
+    eapply bigO_intro with (c := c_state). intros [[gd es] s] _.
+    change (T_assume gd es s <= c_state * N.of_nat (assume_work gd es s) + c_state)%N.
+    pose proof (T_assume_le gd es s) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
+
   Definition models (m : M.t V.t) (st : X.t -> L.val) : Prop :=
     forall x, V.gamma (read m x) (st x).
   Fixpoint ann_models (st : X.t -> L.val) (n : ann L.op X.t V.t)
@@ -2302,7 +2455,8 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
                 (match y with Some v => v | None => V.top end)) ma mb
       | _, _ => false end)).
   Proof.
-    intros [|a] [|b]; try reflexivity. unfold leb.
+    intros a b. rewrite leb_agree. unfold leb_ref.
+    destruct a as [|a], b as [|b]; try reflexivity.
     assert (Hcallback : forall x y, option_leb x y =
       V.leb (match x with Some v => v | None => V.top end)
         (match y with Some v => v | None => V.top end)).
