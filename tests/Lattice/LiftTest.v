@@ -105,10 +105,3 @@ Module RankTests.
   Qed.
 
 End RankTests.
-
-(* LatticeLiftTest.lift_narrow_unknown expects narrow Unknown (Elem false) = Elem false.
-   The public JoinWideningCode adapter gives Unknown on these arguments.
-   LatticeLiftTest.lift_leb_ticks, lift_join_ticks and lift_unknown_ticks retire
-   with Cost.ticks. lift_callback_charges replaces the widening dictionary at run
-   time and expects (Elem true, 9%N). WithTop has no widening callback parameter,
-   so that replacement observation retires with with_widen_c and Cost. *)
