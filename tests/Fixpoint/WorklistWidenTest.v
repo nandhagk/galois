@@ -2,6 +2,12 @@
 
     A product lattice distinguishes joining from widening at a head.
     For example, delay zero widens the first change.
+
+    Groups:
+    - Fixtures: a pair lattice, a one-row system and a policy with a delayed head.
+    - Delay: the value at a head after the first change, for each delay.
+    - Output order: the stored value and the spent delay after one step.
+
     Builds on: Fixpoint.Worklist and Fixpoint.Policy. *)
 
 From Stdlib Require Import List Bool PArith NArith.
@@ -10,6 +16,9 @@ From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig PolicySig SolverSig WorklistSig Policy Worklist.
 Import List.ListNotations.
 
+(** * Fixtures *)
+
+(** A pair of Boolean components, ordered and joined componentwise. *)
 Module PairOps <: WLATTICE_OPS.
   Definition t := (bool * bool)%type.
   Definition leb a b := implb (fst a) (fst b) && implb (snd a) (snd b).
@@ -20,6 +29,8 @@ Module PairOps <: WLATTICE_OPS.
   Definition widen (_ : unit) (_ _ : t) := (true, true).
   Definition narrow a b := (fst a && fst b, snd a && snd b).
 End PairOps.
+
+(** A system with one row that returns the pair (true, false). *)
 Module One <: SYSTEM_OPS PairOps.
   Definition prog := unit.
   Definition key := positive.
@@ -36,24 +47,39 @@ Module One <: SYSTEM_OPS PairOps.
 End One.
 Module P := PolicyCode PairOps.
 Module W := WorklistCode PairOps One P HeapCode.
+
+(** A policy whose head at key 1 has the given delay. *)
 Definition pol delay : policy unit :=
   Policy unit PTrieCode.empty (PTrieCode.set 1%positive (HeadCfg delay 0) PTrieCode.empty) tt 0.
+
+(** The value that the solver stores at key 1 for the given delay. *)
 Definition observe delay :=
   match W.run tt (pol delay) 2%N with
   | Solved m => look_or One.key_code PairOps.bot m 1%positive
   | _ => (false, false)
   end.
 
-Example zero_delay_widens_first_change : observe 0%N = (true, true).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+(** * Delay *)
 
-Example positive_delay_joins_first_change : observe 1%N = (true, false).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+Module DelayTests.
 
+  (** A head with zero delay widens the first change to the top pair. *)
+  Example zero_delay_widens_first_change : observe 0%N = (true, true).
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A head with positive delay joins the first change instead of widening it. *)
+  Example positive_delay_joins_first_change : observe 1%N = (true, false).
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End DelayTests.
+
+(** * Output order *)
+
+(** A system whose row 1 writes a side contribution before its primary output. *)
 Module OutputOrder <: SYSTEM_OPS PairOps.
   Definition prog := unit.
   Definition key := positive.
@@ -71,15 +97,27 @@ Module OutputOrder <: SYSTEM_OPS PairOps.
 End OutputOrder.
 Module OW := WorklistCode PairOps OutputOrder P HeapCode.
 
-(* primary_precedes_sides_and_below_side_does_not_spend_delay had
-   ((true, true), 1) with a remaining delay counter. The new counter records
-   changes spent, so one change at delay two also gives 1. *)
-Example primary_precedes_sides_and_below_side_does_not_spend_delay :
-  match OW.step tt (pol 2%N) (OW.prepare tt (pol 2%N)) with
-  | inl s => (look_or OutputOrder.key_code PairOps.bot (ws_store s) 1%positive,
-      match trie_get 1%positive (ws_counters s) with Some n => n | None => 0%N end)
-  | inr _ => ((false, false), 2%N)
-  end = ((true, true), 1%N).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+Module OutputOrderTests.
+
+  (** After one step, the stored value at key 1 is the primary output, not a side one. *)
+  Example primary_output_is_stored :
+    match OW.step tt (pol 2%N) (OW.prepare tt (pol 2%N)) with
+    | inl s => look_or OutputOrder.key_code PairOps.bot (ws_store s) 1%positive
+    | inr _ => (false, false)
+    end = (true, true).
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A side contribution below the head does not spend the delay, so one change is counted. *)
+  Example primary_output_spends_one_change :
+    match OW.step tt (pol 2%N) (OW.prepare tt (pol 2%N)) with
+    | inl s =>
+      match trie_get 1%positive (ws_counters s) with Some n => n | None => 0%N end
+    | inr _ => 2%N
+    end = 1%N.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End OutputOrderTests.
