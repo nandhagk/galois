@@ -2,10 +2,26 @@
 
     Unit-valued maps represent finite sets.
     For example, adding one key twice leaves a singleton.
+    Main results
+    - [elements_spec] Consistent sets enumerate precisely their members.
+    - [fold_spec] Folding follows enumeration order.
+    - [subset_spec] Inclusion accepts exactly when every member of the left set is a member of
+      the right set.
+    - [equal_spec] Equality accepts exactly when two sets have the same members.
+    - [mem_complexity] Membership is linear in the encoded key length.
+    - [add_complexity] Adding a member is linear in the encoded key length.
+    - [union_complexity] Union, intersection and difference visit the shared skeleton only.
+    - [inter_complexity] Intersection visits the shared skeleton only, so its time is linear in
+      the smaller tree.
+    - [diff_complexity] Difference visits the shared skeleton only, so its time is linear in
+      the smaller tree.
+    - [subset_complexity] Inclusion visits the left skeleton only and stops at the first failure.
+
     Builds on: SetSig and MapSig. *)
 
 From Stdlib Require Import List Bool NArith PeanoNat Lia Sorting.Sorted.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig TrieSig MapSig SetSig.
 From Galois.Base Require Import Trie.
 
@@ -442,8 +458,8 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
 
   (** Membership costs at most a constant per encoded key bit. *)
-  Lemma mem_complexity : bigO (X := K.t * t) (fun _ => True)
-    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_mem (fst x) (snd x)).
+  Lemma mem_complexity :
+    T_mem k s ∈ 𝑂(N.of_nat (K.bits k)) for (k, s).
   Proof.
     exists c_set. intros [k s] _. cbn [fst snd].
     pose proof (T_mem_le k s) as Hmem.
@@ -451,8 +467,8 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
 
   (** Adding a member costs at most a constant per encoded key bit. *)
-  Lemma add_complexity : bigO (X := K.t * t) (fun _ => True)
-    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_add (fst x) (snd x)).
+  Lemma add_complexity :
+    T_add k s ∈ 𝑂(N.of_nat (K.bits k)) for (k, s).
   Proof.
     exists c_set. intros [k s] _. cbn [fst snd].
     pose proof (T_add_le k s) as Hadd.
@@ -460,9 +476,8 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
 
   (** Union shares one-sided subtrees and visits at most the smaller skeleton. *)
-  Lemma union_complexity : bigO (X := t * t) (fun _ => True)
-    (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
-    (fun x => T_union (fst x) (snd x)).
+  Lemma union_complexity :
+    T_union s u ∈ 𝑂(N.of_nat (Nat.min (nodes s) (nodes u))) for (s, u).
   Proof.
     exists (4 * PTrieT.k_merge + 1)%N. intros [s u] _. cbn [fst snd].
     unfold T_union. eapply N.le_trans.
@@ -474,9 +489,8 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
 
   (** Intersection drops one-sided subtrees and visits at most the smaller skeleton. *)
-  Lemma inter_complexity : bigO (X := t * t) (fun _ => True)
-    (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
-    (fun x => T_inter (fst x) (snd x)).
+  Lemma inter_complexity :
+    T_inter s u ∈ 𝑂(N.of_nat (Nat.min (nodes s) (nodes u))) for (s, u).
   Proof.
     exists (4 * PTrieT.k_merge + 1)%N. intros [s u] _. cbn [fst snd].
     unfold T_inter. eapply N.le_trans.
@@ -488,9 +502,8 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
 
   (** Difference shares left-only subtrees and visits at most the smaller skeleton. *)
-  Lemma diff_complexity : bigO (X := t * t) (fun _ => True)
-    (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
-    (fun x => T_diff (fst x) (snd x)).
+  Lemma diff_complexity :
+    T_diff s u ∈ 𝑂(N.of_nat (Nat.min (nodes s) (nodes u))) for (s, u).
   Proof.
     exists (4 * PTrieT.k_merge + 1)%N. intros [s u] _. cbn [fst snd].
     unfold T_diff. eapply N.le_trans.
@@ -502,8 +515,8 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
 
   (** Inclusion visits the left skeleton only. *)
-  Lemma subset_complexity : bigO (X := t * t) (fun _ => True)
-    (fun x => N.of_nat (nodes (fst x))) (fun x => T_subset (fst x) (snd x)).
+  Lemma subset_complexity :
+    T_subset s u ∈ 𝑂(N.of_nat (nodes s)) for (s, u).
   Proof.
     exists (2 * PTrieT.k_check + 1)%N. intros [s u] _. cbn [fst snd].
     pose proof (T_subset_nodes s u) as Hsubset.
