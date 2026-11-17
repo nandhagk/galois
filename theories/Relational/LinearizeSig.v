@@ -2,13 +2,21 @@
 
     Linearization recognizes affine expressions and wrapped comparisons.
     For example, integer addition can yield an unwrapped linear form.
+
+    Main results
+    - [lin_sound] Recognized forms reproduce successful concrete evaluation in the numeric view.
+    - [atoms_sound] Every emitted atom follows from the concrete guard.
+    - [lin_of_complexity] Linearization of a term is linear in its size and bit measure.
+    - [atoms_of_complexity] Guard linearization is linear in the operand sizes and bit measure.
+
     Builds on: KeySig, LangSig, ValueSig and LinForm. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import Std BigO.
+From Argent Require Import Std Complexity.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.Relational Require Import LinForm.
+Import ComplexityNotations.
 
 Module Type LINEARIZE_OPS (X : KEY_OPS) (L : LANG_OPS).
   Parameter lin_of : term L.op X.t -> option (lin X.t * wrapr).
@@ -61,14 +69,12 @@ Module Type LINEARIZE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_atoms_of g es <= c_linearize * N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
       N.of_nat ((bits_es g es + 1)%nat))%N.
   (** Linearization of a term is linear in its size and bit measure. *)
-  Parameter lin_of_complexity : bigO (fun _ : term L.op X.t => True)
-    (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
-    (fun e => T_lin_of e).
+  Parameter lin_of_complexity :
+    T_lin_of e ∈ 𝑂(N.of_nat ((tsize e * (bits_e e + 1))%nat)) for e.
   (** Guard linearization is linear in the operand sizes and bit measure. *)
-  Parameter atoms_of_complexity : bigO (fun _ : L.guard * list (term L.op X.t) => True)
-    (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
-      (bits_es (fst x) (snd x) + 1))%nat))
-    (fun x => T_atoms_of (fst x) (snd x)).
+  Parameter atoms_of_complexity :
+    T_atoms_of g es ∈ 𝑂(N.of_nat (((fold_right Nat.add 0 (map tsize es) + 1) *
+      (bits_es g es + 1))%nat)) for (g, es).
 End LINEARIZE_TIME.
 
 Module Type LINEARIZE_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) :=
