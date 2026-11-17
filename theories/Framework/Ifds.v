@@ -587,23 +587,61 @@ Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
       + pose proof (Hlook (d0, (C.src p call, x))) as Hsize.
         rewrite Hcaller in Hsize; unfold row_work; lia.
   Qed.
+  (** Row enumeration is linear in the number of rows. *)
   Lemma rows_bigO : bigO (X := prog) (fun p => wf p)
     (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_sys).
+    intros p Hwf; pose proof (T_rows_le p Hwf) as Hrows.
+    change (T_rows p <= c_sys * N.of_nat (length (rows p)) + c_sys)%N.
+    rewrite Nat2N.inj_add in Hrows; nia.
+  Qed.
+
+  (** Starting a listed row fits its budget at the empty value. *)
   Lemma start_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_sys).
+    intros [p r] [Hwf Hrow].
+    change (T_start p r <= c_sys * row_work p 0 + c_sys)%N.
+    pose proof (T_start_le p r Hwf Hrow) as Htime; nia.
+  Qed.
+
+  (** Listing dependencies is linear in their number times the key width. *)
   Lemma deps_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_deps p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_sys).
+    intros [p r] [Hwf Hrow].
+    change (T_deps p r <=
+      c_sys * N.of_nat ((length (deps p r) + 1) * (kw p + 1)) + c_sys)%N.
+    pose proof (T_deps_le p r Hwf Hrow) as Htime.
+    rewrite Nat2N.inj_mul; nia.
+  Qed.
+
+  (** Finding a listed row's target fits its budget at the empty value. *)
   Lemma target_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_sys).
+    intros [p r] [Hwf Hrow].
+    change (T_target p r <= c_sys * row_work p 0 + c_sys)%N.
+    pose proof (T_target_le p r Hwf Hrow) as Htime; nia.
+  Qed.
+
+  (** Listing side writes is linear in their number times the key width. *)
   Lemma sides_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_sides p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_sys).
+    intros [p r] [Hwf Hrow].
+    change (T_sides p r <=
+      c_sys * N.of_nat ((length (sides p r) + 1) * (kw p + 1)) + c_sys)%N.
+    pose proof (T_sides_le p r Hwf Hrow) as Htime.
+    rewrite Nat2N.inj_mul; nia.
+  Qed.
 End IfdsT.
 
 Module IfdsSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
