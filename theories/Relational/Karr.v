@@ -5867,6 +5867,12 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
       then Some (kweight r) else empty_certificate P rs
     end.
 
+  (** A contradiction scan reuses the caller's prepared equality basis. *)
+  Definition contradiction_in (xs : list X.t) (basis : list karr_row)
+      (P : list (lcons X.t)) : option (list Z) :=
+    empty_certificate P basis.
+
+
   Definition contradiction (P : list (lcons X.t)) : option (list Z) :=
     empty_certificate P (equality_basis (variables P) P).
 
@@ -5933,7 +5939,7 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     end.
 
   (** Inclusion skips literal rows and prepares one basis for all remaining targets. *)
-  Definition leb (a b : t) : bool :=
+  Definition leb_shared_spec (a b : t) : bool :=
     match a, b with
     | Unreached, _ => true
     | Reached P, Unreached =>
@@ -5951,6 +5957,26 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
         end
       end
     end.
+
+  (** One basis serves both contradiction detection and the remaining targets. *)
+  Definition leb (a b : t) : bool :=
+    match a, b with
+    | Unreached, _ => true
+    | Reached P, Unreached =>
+      match contradiction P with Some _ => true | None => false end
+    | Reached P, Reached Q =>
+      match filter (fun r => negb (existsb (row_eqb r) P)) Q with
+      | [] => true
+      | rest =>
+        let xs := variables (P ++ Q) in
+        let basis := equality_basis xs P in
+        match contradiction_in xs basis P with
+        | Some _ => true
+        | None => forallb (entails_in xs basis P) rest
+        end
+      end
+    end.
+
 
   Definition bot : t := Unreached.
 
@@ -7735,31 +7761,60 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
       + now apply IH with (r := r).
   Qed.
 
+  (** Any covered zero row with nonzero right-hand side yields a contradiction certificate. *)
+  Lemma contradiction_in_of_zero_row : forall P xs r,
+    (forall s, In s P -> forall x z, In (x, z) (lhs s) -> In x xs) ->
+    In r (equality_basis xs P) -> karr_zero r = true -> kright r <> 0%Z ->
+    exists ms, contradiction_in xs (equality_basis xs P) P = Some ms.
+  Proof.
+    intros P xs r Hsupport Hin Hzero Hnonzero. unfold contradiction_in.
+    apply empty_certificate_accepts_row with (r := r); try assumption.
+    apply row_tracks_check_empty with (xs := xs)
+      (target := LCons X.t [] REq 0%Z); try assumption.
+    - now apply (proj1 (Forall_forall _ _) (equality_basis_tracks P xs
+        (LCons X.t [] REq 0%Z))).
+    - intros s Hs x z Hterm. destruct Hs as [Hsame | Hs].
+      + subst s. contradiction.
+      + now apply Hsupport with (s := s) (z := z).
+    - now apply (proj1 (Forall_forall _ _) (equality_basis_scale_zero P xs)).
+  Qed.
+
+
   Lemma contradiction_of_zero_row : forall P r,
     In r (equality_basis (variables P) P) -> karr_zero r = true -> kright r <> 0%Z ->
     exists ms, contradiction P = Some ms.
   Proof.
-    intros P r Hin Hzero Hnonzero. unfold contradiction.
-    apply empty_certificate_accepts_row with (r := r); try assumption.
-    apply row_tracks_check_empty with (xs := variables P)
-      (target := LCons X.t [] REq 0%Z); try assumption.
-    - now apply (proj1 (Forall_forall _ _) (equality_basis_tracks P (variables P)
-        (LCons X.t [] REq 0%Z))).
-    - intros s Hs x z Hterm. destruct Hs as [Hsame | Hs].
-      + subst s. contradiction.
-      + now apply variables_contains with (r := s) (z := z).
-    - now apply (proj1 (Forall_forall _ _) (equality_basis_scale_zero P (variables P))).
+    intros P r Hin Hzero Hnonzero.
+    apply contradiction_in_of_zero_row with (xs := variables P) (r := r);
+      try assumption.
+    intros s Hs x z Hterm. now apply variables_contains with (r := s) (z := z).
   Qed.
+
+
+  (** Failure of a covered-basis scan excludes false constant rows. *)
+  Lemma contradiction_in_none_no_false_row : forall P xs r,
+    (forall s, In s P -> forall x z, In (x, z) (lhs s) -> In x xs) ->
+    contradiction_in xs (equality_basis xs P) P = None ->
+    In r (equality_basis xs P) -> karr_zero r = true -> kright r = 0%Z.
+  Proof.
+    intros P xs r Hsupport Hnone Hin Hzero.
+    destruct (Z.eq_dec (kright r) 0) as [Hz | Hnz]; [exact Hz |].
+    destruct (contradiction_in_of_zero_row P xs r Hsupport Hin Hzero Hnz)
+      as [ms Hsome].
+    rewrite Hnone in Hsome. discriminate.
+  Qed.
+
 
   Lemma contradiction_none_no_false_row : forall P r,
     contradiction P = None -> In r (equality_basis (variables P) P) ->
     karr_zero r = true -> kright r = 0%Z.
   Proof.
-    intros P r Hnone Hin Hzero. destruct (Z.eq_dec (kright r) 0) as [Hz | Hnz];
-      [exact Hz |].
-    destruct (contradiction_of_zero_row _ _ Hin Hzero Hnz) as [ms Hsome].
-    rewrite Hnone in Hsome. discriminate.
+    intros P r Hnone Hin Hzero.
+    apply contradiction_in_none_no_false_row with (P := P) (xs := variables P);
+      try assumption.
+    intros s Hs x z Hterm. now apply variables_contains with (r := s) (z := z).
   Qed.
+
 
   Lemma dense_normalize_row : forall xs r,
     dense xs (normalize_row r) = dense xs r.
@@ -8061,23 +8116,25 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - destruct (IH _ Hcert) as [r [Hin Hrow]]. exists r. split; [now right |exact Hrow].
   Qed.
 
-  Lemma contradiction_sound_Q : forall P ms,
-    contradiction P = Some ms -> forall v,
+  (** A contradiction over covered coordinates excludes every rational equality model. *)
+  Lemma contradiction_in_sound_Q : forall P xs ms,
+    (forall s, In s P -> forall x z, In (x, z) (lhs s) -> In x xs) ->
+    contradiction_in xs (equality_basis xs P) P = Some ms -> forall v,
     ~ Forall (fun r => lrel r = REq -> satQ v r) P.
   Proof.
-    intros P ms Hempty v Hmodels. unfold contradiction in Hempty.
+    intros P xs ms Hsource Hempty v Hmodels. unfold contradiction_in in Hempty.
     destruct (empty_certificate_has_row _ _ _ Hempty)
       as [r [Hin [Hzero [Hright _]]]].
     pose proof (proj1 (Forall_forall _ _)
-      (equality_basis_tracks P (variables P) (LCons X.t [] REq 0%Z)) r Hin) as Htracks.
+      (equality_basis_tracks P xs (LCons X.t [] REq 0%Z)) r Hin) as Htracks.
     pose proof (proj1 (Forall_forall _ _)
-      (equality_basis_scale_zero P (variables P)) r Hin) as Hscale.
+      (equality_basis_scale_zero P xs) r Hin) as Hscale.
     assert (Hsupport : forall s, In s (LCons X.t [] REq 0%Z :: P) ->
-      forall x z, In (x, z) (lhs s) -> In x (variables P)).
+      forall x z, In (x, z) (lhs s) -> In x xs).
     { intros s Hs x z Hterm. destruct Hs as [Hsame | Hs].
       - subst s. contradiction.
-      - now apply variables_contains with (r := s) (z := z). }
-    pose proof (row_tracks_zero_coeff P (variables P) (LCons X.t [] REq 0%Z) r
+      - now apply Hsource with (s := s) (z := z). }
+    pose proof (row_tracks_zero_coeff P xs (LCons X.t [] REq 0%Z) r
       Htracks Hsupport Hzero) as Hcoeff.
     destruct Htracks as [Hweights [_ Hrhs]].
     apply (equality_empty_sound_Q P (kweight r) Hweights) with (v := v).
@@ -8085,6 +8142,18 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - rewrite Hscale in Hrhs. lia.
     - exact Hmodels.
   Qed.
+
+
+  Lemma contradiction_sound_Q : forall P ms,
+    contradiction P = Some ms -> forall v,
+    ~ Forall (fun r => lrel r = REq -> satQ v r) P.
+  Proof.
+    intros P ms Hempty.
+    apply contradiction_in_sound_Q with (xs := variables P) (ms := ms).
+    - intros s Hs x z Hterm. now apply variables_contains with (r := s) (z := z).
+    - exact Hempty.
+  Qed.
+
 
   Lemma entail_cert_sound_Q : forall P target k,
     entail_cert P target = Some k -> forall v,
@@ -8125,21 +8194,35 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
   (** Failure to produce a contradiction supplies an actual rational equality model. *)
-  Lemma contradiction_none_model_Q : forall P, contradiction P = None ->
+  (** Distinct covered coordinates turn scan failure into a rational equality model. *)
+  Lemma contradiction_in_none_model_Q : forall P xs,
+    NoDup xs ->
+    (forall r, In r P -> forall x z, In (x, z) (lhs r) -> In x xs) ->
+    contradiction_in xs (equality_basis xs P) P = None ->
     exists v : X.t -> Q, Forall (fun r => lrel r = REq -> satQ v r) P.
   Proof.
-    intros P Hnone. set (xs := variables P).
+    intros P xs Hunique Hsupport Hnone.
     assert (Hzero : karr_zero_right (equality_basis xs P)).
     { apply Forall_forall. intros r Hin Hrowzero.
-      exact (contradiction_none_no_false_row P r Hnone Hin Hrowzero). }
+      exact (contradiction_in_none_no_false_row P xs r Hsupport Hnone Hin Hrowzero). }
     destruct (karr_echelon_model _ _ (equality_basis_echelon P xs) Hzero)
       as [qs [Hlength Hmodels]].
     exists (coordinate_store xs qs).
-    assert (Hsupport : forall r, In r P -> forall x z, In (x, z) (lhs r) -> In x xs).
-    { intros r Hin x z Hterm. now apply variables_contains with (r := r) (z := z). }
-    apply (proj1 (coordinate_basis_models_Q P xs qs (variables_nodup P)
+    apply (proj1 (coordinate_basis_models_Q P xs qs Hunique
       (eq_sym Hlength) Hsupport)). exact Hmodels.
   Qed.
+
+
+  Lemma contradiction_none_model_Q : forall P, contradiction P = None ->
+    exists v : X.t -> Q, Forall (fun r => lrel r = REq -> satQ v r) P.
+  Proof.
+    intros P Hnone.
+    apply contradiction_in_none_model_Q with (xs := variables P).
+    - apply variables_nodup.
+    - intros r Hin x z Hterm. now apply variables_contains with (r := r) (z := z).
+    - exact Hnone.
+  Qed.
+
 
   (** A modeled basis has no false constant row, regardless of the chosen variable list. *)
   Lemma equality_basis_zero_right : forall P xs v,
@@ -8367,10 +8450,46 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
   (** Shared-basis inclusion agrees with the reference operation on every state. *)
-  Lemma leb_eq : forall a b, leb a b = leb_spec a b.
+  (** Covered coordinate choices agree on contradiction success. *)
+  Lemma contradiction_in_none_iff : forall P xs,
+    NoDup xs ->
+    (forall r, In r P -> forall x z, In (x, z) (lhs r) -> In x xs) ->
+    (contradiction_in xs (equality_basis xs P) P = None <-> contradiction P = None).
+  Proof.
+    intros P xs Hunique Hsupport. split.
+    - intro Hnone.
+      destruct (contradiction P) as [ms|] eqn:Horiginal; [|reflexivity].
+      destruct (contradiction_in_none_model_Q P xs Hunique Hsupport Hnone)
+        as [v Hmodels].
+      exfalso. exact (contradiction_sound_Q P ms Horiginal v Hmodels).
+    - intro Hnone.
+      destruct (contradiction_in xs (equality_basis xs P) P) as [ms|] eqn:Hshared;
+        [|reflexivity].
+      destruct (contradiction_none_model_Q P Hnone) as [v Hmodels].
+      exfalso. exact (contradiction_in_sound_Q P xs ms Hsupport Hshared v Hmodels).
+  Qed.
+
+
+  Lemma contradiction_in_success_eq : forall P xs,
+    NoDup xs ->
+    (forall r, In r P -> forall x z, In (x, z) (lhs r) -> In x xs) ->
+    (match contradiction_in xs (equality_basis xs P) P with Some _ => true | None => false end) =
+    (match contradiction P with Some _ => true | None => false end).
+  Proof.
+    intros P xs Hunique Hsupport.
+    pose proof (contradiction_in_none_iff P xs Hunique Hsupport) as Hnone.
+    destruct (contradiction_in xs (equality_basis xs P) P) as [shared|] eqn:Hshared;
+      destruct (contradiction P) as [original|] eqn:Horiginal; try reflexivity.
+    - destruct Hnone as [_ Hnone]. specialize (Hnone eq_refl). discriminate.
+    - destruct Hnone as [Hnone _]. specialize (Hnone eq_refl). discriminate.
+  Qed.
+
+
+  (** The retained K1 operation agrees with the original reference order. *)
+  Lemma leb_shared_eq : forall a b, leb_shared_spec a b = leb_spec a b.
   Proof.
     intros [|P] [|Q]; try reflexivity.
-    unfold leb, leb_spec.
+    unfold leb_shared_spec, leb_spec.
     rewrite (entails_filter P Q).
     remember (filter (fun r => negb (existsb (row_eqb r) P)) Q) as rest eqn:Hrest.
     destruct rest as [|r rest].
@@ -8400,6 +8519,34 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
       + rewrite (Hagree target Hin).
         exact (proj1 (forallb_forall _ _) Hforall target Hin).
   Qed.
+
+  (** Reusing the target basis for contradiction detection preserves inclusion. *)
+  Lemma leb_one_basis_eq : forall a b, leb a b = leb_shared_spec a b.
+  Proof.
+    intros [|P] [|Q]; try reflexivity.
+    unfold leb, leb_shared_spec.
+    destruct (filter (fun r => negb (existsb (row_eqb r) P)) Q) as [|r rest];
+      [reflexivity|].
+    assert (Hsupport : forall s, In s P -> forall x z, In (x, z) (lhs s) ->
+      In x (variables (P ++ Q))).
+    { intros s Hin x z Hterm. apply variables_contains with (r := s) (z := z);
+        [apply in_or_app; now left|exact Hterm]. }
+    pose proof (contradiction_in_none_iff P (variables (P ++ Q))
+      (variables_nodup (P ++ Q)) Hsupport) as Hnone.
+    destruct (contradiction_in (variables (P ++ Q))
+      (equality_basis (variables (P ++ Q)) P) P) as [shared|] eqn:Hshared;
+      destruct (contradiction P) as [original|] eqn:Horiginal; try reflexivity.
+    - destruct Hnone as [_ Hnone]. specialize (Hnone eq_refl). discriminate.
+    - destruct Hnone as [Hnone _]. specialize (Hnone eq_refl). discriminate.
+  Qed.
+
+
+  (** Final inclusion agrees with the original reference operation. *)
+  Lemma leb_eq : forall a b, leb a b = leb_spec a b.
+  Proof.
+    intros a b. rewrite leb_one_basis_eq. apply leb_shared_eq.
+  Qed.
+
 
   Lemma leb_eq_sound_Q : forall P R,
     leb (Reached P) (Reached R) = true -> forall v,
@@ -10693,6 +10840,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun seed_rows.
   TimeFun equality_basis.
   TimeFun empty_certificate.
+  TimeFun contradiction_in.
   TimeFun contradiction.
   TimeFun row_eqb.
   TimeFun target_certificate_in.
@@ -10701,6 +10849,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun entails.
   TimeFun entails_in.
   TimeFun leb_spec.
+  TimeFun leb_shared_spec.
   TimeFun leb.
   TimeFun bot.
   TimeFun is_bot.
@@ -23627,6 +23776,72 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clear -Hclock Hproduct HcountN Hpositive. nia.
   Qed.
 
+  (** A supplied basis retains the raw-state contradiction-scan allowance. *)
+  Lemma T_karr_contradiction_in_raw : forall P xs m,
+    mu (Reached P) <= m -> length xs + length P + 2 <= m + 1 ->
+    (T_contradiction_in xs (equality_basis xs P) P <= karr_lattice_contradiction_factor *
+      N.of_nat ((m + 1)^3 * (ellB (m + 1) m + 1)^2))%N.
+  Proof.
+    intros P xs m Hmu Hdim.
+    destruct (karr_lattice_source P m Hmu) as
+      [Hlength [Hterms [Hn [Hnell [Hell [_ [Hmass [Hwidth Hsource]]]]]]]].
+    destruct (karr_lattice_volume m) as [Hd [Hdv [Hone [Hlinear [Hsquare Hfour]]]]].
+    set (d := m + 1) in *.
+    set (v := ellB d m + 1) in *.
+    set (work := N.of_nat (d^3 * v^2)).
+    assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+    assert (Hvars_count : length xs <= m) by (unfold d in Hdim; lia).
+    assert (Hbasis : Forall (karr_row_envelope m m (ellB d m))
+      (equality_basis xs P)).
+    { unfold equality_basis. eapply Forall_impl; [|apply karr_seed_basis_envelope].
+      intros row Hr. eapply karr_row_envelope_resize; [exact Hvars_count|exact Hlength| |exact Hr].
+      now apply ellB_mono. }
+    assert (Hbasis_length : length (equality_basis xs P) <= m).
+    { unfold equality_basis. rewrite karr_bareiss_length.
+      pose proof (karr_seed_rows_length xs (length P) 0
+        (map normalize_row P)) as Hseed_length.
+      rewrite length_map in Hseed_length. lia. }
+    assert (Hscan : (T_empty_certificate P (equality_basis xs P) <=
+      (8 * C.c_lc + 128) * work)%N).
+    { pose proof (T_karr_empty_certificate_bounded P (equality_basis xs P)
+        m m m (ellB d m) Hlength Hbasis_length Hsource Hbasis) as Hclock.
+      destruct (karr_lattice_empty_polynomial m) as [Hpoly Hextra]. fold d v in Hpoly, Hextra.
+      assert (HpolyN : (N.of_nat ((2 * m + 1) * (m + 1) *
+        (m + (ellB d m + 1) * (m + 1) + 1) + 1) * N.of_nat (m + 1) <=
+        8 * work)%N).
+      { rewrite <- Nat2N.inj_mul. unfold work.
+        replace (8 * N.of_nat (d^3 * v^2))%N with
+          (N.of_nat (8 * (d^3 * v^2))) by (rewrite Nat2N.inj_mul; reflexivity). lia. }
+      assert (HextraN : ((8 * N.of_nat (m + 1) + 64) * N.of_nat (m + 1) <=
+        128 * work)%N).
+      { replace (8 * N.of_nat (m + 1) + 64)%N with
+          (N.of_nat (8 * (m + 1) + 64)) by (rewrite Nat2N.inj_add, Nat2N.inj_mul; reflexivity).
+        rewrite <- Nat2N.inj_mul. unfold work.
+        replace (128 * N.of_nat (d^3 * v^2))%N with
+          (N.of_nat (128 * (d^3 * v^2))) by (rewrite Nat2N.inj_mul; reflexivity). lia. }
+      unfold karr_empty_scan_charge in Hclock.
+      set (poly := N.of_nat ((2 * m + 1) * (m + 1) *
+        (m + (ellB d m + 1) * (m + 1) + 1) + 1)) in *.
+      set (span := N.of_nat (m + 1)) in *.
+      change (T_empty_certificate P (equality_basis xs P) <=
+        (C.c_lc * poly + 8 * span + 64) * span)%N in Hclock.
+      change (poly * span <= 8 * work)%N in HpolyN.
+      change ((8 * span + 64) * span <= 128 * work)%N in HextraN.
+      clear -Hclock HpolyN HextraN. clearbody poly span work.
+      eapply N.le_trans; [exact Hclock|].
+      replace ((C.c_lc * poly + 8 * span + 64) * span)%N with
+        (C.c_lc * (poly * span) + (8 * span + 64) * span)%N by ring.
+      eapply N.le_trans with (m := (C.c_lc * (8 * work) + 128 * work)%N).
+      - apply N.add_le_mono; [now apply N.mul_le_mono_l|exact HextraN].
+      - replace (C.c_lc * (8 * work) + 128 * work)%N with
+          ((8 * C.c_lc + 128) * work)%N by ring. apply N.le_refl. }
+    time_unfold T_contradiction_in.
+    fold d v work.
+    unfold karr_lattice_contradiction_factor.
+    clear -Hscan Hpositive. nia.
+  Qed.
+
+
   Definition karr_lattice_leb_factor : N :=
     (karr_lattice_contradiction_factor + karr_lattice_entails_factor + 16)%N.
 
@@ -23653,11 +23868,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       destruct (karr_lattice_shared_dimensions P Q m Hmeasure)
         as [Hdim [Hkeys [Hmass Hrows]]].
       pose proof (karr_lattice_work_le m) as Hwork.
-      pose proof (T_karr_contradiction_raw P m ltac:(lia)) as Hcontradiction_raw.
+      pose proof (T_karr_contradiction_in_raw P (variables (P ++ Q)) m ltac:(lia) ltac:(lia)) as Hcontradiction_raw.
       pose proof (T_karr_variables_lattice (P ++ Q) m Hmass Hrows) as Hvariables_raw.
       pose proof (T_karr_equality_basis_raw (variables (P ++ Q)) P m
         ltac:(lia) ltac:(lia) Hkeys) as Hbasis_raw.
-      assert (Hcontradiction : (T_contradiction P <=
+      assert (Hcontradiction : (T_contradiction_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P <=
         karr_lattice_contradiction_factor * N.of_nat (lat m))%N).
       { eapply N.le_trans; [exact Hcontradiction_raw|]. apply N.mul_le_mono_l. lia. }
       assert (Hvariables : (T_variables (P ++ Q) <=
@@ -23715,12 +23930,13 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         T_entails_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P r)
         with (T_entails_in (variables (P ++ Q))
           (equality_basis (variables (P ++ Q)) P) P).
-      destruct rest as [|r rest]; [|destruct (contradiction P)]; time_simpl;
+      destruct rest as [|r rest]; [|destruct (contradiction_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P)]; time_simpl;
         unfold karr_lattice_leb_factor, karr_lattice_entails_factor,
           karr_lattice_entail_factor, karr_lattice_target_factor;
         clear -Hpositive Hcontradiction Hvariables Hbasis Happ Hfilter Hscan;
         nia.
   Qed.
+
 
   (** Raw normalization fits the common lattice elimination polynomial. *)
   Lemma T_karr_prepare_lattice : forall P m,
@@ -25013,7 +25229,8 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     destruct (karr_shared_volume P Q) as [_ [Hdimension _]].
     cbv zeta in Hdimension. fold d w v in Hdimension.
     assert (HcountN : (N.of_nat (length rest) <= work)%N) by (unfold work; lia).
-    assert (Hpositive : (1 <= work)%N) by (unfold work; assert (Hd : 1 <= d) by (unfold d; lia); lia).
+    assert (Hpositive : (1 <= work)%N) by
+      (unfold work; assert (Hd : 1 <= d) by (unfold d; lia); lia).
     change (List.T_forallb (entails_in xs (equality_basis xs P) P)
       (T_entails_in xs (equality_basis xs P) P) rest <=
       (karr_shared_entails_factor + 3) * work)%N.
@@ -25030,6 +25247,168 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     assert (Hv : 1 <= v) by (unfold v; lia).
     cbn [Nat.pow]. nia.
   Qed.
+
+  (** Additional zero columns preserve the public contradiction-width allowance. *)
+  Lemma karr_shared_contradiction_width : forall P Q,
+    normal P -> Q <> nil ->
+    ellB (length (variables (P ++ Q)) + length P + 2) (nell (Reached P)) + 1 <=
+      4 * (ellB (n (Reached P) + n (Reached Q) + 1)
+        (ell (Reached P) + ell (Reached Q)) + 1).
+  Proof.
+    intros P Q Hnormal Hnonempty.
+    set (d := n (Reached P) + n (Reached Q) + 1).
+    set (w := ell (Reached P) + ell (Reached Q)).
+    set (s := length (variables (P ++ Q)) + length P + 2).
+    pose proof (karr_shared_variables_public P Q) as Hvars.
+    assert (Hcount : 1 <= length Q).
+    { destruct Q; [contradiction|cbn [length]; lia]. }
+    assert (Hs : s <= d).
+    { unfold s, d, n in *. cbn [rows_of] in *. lia. }
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of]. lia. }
+    pose proof (karr_normal_terms_log P Hnormal) as Hterms.
+    assert (Hlogd : Nat.log2 (n (Reached P) + 1) <= Nat.log2 d).
+    { apply Nat.log2_le_mono. unfold d. lia. }
+    assert (Hlogs : Nat.log2 s <= Nat.log2 d).
+    { now apply Nat.log2_le_mono. }
+    unfold nell, ellB in *. fold d w s. nia.
+  Qed.
+
+
+  (** The shared contradiction scan fits the existing elimination polynomial. *)
+  Lemma T_karr_shared_contradiction_scan_public : forall P Q,
+    normal P -> Q <> nil ->
+    (T_empty_certificate P (equality_basis (variables (P ++ Q)) P) <=
+      256 * (C.c_lc + 1) * N.of_nat
+        (elimination_work (Reached P) (Reached Q)))%N.
+  Proof.
+    intros P Q HP Hnonempty.
+    set (d := n (Reached P) + n (Reached Q) + 1).
+    set (w := ell (Reached P) + ell (Reached Q)).
+    set (q := ell (Reached P)).
+    set (v := ellB d w + 1).
+    set (m := d).
+    set (b := ellB (length (variables (P ++ Q)) + length P + 2)
+      (nell (Reached P))).
+    assert (Hcount : 1 <= length Q).
+    { destruct Q; [contradiction|cbn [length]; lia]. }
+    pose proof (karr_shared_variables_public P Q) as Hvariables.
+    assert (Hscan : (T_empty_certificate P (equality_basis (variables (P ++ Q)) P) <=
+      karr_empty_scan_charge m q q b * N.of_nat (m + 1))%N).
+    { eapply T_karr_empty_certificate_bounded.
+      - unfold m, d, n. cbn [rows_of]. lia.
+      - unfold equality_basis. rewrite karr_bareiss_length.
+        pose proof (karr_seed_rows_length (variables (P ++ Q)) (length P) 0
+          (map normalize_row P)) as Hlength.
+        rewrite length_map in Hlength. unfold m, d, n. cbn [rows_of]. lia.
+      - eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
+        intros row [Hlength [Hkeys Hbits]]. unfold m, d, q.
+        repeat split; lia.
+      - unfold equality_basis. eapply Forall_impl; [|apply karr_seed_basis_envelope].
+        intros row Hrow. eapply karr_row_envelope_resize; [| | |exact Hrow];
+          unfold m, d, b, n; cbn [rows_of]; lia. }
+    pose proof (karr_shared_contradiction_width P Q HP Hnonempty) as Hbits.
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of]. lia. }
+    assert (Hm : m <= d) by (unfold m; lia).
+    assert (Hv : 1 <= v) by (unfold v; lia).
+    assert (Hw : w + 1 <= v).
+    { unfold v, ellB. nia. }
+    assert (Hq : q + 1 <= v) by (unfold q, w in *; lia).
+    assert (Hb : b + 1 <= 4 * v).
+    { unfold b, v, d, w in *. exact Hbits. }
+    assert (Hinner : q + (b + 1) * (q + 1) + 1 <= 5 * v^2).
+    { assert (Hproduct : (b + 1) * (q + 1) <= (4 * v) * v)
+        by (apply Nat.mul_le_mono; lia).
+      assert (Hsquare : v <= v^2) by (cbn [Nat.pow]; nia).
+      cbn [Nat.pow] in *. nia. }
+    assert (Hpoly :
+      ((2 * m + 1) * (m + 1) *
+        (q + (b + 1) * (q + 1) + 1) + 1) * (m + 1) <=
+      64 * (d^3 * v^2)).
+    { assert (Hpart :
+        (2 * m + 1) * (m + 1) *
+          (q + (b + 1) * (q + 1) + 1) <=
+        30 * (d^2 * v^2)).
+      { eapply Nat.le_trans with (m := (3 * d) * (2 * d) * (5 * v^2)).
+        - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|exact Hinner].
+        - replace ((3 * d) * (2 * d) * (5 * v^2)) with
+            (30 * (d^2 * v^2)) by (cbn [Nat.pow]; ring).
+          lia. }
+      assert (Hmass : 1 <= d^2 * v^2).
+      { cbn [Nat.pow]. nia. }
+      replace (d^3 * v^2) with (d * (d^2 * v^2)) by (cbn [Nat.pow]; ring).
+      set (mass := d^2 * v^2) in *. nia. }
+    assert (Hvolume : d^2 <= d^3 * v^2).
+    { replace (d^3 * v^2) with (d^2 * (d * v^2)) by (cbn [Nat.pow]; ring).
+      assert (1 <= d * v^2) by (cbn [Nat.pow]; nia).
+      nia. }
+    assert (Hextra : (8 * (m + 1) + 64) * (m + 1) <=
+      128 * (d^3 * v^2)).
+    { assert (Hspan : m + 1 <= 2 * d) by lia.
+      assert (Hsquare : (8 * (m + 1) + 64) * (m + 1) <= 96 * d^2).
+      { eapply Nat.le_trans with (m := (8 * (2 * d) + 64) * (2 * d)).
+        - apply Nat.mul_le_mono; lia.
+        - cbn [Nat.pow]. nia. }
+      set (volume := d^3 * v^2) in *.
+      set (square := d^2) in *.
+      clear -Hsquare Hvolume. nia. }
+    set (work := N.of_nat (d^3 * v^2)).
+    assert (HpolyN : (N.of_nat
+      ((2 * m + 1) * (m + 1) *
+        (q + (b + 1) * (q + 1) + 1) + 1) * N.of_nat (m + 1) <=
+      64 * work)%N).
+    { unfold work. rewrite <- Nat2N.inj_mul.
+      replace (64 * N.of_nat (d^3 * v^2))%N with
+        (N.of_nat (64 * (d^3 * v^2))) by (rewrite Nat2N.inj_mul; reflexivity).
+      lia. }
+    assert (HextraN : ((8 * N.of_nat (m + 1) + 64) * N.of_nat (m + 1) <=
+      128 * work)%N).
+    { unfold work.
+      replace (8 * N.of_nat (m + 1) + 64)%N with
+        (N.of_nat (8 * (m + 1) + 64))
+        by (rewrite Nat2N.inj_add, Nat2N.inj_mul; reflexivity).
+      rewrite <- Nat2N.inj_mul.
+      replace (128 * N.of_nat (d^3 * v^2))%N with
+        (N.of_nat (128 * (d^3 * v^2)))
+        by (rewrite Nat2N.inj_mul; reflexivity).
+      lia. }
+    change (T_empty_certificate P (equality_basis (variables (P ++ Q)) P) <=
+      karr_empty_scan_charge m q q b * N.of_nat (m + 1))%N in Hscan.
+    unfold karr_empty_scan_charge in Hscan.
+    change (T_empty_certificate P (equality_basis (variables (P ++ Q)) P) <=
+      256 * (C.c_lc + 1) * work)%N.
+    set (poly := N.of_nat ((2 * m + 1) * (m + 1) *
+      (q + (b + 1) * (q + 1) + 1) + 1)) in *.
+    set (span := N.of_nat (m + 1)) in *.
+    change (T_empty_certificate P (equality_basis (variables (P ++ Q)) P) <=
+      (C.c_lc * poly + 8 * span + 64) * span)%N in Hscan.
+    change (poly * span <= 64 * work)%N in HpolyN.
+    change ((8 * span + 64) * span <= 128 * work)%N in HextraN.
+    clear -Hscan HpolyN HextraN.
+    eapply N.le_trans; [exact Hscan|].
+    replace ((C.c_lc * poly + 8 * span + 64) * span)%N with
+      (C.c_lc * (poly * span) + (8 * span + 64) * span)%N by ring.
+    eapply N.le_trans with (m := (C.c_lc * (64 * work) + 128 * work)%N).
+    - apply N.add_le_mono; [now apply N.mul_le_mono_l|exact HextraN].
+    - nia.
+  Qed.
+
+
+  (** The supplied-basis wrapper preserves a public scan allowance. *)
+  Lemma T_karr_contradiction_in_public : forall P Q,
+    normal P -> Q <> nil ->
+    (T_contradiction_in (variables (P ++ Q)) (equality_basis (variables (P ++ Q)) P) P <=
+      512 * (C.c_lc + 1) *
+      N.of_nat (elimination_work (Reached P) (Reached Q)))%N.
+  Proof.
+    intros P Q HP Hnonempty.
+    pose proof (T_karr_shared_contradiction_scan_public P Q HP Hnonempty) as Hscan.
+    assert (Hpositive : (1 <= N.of_nat (elimination_work (Reached P) (Reached Q)))%N).
+    { pose proof (karr_elimination_work_pos (Reached P) (Reached Q)). lia. }
+    time_unfold T_contradiction_in. clear -Hscan Hpositive. nia.
+  Qed.
+
 
   Definition karr_shared_leb_factor : N :=
     (128 * (8 * karr_variables_factor + 33554500 +
@@ -25076,7 +25455,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       + unfold karr_shared_leb_factor. clear -Hfilter Hpositive. nia.
       + assert (Hnonempty : Q <> nil).
         { intro Heq. subst Q. discriminate Hrest. }
-        pose proof (T_karr_shared_contradiction_public P Q Ha) as Hcontradiction.
+        pose proof (T_karr_contradiction_in_public P Q Ha Hnonempty) as Hcontradiction.
         pose proof (T_karr_shared_variables_public P Q Ha Hb Hnonempty) as Hvariables.
         pose proof (karr_shared_basis_public P Q Ha Hnonempty) as Hbasis.
         assert (Hincl : incl (r :: rest) Q).
@@ -25096,12 +25475,13 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
           assert (HlengthP : length P + 1 <= n (Reached P) + n (Reached Q) + 1)
             by (unfold n; cbn [rows_of]; lia).
           lia. }
-        destruct (contradiction P); time_simpl.
-        * unfold karr_shared_leb_factor.
-          clear -Hfilter Hcontradiction Hpositive. nia.
-        * unfold karr_shared_leb_factor.
-          clear -Hfilter Hcontradiction Hvariables Hbasis Hscan Happ_work Hpositive. nia.
+        destruct (contradiction_in (variables (P ++ Q))
+          (equality_basis (variables (P ++ Q)) P) P); time_simpl;
+          unfold karr_shared_leb_factor;
+          clear -Hfilter Hcontradiction Hvariables Hbasis Hscan Happ_work Hpositive;
+          nia.
   Qed.
+
 
   (** The public elimination allowance is symmetric in its two states. *)
   Lemma karr_elimination_work_symmetric : forall a b,

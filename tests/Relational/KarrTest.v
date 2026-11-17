@@ -412,3 +412,69 @@ Example range_rejects_an_inexact_integer_endpoint :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** A shared contradiction basis also covers coordinates introduced only by the target. *)
+Example one_basis_contradiction_covers_target_only_variables :
+  Equalities.leb
+    (Reached
+      [LCons _ [(1%positive, 1)] REq 0; LCons _ [(1%positive, 1)] REq 1])
+    (Reached [LCons _ [(2%positive, 1)] REq 7]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The same basis certifies a missing affine consequence after the contradiction scan. *)
+Example one_basis_retains_an_absent_consequence :
+  Equalities.leb
+    (Reached
+      [LCons _ [(1%positive, 1)] REq 2; LCons _ [(2%positive, 1)] REq 3])
+    (Reached [LCons _ [(1%positive, 1); (2%positive, 1)] REq 5]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An independent target remains unprovable when the shared basis is consistent. *)
+Example one_basis_rejects_an_absent_nonconsequence :
+  Equalities.leb
+    (Reached [LCons _ [(1%positive, 1)] REq 2])
+    (Reached [LCons _ [(2%positive, 1)] REq 3]) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A literal target is discharged before constructing the shared basis. *)
+Example one_basis_retains_the_syntactic_filter :
+  Equalities.leb
+    (Reached [LCons _ [(1%positive, 1)] REq 2])
+    (Reached [LCons _ [(1%positive, 1)] REq 2]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A four-variable chain supplies the first widening fixture. *)
+Definition widening_chain_rows : list (lcons positive) :=
+  [LCons _ [(1%positive, 1); (2%positive, -1)] REq 0;
+   LCons _ [(2%positive, 1); (3%positive, -1)] REq 0;
+   LCons _ [(3%positive, 1); (4%positive, -1)] REq 0].
+
+(** Three absent consequences describe the same equality space. *)
+Definition widening_consequence_rows : list (lcons positive) :=
+  [LCons _ [(1%positive, 1); (3%positive, -1)] REq 0;
+   LCons _ [(2%positive, 1); (4%positive, -1)] REq 0;
+   LCons _ [(1%positive, 1); (4%positive, -1)] REq 0].
+
+(** Widening retains the first state after the shared basis proves reverse inclusion. *)
+Example widening_retains_an_equivalent_chain :
+  Equalities.widen 4%nat (Reached widening_chain_rows) (Reached widening_consequence_rows) =
+    Reached widening_chain_rows.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The opposite direction takes the same shared inclusion path with absent rows. *)
+Example widening_retains_equivalent_consequences :
+  Equalities.widen 4%nat (Reached widening_consequence_rows) (Reached widening_chain_rows) =
+    Reached widening_consequence_rows.
+Proof.
+  vm_compute. reflexivity.
+Qed.
