@@ -2,15 +2,25 @@
 
     This module supplies a checked construction interface.
     Every candidate passes both translation and SSA validation before it is returned.
+
+    Main results
+    - [build_correct] Every returned candidate is SSA and has the source result at every fuel
+      and input.
+    - [build_complexity] SSA construction takes time linear in its build work times the
+      variable width, plus the operator bits.
+    - [produce_complexity] Producing a candidate is linear in the construction work times the
+      width.
+
     Builds on: BuildSig. *)
 
 From Stdlib Require Import List Arith PArith NArith Bool Lia.
-From Argent Require Import Time Tactics Std BigO Loop.
+From Argent Require Import Time Tactics Std Complexity Loop.
 From Galois.Base Require Import Code KeySig Key Trie.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig FrontierSig.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
 From Galois.Ssa Require Import Lang LiveSig Live ValidateSig Validate BuildSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module BuildSig.
   TimeFun rename_bodies.
@@ -5390,8 +5400,8 @@ Module BuildT (O : OPS)
   Qed.
 
   (** Producing a candidate is linear in the construction work times the width. *)
-  Lemma produce_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (build_work p * (function_width p + 1))) T_produce.
+  Lemma produce_complexity :
+    T_produce p ∈ 𝑂(N.of_nat (build_work p * (function_width p + 1))) for p.
   Proof.
     apply (bigO_intro _ _ _ k_graph); intros p _.
     pose proof (T_produce_le p) as Hproduce.
@@ -5423,8 +5433,8 @@ Module BuildT (O : OPS)
   Qed.
 
   (** Construction has the published asymptotic syntax and operation-bit budget. *)
-  Lemma build_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (build_work p * (function_width p + 1) + Va.op_bits p + 1)) T_build.
+  Lemma build_complexity :
+    T_build p ∈ 𝑂(N.of_nat (build_work p * (function_width p + 1) + Va.op_bits p + 1)) for p.
   Proof.
     exists c_build; intros p Htrue.
     eapply N.le_trans; [apply T_build_le|].
