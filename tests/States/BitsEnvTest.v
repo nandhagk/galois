@@ -72,8 +72,10 @@ Module AssumeTests.
   Example empty_guard_list_keeps_state : State.assume (BTruth true) [] State.top = State.top.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A truncation to one bit, assumed false, keeps the 32-bit value that it truncates. *)
+  (** The term that truncates variable 0 to one bit. *)
   Definition truncation_term := Node (BOp (bvtrunc 1%positive)) [Leaf 0%nat].
+
+  (** A truncation to one bit, assumed false, keeps the 32-bit value that it truncates. *)
   Example truncated_guard_keeps_value :
     observe 0%nat (State.assume (BTruth false) [truncation_term] (one_value 2)) = p 32 2.
   Proof. vm_compute. reflexivity. Qed.
@@ -98,10 +100,11 @@ End AssumeTests.
 
 Module EvalTests.
 
-  (** A nested term evaluates to its wrapped singleton over an abstract state. *)
+  (** The term that multiplies variable 0 by 3 and adds 250, as eight-bit words. *)
   Definition nested :=
     Node (BOp bvadd) [Node (BOp bvmul) [Leaf 0%nat; Node (BConst 8%positive 3) []];
                        Node (BConst 8%positive 250) []].
+  (** A nested term evaluates to its wrapped singleton over an abstract state. *)
   Example nested_term_evaluates_abstractly :
     State.eval nested (Reached (Vars.set 0%nat (p 8 5) Vars.empty)) = p 8 9.
   Proof. vm_compute. reflexivity. Qed.
@@ -114,10 +117,13 @@ Module RefineTests.
   Definition add_three :=
     Node (BOp bvadd) [Leaf 0%nat; Node (BConst 8%positive 3) []].
 
+  (** The map that binds variable 0 to an unknown byte. *)
+  Definition unknown_byte := Vars.set 0%nat (TVal 8%positive (FTop : flat Z)) Vars.empty.
+
   (** Refining the sum to 7 gives variable 0 the value 4. *)
   Example leaf_refined_through_addition :
-    let m := Vars.set 0%nat (TVal 8%positive FTop) Vars.empty in
-    State.read (State.refine (p 8 7) (State.annotate m add_three) m) 0%nat = p 8 4.
+    State.read (State.refine (p 8 7) (State.annotate unknown_byte add_three) unknown_byte) 0%nat =
+      p 8 4.
   Proof. vm_compute. reflexivity. Qed.
 
 End RefineTests.
