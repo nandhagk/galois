@@ -128,3 +128,47 @@ Example tnum_fast_variable_boundaries :
 Proof.
   vm_compute. repeat split; reflexivity.
 Qed.
+
+(** Every bit position varies when an unknown amount rotates these mixed masks. *)
+Example tnum_fast_rotation_unknown_amounts :
+  MaskCode.tnum_variable Op.bvrotl 8%positive (Tnum 240 15) (Tnum 0 0) = Tnum 0 0 /\
+  MaskCode.tnum_variable Op.bvrotr 8%positive (Tnum 240 15) (Tnum 0 0) = Tnum 0 0 /\
+  MaskCode.tnum_variable Op.bvrotl 64%positive (Tnum 240 15) (Tnum 0 0) = Tnum 0 0 /\
+  MaskCode.tnum_variable Op.bvrotr 64%positive (Tnum 240 15) (Tnum 0 0) = Tnum 0 0.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** A constant rotation moves the two masks and wraps their boundary bits. *)
+Example tnum_fast_rotation_constant_amounts :
+  MaskCode.tnum_variable Op.bvrotl 8%positive (Tnum 240 15) (tnum_const 8%positive 1) =
+    Tnum 225 30 /\
+  MaskCode.tnum_variable Op.bvrotr 8%positive (Tnum 240 15) (tnum_const 8%positive 1) =
+    Tnum 120 135 /\
+  MaskCode.tnum_variable Op.bvrotl 64%positive (Tnum 240 15) (tnum_const 64%positive 1) =
+    Tnum 480 30 /\
+  MaskCode.tnum_variable Op.bvrotr 64%positive (Tnum 240 15) (tnum_const 64%positive 1) =
+    Tnum 120 (2 ^ 63 + 7).
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** The possible odd rotations have no common known bit in either direction. *)
+Example tnum_fast_rotation_sparse_amounts :
+  MaskCode.tnum_variable Op.bvrotl 8%positive (Tnum 240 15) (Tnum 248 1) = Tnum 0 0 /\
+  MaskCode.tnum_variable Op.bvrotr 8%positive (Tnum 240 15) (Tnum 248 1) = Tnum 0 0 /\
+  MaskCode.tnum_variable Op.bvrotl 64%positive (Tnum 240 15) (Tnum 248 1) = Tnum 0 0 /\
+  MaskCode.tnum_variable Op.bvrotr 64%positive (Tnum 240 15) (Tnum 248 1) = Tnum 0 0.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Unit widths stay fixed, while non-power-of-two widths retain the complete traversal. *)
+Example tnum_fast_rotation_boundaries :
+  MaskCode.tnum_variable Op.bvrotl 1%positive (Tnum 0 1) (Tnum 0 0) = Tnum 0 1 /\
+  MaskCode.tnum_variable Op.bvrotr 1%positive (Tnum 0 1) (Tnum 0 0) = Tnum 0 1 /\
+  MaskCode.tnum_variable Op.bvrotl 7%positive (Tnum 112 15) (Tnum 0 0) = Tnum 0 0 /\
+  MaskCode.tnum_variable Op.bvrotr 7%positive (Tnum 112 15) (Tnum 0 0) = Tnum 0 0.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.

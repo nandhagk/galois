@@ -867,6 +867,25 @@ Definition tnum_expand_mask (o : op) (w : width) (u : Z) (r : tnum) : tnum :=
   end.
 TimeFun tnum_expand_mask.
 
+(** A zero rotation stride leaves a normalized seed fixed for every remaining digit. *)
+Fixpoint tnum_expand_rotation (o : op) (w : width) (p : positive) (d : Z) (r : tnum)
+    : tnum :=
+  if d =? 0 then r else
+  match p with
+  | xH => tnum_join w r (tnum_scalar o w d r)
+  | xO q => tnum_expand_rotation o w q (tnum_stride o w d) r
+  | xI q => tnum_expand_rotation o w q (tnum_stride o w d)
+      (tnum_join w r (tnum_scalar o w d r))
+  end.
+TimeFun tnum_expand_rotation.
+
+Definition tnum_expand_rotation_mask (o : op) (w : width) (u : Z) (r : tnum) : tnum :=
+  match u with
+  | Zpos p => tnum_expand_rotation o w p 1 r
+  | _ => tnum_normalise w r
+  end.
+TimeFun tnum_expand_rotation_mask.
+
 Definition tnum_shift_cutoff (w : width) : Z := tnum_bitlen (Zpos w - 1).
 TimeFun tnum_shift_cutoff.
 
@@ -887,12 +906,12 @@ Definition tnum_variable (o : op) (w : width) (a b : tnum) : tnum :=
   else tnum_variable_raw o w a b.
 TimeFun tnum_variable.
 
-(** Variable shifts retain only the uncertainty bits below their width cutoff. *)
+(** Variable transfers mask shift uncertainty and stop zero-stride rotations. *)
 Definition tnum_variable_raw_fast (o : op) (w : width) (a b : tnum) : tnum :=
   let base := tnum_min w b in
   let u := tnum_mask w b in
   let r := tnum_scalar o w base a in
-  if tnum_rotation o then tnum_expand_mask o w u r else
+  if tnum_rotation o then tnum_expand_rotation_mask o w u r else
   let cs := tnum_shift_cutoff w in
   let low := tnum_expand_mask o w (Z.land u (Z.ones cs)) r in
   if Z.shiftr u cs =? 0 then low else tnum_join w low (tnum_scalar o w (Zpos w) a).
@@ -2956,6 +2975,93 @@ Proof.
       ?tnum_wor_agrees, ?tnum_wnot_agrees, negb_involutive.
 Qed.
 
+(** Equivalent masks have identical normalized records. *)
+Lemma tnum_normalise_equiv : forall w a b,
+  tnum_equiv w a b -> tnum_normalise w a = tnum_normalise w b.
+Proof.
+  intros w [az ao] [bz bo] [Hz Ho]. unfold tnum_normalise.
+  cbn [zeros ones] in *. rewrite !tnum_wrap_agrees. f_equal; assumption.
+Qed.
+
+(** Scalar transfers return two already normalized masks. *)
+Lemma tnum_scalar_normalised : forall o w k a,
+  tnum_normalise w (tnum_scalar o w k a) = tnum_scalar o w k a.
+Proof.
+  intros o w k a. unfold tnum_scalar, tnum_map, tnum_normalise. cbn [zeros ones].
+  rewrite !tnum_wrap_agrees, !tnum_wnot_agrees, !wrap_wrap.
+  rewrite wrap_id by apply wnot_is_word. reflexivity.
+Qed.
+
+(** Joining two seeds returns two already normalized masks. *)
+Lemma tnum_join_normalised : forall w a b,
+  tnum_normalise w (tnum_join w a b) = tnum_join w a b.
+Proof.
+  intros w a b. unfold tnum_join, tnum_normalise. cbn [zeros ones].
+  rewrite !tnum_wrap_agrees, !tnum_wand_agrees.
+  rewrite !wrap_id by apply wand_is_word. reflexivity.
+Qed.
+
+(** A zero scalar amount leaves an already normalized seed unchanged. *)
+Lemma tnum_scalar_zero_normalised : forall o w r,
+  tnum_normalise w r = r -> tnum_scalar o w 0 r = r.
+Proof.
+  intros o w r Hnormal.
+  pose proof (tnum_normalise_equiv w (tnum_scalar o w 0 r) r
+    (tnum_scalar_zero o w r)) as Hequal.
+  now rewrite tnum_scalar_normalised, Hnormal in Hequal.
+Qed.
+
+(** Joining a seed with itself only normalizes its two masks. *)
+Lemma tnum_join_self : forall w r, tnum_join w r r = tnum_normalise w r.
+Proof.
+  intros w [rz ro]. unfold tnum_join, tnum_wand, tnum_normalise. cbn [zeros ones].
+  now rewrite !Z.land_diag.
+Qed.
+
+(** Doubling a zero stride preserves zero for shifts and rotations. *)
+Lemma tnum_stride_zero : forall o w, tnum_stride o w 0 = 0.
+Proof.
+  intros o w. unfold tnum_stride. destruct (tnum_rotation o); reflexivity.
+Qed.
+
+(** Every remaining expansion step fixes a normalized seed once the stride is zero. *)
+Lemma tnum_expand_zero_normalised : forall o w p r,
+  tnum_normalise w r = r -> tnum_expand o w p 0 r = r.
+Proof.
+  intros o w p. induction p as [p IH|p IH|]; intros r Hnormal.
+  - cbn [tnum_expand]. rewrite tnum_stride_zero.
+    rewrite (tnum_scalar_zero_normalised o w r Hnormal), tnum_join_self, Hnormal.
+    apply IH. exact Hnormal.
+  - cbn [tnum_expand]. rewrite tnum_stride_zero. apply IH. exact Hnormal.
+  - cbn [tnum_expand]. rewrite (tnum_scalar_zero_normalised o w r Hnormal).
+    now rewrite tnum_join_self, Hnormal.
+Qed.
+
+(** The zero-stride loop agrees with full expansion on every normalized seed. *)
+Lemma tnum_expand_rotation_agrees : forall o w p d r,
+  tnum_normalise w r = r ->
+  tnum_expand_rotation o w p d r = tnum_expand o w p d r.
+Proof.
+  intros o w p. induction p as [p IH|p IH|]; intros d r Hnormal.
+  all: cbn [tnum_expand_rotation]; destruct (d =? 0) eqn:Hzero.
+  all: try (apply Z.eqb_eq in Hzero; subst d; symmetry;
+    apply tnum_expand_zero_normalised; exact Hnormal).
+  - cbn [tnum_expand]. apply IH. apply tnum_join_normalised.
+  - cbn [tnum_expand]. apply IH. exact Hnormal.
+  - reflexivity.
+Qed.
+
+(** Mask expansion keeps the full-loop result when its seed is normalized. *)
+Lemma tnum_expand_rotation_mask_agrees : forall o w u r,
+  tnum_normalise w r = r ->
+  tnum_expand_rotation_mask o w u r = tnum_expand_mask o w u r.
+Proof.
+  intros o w [|p|p] r Hnormal; cbn [tnum_expand_rotation_mask tnum_expand_mask].
+  - reflexivity.
+  - apply tnum_expand_rotation_agrees. exact Hnormal.
+  - reflexivity.
+Qed.
+
 Lemma tnum_scalar_period : forall o w h k a,
   tnum_rotation o = true -> h mod Zpos w = k mod Zpos w ->
   tnum_scalar o w h a = tnum_scalar o w k a.
@@ -3232,11 +3338,12 @@ Lemma tnum_variable_raw_fast_agrees : forall o w a b,
   tnum_variable_raw_fast o w a b = tnum_variable_raw o w a b.
 Proof.
   intros o w a b. unfold tnum_variable_raw_fast, tnum_variable_raw.
-  destruct (tnum_rotation o); [reflexivity|].
-  destruct (tnum_shift_cutoff_bound w) as [Hcutoff Hwidth].
-  destruct (tnum_mask_word w b) as [Hmask Hmaskbound].
-  rewrite Z.land_ones by exact Hcutoff.
-  rewrite tnum_shiftr_zero_test by assumption. reflexivity.
+  destruct (tnum_rotation o).
+  - apply tnum_expand_rotation_mask_agrees. apply tnum_scalar_normalised.
+  - destruct (tnum_shift_cutoff_bound w) as [Hcutoff Hwidth].
+    destruct (tnum_mask_word w b) as [Hmask Hmaskbound].
+    rewrite Z.land_ones by exact Hcutoff.
+    rewrite tnum_shiftr_zero_test by assumption. reflexivity.
 Qed.
 
 (** The fast variable transfer returns exactly the original masks. *)
@@ -5821,6 +5928,28 @@ Proof.
     rewrite ?N.mul_succ_r in *. lia.
 Qed.
 
+(** Testing for the zero stride adds at most two clock units per mask digit. *)
+Lemma tnum_expand_rotation_time_le : forall o w p d r,
+  (T_tnum_expand_rotation o w p d r <= T_tnum_expand o w p d r +
+    2 * N.of_nat (Pos.size_nat p))%N.
+Proof.
+  intros o w p. induction p as [p IH|p IH|]; intros d r.
+  all: assert (Heqb : (Std.Z.T_eqb d 0 <= 1)%N)
+    by (destruct d; time_unfold Std.Z.T_eqb; reflexivity).
+  - pose proof (IH (tnum_stride o w d)
+      (tnum_join w r (tnum_scalar o w d r))) as Htail.
+    time_unfold T_tnum_expand_rotation. time_unfold T_tnum_expand.
+    cbn beta iota zeta. destruct (d =? 0); cbn beta iota zeta;
+      cbn [Pos.size_nat]; rewrite Nat2N.inj_succ; lia.
+  - pose proof (IH (tnum_stride o w d) r) as Htail.
+    time_unfold T_tnum_expand_rotation. time_unfold T_tnum_expand.
+    cbn beta iota zeta. destruct (d =? 0); cbn beta iota zeta;
+      cbn [Pos.size_nat]; rewrite Nat2N.inj_succ; lia.
+  - time_unfold T_tnum_expand_rotation. time_unfold T_tnum_expand.
+    cbn beta iota zeta. destruct (d =? 0); cbn beta iota zeta;
+      cbn [Pos.size_nat]; lia.
+Qed.
+
 (** Normalized expansion masks require at most a quadratic width budget. *)
 Lemma tnum_expand_mask_time : forall o w u r,
   0 <= u -> (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
@@ -5849,6 +5978,38 @@ Proof.
     { cbn [Nat.pow]. nia. }
     pose proof (time_of_nat_le _ _ Hwork) as HworkN.
     time_unfold T_tnum_expand_mask. cbn beta iota zeta.
+    rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+Qed.
+
+(** The zero-stride check fits the existing quadratic rotation budget. *)
+Lemma tnum_expand_rotation_mask_time : forall o w u r,
+  tnum_rotation o = true -> 0 <= u ->
+  (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
+  (Z.size_nat u <= Pos.to_nat w)%nat ->
+  (T_tnum_expand_rotation_mask o w u r <=
+    4194304 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros o w [|p|p] r Hrotation Hu Hr Hbits; [| |lia].
+  all: pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  - time_unfold T_tnum_expand_rotation_mask. cbn beta iota zeta. time_pose.
+    rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  - assert (Hbudget : if tnum_rotation o
+      then (Z.size_nat 1 <= Pos.size_nat w + 2)%nat
+      else (Z.size_nat 1 + Pos.size_nat p <= Pos.size_nat w + 2)%nat).
+    { rewrite Hrotation. cbn [Z.size_nat Pos.size_nat]. lia. }
+    pose proof (tnum_expand_time o w p 1 r ltac:(lia) Hr Hbudget) as Hexpand.
+    pose proof (tnum_expand_rotation_time_le o w p 1 r) as Hfast.
+    cbn [Z.size_nat] in Hbits.
+    pose proof (time_of_nat_le _ _ Hbits) as HlengthN.
+    assert (Hwork : ((Pos.to_nat w + 1) * Pos.size_nat p <=
+      (Pos.to_nat w + 1) ^ 2)%nat) by (cbn [Nat.pow]; nia).
+    pose proof (time_of_nat_le _ _ Hwork) as HworkN.
+    time_unfold T_tnum_expand_rotation_mask. cbn beta iota zeta.
     rewrite ?Nat2N.inj_add in *.
     set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
     clearbody budget. lia.
@@ -6047,9 +6208,9 @@ Proof.
     (tnum_scalar o w (tnum_min w b) a)) as Hlowbits.
   time_unfold T_tnum_variable_raw_fast. cbn beta iota zeta.
   destruct (tnum_rotation o) eqn:Hrotation.
-  - pose proof (tnum_expand_mask_time o w (tnum_mask w b)
-      (tnum_scalar o w (tnum_min w b) a) (proj1 Humaskword) Hr
-      ltac:(rewrite Hrotation; exact Humaskbits)) as Hexpand.
+  - pose proof (tnum_expand_rotation_mask_time o w (tnum_mask w b)
+      (tnum_scalar o w (tnum_min w b) a) Hrotation (proj1 Humaskword) Hr
+      Humaskbits) as Hexpand.
     cbn beta iota zeta. time_pose. unfold tnum_bits in *.
     rewrite ?Nat2N.inj_add in *.
     set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
