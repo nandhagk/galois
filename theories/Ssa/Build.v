@@ -58,6 +58,40 @@ Definition build_live_rows_size (rows : list (positive * list positive)) : nat :
   fold_right (fun row n => 1 + length (snd row) + n) 0 rows.
 TimeFun build_live_rows_size.
 
+(** Only variables present in some live row need a frontier search. *)
+Definition live_variables (live : list (positive * list positive)) (vars : list positive)
+    : list positive :=
+  let seen := val_set (flat_map snd live) in
+  filter (fun x => val_mem seen x) vars.
+TimeFun live_variables.
+
+(** Filtering live variables preserves their original order and membership. *)
+Lemma live_variables_incl live vars : incl (live_variables live vars) vars.
+Proof.
+  intros x Hin; unfold live_variables in Hin; now apply filter_In in Hin as [Hin _].
+Qed.
+
+(** Filtering live variables preserves distinctness. *)
+Lemma live_variables_nodup live vars : NoDup vars -> NoDup (live_variables live vars).
+Proof.
+  unfold live_variables; apply NoDup_filter.
+Qed.
+
+(** Filtering live variables cannot enlarge the inventory. *)
+Lemma live_variables_length live vars : length (live_variables live vars) <= length vars.
+Proof.
+  unfold live_variables; apply filter_length_le.
+Qed.
+
+(** Live-row headers and their flattened values partition the row inventory. *)
+Lemma live_variables_rows_size live :
+  length live + length (flat_map snd live) = build_live_rows_size live.
+Proof.
+  induction live as [|[b xs] rest IH]; [reflexivity|].
+  unfold build_live_rows_size in IH |- *.
+  cbn [flat_map fold_right snd length]; rewrite length_app; lia.
+Qed.
+
 Lemma build_mem_set_false seen x y :
   val_mem (PTrieCode.set x tt seen) y = false <-> y <> x /\ val_mem seen y = false.
 Proof.
@@ -934,8 +968,9 @@ Module BuildCode (O : OPS)
         rows (place_var frontier defs live x)) Empty vars.
 
   Definition placement (p : P.t) : ptrie (list positive) :=
-    placement_with (frontiers p) (def_index p) (live_sets (L.live_in p))
-      (U.universe (R.prepare p)).
+    let live := L.live_in p in
+    placement_with (frontiers p) (def_index p) (live_sets live)
+      (live_variables live (U.universe (R.prepare p))).
 
   Fixpoint rename_code (cs : list (positive * O.K * list positive))
       (rho : ptrie positive) (names : renaming) (fresh : N)
@@ -1062,7 +1097,7 @@ Module BuildCode (O : OPS)
       let t := D.tree g (entry _ _ _ p) (fst result) (snd result) in
       let frontier := F.df g t in
       let live := L.live_in p in
-      let vars := U.universe q in
+      let vars := live_variables live (U.universe q) in
       if placement_allowed p q frontier live vars then
         let defs := def_index p in
         let sets := live_sets live in
@@ -1108,6 +1143,67 @@ Module Build (O : OPS)
       + apply Pos.eqb_neq in Heq. rewrite PTrie.get_set_other by exact Heq. apply IH.
   Qed.
 
+  (** A variable absent from every live row has no pruned placement site. *)
+  Lemma place_var_dead frontier defs live x :
+    val_mem (val_set (flat_map snd live)) x = false ->
+    place_var frontier defs (live_sets live) x = [].
+  Proof.
+    intro Hdead.
+    assert (Hrow : forall b,
+      (match trie_get b (live_sets live) with
+       | Some xs => val_mem xs x | None => false end) = false).
+    { intro b; rewrite live_sets_lookup.
+      destruct (lookup b live) as [xs|] eqn:Hlookup; [|reflexivity].
+      cbn [option_map]. destruct (val_mem (val_set xs) x) eqn:Hmem; [|reflexivity].
+      apply val_set_member in Hmem.
+      assert (Hseen : val_mem (val_set (flat_map snd live)) x = true).
+      { apply val_set_member, in_flat_map. exists (b, xs); split.
+        - now apply val_lookup_in in Hlookup.
+        - exact Hmem. }
+      rewrite Hdead in Hseen; discriminate. }
+    unfold place_var. induction (F.idf frontier (frontier_row defs x)) as [|b rest IH].
+    - reflexivity.
+    - cbn [filter]; rewrite Hrow; exact IH.
+  Qed.
+
+  (** A variable with no sites leaves the placement table unchanged. *)
+  Lemma placement_with_skip frontier defs sets vars x :
+    place_var frontier defs sets x = [] ->
+    placement_with frontier defs sets (x :: vars) = placement_with frontier defs sets vars.
+  Proof.
+    intro Hdead; unfold placement_with at 1; cbn [fold_right].
+    rewrite Hdead; reflexivity.
+  Qed.
+
+  (** Removing variables absent from all live rows preserves the exact placement table. *)
+  Lemma placement_with_live frontier defs live vars :
+    placement_with frontier defs (live_sets live) (live_variables live vars) =
+      placement_with frontier defs (live_sets live) vars.
+  Proof.
+    induction vars as [|x rest IH]; [reflexivity|].
+    change (placement_with frontier defs (live_sets live)
+      (if val_mem (val_set (flat_map snd live)) x
+       then x :: live_variables live rest else live_variables live rest) =
+      placement_with frontier defs (live_sets live) (x :: rest)).
+    destruct (val_mem (val_set (flat_map snd live)) x) eqn:Hseen.
+    - change (fold_right (fun b acc => PTrieCode.set b (x :: index_row acc b) acc)
+        (placement_with frontier defs (live_sets live) (live_variables live rest))
+        (place_var frontier defs (live_sets live) x) =
+        fold_right (fun b acc => PTrieCode.set b (x :: index_row acc b) acc)
+          (placement_with frontier defs (live_sets live) rest)
+          (place_var frontier defs (live_sets live) x)).
+      now rewrite IH.
+    - rewrite placement_with_skip by (now apply place_var_dead). exact IH.
+  Qed.
+
+  (** Pruning the search inventory keeps the original full-universe placement table. *)
+  Lemma placement_full p : placement p =
+    placement_with (frontiers p) (def_index p) (live_sets (L.live_in p))
+      (U.universe (R.prepare p)).
+  Proof.
+    unfold placement; apply placement_with_live.
+  Qed.
+
   Lemma placement_with_spec : forall frontier defs live vars b x,
     In x (index_row (placement_with frontier defs live vars) b) <->
       In x vars /\ In b (place_var frontier defs live x).
@@ -1120,6 +1216,18 @@ Module Build (O : OPS)
           (placement_with frontier defs live rest) (place_var frontier defs live y)) b) <->
         In x (y :: rest) /\ In b (place_var frontier defs live x)).
       rewrite build_places_row_spec, IH. cbn [In]; intuition congruence.
+  Qed.
+
+  (** A shorter variable inventory preserves every successful placement guard. *)
+  Lemma placement_allowed_mono p q frontier live vars all_vars :
+    length vars <= length all_vars ->
+    placement_allowed p q frontier live all_vars = true ->
+    placement_allowed p q frontier live vars = true.
+  Proof.
+    unfold placement_allowed; intros Hlength.
+    rewrite !N.leb_le; intro Hallowed.
+    eapply N.le_trans; [|exact Hallowed].
+    apply N.mul_le_mono_r, val_nat_mono; exact Hlength.
   Qed.
 
   Lemma build_checked : forall p, build p =
@@ -1384,6 +1492,32 @@ Proof.
   specialize (IH ltac:(intros y Hin; apply Hcost; now right)).
   time_unfold @List.T_filter; cbn [length]; rewrite Nat2N.inj_succ.
   destruct (f x); time_simpl; nia.
+Qed.
+
+(** Set construction and filtering charge each live occurrence and candidate variable once. *)
+Lemma live_variables_clock live vars w :
+  (forall x, In x (flat_map snd live) -> Pos.size_nat x <= w) ->
+  (forall x, In x vars -> Pos.size_nat x <= w) ->
+  (T_live_variables live vars <= (PTrieT.c_trie + 32) *
+    N.of_nat (build_live_rows_size live + length vars + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros Hlive Hvars.
+  pose proof (val_set_time (flat_map snd live) w Hlive) as Hset.
+  pose proof (live_variables_rows_size live) as Hrows.
+  assert (Hw : (1 <= N.of_nat (w + 1))%N) by lia.
+  time_unfold T_live_variables; time_simpl.
+  lazymatch goal with |- context [Code.List.T_flat_map ?f ?Tf ?rows] =>
+    pose proof (val_flat_map_output_clock f Tf 2%N rows
+      ltac:(intros [b xs] Hin; time_simpl; cbn [snd]; nia)) as Hflat
+  end.
+  lazymatch goal with |- context [List.T_filter ?f ?Tf ?xs] =>
+    pose proof (build_place_filter_clock f Tf xs (4 * N.of_nat (w + 1))%N
+      ltac:(intros x Hin; pose proof (val_mem_time (val_set (flat_map snd live)) x w
+        (Hvars x Hin)); time_simpl; nia)) as Hfilter
+  end.
+  rewrite <- Hrows.
+  rewrite !Nat2N.inj_add in *; change (N.of_nat 1) with 1%N in *.
+  nia.
 Qed.
 
 (** Set bits release the credit needed by binary carries. *)
@@ -1717,7 +1851,7 @@ Module BuildT (O : OPS)
     In x (frontier_row (placement p) b) <->
       In x (U.universe (R.prepare p)) /\ In b (placed p x).
   Proof.
-    intros p b x. unfold placement, placed.
+    intros p b x. rewrite placement_full. unfold placed.
     apply placement_with_spec.
   Qed.
   (** Renaming uses a bounded explicit stack with one entering and one leaving visit per block. *)
@@ -1741,7 +1875,7 @@ Module BuildT (O : OPS)
     change ((if D.check (graph p) (entry _ _ _ p)
       (fst (dom_result p)) (snd (dom_result p)) then
       if placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
-        (U.universe (R.prepare p)) then
+        (live_variables (L.live_in p) (U.universe (R.prepare p))) then
         rename p (dom_tree p) (placement p) (L.live_in p) else None
       else None) = Some (s, c) ->
       D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true /\
@@ -1749,7 +1883,8 @@ Module BuildT (O : OPS)
     destruct (D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)))
       eqn:Hchecked; [|discriminate].
     destruct (placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
-      (U.universe (R.prepare p))); [intro Hrename; now split|discriminate].
+      (live_variables (L.live_in p) (U.universe (R.prepare p))));
+      [intro Hrename; now split|discriminate].
   Qed.
 
   (** Renaming preserves code arities and allocates exactly one counter value per instruction. *)
@@ -1993,7 +2128,7 @@ Module BuildT (O : OPS)
   (** Every produced parameter row contains each old variable at most once. *)
   Lemma placement_row_unique p b : NoDup (index_row (placement p) b).
   Proof.
-    unfold placement; apply placement_with_unique, U.universe_nodup.
+    rewrite placement_full; apply placement_with_unique, U.universe_nodup.
   Qed.
 
   (** Adding one row entry increases a total over distinct keys by at most one. *)
@@ -2049,7 +2184,7 @@ Module BuildT (O : OPS)
     build_sum (fun b => length (index_row (placement p) b)) (map fst (blocks _ _ _ p)) <=
       placement_work p.
   Proof.
-    intro Hunique. unfold placement.
+    intro Hunique. rewrite placement_full.
     eapply Nat.le_trans; [apply placement_rows_size; exact Hunique|].
     unfold placement_work, build_sum. apply val_sum_mono; intros x Hin.
     unfold place_var. rewrite F2a_def_index. eapply Nat.le_trans; [apply filter_length_le|].
@@ -2710,7 +2845,7 @@ Module BuildT (O : OPS)
     intros Hunique Hrun.
     assert (Hrows : forall b, length (index_row (placement p) b) <=
         length (U.universe (R.prepare p))).
-    { intro b; unfold placement; apply placement_row_length. }
+    { intro b; rewrite placement_full; apply placement_row_length. }
     pose proof (rename_edge_arg_size _ _ _ _ _ _ _ Hrun Hrows) as Hargs.
     pose proof (rename_core_size _ _ _ _ _ _ Hunique Hrun) as Hcore.
     pose proof (rename_parameter_size _ _ _ _ _ _ Hrun) as Hparams.
@@ -3038,6 +3173,39 @@ Module BuildT (O : OPS)
     apply val_nat_mono; lia.
   Qed.
 
+  Definition place_live_variables_coefficient : N :=
+    (PTrieT.c_trie + 32) * (PB.c_present + 2).
+
+  (** The live-variable inventory charges source occurrences and emitted live rows once. *)
+  Lemma place_live_variables_clock p :
+    (T_live_variables (L.live_in p) (U.universe (R.prepare p)) <=
+      place_live_variables_coefficient * N.of_nat (function_size p + L.live_size p + 1) *
+        N.of_nat (function_width p + 1))%N.
+  Proof.
+    pose proof (live_variables_clock (L.live_in p) (U.universe (R.prepare p))
+      (function_width p)
+      ltac:(intros x Hin; apply in_flat_map in Hin as [[b xs] [Hrow Hx]];
+        apply universe_width; exact (proj2 (L.live_in_ids p (b, xs) Hrow) x Hx))
+      (universe_width p)) as Hclock.
+    pose proof (L.live_in_size p) as Hrows.
+    change (build_live_rows_size (L.live_in p) <= length (blocks _ _ _ p) + L.live_size p)
+      in Hrows.
+    pose proof (place_universe_inventory p) as Hvars.
+    assert (Hblocks : length (blocks _ _ _ p) <= function_size p)
+      by (unfold function_size; lia).
+    apply val_nat_mono in Hrows; apply val_nat_mono in Hblocks.
+    eapply N.le_trans; [exact Hclock|].
+    unfold place_live_variables_coefficient.
+    replace (((PTrieT.c_trie + 32) * (PB.c_present + 2)) *
+      N.of_nat (function_size p + L.live_size p + 1) * N.of_nat (function_width p + 1))%N with
+      ((PTrieT.c_trie + 32) * ((PB.c_present + 2) *
+        N.of_nat (function_size p + L.live_size p + 1)) *
+        N.of_nat (function_width p + 1))%N by ring.
+    apply N.mul_le_mono_r, N.mul_le_mono_l.
+    rewrite !Nat2N.inj_add in *; change (N.of_nat 1) with 1%N in *.
+    cbv beta delta [PosKeyT.t PosKey.t PosKeyCode.t] in *. nia.
+  Qed.
+
   (** Every source block identifier occurs in the prepared producer graph. *)
   Lemma place_source_listed p b : In b (map fst (blocks _ _ _ p)) ->
     In b (nodes (graph p)).
@@ -3145,16 +3313,16 @@ Module BuildT (O : OPS)
   Qed.
 
   (** A successful guard charges every variable's repeated seed scans to existing work. *)
-  Lemma place_allowed_charge p :
+  Lemma place_allowed_charge p vars :
     placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
-      (U.universe (R.prepare p)) = true ->
-    (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p) <=
+      vars = true ->
+    (N.of_nat (length vars) * N.of_nat (df_size p) <=
       16 * N.of_nat (function_size p + L.live_size p + df_size p + 1))%N.
   Proof.
     unfold placement_allowed; rewrite <- place_graph_nodes.
-    change (N.leb (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p))
+    change (N.leb (N.of_nat (length vars) * N.of_nat (df_size p))
       (8 * N.of_nat (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1)) =
-      true -> (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p) <=
+      true -> (N.of_nat (length vars) * N.of_nat (df_size p) <=
         16 * N.of_nat (function_size p + L.live_size p + df_size p + 1))%N).
     rewrite N.leb_le; intro Hguard.
     pose proof (L.live_in_size p) as Hrows.
@@ -3176,30 +3344,45 @@ Module BuildT (O : OPS)
     pose proof (Nat.pow_nonzero 2 (function_width p) ltac:(lia)); nia.
   Qed.
 
+  (** A subinventory count fits the same source identifier width. *)
+  Lemma place_variables_numeric_width p (vars : list positive) :
+    length vars <= length (U.universe (R.prepare p)) ->
+    N.size_nat (N.of_nat (length vars)) <= function_width p + 1.
+  Proof.
+    intro Hlength; apply build_place_nat_bits_bound.
+    pose proof (universe_count p) as Hcount.
+    rewrite Nat.pow_add_r; cbn [Nat.pow].
+    pose proof (Nat.pow_nonzero 2 (function_width p) ltac:(lia)); nia.
+  Qed.
+
   (** Guard multiplication charges one source width per variable and frontier entry. *)
-  Lemma place_guard_mul_clock p :
-    (Code.N.T_mul (N.of_nat (length (U.universe (R.prepare p)))) (N.of_nat (df_size p)) <=
-      8 * N.of_nat (length (U.universe (R.prepare p)) + df_size p + 1) *
+  Lemma place_guard_mul_clock p (vars : list positive) :
+    length vars <= length (U.universe (R.prepare p)) ->
+    (Code.N.T_mul (N.of_nat (length vars)) (N.of_nat (df_size p)) <=
+      8 * N.of_nat (length vars + df_size p + 1) *
         N.of_nat (function_width p + 1))%N.
   Proof.
-    pose proof (build_place_mul_clock (N.of_nat (length (U.universe (R.prepare p))))
+    intro Hlength.
+    pose proof (build_place_mul_clock (N.of_nat (length vars))
       (N.of_nat (df_size p))) as Hclock.
-    pose proof (place_universe_numeric_width p) as Hleft.
+    pose proof (place_variables_numeric_width p vars Hlength) as Hleft.
     pose proof (build_place_nat_bits_value (df_size p)) as Hright.
-    pose proof (build_place_nat_bits_value (length (U.universe (R.prepare p)))) as Hvalue.
+    pose proof (build_place_nat_bits_value (length vars)) as Hvalue.
     rewrite !Nat2N.inj_add; change (N.of_nat 1) with 1%N.
     nia.
   Qed.
 
-  Lemma place_guard_compare_clock p limit :
-    (N.T_leb (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p)) limit <=
+  Lemma place_guard_compare_clock p (vars : list positive) limit :
+    length vars <= length (U.universe (R.prepare p)) ->
+    (N.T_leb (N.of_nat (length vars) * N.of_nat (df_size p)) limit <=
       8 * N.of_nat (df_size p + 1) * N.of_nat (function_width p + 1))%N.
   Proof.
-    pose proof (N.T_leb_le (N.of_nat (length (U.universe (R.prepare p))) *
+    intro Hlength.
+    pose proof (N.T_leb_le (N.of_nat (length vars) *
       N.of_nat (df_size p)) limit) as Hclock.
-    pose proof (build_place_mul_bits (N.of_nat (length (U.universe (R.prepare p))))
+    pose proof (build_place_mul_bits (N.of_nat (length vars))
       (N.of_nat (df_size p))) as Hbits.
-    pose proof (place_universe_numeric_width p) as Hleft.
+    pose proof (place_variables_numeric_width p vars Hlength) as Hleft.
     pose proof (build_place_nat_bits_value (df_size p)) as Hright.
     rewrite !Nat2N.inj_add; change (N.of_nat 1) with 1%N; nia.
   Qed.
@@ -3208,14 +3391,14 @@ Module BuildT (O : OPS)
     1024 + 4 * BC.c_cfg_adj + 64 * PB.c_present.
 
   (** The generated guard clock reads both inventories and evaluates its binary comparison. *)
-  Lemma place_guard_clock_parts p :
+  Lemma place_guard_clock_parts p vars :
     T_placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
-      (U.universe (R.prepare p)) =
+      vars =
     (BC.T_nodes (R.prepare p) + T_frontier_entries (frontiers p) (nodes (graph p)) +
-      Datatypes.T_length (U.universe (R.prepare p)) +
-      TimeHelpers.N.T_of_nat (length (U.universe (R.prepare p))) +
+      Datatypes.T_length vars +
+      TimeHelpers.N.T_of_nat (length vars) +
       TimeHelpers.N.T_of_nat (df_size p) +
-      Code.N.T_mul (N.of_nat (length (U.universe (R.prepare p)))) (N.of_nat (df_size p)) +
+      Code.N.T_mul (N.of_nat (length vars)) (N.of_nat (df_size p)) +
       T_function_size p + T_build_live_rows_size (L.live_in p) +
       Nat.T_add (function_size p) (build_live_rows_size (L.live_in p)) +
       Nat.T_add (function_size p + build_live_rows_size (L.live_in p)) (df_size p) +
@@ -3224,7 +3407,7 @@ Module BuildT (O : OPS)
         (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1) +
       Code.N.T_mul 8
         (N.of_nat (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1)) +
-      N.T_leb (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p))
+      N.T_leb (N.of_nat (length vars) * N.of_nat (df_size p))
         (8 * N.of_nat (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1)))%N.
   Proof.
     time_unfold T_placement_allowed; unfold T_frontier_entries.
@@ -3235,12 +3418,14 @@ Module BuildT (O : OPS)
   Qed.
 
   (** The guard charges syntax, live rows and frontier entries on every outcome. *)
-  Lemma place_guard_clock p :
+  Lemma place_guard_clock p vars :
+    length vars <= length (U.universe (R.prepare p)) ->
     (T_placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
-      (U.universe (R.prepare p)) <= place_guard_coefficient *
+      vars <= place_guard_coefficient *
       N.of_nat (function_size p + L.live_size p + df_size p + 1) *
         N.of_nat (function_width p + 1))%N.
   Proof.
+    intro Hlength.
     set (total := function_size p + L.live_size p + df_size p + 1).
     set (width := N.of_nat (function_width p + 1)).
     set (budget := (N.of_nat total * width)%N).
@@ -3260,8 +3445,11 @@ Module BuildT (O : OPS)
     assert (Hfrontier : df_size p + 1 <= total) by (unfold total; lia).
     assert (Hcombined : function_size p + build_live_rows_size (L.live_in p) + df_size p + 1
       <= 2 * total) by (unfold total; lia).
-    pose proof (place_universe_inventory p) as Hvars_size.
-    assert (Hvars : ((N.of_nat (length (U.universe (R.prepare p))) + 1) * width <=
+    pose proof (place_universe_inventory p) as Huniverse_size.
+    assert (Hvars_size : (N.of_nat (length vars) <=
+      PB.c_present * N.of_nat (function_size p + 1))%N).
+    { eapply N.le_trans; [apply val_nat_mono; exact Hlength|exact Huniverse_size]. }
+    assert (Hvars : ((N.of_nat (length vars) + 1) * width <=
       (PB.c_present + 1) * budget)%N).
     { unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r.
       pose proof (val_nat_mono _ _ Hsource) as HsourceN.
@@ -3286,15 +3474,15 @@ Module BuildT (O : OPS)
       apply val_nat_mono; rewrite place_graph_nodes; unfold total.
       apply Nat.add_le_mono_r; apply Nat.add_le_mono_r.
       eapply Nat.le_trans; [exact Hnodes_size|]; lia. }
-    assert (Hvar_length : (Datatypes.T_length (U.universe (R.prepare p)) <=
+    assert (Hvar_length : (Datatypes.T_length vars <=
       (PB.c_present + 1) * budget)%N).
     { eapply N.le_trans; [apply Datatypes.T_length_le|]. nia. }
-    assert (Hvar_convert : (TimeHelpers.N.T_of_nat (length (U.universe (R.prepare p))) <=
+    assert (Hvar_convert : (TimeHelpers.N.T_of_nat (length vars) <=
       (3 * (PB.c_present + 1)) * budget)%N).
     { eapply N.le_trans; [apply build_place_of_nat_clock|]. nia. }
-    assert (Hvar_product : (Code.N.T_mul (N.of_nat (length (U.universe (R.prepare p))))
+    assert (Hvar_product : (Code.N.T_mul (N.of_nat (length vars))
       (N.of_nat (df_size p)) <= (8 * (PB.c_present + 2)) * budget)%N).
-    { eapply N.le_trans; [apply place_guard_mul_clock|].
+    { eapply N.le_trans; [apply place_guard_mul_clock; exact Hlength|].
       rewrite !Nat2N.inj_add; change (N.of_nat 1) with 1%N; fold width.
       pose proof (val_nat_mono _ _ Hfrontier) as HfrontierN.
       assert (Hdf : (N.of_nat (df_size p) * width <= budget)%N)
@@ -3321,9 +3509,9 @@ Module BuildT (O : OPS)
       - exact Htotal.
       - exact Hw. }
     assert (Hcomparison : forall limit,
-      (N.T_leb (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p)) limit <=
+      (N.T_leb (N.of_nat (length vars) * N.of_nat (df_size p)) limit <=
         8 * budget)%N).
-    { intro limit; eapply N.le_trans; [apply place_guard_compare_clock|].
+    { intro limit; eapply N.le_trans; [apply place_guard_compare_clock; exact Hlength|].
       unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r; apply N.mul_le_mono_l.
       apply val_nat_mono; exact Hfrontier. }
     assert (Hadd : forall n m, n <= 2 * total -> (Nat.T_add n m <= 3 * budget)%N).
@@ -3443,43 +3631,55 @@ Module BuildT (O : OPS)
   Qed.
 
   (** The guarded total search work consists of source, live rows, frontiers and placements. *)
-  Lemma place_search_inventory p : NoDup (map fst (blocks _ _ _ p)) ->
+  Lemma place_search_inventory p vars : NoDup vars ->
+    incl vars (U.universe (R.prepare p)) -> NoDup (map fst (blocks _ _ _ p)) ->
     D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
-    placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
-      (U.universe (R.prepare p)) = true ->
-    (N.of_nat (build_sum (place_variable_work p) (U.universe (R.prepare p))) <=
+    placement_allowed p (R.prepare p) (frontiers p) (L.live_in p) vars = true ->
+    (N.of_nat (build_sum (place_variable_work p) vars) <=
       (PB.c_present + 40) * N.of_nat
         (function_size p + L.live_size p + df_size p + placement_work p + 1))%N.
   Proof.
-    intros Hunique Hcheck Hguard.
-    pose proof (build_place_definitions_count p (U.universe (R.prepare p))
-      (U.universe_nodup _)) as Hseeds.
-    pose proof (place_allowed_charge p Hguard) as Hscan.
-    pose proof (place_universe_inventory p) as Hvars.
+    intros Hvars_unique Hvars_in Hunique Hcheck Hguard.
+    pose proof (build_place_definitions_count p vars Hvars_unique) as Hseeds.
+    pose proof (place_allowed_charge p vars Hguard) as Hscan.
+    pose proof (place_universe_inventory p) as Huniverse.
+    assert (Hvars : (N.of_nat (length vars) <=
+      PB.c_present * N.of_nat (function_size p + 1))%N).
+    { eapply N.le_trans; [apply val_nat_mono; eapply NoDup_incl_length; eassumption|].
+      exact Huniverse. }
     assert (Hrows : build_sum
       (fun x => build_sum (fun b => length (frontier_row (frontiers p) b))
-        (definition_blocks p x)) (U.universe (R.prepare p)) <=
-      length (U.universe (R.prepare p)) * (2 * df_size p)).
+        (definition_blocks p x)) vars <= length vars * (2 * df_size p)).
     { apply build_sum_bound; intros x Hin; apply place_seed_rows; assumption. }
-    assert (Hsplit : build_sum (place_variable_work p) (U.universe (R.prepare p)) =
-      build_sum (fun x => length (definition_blocks p x)) (U.universe (R.prepare p)) +
+    assert (Hplaced : build_sum
+      (fun x => build_sum (fun b => 1 + length (frontier_row (frontiers p) b))
+        (phi_sites p x)) vars <= placement_work p).
+    { change (build_sum
+        (fun x => build_sum (fun b => 1 + length (frontier_row (frontiers p) b))
+          (phi_sites p x)) vars <=
+        build_sum (fun x => build_sum (fun b => 1 + length (frontier_row (frontiers p) b))
+          (phi_sites p x)) (U.universe (R.prepare p))).
+      apply build_place_sum_incl; assumption. }
+    assert (Hsplit : build_sum (place_variable_work p) vars =
+      build_sum (fun x => length (definition_blocks p x)) vars +
       build_sum (fun x => build_sum (fun b => length (frontier_row (frontiers p) b))
-        (definition_blocks p x)) (U.universe (R.prepare p)) +
-      placement_work p + length (U.universe (R.prepare p))).
+        (definition_blocks p x)) vars +
+      build_sum (fun x => build_sum (fun b => 1 + length (frontier_row (frontiers p) b))
+        (phi_sites p x)) vars + length vars).
     { unfold place_variable_work.
       rewrite build_sum_add, build_sum_add, build_sum_add, build_sum_const.
-      unfold placement_work, build_sum.
-      cbv beta delta [PosKeyT.t PosKey.t PosKeyCode.t].
-      ring. }
+      unfold build_sum; cbv beta delta [PosKeyT.t PosKey.t PosKeyCode.t]. ring. }
     rewrite Hsplit, !Nat2N.inj_add.
-    apply val_nat_mono in Hseeds; apply val_nat_mono in Hrows.
+    apply val_nat_mono in Hseeds; apply val_nat_mono in Hrows;
+      apply val_nat_mono in Hplaced.
     rewrite !Nat2N.inj_mul in Hrows; change (N.of_nat 2) with 2%N in Hrows.
     rewrite !Nat2N.inj_add in Hscan, Hvars; change (N.of_nat 1) with 1%N in *.
     set (source := N.of_nat (function_size p)).
     set (live := N.of_nat (L.live_size p)).
     set (frontier := N.of_nat (df_size p)).
     set (placed := N.of_nat (placement_work p)).
-    fold source live frontier placed in Hscan, Hvars, Hseeds, Hrows.
+    fold source live frontier placed in Hscan, Hvars, Hseeds, Hrows, Hplaced.
+    cbv beta delta [PosKeyT.t PosKey.t PosKeyCode.t] in *.
     nia.
   Qed.
 
@@ -3487,23 +3687,24 @@ Module BuildT (O : OPS)
     128 * (place_variable_coefficient + PTrieT.c_trie + 32) * (PB.c_present + 1).
 
   (** The outer placement fold charges each selected site once after its indexed search. *)
-  Lemma place_with_clock p : NoDup (map fst (blocks _ _ _ p)) ->
+  Lemma place_with_clock p vars : NoDup vars -> incl vars (U.universe (R.prepare p)) ->
+    NoDup (map fst (blocks _ _ _ p)) ->
     D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
     placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
-      (U.universe (R.prepare p)) = true ->
+      vars = true ->
     (T_placement_with (frontiers p) (def_index p) (live_sets (L.live_in p))
-      (U.universe (R.prepare p)) <= place_driver_coefficient *
+      vars <= place_driver_coefficient *
       N.of_nat (function_size p + L.live_size p + df_size p + placement_work p + 1) *
         N.of_nat (function_width p + 1))%N.
   Proof.
-    intros Hunique Hcheck Hguard.
+    intros Hvars_unique Hvars_in Hunique Hcheck Hguard.
     set (width := N.of_nat (function_width p + 1)).
     set (total := function_size p + L.live_size p + df_size p + placement_work p + 1).
     set (budget := (N.of_nat total * width)%N).
     assert (Hw : (1 <= width)%N) by (unfold width; lia).
     assert (Htotal : 1 <= total) by (unfold total; lia).
     assert (Hbudget : (1 <= budget)%N) by (unfold budget; nia).
-    pose proof (place_search_inventory p Hunique Hcheck Hguard) as Hwork.
+    pose proof (place_search_inventory p vars Hvars_unique Hvars_in Hunique Hcheck Hguard) as Hwork.
     fold total in Hwork.
     lazymatch goal with |- (_ <= ?rhs)%N =>
       replace rhs with (place_driver_coefficient * budget)%N by
@@ -3514,7 +3715,7 @@ Module BuildT (O : OPS)
         (place_variable_coefficient + PTrieT.c_trie + 32)%N width Hw
         ltac:(intros x Hin; apply place_variable_positive)
         ltac:(intros x rows Hin;
-          pose proof (place_variable_clock p x Hin Hcheck) as Hvar;
+          pose proof (place_variable_clock p x (Hvars_in x Hin) Hcheck) as Hvar;
           pose proof (place_variable_positive p x) as Hpositive;
           pose proof (place_variable_sites p x) as Hsites;
           assert (Hcount : length (place_var (frontiers p) (def_index p)
@@ -3542,11 +3743,11 @@ Module BuildT (O : OPS)
     set (coefficient := (place_variable_coefficient + PTrieT.c_trie + 32 + 2)%N).
     lazymatch type of Hfold with (?clock <= _)%N =>
       change (clock <= coefficient *
-        N.of_nat (build_sum (place_variable_work p) (U.universe (R.prepare p))) * width + 1)%N
+        N.of_nat (build_sum (place_variable_work p) vars) * width + 1)%N
         in Hfold
     end.
     assert (Hscaled : (coefficient *
-      N.of_nat (build_sum (place_variable_work p) (U.universe (R.prepare p))) * width <=
+      N.of_nat (build_sum (place_variable_work p) vars) * width <=
       coefficient * (PB.c_present + 40) * budget)%N).
     { unfold budget; rewrite <- !N.mul_assoc.
       apply N.mul_le_mono_l. rewrite !N.mul_assoc.
@@ -3722,7 +3923,7 @@ Module BuildT (O : OPS)
   Lemma rename_placement_rows_sum p ids : NoDup ids ->
     build_sum (fun b => length (index_row (placement p) b)) ids <= placement_work p.
   Proof.
-    intro Hunique; unfold placement.
+    intro Hunique; rewrite placement_full.
     eapply Nat.le_trans; [apply placement_rows_size; exact Hunique|].
     unfold placement_work, build_sum; apply val_sum_mono; intros x Hin.
     unfold place_var; rewrite F2a_def_index.
@@ -4991,13 +5192,14 @@ Module BuildT (O : OPS)
         (if D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) then
           D.T_tree (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
           F.T_df (graph p) (dom_tree p) + L.T_live_in p + U.T_universe (R.prepare p) +
+          T_live_variables (L.live_in p) (U.universe (R.prepare p)) +
           T_placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
-            (U.universe (R.prepare p)) +
+            (live_variables (L.live_in p) (U.universe (R.prepare p))) +
           (if placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
-            (U.universe (R.prepare p)) then
+            (live_variables (L.live_in p) (U.universe (R.prepare p))) then
             T_def_index p + T_live_sets (L.live_in p) +
             T_placement_with (frontiers p) (def_index p) (live_sets (L.live_in p))
-              (U.universe (R.prepare p)) +
+              (live_variables (L.live_in p) (U.universe (R.prepare p))) +
             T_rename p (dom_tree p) (placement p) (L.live_in p)
           else 0)
         else 0)
@@ -5012,7 +5214,8 @@ Module BuildT (O : OPS)
     set (frontier := F.df g tree).
     destruct (build_blocks_unique (blocks _ _ _ p) Empty); [|lia].
     destruct (D.check g (entry _ _ _ p) (fst result) (snd result)); [|lia].
-    destruct (placement_allowed p q frontier (L.live_in p) (U.universe q)); lia.
+    destruct (placement_allowed p q frontier (L.live_in p)
+      (live_variables (L.live_in p) (U.universe q))); lia.
   Qed.
 
   Module UniverseClock := LiveT O P Q R BE E N BC C U SP PB.
@@ -5068,7 +5271,8 @@ Module BuildT (O : OPS)
   Definition budget_producer_coefficient : N :=
     (2048 + R.c_prepare + PTrieT.c_trie + 16 + Clock.ssa_graph_coefficient +
       3 * D.c_dom + F.c_frontier + L.c_live + budget_universe_coefficient +
-      place_guard_coefficient + place_index_coefficient + place_driver_coefficient +
+      place_guard_coefficient + place_live_variables_coefficient +
+      place_index_coefficient + place_driver_coefficient +
       rename_cached_coefficient)%N.
 
   (** The producer evaluates each successful phase once and charges all rejected prefixes. *)
@@ -5084,10 +5288,17 @@ Module BuildT (O : OPS)
     pose proof (budget_dom_check_clock p (fst (dom_result p)) (snd (dom_result p))) as Hcheckclock.
     pose proof (budget_live_clock p) as Hlive.
     pose proof (budget_universe_clock p) as Huniverse.
-    assert (Hguardclock : (T_placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
-      (U.universe (R.prepare p)) <= place_guard_coefficient * N.of_nat (build_work p) *
+    assert (Hlivevars : (T_live_variables (L.live_in p) (U.universe (R.prepare p)) <=
+      place_live_variables_coefficient * N.of_nat (build_work p) *
         N.of_nat (function_width p + 1))%N).
-    { eapply budget_component_clock; [|apply place_guard_clock]. unfold build_work; lia. }
+    { eapply budget_component_clock; [|apply place_live_variables_clock].
+      unfold build_work; lia. }
+    assert (Hguardclock : (T_placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
+      (live_variables (L.live_in p) (U.universe (R.prepare p))) <=
+        place_guard_coefficient * N.of_nat (build_work p) *
+        N.of_nat (function_width p + 1))%N).
+    { eapply budget_component_clock; [|apply place_guard_clock; apply live_variables_length].
+      unfold build_work; lia. }
     assert (Hindexes : (T_def_index p + T_live_sets (L.live_in p) <=
       place_index_coefficient * N.of_nat (build_work p) * N.of_nat (function_width p + 1))%N).
     { eapply budget_component_clock; [|apply place_indexes_clock]. unfold build_work; lia. }
@@ -5102,12 +5313,15 @@ Module BuildT (O : OPS)
       + pose proof (budget_dom_tree_clock p _ _ Hcheck) as Htree.
         pose proof (budget_frontier_clock p Hcheck) as Hfrontier.
         destruct (placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
-          (U.universe (R.prepare p))) eqn:Hguard.
+          (live_variables (L.live_in p) (U.universe (R.prepare p)))) eqn:Hguard.
         * assert (Hplacement : (T_placement_with (frontiers p) (def_index p)
             (live_sets (L.live_in p))
-            (U.universe (R.prepare p)) <= place_driver_coefficient *
+            (live_variables (L.live_in p) (U.universe (R.prepare p))) <= place_driver_coefficient *
               N.of_nat (build_work p) * N.of_nat (function_width p + 1))%N).
-          { eapply budget_component_clock; [|now apply place_with_clock]. unfold build_work; lia. }
+          { eapply budget_component_clock; [|apply place_with_clock;
+              [apply live_variables_nodup, U.universe_nodup|apply live_variables_incl|
+               assumption|assumption|assumption]].
+            unfold build_work; lia. }
           assert (Hrename : (T_rename p (dom_tree p) (placement p) (L.live_in p) <=
             rename_cached_coefficient * N.of_nat (build_work p) *
               N.of_nat (function_width p + 1))%N).
