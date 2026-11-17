@@ -1787,7 +1787,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
       reflexivity.
     - rewrite power_mask_mod by lia. reflexivity.
   Qed.
-  
+
   (** The fast wrapping class agrees with gcd and Euclidean remainder. *)
   Lemma wrap_class_fast_eq : forall w m r,
     wrap_class_g w (pow2_gcd w m) r =
