@@ -227,3 +227,120 @@ Example assign_word_with_wrap :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Exact comparison checks all stored entries, including explicit zero diagonals. *)
+Definition bound_equal (a b : option Z) : bool :=
+  match a, b with
+  | Some u, Some v => Z.eqb u v
+  | None, None => true
+  | _, _ => false
+  end.
+
+Definition same_entries (a b : Zones.t) : bool :=
+  match a, b with
+  | Reached ma, Reached mb =>
+    ZoneMap.forall2b
+      (fun ra rb => ZoneMap.forall2b bound_equal (Zones.row_of ra) (Zones.row_of rb)) ma mb
+  | Unreached, Unreached => true
+  | _, _ => false
+  end.
+
+(** Three constrained variables provide a closed input with a present copy source. *)
+Definition assignment_closed_state : Zones.t :=
+  Zones.assume (ZGuardCmp Lt)
+    [Node ZSub [Leaf 2%positive; Leaf 3%positive]; Node (ZConst 2%Z) []]
+  (Zones.assume (ZGuardCmp Lt)
+    [Node ZSub [Leaf 3%positive; Leaf 2%positive]; Node (ZConst 3%Z) []]
+  (Zones.assume (ZGuardCmp Lt) [Leaf 2%positive; Node (ZConst 5%Z) []]
+  (Zones.assume (ZGuardCmp Lt) [Node (ZConst (-1)%Z) []; Leaf 2%positive]
+  (Zones.assume (ZGuardCmp Lt) [Leaf 1%positive; Node (ZConst 11%Z) []]
+  (Zones.assume (ZGuardCmp Lt) [Node (ZConst (-1)%Z) []; Leaf 1%positive] Zones.top))))).
+
+(** Closing the assignment fixture changes none of its entries. *)
+Example assignment_fixture_closed :
+  same_entries
+    (match assignment_closed_state with Reached m => Zones.close m | Unreached => Unreached end)
+    assignment_closed_state = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Row and column copying agrees with the old two refinements on a closed state. *)
+Example assign_closed_copy_same_entries :
+  same_entries
+    (Zones.assign 1%positive
+      (Node ZAdd [Leaf 2%positive; Node (ZConst 3%Z) []]) assignment_closed_state)
+    (Zones.refine x y (-3)%Z
+      (Zones.refine y x 3%Z (Zones.havoc 1%positive assignment_closed_state))) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A source absent from the input still receives the old zero diagonal. *)
+Example assign_absent_source_same_entries :
+  same_entries (Zones.assign 1%positive (Node (ZConst 7%Z) []) Zones.top)
+    (Zones.refine x None (-7)%Z
+      (Zones.refine None x 7%Z (Zones.havoc 1%positive Zones.top))) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Widening drops a bound that remains implied by a two-edge path. *)
+Definition assignment_widened_state : Zones.t :=
+  let later := Zones.assume (ZGuardCmp Lt)
+    [Node ZSub [Leaf 3%positive; Leaf 2%positive]; Node (ZConst 2%Z) []]
+    (Zones.assume (ZGuardCmp Lt) [Leaf 2%positive; Node (ZConst 2%Z) []]
+      (Zones.assume (ZGuardCmp Lt)
+        [Node (ZConst (-1)%Z) []; Leaf 2%positive] Zones.top)) in
+  let earlier := Zones.assume (ZGuardCmp Lt)
+    [Leaf 3%positive; Node (ZConst 2%Z) []] later in
+  Zones.widen 0%nat earlier later.
+
+(** Assignment remains sound after widening without closing unrelated entries. *)
+Example assign_widened_range :
+  Zones.range (Leaf 1%positive)
+    (Zones.assign 1%positive
+      (Node ZAdd [Leaf 2%positive; Node (ZConst 3%Z) []]) assignment_widened_state) =
+    (Fin 3%Z, Fin 4%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A non-unit expression with only a lower bound takes the one-sided interval path. *)
+Example assign_one_sided_lower :
+  let s := Zones.assume (ZGuardCmp Lt)
+    [Node (ZConst (-1)%Z) []; Leaf 2%positive] Zones.top in
+  Zones.range (Leaf 1%positive)
+    (Zones.assign 1%positive
+      (Node ZMul [Node (ZConst 2%Z) []; Leaf 2%positive]) s) = (Fin 0%Z, PosInf).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A missing lower bound omits the copied lower row. *)
+Example assign_one_sided_upper :
+  let s := Zones.assume (ZGuardCmp Lt)
+    [Leaf 2%positive; Node (ZConst 4%Z) []] Zones.top in
+  Zones.range (Leaf 1%positive)
+    (Zones.assign 1%positive
+      (Node ZMul [Node (ZConst 2%Z) []; Leaf 2%positive]) s) = (NegInf, Fin 6%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An unconstrained non-unit expression adds no bound. *)
+Example assign_unbounded_interval :
+  Zones.assign 1%positive
+    (Node ZMul [Node (ZConst 2%Z) []; Leaf 2%positive]) Zones.top = Zones.top.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Crossed bounds in an inconsistent raw matrix make interval assignment unreachable. *)
+Example assign_crossed_interval :
+  let m := Zones.add_cons y None (-5)%Z (Zones.add_cons None y 2%Z ZoneMap.empty) in
+  Zones.assign 1%positive
+    (Node ZMul [Node (ZConst 2%Z) []; Leaf 2%positive]) (Reached m) = Unreached.
+Proof.
+  vm_compute. reflexivity.
+Qed.
