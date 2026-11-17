@@ -6,6 +6,10 @@
     Main results
     - [push_complexity] Push has the worst-case logarithmic comparison cost of bounded width.
     - [pop_complexity] Pop pays one unit budget plus one for each stale entry it discards.
+    - [push_amort_complexity] Push is amortised logarithmic in the pending cap, with the potential
+      of the queue before and after, O(unit_pq P w).
+    - [pop_amort_complexity] Pop is amortised logarithmic in the pending cap, with the potential
+      of the queue before and of the returned queue, O(unit_pq P w).
 
     Builds on: Stdlib lists and binary arithmetic, and Argent time interfaces. *)
 
@@ -103,6 +107,17 @@ Module Type PQ_TIME (Import Q : PQ).
   (** Pop pays one unit budget plus one for each stale entry it discards. *)
   Parameter pop_complexity :
     T_pop q ∈ 𝑂(N.of_nat (unit_pq P w * (pending q - N.to_nat (size q) + 1)))
+      for (P, w, q) | wf q /\ fits w q /\ (pending q <= P)%nat.
+  (** Push is amortised logarithmic in the pending cap, as the potential of the queue changes. *)
+  Parameter push_amort_complexity :
+    T_push p x q ∈ 𝑂(N.of_nat (unit_pq P w)) amortised phi P w q ↦ phi P w (push p x q)
+      for (P, w, p, x, q) | wf q /\ fits w q /\ (pending q < P)%nat /\
+        (Pos.size_nat x + N.size_nat p <= w)%nat.
+  (** Pop is amortised logarithmic in the pending cap, as the potential falls to that of the
+      returned queue. *)
+  Parameter pop_amort_complexity :
+    T_pop q ∈ 𝑂(N.of_nat (unit_pq P w))
+      amortised phi P w q ↦ (match pop q with Some (_, _, q1) => phi P w q1 | None => 0 end)
       for (P, w, q) | wf q /\ fits w q /\ (pending q <= P)%nat.
 End PQ_TIME.
 

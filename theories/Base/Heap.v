@@ -6,6 +6,10 @@
     Main results
     - [push_complexity] Push has the worst-case logarithmic comparison cost of bounded width.
     - [pop_complexity] Pop pays one unit budget plus one for each stale entry it discards.
+    - [push_amort_complexity] Push is amortised logarithmic in the pending cap, with the potential
+      of the queue before and after, O(unit_pq P w).
+    - [pop_amort_complexity] Pop is amortised logarithmic in the pending cap, with the potential
+      of the queue before and of the returned queue, O(unit_pq P w).
 
     Builds on: HeapSig, MapSig and Argent time interfaces. *)
 
@@ -1824,6 +1828,29 @@ Module HeapT <: PQ_ALL.
     rewrite (phi_is_stale_phi P w q Hwf Hfits) in Hpop.
     unfold stale_phi, stale, credit in Hpop.
     rewrite Nat2N.inj_mul, Nat2N.inj_add.
+    nia.
+  Qed.
+
+  (** Push is amortised logarithmic in the pending cap, as the potential of the queue changes. *)
+  Lemma push_amort_complexity :
+    T_push p x q ∈ 𝑂(N.of_nat (unit_pq P w)) amortised phi P w q ↦ phi P w (push p x q)
+      for (P, w, p, x, q) | wf q /\ fits w q /\ (pending q < P)%nat /\
+        (Pos.size_nat x + N.size_nat p <= w)%nat.
+  Proof.
+    exists c_pq. intros [[[[P w] p] x] q] [Hwf [Hfits [Hcap Hwidth]]]. cbn [fst snd].
+    pose proof (T_push_amort P w p x q Hwf Hfits Hcap Hwidth) as Hpush.
+    nia.
+  Qed.
+
+  (** Pop is amortised logarithmic in the pending cap, as the potential falls to that of the
+      returned queue. *)
+  Lemma pop_amort_complexity :
+    T_pop q ∈ 𝑂(N.of_nat (unit_pq P w))
+      amortised phi P w q ↦ (match pop q with Some (_, _, q1) => phi P w q1 | None => 0 end)
+      for (P, w, q) | wf q /\ fits w q /\ (pending q <= P)%nat.
+  Proof.
+    exists c_pq. intros [[P w] q] [Hwf [Hfits Hpending]]. cbn [fst snd].
+    pose proof (T_pop_amort P w q Hwf Hfits Hpending) as Hpop.
     nia.
   Qed.
 End HeapT.
