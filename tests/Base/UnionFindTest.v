@@ -97,6 +97,73 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** An absent key may carry a bounded stale size under the current forest invariant. *)
+Local Lemma uf_wf_stale_size u r n :
+  UnionFind.wf u -> ~ UnionFind.mem u r -> N.to_nat n <= UnionFind.card u ->
+  UnionFind.wf (UF (parents u) (PTrieCode.set r n (sizes u)) (count u)).
+Proof.
+  intros [Hcard [Hparents [Hroots [Hsizes [rk Hranks]]]]] Hfresh Hbound.
+  split; [exact Hcard|]. split; [exact Hparents|]. split.
+  - intros q Hmem Hroot.
+    assert (Hne : q <> r).
+    { intro Heq. subst q. apply Hfresh. exact Hmem. }
+    change (N.to_nat
+      (match PTrieCode.get q (PTrieCode.set r n (sizes u)) with
+       | Some size => size
+       | None => 1%N
+       end) = UnionFind.size_of u q).
+    rewrite PTrie.get_set_other by exact Hne. exact (Hroots q Hmem Hroot).
+  - split.
+    + intros q m Hget.
+      change (PTrieCode.get q (PTrieCode.set r n (sizes u)) = Some m) in Hget.
+      destruct (Pos.eq_dec q r) as [Heq|Hne].
+      * subst q. rewrite PTrie.get_set_same in Hget. injection Hget as Hvalue.
+        subst m. exact Hbound.
+      * rewrite PTrie.get_set_other in Hget by exact Hne. exact (Hsizes q m Hget).
+    + exists rk. exact Hranks.
+Qed.
+
+Definition uf_two_singletons :=
+  UnionFindCode.add 1%positive (UnionFindCode.add 2%positive UnionFindCode.empty).
+Definition uf_stale_size :=
+  UF (parents uf_two_singletons) (PTrieCode.set 3%positive 2%N (sizes uf_two_singletons))
+    (count uf_two_singletons).
+
+(** This is the proposed T7 body, retained only to check its rejected behavior. *)
+Definition uf_add_without_size_reset (x : positive) (u : uf) : uf :=
+  match PTrieCode.get x (parents u) with
+  | Some _ => u
+  | None => UF (PTrieCode.set x x (parents u)) (sizes u) (N.succ (count u))
+  end.
+
+(** Leaving the stale size unchanged breaks well-formedness when its key becomes a member. *)
+Example uf_add_without_size_reset_breaks_wf :
+  UnionFind.wf uf_stale_size /\
+  ~ UnionFind.wf (uf_add_without_size_reset 3%positive uf_stale_size).
+Proof.
+  split.
+  - unfold uf_stale_size. apply uf_wf_stale_size.
+    + apply UnionFind.wf_add, UnionFind.wf_add, UnionFind.wf_empty.
+    + vm_compute. tauto.
+    + vm_compute. lia.
+  - intro Hwf.
+    assert (Hmem : UnionFind.mem (uf_add_without_size_reset 3%positive uf_stale_size)
+      3%positive).
+    { vm_compute. discriminate. }
+    assert (Hroot : UnionFind.is_root (uf_add_without_size_reset 3%positive uf_stale_size)
+      3%positive).
+    { vm_compute. reflexivity. }
+    pose proof (proj1 (proj2 (proj2 Hwf)) 3%positive Hmem Hroot) as Hsize.
+    vm_compute in Hsize. discriminate.
+Qed.
+
+(** The retained add operation resets that stale size to the singleton default. *)
+Example uf_add_resets_stale_size :
+  UnionFindCode.size_at 3%positive (UnionFindCode.add 3%positive uf_stale_size) = 1%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** The original link plan permits an absent losing root with an unconstrained rank. *)
 Example uf_link_plan_absent_root :
   let u := UnionFind.add 1%positive UnionFind.empty in
