@@ -382,9 +382,17 @@ Module IndexCode (V : VALUE_OPS) <: INDEX_OPS V.
   Definition bounded_succ (limit : positive) (n : N) : N :=
     if N.ltb (Npos limit) n then 0%N else N.succ n.
 
+  (** Only the exact empty node may be omitted from the node table. *)
+  Definition node_is_empty (nd : index_node (cell V.t)) : bool :=
+    if PTrieCode.is_empty (node_edges nd) then
+      if N.eqb 0%N (node_degree nd) then negb (node_terminal nd) else false
+    else false.
+
   Definition write_node (ix : t) (n : positive) (nd : index_node (cell V.t))
       (counter : positive) : t :=
-    IndexState counter (PTrieCode.set n nd (index_nodes ix)) (index_cell_width ix).
+    IndexState counter
+      (if node_is_empty nd then PTrieCode.remove n (index_nodes ix)
+       else PTrieCode.set n nd (index_nodes ix)) (index_cell_width ix).
 
   Definition walk_state := (t * positive)%type.
   Definition start (ix : t) : walk_state := (ix, root ix).
@@ -431,9 +439,10 @@ Module IndexCode (V : VALUE_OPS) <: INDEX_OPS V.
 
   Definition mark_terminal (ix : t) (n : positive) (present : bool) (bits : nat) : t :=
     let nd := read_node ix n in
+    let updated := IndexNode (node_edges nd) (node_degree nd) present in
     IndexState (next ix)
-      (PTrieCode.set n (IndexNode (node_edges nd) (node_degree nd) present) (index_nodes ix))
-      bits.
+      (if node_is_empty updated then PTrieCode.remove n (index_nodes ix)
+       else PTrieCode.set n updated (index_nodes ix)) bits.
 
   Definition insert_finish (r : list (cell V.t)) (ix : t) (st : walk_state) : t :=
     if contains r ix then ix else
@@ -525,18 +534,36 @@ Module Index (V : VALUE) <: INDEX V.
     specialize (Hedges n code edge Hget). tauto.
   Qed.
 
+  (** An omitted node agrees with the value returned by an absent table lookup. *)
+  Lemma node_is_empty_spec : forall nd, node_is_empty nd = true -> nd = empty_node.
+  Proof.
+    intros [edges degree present].
+    change ((if PTrieCode.is_empty edges then
+      if N.eqb 0%N degree then negb present else false else false) = true ->
+      IndexNode edges degree present = empty_node).
+    destruct (PTrieCode.is_empty edges) eqn:Hedges; [| discriminate].
+    destruct (N.eqb 0%N degree) eqn:Hdegree; [| discriminate].
+    destruct present; [discriminate |]. intros _.
+    apply PTrie.is_empty_spec in Hedges. apply N.eqb_eq in Hdegree.
+    subst edges degree. reflexivity.
+  Qed.
+
   Lemma read_node_write_same : forall ix n nd counter,
     read_node (write_node ix n nd counter) n = nd.
   Proof.
     intros ix n nd counter. unfold read_node, write_node. cbn [index_nodes].
-    rewrite PTrie.get_set_same. reflexivity.
+    destruct (node_is_empty nd) eqn:Hempty.
+    - rewrite PTrie.get_remove_same. symmetry. now apply node_is_empty_spec.
+    - rewrite PTrie.get_set_same. reflexivity.
   Qed.
 
   Lemma read_node_write_other : forall ix n q nd counter, q <> n ->
     read_node (write_node ix n nd counter) q = read_node ix q.
   Proof.
     intros ix n q nd counter Hneq. unfold read_node, write_node. cbn [index_nodes].
-    now rewrite PTrie.get_set_other.
+    destruct (node_is_empty nd).
+    - now rewrite PTrie.get_remove_other.
+    - now rewrite PTrie.get_set_other.
   Qed.
 
   Lemma read_node_above_counter : forall ix n, table_ok ix -> (next ix < n)%positive ->
@@ -568,8 +595,11 @@ Module Index (V : VALUE) <: INDEX V.
     intros ix n nd counter Htable Hnode Hcounter q out Hget.
     cbn [write_node index_nodes] in Hget. change (q <= counter)%positive.
     destruct (Pos.eq_dec q n) as [-> | Hneq]; [exact Hnode |].
-    rewrite PTrie.get_set_other in Hget by exact Hneq.
-    eapply Pos.le_trans; [eapply Htable; exact Hget | exact Hcounter].
+    destruct (node_is_empty nd).
+    - rewrite PTrie.get_remove_other in Hget by exact Hneq.
+      eapply Pos.le_trans; [eapply Htable; exact Hget | exact Hcounter].
+    - rewrite PTrie.get_set_other in Hget by exact Hneq.
+      eapply Pos.le_trans; [eapply Htable; exact Hget | exact Hcounter].
   Qed.
 
   Lemma insert_step_counter_mono : forall st c,
@@ -1136,15 +1166,22 @@ Module Index (V : VALUE) <: INDEX V.
     read_node (mark_terminal ix n present bits) n =
       IndexNode (node_edges (read_node ix n)) (node_degree (read_node ix n)) present.
   Proof.
-    intros ix n present bits. unfold read_node, mark_terminal. cbn [index_nodes].
-    rewrite PTrie.get_set_same. reflexivity.
+    intros ix n present bits.
+    change (read_node (write_node ix n
+      (IndexNode (node_edges (read_node ix n)) (node_degree (read_node ix n)) present)
+      (next ix)) n =
+      IndexNode (node_edges (read_node ix n)) (node_degree (read_node ix n)) present).
+    apply read_node_write_same.
   Qed.
 
   Lemma read_node_mark_other : forall ix n present bits q, q <> n ->
     read_node (mark_terminal ix n present bits) q = read_node ix q.
   Proof.
-    intros ix n present bits q Hneq. unfold read_node, mark_terminal. cbn [index_nodes].
-    now rewrite PTrie.get_set_other.
+    intros ix n present bits q Hneq.
+    change (read_node (write_node ix n
+      (IndexNode (node_edges (read_node ix n)) (node_degree (read_node ix n)) present)
+      (next ix)) q = read_node ix q).
+    now apply read_node_write_other.
   Qed.
 
   Lemma mark_node_edges : forall ix n present bits q,
@@ -3133,6 +3170,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   TimeFun contains.
   TimeFun tuple_bits.
   TimeFun bounded_succ.
+  TimeFun node_is_empty.
   TimeFun write_node.
   TimeFun start.
   TimeFun insert_step_st.
@@ -3477,15 +3515,32 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
       cbn [N.size_nat] in Hcompare. time_cbn. lia.
   Qed.
 
-  (** Writing a node charges its trie key and three fixed wrapper calls. *)
+  (** Testing an exact empty node takes constant time, even for malformed degrees. *)
+  Lemma T_node_is_empty_le : forall nd,
+    (T_node_is_empty nd <= PTrieT.c_trie + 6)%N.
+  Proof.
+    intro nd.
+    pose proof (PTrieT.T_is_empty_le _ (node_edges nd)) as Hedges.
+    pose proof (N.T_eqb_le 0%N (node_degree nd)) as Hdegree.
+    change (N.T_eqb 0%N (node_degree nd) <= 1)%N in Hdegree.
+    pose proof (Datatypes.T_negb_le (node_terminal nd)) as Hterminal.
+    time_unfold T_node_is_empty.
+    time_unfold @T_node_edges. time_unfold @T_node_degree. time_unfold @T_node_terminal.
+    destruct (PTrieCode.is_empty (node_edges nd));
+      destruct (N.eqb 0%N (node_degree nd)); cbn beta iota zeta; lia.
+  Qed.
+
+  (** Writing or dropping a node charges its key and the constant emptiness test. *)
   Lemma T_write_node_le : forall ix n nd counter,
     (T_write_node ix n nd counter <=
-      PTrieT.c_trie * N.of_nat (Pos.size_nat n + 1) + 3)%N.
+      PTrieT.c_trie * N.of_nat (Pos.size_nat n + 1) + PTrieT.c_trie + 9)%N.
   Proof.
     intros ix n nd counter.
+    pose proof (T_node_is_empty_le nd) as Hempty.
     pose proof (PTrieT.T_set_le _ n nd (index_nodes ix)) as Hset.
+    pose proof (PTrieT.T_remove_le _ n (index_nodes ix)) as Hremove.
     time_unfold T_write_node. time_unfold @T_index_nodes. time_unfold @T_index_cell_width.
-    time_cbn. lia.
+    destruct (node_is_empty nd); time_cbn; lia.
   Qed.
 
   (** An insertion step eagerly pays the value encoder even when its edge is absent. *)
@@ -3518,12 +3573,12 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   (** Normalized mutation charges fit a coefficient that includes the value encoder. *)
   Lemma mutation_step_budget : forall trie_cost key_cost bits,
     (1 <= bits ->
-      96 + 16 * bits + 4 * trie_cost * bits + (key_cost + 1) * bits <=
+      104 + 16 * bits + 5 * trie_cost * bits + (key_cost + 1) * bits <=
       128 * (trie_cost + key_cost + 1) * bits)%N.
   Proof.
     intros trie_cost key_cost bits Hbits.
-    replace (96 + 16 * bits + 4 * trie_cost * bits + (key_cost + 1) * bits)%N
-      with (96 + 17 * bits + 4 * (trie_cost * bits) + key_cost * bits)%N by ring.
+    replace (104 + 16 * bits + 5 * trie_cost * bits + (key_cost + 1) * bits)%N
+      with (104 + 17 * bits + 5 * (trie_cost * bits) + key_cost * bits)%N by ring.
     replace (128 * (trie_cost + key_cost + 1) * bits)%N
       with (128 * bits + 128 * (trie_cost * bits) + 128 * (key_cost * bits))%N by ring.
     lia.
@@ -3567,9 +3622,14 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
       { intro edge. eapply N.le_trans; [apply PTrieT.T_set_le |].
         apply N.mul_le_mono_l. rewrite Hcode. unfold bits. lia. }
       assert (Hwrite : forall nd counter,
-        (T_write_node ix n nd counter <= PTrieT.c_trie * bits + 3)%N).
+        (T_write_node ix n nd counter <= 2 * PTrieT.c_trie * bits + 9)%N).
       { intros nd counter. eapply N.le_trans; [apply T_write_node_le |].
-        apply N.add_le_mono_r, N.mul_le_mono_l. unfold bits. lia. }
+        assert (Htrie : (PTrieT.c_trie <= PTrieT.c_trie * bits)%N).
+        { rewrite <- (N.mul_1_r PTrieT.c_trie) at 1.
+          apply N.mul_le_mono_l. exact Hbits. }
+        assert (Hkey : (PTrieT.c_trie * N.of_nat (Pos.size_nat n + 1) <=
+          PTrieT.c_trie * bits)%N) by (apply N.mul_le_mono_l; unfold bits; lia).
+        lia. }
       assert (Hincrement : forall count,
         (T_bounded_succ (next ix) count <= 2 * bits + 5)%N).
       { intro count. eapply N.le_trans; [apply T_bounded_succ_le |]. unfold bits. lia. }
@@ -3627,9 +3687,14 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
       { eapply N.le_trans; [apply PTrieT.T_remove_le |].
         apply N.mul_le_mono_l. rewrite Hcode. unfold bits. lia. }
       assert (Hwrite : forall nd counter,
-        (T_write_node ix n nd counter <= PTrieT.c_trie * bits + 3)%N).
+        (T_write_node ix n nd counter <= 2 * PTrieT.c_trie * bits + 9)%N).
       { intros nd counter. eapply N.le_trans; [apply T_write_node_le |].
-        apply N.add_le_mono_r, N.mul_le_mono_l. unfold bits. lia. }
+        assert (Htrie : (PTrieT.c_trie <= PTrieT.c_trie * bits)%N).
+        { rewrite <- (N.mul_1_r PTrieT.c_trie) at 1.
+          apply N.mul_le_mono_l. exact Hbits. }
+        assert (Hkey : (PTrieT.c_trie * N.of_nat (Pos.size_nat n + 1) <=
+          PTrieT.c_trie * bits)%N) by (apply N.mul_le_mono_l; unfold bits; lia).
+        lia. }
       time_unfold T_next. time_unfold @T_index_counter.
       destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
         as [edge |] eqn:Hlookup.
@@ -3946,8 +4011,21 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
       (PTrieCode.T_set n nd (index_nodes ix) <= cost * bits)%N).
     { intro nd. eapply N.le_trans; [apply PTrieT.T_set_le |].
       apply N.mul_le_mono; [unfold cost; lia | unfold bits; lia]. }
+    assert (Hremove : (PTrieCode.T_remove n (index_nodes ix) <= cost * bits)%N).
+    { eapply N.le_trans; [apply PTrieT.T_remove_le |].
+      apply N.mul_le_mono; [unfold cost; lia | unfold bits; lia]. }
+    assert (Hempty : forall nd,
+      (T_node_is_empty nd <= cost * bits + 5)%N).
+    { intro nd. eapply N.le_trans; [apply T_node_is_empty_le |].
+      assert (Hmargin : (PTrieT.c_trie + 1 <= cost)%N) by (unfold cost; lia).
+      assert (Hscaled : (cost <= cost * bits)%N).
+      { rewrite <- (N.mul_1_r cost) at 1. apply N.mul_le_mono_l. exact Hbits. }
+      lia. }
     time_unfold T_mark_terminal. time_unfold T_next. time_unfold @T_index_counter.
-    time_pose. time_simpl. time_cbn. clear Hnode Hset. clearbody cost bits. lia.
+    cbn beta iota zeta.
+    destruct (node_is_empty
+      (IndexNode (node_edges (read_node ix n)) (node_degree (read_node ix n)) present));
+      time_pose; time_simpl; time_cbn; clear Hnode Hset Hempty; clearbody cost bits; lia.
   Qed.
 
   (** The finishing pass fits the membership scan, width scan and final node write. *)

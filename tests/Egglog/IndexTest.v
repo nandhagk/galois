@@ -5,6 +5,7 @@
     Builds on: Index, Syntax and the operations-only value interface. *)
 
 From Stdlib Require Import List PArith NArith.
+From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax Index.
 
 Import List.ListNotations.
@@ -129,6 +130,39 @@ Qed.
 Example absent_removal_after_shared_prefix :
   let ix := RuntimeIndex.insert [Val 2; Val 3; Val 7]%positive RuntimeIndex.empty in
   RuntimeIndex.remove [Val 2; Val 5; Val 11]%positive ix = ix.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Removing shared tuples drops their empty nodes while preserving the allocation counter. *)
+Example removing_shared_tuples_drops_empty_nodes :
+  let one := RuntimeIndex.remove first_tuple shared_index in
+  let none := RuntimeIndex.remove second_tuple one in
+  (length (PTrieCode.elements (index_nodes shared_index)),
+   length (PTrieCode.elements (index_nodes one)),
+   length (PTrieCode.elements (index_nodes none)), RuntimeIndex.next none) =
+    (4%nat, 3%nat, 0%nat, 4%positive).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A nonzero cached degree prevents an edgeless node from being discarded. *)
+Example empty_edges_with_degree_survive_write :
+  let nd : index_node (cell IndexFixtureValue.t) := IndexNode PTrieCode.empty 5%N false in
+  RuntimeIndex.read_node
+    (RuntimeIndex.write_node RuntimeIndex.empty 1%positive nd 1%positive) 1%positive = nd.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Clearing the last root terminal removes its table entry. *)
+Example empty_tuple_terminal_prunes_table :
+  let present := RuntimeIndex.insert [] RuntimeIndex.empty in
+  let absent := RuntimeIndex.remove [] present in
+  (length (PTrieCode.elements (index_nodes present)),
+   length (PTrieCode.elements (index_nodes absent)),
+   RuntimeIndex.contains [] present, RuntimeIndex.contains [] absent) =
+    (1%nat, 0%nat, true, false).
 Proof.
   vm_compute. reflexivity.
 Qed.
