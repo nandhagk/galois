@@ -4,8 +4,7 @@
     For example, a solver that returns the empty cycle assignment fails certification.
 
     Groups:
-    - Fixtures: a solver that returns the empty assignment, and the analysis that wraps it.
-    - Candidate: the checker rejects the unchecked candidate.
+    - [CandidateTests] The checker rejects the unchecked candidate.
 
     Builds on: Fixpoint.Certified, Fixpoint.Narrow and CheckTest. *)
 
