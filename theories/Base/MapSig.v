@@ -2,10 +2,27 @@
 
     Keyed maps retain each original key alongside its value in a positive-key trie.
     For example, enumeration returns the client key stored by insertion.
+
+    Main results
+    - [elements_spec] Consistent maps enumerate precisely their bindings.
+    - [fold_spec] Folding follows enumeration order.
+    - [forall2b_spec] When the callback accepts two absences, checking accepts exactly when
+      the callback accepts the bindings at every key.
+    - [existsb_spec] Checking finds a stored value exactly when some stored value satisfies
+      the predicate.
+    - [codes_spec] The codes are exactly the keys that have a binding.
+    - [get_complexity] Lookup is linear in the encoded key length.
+    - [set_complexity] Insertion is linear in the encoded key length.
+    - [remove_complexity] Removal is linear in the encoded key length.
+    - [merge_complexity] Merging is linear in both skeletons for bounded callbacks.
+    - [forall2b_complexity] Relational checking is linear in both skeletons for bounded
+      callbacks.
+
     Builds on: KeySig, Trie and Argent time interfaces. *)
 
 From Stdlib Require Import NArith PArith List Bool.
-From Argent Require Import Time BigO.
+From Argent Require Import Time Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig Trie.
 
 Definition kmap (K A : Type) : Type := PTrieCode.t (K * A).
@@ -167,29 +184,24 @@ Module Type MAP_TIME (K : KEY_T) (Import M : MAP K).
         (f (fst bw) (fst ka) (snd ka), snd bw + T_f (fst bw) (fst ka) (snd ka)))
         (elements m) (b, 0))))%N.
   (** Lookup is linear in the encoded key length. *)
-  Parameter get_complexity : forall A, bigO (X := K.t * t A) (fun _ => True)
-    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_get (fst x) (snd x)).
+  Parameter get_complexity : forall A,
+    T_get (A := A) k m ∈ 𝑂(N.of_nat (K.bits k)) for (k, m).
   (** Insertion is linear in the encoded key length. *)
-  Parameter set_complexity : forall A, bigO (X := K.t * A * t A) (fun _ => True)
-    (fun x => N.of_nat (K.bits (fst (fst x))))
-    (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter set_complexity : forall A,
+    T_set (A := A) k a m ∈ 𝑂(N.of_nat (K.bits k)) for (k, a, m).
   (** Removal is linear in the encoded key length. *)
-  Parameter remove_complexity : forall A, bigO (X := K.t * t A) (fun _ => True)
-    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_remove (fst x) (snd x)).
+  Parameter remove_complexity : forall A,
+    T_remove (A := A) k m ∈ 𝑂(N.of_nat (K.bits k)) for (k, m).
   (** Merging is linear in both skeletons for bounded callbacks. *)
   Parameter merge_complexity : forall A B C,
-    bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
-      t A * t B)
-      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
-      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
-      (fun '(f, T_f, _, m1, m2) => T_merge f T_f m1 m2).
+    T_merge (A := A) (B := B) (C := C) f T_f m1 m2
+      ∈ 𝑂(((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      for (f, T_f, k, m1, m2) | forall a b, (T_f a b <= k)%N.
   (** Relational checking is linear in both skeletons for bounded callbacks. *)
   Parameter forall2b_complexity : forall A B,
-    bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
-      t A * t B)
-      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
-      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
-      (fun '(f, T_f, _, m1, m2) => T_forall2b f T_f m1 m2).
+    T_forall2b (A := A) (B := B) f T_f m1 m2
+      ∈ 𝑂(((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      for (f, T_f, k, m1, m2) | forall a b, (T_f a b <= k)%N.
 End MAP_TIME.
 
 Module Type MAP_T (K : KEY_T) := MAP K <+ MAP_TIME K.

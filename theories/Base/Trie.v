@@ -2,10 +2,27 @@
 
     Seven nonempty node shapes give finite positive-key maps a canonical representation.
     For example, removing the sole binding collapses its path to the empty trie.
+    Main results
+    - [forall2b_spec] Relational checking covers every key when absence passes.
+    - [existsb_spec] Existential checking finds a stored value satisfying the predicate.
+    - [elements_spec] Enumeration contains precisely the bindings.
+    - [fold_spec] Folding follows enumeration order.
+    - [is_empty_spec] A trie is reported empty exactly when it is the empty trie.
+    - [get_complexity] Lookup is linear in the key bit length, O(|p|) for a key p.
+    - [set_complexity] Setting is linear in the key bit length.
+    - [remove_complexity] Removal is linear in the key bit length.
+    - [merge_complexity] Merging is linear in both skeletons for bounded callbacks.
+    - [forall2b_complexity] Relational checking is linear in both skeletons for bounded
+      callbacks.
+    - [fold_complexity] Folding is linear in the skeleton and the key mass for bounded
+      callbacks.
+    - [elements_complexity] Enumeration is linear in the binding weight.
+
     Builds on: TrieSig and Argent time derivation. *)
 
 From Stdlib Require Import NArith PArith Arith List Bool Lia Sorting.Sorted.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import TrieSig.
 
 Inductive trie_ne (A : Type) : Type :=
@@ -2170,8 +2187,8 @@ Module PTrieT <: TRIE_ALL.
   Qed.
 
   (** Lookup time is linear in the number of key bits. *)
-  Lemma get_complexity : forall A, bigO (X := positive * t A) (fun _ => True)
-    (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_get (fst x) (snd x)).
+  Lemma get_complexity : forall A,
+    T_get (A := A) p m ∈ 𝑂(N.of_nat (Pos.size_nat p)) for (p, m).
   Proof.
     intro A. exists c_trie. intros [p m] _. cbn [fst snd].
     pose proof (T_get_le A p m) as Hget.
@@ -2179,9 +2196,8 @@ Module PTrieT <: TRIE_ALL.
   Qed.
 
   (** Insertion time is linear in the number of key bits. *)
-  Lemma set_complexity : forall A, bigO (X := positive * A * t A) (fun _ => True)
-    (fun x => N.of_nat (Pos.size_nat (fst (fst x))))
-    (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma set_complexity : forall A,
+    T_set (A := A) p a m ∈ 𝑂(N.of_nat (Pos.size_nat p)) for (p, a, m).
   Proof.
     intro A. exists c_trie. intros [[p a] m] _. cbn [fst snd].
     pose proof (T_set_le A p a m) as Hset.
@@ -2189,8 +2205,8 @@ Module PTrieT <: TRIE_ALL.
   Qed.
 
   (** Removal time is linear in the number of key bits. *)
-  Lemma remove_complexity : forall A, bigO (X := positive * t A) (fun _ => True)
-    (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_remove (fst x) (snd x)).
+  Lemma remove_complexity : forall A,
+    T_remove (A := A) p m ∈ 𝑂(N.of_nat (Pos.size_nat p)) for (p, m).
   Proof.
     intro A. exists c_trie. intros [p m] _. cbn [fst snd].
     pose proof (T_remove_le A p m) as Hremove.
@@ -2199,11 +2215,9 @@ Module PTrieT <: TRIE_ALL.
 
   (** A bounded-callback merge is linear in the combined input skeletons. *)
   Lemma merge_complexity : forall A B C,
-    bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
-      t A * t B)
-      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
-      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
-      (fun '(f, T_f, _, m1, m2) => T_merge f T_f m1 m2).
+    T_merge (A := A) (B := B) (C := C) f T_f m1 m2 ∈
+      𝑂(((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      for (f, T_f, k, m1, m2) | forall a b, (T_f a b <= k)%N.
   Proof.
     intros A B C. exists c_trie.
     intros [[[[f T_f] k] m1] m2] Hcallback.
@@ -2215,11 +2229,9 @@ Module PTrieT <: TRIE_ALL.
 
   (** A bounded relation check is linear in the combined input skeletons. *)
   Lemma forall2b_complexity : forall A B,
-    bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
-      t A * t B)
-      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
-      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
-      (fun '(f, T_f, _, m1, m2) => T_forall2b f T_f m1 m2).
+    T_forall2b (A := A) (B := B) f T_f m1 m2 ∈
+      𝑂(((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      for (f, T_f, k, m1, m2) | forall a b, (T_f a b <= k)%N.
   Proof.
     intros A B. exists c_trie.
     intros [[[[f T_f] k] m1] m2] Hcallback.
@@ -2231,10 +2243,9 @@ Module PTrieT <: TRIE_ALL.
 
   (** A bounded fold pays for the skeleton and the bits of its enumerated keys. *)
   Lemma fold_complexity : forall A B,
-    bigO (X := (B -> positive -> A -> B) * (B -> positive -> A -> N) * N * t A * B)
-      (fun '(_, T_f, k, _, _) => forall acc p a, (T_f acc p a <= k)%N)
-      (fun '(_, _, k, m, _) => ((k + 1) * N.of_nat (nodes m + 1) + N.of_nat (weight m))%N)
-      (fun '(f, T_f, _, m, b) => T_fold f T_f m b).
+    T_fold (A := A) (B := B) f T_f m b ∈
+      𝑂(((k + 1) * N.of_nat (nodes m + 1) + N.of_nat (weight m))%N)
+      for (f, T_f, k, m, b) | forall acc p a, (T_f acc p a <= k)%N.
   Proof.
     intros A B. exists c_trie.
     intros [[[[f T_f] k] m] b] Hcallback.
@@ -2245,8 +2256,8 @@ Module PTrieT <: TRIE_ALL.
   Qed.
 
   (** Enumeration time is linear in the total binding weight. *)
-  Lemma elements_complexity : forall A, bigO (X := t A) (fun _ => True)
-    (fun m => N.of_nat (weight m)) (fun m => T_elements m).
+  Lemma elements_complexity : forall A,
+    T_elements (A := A) m ∈ 𝑂(N.of_nat (weight m)) for m.
   Proof.
     intro A. exists c_trie. intros m _.
     pose proof (T_elements_le A m) as Helements.

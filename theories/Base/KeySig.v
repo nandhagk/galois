@@ -2,6 +2,10 @@
 
     Keys have injective positive encodings and a reflected equality test.
     For example, positive keys can use the identity encoding.
+
+    Main results
+    - [eqb_spec] The Boolean test decides key equality.
+
     Builds on: Stdlib binary arithmetic and Argent time interfaces. *)
 
 From Stdlib Require Import PArith NArith Bool.

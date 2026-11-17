@@ -2,10 +2,21 @@
 
     Lists denote unions and compare by coverage of every alternative.
     For example, cap one collapses two incomparable flat values to their top.
+
+    Main results
+    - [leb_spec] Order compares the projected lists by Hoare coverage.
+    - [is_bot_spec] The bottom test recognizes exactly the empty projected list.
+    - [leb_complexity] Inclusion is linear in both sizes. The constant depends on the cap.
+    - [join_complexity] Joining is linear in both sizes. The constant depends on the cap.
+    - [is_bot_complexity] The bottom test is linear in the size.
+    - [clip_complexity] Clipping at most twice the cap is linear in the raw length and component
+      sizes.
+
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool Arith NArith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig DisjunctionSig Bounded.
 Import List.ListNotations.
 
@@ -614,9 +625,8 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
   Qed.
 
   (** Inclusion is linear in both disjunction sizes for the fixed cap. *)
-  Lemma leb_complexity : bigO (X := t * t) (fun _ => True)
-    (fun xy => N.of_nat (size (fst xy) + size (snd xy)))
-    (fun xy => T_leb (fst xy) (snd xy)).
+  Lemma leb_complexity :
+    T_leb x y ∈ 𝑂(N.of_nat (size x + size y)) for (x, y).
   Proof.
     apply bigO_intro with (c := c_lat).
     intros [a b] _; cbn [fst snd].
@@ -625,9 +635,8 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
   Qed.
 
   (** Joining is linear in both disjunction sizes for the fixed cap. *)
-  Lemma join_complexity : bigO (X := t * t) (fun _ => True)
-    (fun xy => N.of_nat (size (fst xy) + size (snd xy)))
-    (fun xy => T_join (fst xy) (snd xy)).
+  Lemma join_complexity :
+    T_join x y ∈ 𝑂(N.of_nat (size x + size y)) for (x, y).
   Proof.
     apply bigO_intro with (c := c_lat).
     intros [a b] _; cbn [fst snd].
@@ -636,7 +645,8 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
   Qed.
 
   (** Bottom testing is linear in the disjunction size. *)
-  Lemma is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Lemma is_bot_complexity :
+    T_is_bot a ∈ 𝑂(N.of_nat (size a)) for a.
   Proof.
     apply bigO_intro with (c := c_lat).
     intros a _.
@@ -645,8 +655,9 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
   Qed.
 
   (** Clipping within twice the cap is linear in raw length and component sizes. *)
-  Lemma clip_complexity : bigO (fun xs : list L.t => length xs <= 2 * C.k)
-    (fun xs => N.of_nat (length xs + fold_right (fun a n => L.size a + n) 0 xs)) T_clip.
+  Lemma clip_complexity :
+    T_clip xs ∈ 𝑂(N.of_nat (length xs + fold_right (fun a n => (L.size a + n)%nat) 0%nat xs))
+    for xs | length xs <= 2 * C.k.
   Proof.
     apply bigO_intro with (c := c_lat).
     intros xs Hlength.

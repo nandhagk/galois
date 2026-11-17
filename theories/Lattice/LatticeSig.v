@@ -2,6 +2,17 @@
 
     These layers separate executable orders from laws and time bounds.
     For example, Boolean disjunction supplies a join and false supplies bottom.
+
+    Main results
+    - [bot_least] Bottom is below every value.
+    - [is_bot_least] Every recognized bottom is below every value.
+
+    Glossary
+    - [wrank] The widening rank of a value, which every unstable widening strictly lowers.
+    - [wsize] The size of a widening parameter, such as a threshold set.
+    - [wunits] The number of components that widening widens one at a time, each paying the
+      parameter's size.
+
     Builds on: Stdlib arithmetic and Argent time interfaces. *)
 
 From Stdlib Require Import Arith NArith Bool.

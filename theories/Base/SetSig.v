@@ -2,10 +2,27 @@
 
     Keyed sets provide membership and finite set operations over client keys.
     For example, union contains each key present in either operand.
+
+    Main results
+    - [elements_spec] Consistent sets enumerate precisely their members.
+    - [fold_spec] Folding follows enumeration order.
+    - [subset_spec] Inclusion accepts exactly when every member of the left set is a member of
+      the right set.
+    - [equal_spec] Equality accepts exactly when two sets have the same members.
+    - [mem_complexity] Membership is linear in the encoded key length.
+    - [add_complexity] Adding a member is linear in the encoded key length.
+    - [union_complexity] Union, intersection and difference visit the shared skeleton only.
+    - [inter_complexity] Intersection visits the shared skeleton only, so its time is linear in
+      the smaller tree.
+    - [diff_complexity] Difference visits the shared skeleton only, so its time is linear in
+      the smaller tree.
+    - [subset_complexity] Inclusion visits the left skeleton only and stops at the first failure.
+
     Builds on: KeySig, Stdlib lists and Argent time interfaces. *)
 
 From Stdlib Require Import NArith PArith List Bool.
-From Argent Require Import Time BigO.
+From Argent Require Import Time Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 
 Module Type SET_OPS (K : KEY_OPS).
@@ -130,24 +147,21 @@ Module Type SET_TIME (K : KEY_T) (Import S : SET K).
     ((forall acc k, T_f acc k <= c) ->
     T_fold f T_f s a <= c_set * (c + 1) * N.of_nat (nodes s + 1))%N.
   (** Membership is linear in the encoded key length. *)
-  Parameter mem_complexity : bigO (X := K.t * t) (fun _ => True)
-    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_mem (fst x) (snd x)).
+  Parameter mem_complexity :
+    T_mem k s ∈ 𝑂(N.of_nat (K.bits k)) for (k, s).
   (** Adding a member is linear in the encoded key length. *)
-  Parameter add_complexity : bigO (X := K.t * t) (fun _ => True)
-    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_add (fst x) (snd x)).
+  Parameter add_complexity :
+    T_add k s ∈ 𝑂(N.of_nat (K.bits k)) for (k, s).
   (** Union, intersection and difference visit the shared skeleton only. *)
-  Parameter union_complexity : bigO (X := t * t) (fun _ => True)
-    (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
-    (fun x => T_union (fst x) (snd x)).
-  Parameter inter_complexity : bigO (X := t * t) (fun _ => True)
-    (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
-    (fun x => T_inter (fst x) (snd x)).
-  Parameter diff_complexity : bigO (X := t * t) (fun _ => True)
-    (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
-    (fun x => T_diff (fst x) (snd x)).
+  Parameter union_complexity :
+    T_union s u ∈ 𝑂(N.of_nat (Nat.min (nodes s) (nodes u))) for (s, u).
+  Parameter inter_complexity :
+    T_inter s u ∈ 𝑂(N.of_nat (Nat.min (nodes s) (nodes u))) for (s, u).
+  Parameter diff_complexity :
+    T_diff s u ∈ 𝑂(N.of_nat (Nat.min (nodes s) (nodes u))) for (s, u).
   (** Inclusion visits the left skeleton only and stops at the first failure. *)
-  Parameter subset_complexity : bigO (X := t * t) (fun _ => True)
-    (fun x => N.of_nat (nodes (fst x))) (fun x => T_subset (fst x) (snd x)).
+  Parameter subset_complexity :
+    T_subset s u ∈ 𝑂(N.of_nat (nodes s)) for (s, u).
 End SET_TIME.
 
 Module Type SET_T (K : KEY_T) := SET K <+ SET_TIME K.

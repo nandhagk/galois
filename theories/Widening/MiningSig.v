@@ -2,10 +2,17 @@
 
     Mining collects literals and their neighbors for threshold widening.
     For example, a literal 4 contributes 3, 4 and 5.
+
+    Main results
+    - [lits_complexity] Literal collection is linear in the term size.
+    - [mine_complexity] Mining is linear in the terms and seeds plus the cost of building the
+      thresholds.
+
     Builds on: LangSig and ThresholdsSig. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import Std BigO.
+From Argent Require Import Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ThresholdsSig.
 
@@ -44,19 +51,19 @@ Module Type MINING_TIME (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
   Parameter T_lits_le : forall e, (T_lits e <= c_mining * N.of_nat ((tsize e)%nat))%N.
   (** Mining charges traversal, neighbor arithmetic and threshold construction. *)
   Parameter T_mine_le : forall es extra, (T_mine es extra <= c_mining *
-    (N.of_nat ((fold_right Nat.add 0 (map tsize es) +
+    (N.of_nat ((fold_right Nat.add 0%nat (map tsize es) +
      fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)))%nat) +
      T.T_make (expanded es extra) + 1))%N.
   (** Literal collection is linear in the term size. *)
-  Parameter lits_complexity : bigO (X := term L.op X.t) (fun _ => True)
-    (fun e => N.of_nat (tsize e)) (fun e => T_lits e).
+  Parameter lits_complexity :
+    T_lits e ∈ 𝑂(N.of_nat (tsize e)) for e.
   (** Mining is linear in the terms and seeds plus the cost of building the thresholds. *)
-  Parameter mine_complexity : bigO (X := list (term L.op X.t) * list Z) (fun _ => True)
-    (fun '(es, extra) => N.of_nat (fold_right Nat.add 0 (map tsize es) +
-        fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)) +
+  Parameter mine_complexity :
+    T_mine es extra ∈ 𝑂(N.of_nat (fold_right Nat.add 0%nat (map tsize es) +
+        fold_right Nat.add 0%nat (map (fun z => (Z.size_nat z + 1)%nat) (seeds es extra)) +
         ((length (expanded es extra) * (Nat.log2 (length (expanded es extra)) + 1) + 1) *
           (T.zb (expanded es extra) + 1))))
-    (fun '(es, extra) => T_mine es extra).
+    for (es, extra).
 End MINING_TIME.
 
 Module Type MINING_T (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T) :=

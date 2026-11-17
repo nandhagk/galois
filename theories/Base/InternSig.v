@@ -2,10 +2,19 @@
 
     Interning assigns stable dense positive identifiers to client keys.
     For example, interning the same key twice returns the same identifier.
+
+    Main results
+    - [intern_complexity] Interning is linear in the key bits and the allocation frontier's width.
+    - [find_complexity] Forward lookup is linear in the key bits and the allocation
+      frontier's width.
+    - [name_complexity] Inverse lookup is linear in the identifier bits and the
+      allocation frontier's width.
+
     Builds on: KeySig, Stdlib binary arithmetic, and Argent time interfaces. *)
 
 From Stdlib Require Import PArith NArith.
-From Argent Require Import Time BigO.
+From Argent Require Import Time Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 
 Module Type INTERN_OPS (K : KEY_OPS).
@@ -85,17 +94,14 @@ Module Type INTERN_TIME (K : KEY_T) (Import I : INTERN K).
   Parameter T_size_le : forall s,
     (T_size s <= c_intern * N.of_nat (N.size_nat (size s) + 1))%N.
   (** Interning is linear in the key bits and the allocation frontier's width. *)
-  Parameter intern_complexity : bigO (X := K.t * t) (fun xs => wf (snd xs))
-    (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
-    (fun xs => T_intern (fst xs) (snd xs)).
+  Parameter intern_complexity :
+    T_intern k s ∈ 𝑂(N.of_nat (K.bits k + N.size_nat (size s))) for (k, s) | wf s.
   (** Forward lookup is linear in the key bits and the allocation frontier's width. *)
-  Parameter find_complexity : bigO (X := K.t * t) (fun _ => True)
-    (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
-    (fun xs => T_find (fst xs) (snd xs)).
+  Parameter find_complexity :
+    T_find k s ∈ 𝑂(N.of_nat (K.bits k + N.size_nat (size s))) for (k, s).
   (** Inverse lookup is linear in the identifier bits and the allocation frontier's width. *)
-  Parameter name_complexity : bigO (X := positive * t) (fun _ => True)
-    (fun xs => N.of_nat (Pos.size_nat (fst xs) + N.size_nat (size (snd xs))))
-    (fun xs => T_name (fst xs) (snd xs)).
+  Parameter name_complexity :
+    T_name i s ∈ 𝑂(N.of_nat (Pos.size_nat i + N.size_nat (size s))) for (i, s).
 
 End INTERN_TIME.
 

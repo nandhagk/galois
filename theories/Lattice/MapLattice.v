@@ -2,10 +2,17 @@
 
     Sparse environments use explicit defaults for absent keys.
     For example, joining top-default maps drops a binding present on one side.
+
+    Main results
+    - [leb_complexity] Inclusion is linear in both map sizes.
+    - [join_complexity] Joining is linear in both map sizes.
+    - [is_bot_complexity] Bottom testing is linear in the map size.
+
     Builds on: LatticeSig and MapSig. *)
 
 From Stdlib Require Import Bool List Arith NArith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Lattice Require Import LatticeSig.
 
@@ -326,9 +333,8 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
   Qed.
 
   (** Inclusion is linear in both map sizes. *)
-  Theorem leb_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_leb (fst ab) (snd ab)).
+  Theorem leb_complexity :
+    T_leb x y ∈ 𝑂(N.of_nat (size x + size y)) for (x, y).
   Proof.
     apply bigO_intro with (c := c_lat).
     intros [a b] _; cbn [fst snd].
@@ -337,9 +343,8 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
   Qed.
 
   (** Joining is linear in both map sizes. *)
-  Theorem join_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_join (fst ab) (snd ab)).
+  Theorem join_complexity :
+    T_join x y ∈ 𝑂(N.of_nat (size x + size y)) for (x, y).
   Proof.
     apply bigO_intro with (c := c_lat).
     intros [a b] _; cbn [fst snd].
@@ -348,7 +353,8 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
   Qed.
 
   (** Bottom testing is linear in the map size. *)
-  Theorem is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Theorem is_bot_complexity :
+    T_is_bot a ∈ 𝑂(N.of_nat (size a)) for a.
   Proof.
     apply bigO_intro with (c := c_lat).
     intros a _.

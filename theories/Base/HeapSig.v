@@ -2,10 +2,16 @@
 
     A priority queue keeps the least priority assigned to each live positive item.
     For example, pushing a larger priority for a live item leaves its priority unchanged.
+
+    Main results
+    - [push_complexity] Push has the worst-case logarithmic comparison cost of bounded width.
+    - [pop_complexity] Pop pays one unit budget plus one for each stale entry it discards.
+
     Builds on: Stdlib lists and binary arithmetic, and Argent time interfaces. *)
 
 From Stdlib Require Import List PArith NArith Arith.
-From Argent Require Import Time BigO.
+From Argent Require Import Time Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import Loop.
 
 Module Type PQ_OPS.
@@ -90,17 +96,14 @@ Module Type PQ_TIME (Import Q : PQ).
   (** Reading cached live size takes constant time. *)
   Parameter T_size_le : forall q, (T_size q <= c_pq)%N.
   (** Push has the worst-case logarithmic comparison cost of bounded width. *)
-  Parameter push_complexity : bigO (X := nat * nat * N * positive * t)
-    (fun '(P, w, p, x, q) => wf q /\ fits w q /\ (pending q < P)%nat /\
-      (Pos.size_nat x + N.size_nat p <= w)%nat)
-    (fun '(P, w, _, _, _) => N.of_nat (unit_pq P w))
-    (fun '(_, _, p, x, q) => T_push p x q).
+  Parameter push_complexity :
+    T_push p x q ∈ 𝑂(N.of_nat (unit_pq P w))
+      for (P, w, p, x, q) | wf q /\ fits w q /\ (pending q < P)%nat /\
+        (Pos.size_nat x + N.size_nat p <= w)%nat.
   (** Pop pays one unit budget plus one for each stale entry it discards. *)
-  Parameter pop_complexity : bigO (X := nat * nat * t)
-    (fun '(P, w, q) => wf q /\ fits w q /\ (pending q <= P)%nat)
-    (fun '(P, w, q) =>
-      N.of_nat (unit_pq P w * (pending q - N.to_nat (size q) + 1)))
-    (fun '(_, _, q) => T_pop q).
+  Parameter pop_complexity :
+    T_pop q ∈ 𝑂(N.of_nat (unit_pq P w * (pending q - N.to_nat (size q) + 1)))
+      for (P, w, q) | wf q /\ fits w q /\ (pending q <= P)%nat.
 End PQ_TIME.
 
 Module Type PQ_T := PQ <+ PQ_TIME.
