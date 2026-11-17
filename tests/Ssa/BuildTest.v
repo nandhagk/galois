@@ -99,7 +99,9 @@ Example build_short_circuit_agrees :
       | Some (s, c) =>
         if andb (TestValidate.check p s c) (TestValidate.check_ssa s) then Some s else None
       end) [build_diamond; build_unavailable].
-Proof. vm_compute; reflexivity. Qed.
+Proof.
+  vm_compute; reflexivity.
+Qed.
 
 (** These fixtures keep the inputs live across blocks and all temporary definitions local. *)
 Module TestInputLive.
@@ -124,7 +126,9 @@ Example build_local_temporaries_inventory :
   (length (TestView.U.universe (TestView.R.prepare build_local_temporaries)),
     length (live_variables (TestInputLive.live_in build_local_temporaries)
       (TestView.U.universe (TestView.R.prepare build_local_temporaries)))) = (42, 2)%nat.
-Proof. vm_compute; reflexivity. Qed.
+Proof.
+  vm_compute; reflexivity.
+Qed.
 
 (** Filtering leaves exactly the same placement table as the complete universe. *)
 Example build_local_temporaries_placement :
@@ -133,7 +137,9 @@ Example build_local_temporaries_placement :
       (TestInputBuild.def_index build_local_temporaries)
       (TestInputBuild.live_sets (TestInputLive.live_in build_local_temporaries))
       (TestView.U.universe (TestView.R.prepare build_local_temporaries)).
-Proof. vm_compute; reflexivity. Qed.
+Proof.
+  vm_compute; reflexivity.
+Qed.
 
 (** A function accepted by the original guard keeps its exact checked candidate. *)
 Example build_local_temporaries_unchanged :
@@ -150,12 +156,16 @@ Example build_local_temporaries_unchanged :
       if andb (TestValidate.check build_local_temporaries s c) (TestValidate.check_ssa s)
       then Some s else None
     end.
-Proof. vm_compute; reflexivity. Qed.
+Proof.
+  vm_compute; reflexivity.
+Qed.
 
 Example build_local_temporaries_result :
   option_map (fun s => run_with TestOps.eval TestOps.test 3 s [4; 5])
     (TestInputBuild.build build_local_temporaries) = Some (Returned [4; 5]).
-Proof. vm_compute; reflexivity. Qed.
+Proof.
+  vm_compute; reflexivity.
+Qed.
 
 Definition build_large_inputs : list positive := map Pos.of_succ_nat (seq 0 20).
 Definition build_large_block (i : nat) : positive * block positive positive positive :=
@@ -171,14 +181,20 @@ Definition build_large_universe : TestSource.t :=
 (** The old guard rejected this function: 2,000 times 37 exceeds 54,704, so old build returned
     None. Only the twenty inputs are live across block entries; the new product is 740. *)
 Example build_large_universe_produced : TestInputBuild.produce build_large_universe <> None.
-Proof. vm_compute; discriminate. Qed.
+Proof.
+  vm_compute; discriminate.
+Qed.
 
 Example build_large_universe_accepted : TestInputBuild.build build_large_universe <> None.
-Proof. vm_compute; discriminate. Qed.
+Proof.
+  vm_compute; discriminate.
+Qed.
 
 Example build_large_universe_is_ssa :
   option_map TestValidate.check_ssa (TestInputBuild.build build_large_universe) = Some true.
-Proof. vm_compute; reflexivity. Qed.
+Proof.
+  vm_compute; reflexivity.
+Qed.
 
 Module TestRejectValidate.
   Definition check (_ _ : TestSource.t) (_ : cert) : bool := false.
@@ -191,4 +207,6 @@ Module TestRejectBuild := BuildCode TestOps PosKeyCode PosKeyCode TestSource
 (** Failure of the translation validator rejects an otherwise valid produced candidate. *)
 Example build_short_circuit_rejects_candidate :
   TestRejectBuild.produce build_diamond <> None /\ TestRejectBuild.build build_diamond = None.
-Proof. vm_compute; split; [discriminate|reflexivity]. Qed.
+Proof.
+  vm_compute; split; [discriminate|reflexivity].
+Qed.

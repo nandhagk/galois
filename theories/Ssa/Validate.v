@@ -4280,6 +4280,7 @@ Module ValidateT (O : OPS)
       time_simpl; nia.
   Qed.
 
+  (** A target supplied with renaming indexes avoids their construction work. *)
   Lemma check_target_with_clock t target rho known args :
     (T_check_target_with t target (ExitTables (val_index rho) (val_inverse rho) known) args <=
       T_check_target t target rho known args)%N.
@@ -4291,6 +4292,7 @@ Module ValidateT (O : OPS)
     destruct (val_bind_symbols (params _ _ _ sb) args Empty); lia.
   Qed.
 
+  (** Sharing the renaming indexes cannot increase an arm's checking work. *)
   Lemma check_arm_with_clock t target rho known ie se choice :
     (T_check_arm_with t target (ExitTables (val_index rho) (val_inverse rho) known)
       ie se choice <= T_check_arm t target rho known ie se choice)%N.
@@ -4303,6 +4305,7 @@ Module ValidateT (O : OPS)
     destruct (Pos.eqb u target), (Pos.eqb u v); lia.
   Qed.
 
+  (** Reusing the found bodies and exit tables removes repeated edge preparation. *)
   Lemma check_edge_with_clock t b target rho ib sb :
     trie_get b (source_bodies t) = Some ib -> trie_get b (target_bodies t) = Some sb ->
     (T_check_edge_with t target (prepare_exit_tables t b ib rho) ib sb <=
