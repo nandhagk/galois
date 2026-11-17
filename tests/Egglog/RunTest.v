@@ -191,6 +191,28 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** Three productive delta rounds and two quiet rounds saturate the chain. *)
+Example closure_run_five_calls :
+  let cp := PlanRun.plan closure_program in
+  (fst (PlanRun.run closure_program cp (Limits 5 100) closure_seed),
+   fst (PlanRun.run closure_program cp (Limits 4 100) closure_seed)) =
+  (Saturated, IterLimit).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The first round leaves its new paths available to the next semi-naive join. *)
+Example closure_semi_round_reads_delta :
+  let cp := PlanRun.plan closure_program in
+  match PlanRun.driver closure_program cp (Limits 10 100) (false, closure_seed) with
+  | inl (_, db) =>
+    map (fun j => rule_ix positive (fst j)) (PlanRun.jobs closure_program cp false db)
+  | inr _ => []
+  end = [1; 1]%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Two rounds stop before the naive round that would confirm saturation. *)
 Example closure_iteration_limit :
   fst (PlanRun.run closure_program (PlanRun.plan closure_program) (Limits 2 100)
@@ -519,6 +541,22 @@ Example derivation_plan_result_put :
    fst (PlanDatabase.lookup 1 []
      (PlanRun.apply [Put 1 [] (Some (Lit 1%positive))] (fun _ => None) db))) =
   (true, Some (Some (val 1))).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** * Raised initial change flag *)
+
+(** Advancing before the first empty round clears the seed flag and saves a driver call. *)
+Example raised_flag_two_rounds :
+  let p := Program positive [] [] in
+  let cp := PlanRun.plan p in
+  let empty := PlanRun.load p cp in
+  let initial := database_set_runtime (runtime_set_changed true (db_runtime empty)) empty in
+  (PlanDatabase.changed initial,
+   fst (PlanRun.run p cp (Limits 2 0) initial),
+   fst (PlanRun.run p cp (Limits 1 0) initial)) =
+  (true, Saturated, IterLimit).
 Proof.
   vm_compute. reflexivity.
 Qed.
