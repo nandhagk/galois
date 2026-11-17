@@ -2155,6 +2155,313 @@ Proof.
 Qed.
 
 
+(** * Paired interval metadata
+
+    The checker builds paired cells only after the order and parent map pass validation.
+    The agreement invariant below keeps the position domain fixed during size accumulation. *)
+
+(** Seed every positioned vertex with its position and the default subtree size. *)
+Definition dom_info_initial (pos : ptrie N) : ptrie (N * N) :=
+  PTrieCode.filter_map (fun p => Some (p, 1%N)) pos.
+TimeFun dom_info_initial.
+
+(** Accumulate a positioned child into its parent without rewriting its own cell. *)
+Definition dom_info_add_size (m : ptrie positive) (info : ptrie (N * N)) (v : positive)
+    : ptrie (N * N) :=
+  match trie_get v info with
+  | None => info
+  | Some (_, own) =>
+    match trie_get v m with
+    | None => info
+    | Some p =>
+      match trie_get p info with
+      | None => info
+      | Some (pp, sp) => PTrieCode.replace p (Some (pp, N.add sp own)) info
+      end
+    end
+  end.
+TimeFun dom_info_add_size.
+
+(** Compute subtree sizes in the position trie with one parent update per vertex. *)
+Definition dom_info_sizes (m : ptrie positive) (o : list positive) (pos : ptrie N)
+    : ptrie (N * N) :=
+  fold_left (dom_info_add_size m) (rev_append o []) (dom_info_initial pos).
+TimeFun dom_info_sizes.
+
+(** Compare both interval endpoints after reading one paired cell per vertex. *)
+Definition dom_info_interval (info : ptrie (N * N)) (u v : positive) : bool :=
+  match trie_get u info, trie_get v info with
+  | Some (pu, su), Some (pv, sv) =>
+    if N.leb pu pv then N.leb (N.add pv sv) (N.add pu su) else false
+  | _, _ => false
+  end.
+TimeFun dom_info_interval.
+
+(** Check that every parent interval contains its child interval. *)
+Definition dom_info_sizes_ok (m : ptrie positive) (info : ptrie (N * N)) (o : list positive)
+    : bool :=
+  forallb (fun v => match trie_get v m with
+    | None => true
+    | Some p => dom_info_interval info p v
+    end) o.
+TimeFun dom_info_sizes_ok.
+
+(** Compare a cached source interval with one paired parent lookup. *)
+Definition dom_info_interval_from (info : ptrie (N * N)) (p : positive) (pu su : N) : bool :=
+  match trie_get p info with
+  | Some (pp, sp) => if N.leb pp pu then N.leb (N.add pu su) (N.add pp sp) else false
+  | None => false
+  end.
+TimeFun dom_info_interval_from.
+
+(** Collect low-high witnesses using paired parent metadata and a cached source. *)
+Definition dom_info_edge_update (r : positive) (m : ptrie positive) (pos : ptrie N)
+    (info : ptrie (N * N)) (u : positive) (pu su : N)
+    (acc : option (ptrie (bool * N * N))) (v : positive) : option (ptrie (bool * N * N)) :=
+  match acc with
+  | None => None
+  | Some flags =>
+    match trie_get v pos with
+    | None => None
+    | Some _ =>
+      if Pos.eqb v r then Some flags else
+        match trie_get v m with
+        | None => None
+        | Some p =>
+          if dom_info_interval_from info p pu su then
+            let '(direct, lo, hi) :=
+              match trie_get v flags with
+              | None => (false, pu, pu)
+              | Some flag => flag
+              end in
+            Some (PTrieCode.set v
+              (if direct then true else Pos.eqb u p, N.min lo pu, N.max hi pu) flags)
+          else None
+        end
+    end
+  end.
+TimeFun dom_info_edge_update.
+
+(** Read source metadata once before processing its outgoing edges. *)
+Definition dom_info_edges_from (g : prepared) (r : positive) (m : ptrie positive)
+    (pos : ptrie N) (info : ptrie (N * N)) (acc : option (ptrie (bool * N * N))) (u : positive)
+    : option (ptrie (bool * N * N)) :=
+  match acc with
+  | None => None
+  | Some _ =>
+    match trie_get u info with
+    | Some (pu, su) => fold_left (dom_info_edge_update r m pos info u pu su)
+      (succs (base g) u) acc
+    | None =>
+      match succs (base g) u with
+      | [] => acc
+      | _ => None
+      end
+    end
+  end.
+TimeFun dom_info_edges_from.
+
+(** Accept a direct parent witness before comparing the low and high endpoints. *)
+Definition dom_info_low_high (r : positive) (info : ptrie (N * N))
+    (flags : ptrie (bool * N * N)) (v : positive) : bool :=
+  if Pos.eqb v r then true else
+    match trie_get v info, trie_get v flags with
+    | Some (pv, sv), Some (direct, lo, hi) =>
+      if direct then true else
+        if N.ltb lo pv then N.leb (N.add pv sv) hi else false
+    | _, _ => false
+    end.
+TimeFun dom_info_low_high.
+
+(** Validate edge containment and low-high witnesses from paired intervals. *)
+Definition dom_info_edges (g : prepared) (r : positive) (m : ptrie positive)
+    (o : list positive) (pos : ptrie N) (info : ptrie (N * N)) : bool :=
+  match fold_left (dom_info_edges_from g r m pos info) o (Some Empty) with
+  | None => false
+  | Some flags => forallb (dom_info_low_high r info flags) o
+  end.
+TimeFun dom_info_edges.
+
+(** Paired cells retain the position domain and the defaulted size of each position. *)
+Local Definition dom_info_matches (pos sizes : ptrie N) (info : ptrie (N * N)) : Prop :=
+  forall v, trie_get v info =
+    match trie_get v pos with
+    | Some p => Some (p, dom_size_get sizes v)
+    | None => None
+    end.
+
+(** Positioned vertices have positioned parents whenever a parent binding exists. *)
+Local Definition dom_info_closed (m : ptrie positive) (pos : ptrie N) : Prop :=
+  forall v p, (exists i, trie_get v pos = Some i) -> trie_get v m = Some p ->
+    exists i, trie_get p pos = Some i.
+
+(** Initial paired cells agree with the empty size table's default value. *)
+Local Lemma dom_info_initial_agrees pos : dom_info_matches pos Empty (dom_info_initial pos).
+Proof.
+  intro v. unfold dom_info_initial. rewrite PTrieT.F8_filter.
+  change (PTrieT.get v pos) with (trie_get v pos).
+  destruct (trie_get v pos); [|reflexivity].
+  unfold dom_size_get. rewrite PTrie.get_empty. reflexivity.
+Qed.
+
+(** Parent accumulation updates the same size while preserving every stored position. *)
+Local Lemma dom_info_add_size_agrees m pos sizes info v :
+  dom_info_matches pos sizes info -> dom_info_closed m pos ->
+  (exists i, trie_get v pos = Some i) ->
+  dom_info_matches pos (dom_add_size m sizes v) (dom_info_add_size m info v).
+Proof.
+  intros Hagree Hclosed [pv Hv]. unfold dom_info_add_size.
+  rewrite Hagree, Hv. destruct (trie_get v m) as [p|] eqn:Hparent.
+  - destruct (Hclosed v p (ex_intro _ pv Hv) Hparent) as [pp Hp].
+    rewrite Hagree, Hp. intro x. rewrite PTrieT.F7_replace, dom_add_size_value, Hparent.
+    change (PTrieT.get x info) with (trie_get x info).
+    destruct (Pos.eqb x p) eqn:Heq.
+    + apply Pos.eqb_eq in Heq. subst x. now rewrite Hp.
+    + rewrite Hagree. destruct (trie_get x pos); reflexivity.
+  - intro x. rewrite Hagree, dom_add_size_value, Hparent. reflexivity.
+Qed.
+
+(** Repeated paired accumulation agrees with the existing size fold. *)
+Local Lemma dom_info_size_fold_agrees m pos xs :
+  dom_info_closed m pos ->
+  (forall v, In v xs -> exists i, trie_get v pos = Some i) ->
+  forall sizes info, dom_info_matches pos sizes info ->
+  dom_info_matches pos (fold_left (dom_add_size m) xs sizes)
+    (fold_left (dom_info_add_size m) xs info).
+Proof.
+  intro Hclosed. induction xs as [|v rest IH]; intros Hkeys sizes info Hagree.
+  - exact Hagree.
+  - cbn [fold_left]. apply IH.
+    + intros x Hx. apply Hkeys. now right.
+    + apply dom_info_add_size_agrees; [exact Hagree|exact Hclosed|].
+      apply Hkeys. now left.
+Qed.
+
+(** A checked parent map closes the paired-cell domain supplied by the successful reader. *)
+Local Lemma dom_info_read_closed g r m o pos :
+  dom_read_known (dom_scan g) r o = Some pos ->
+  dom_map_check_known (dom_scan g) r m o = true ->
+  dom_info_closed m pos.
+Proof.
+  intros Hread Hmap v p Hposition Hparent.
+  destruct (dom_read_known_success g r o pos Hread)
+    as [_ [_ [_ [_ Hkeys]]]].
+  apply Hkeys. exact (proj2 (dom_map_check_domain g r m o Hmap v p Hparent)).
+Qed.
+
+(** The fused size phase has the same position and size observations as the two original tables. *)
+Local Lemma dom_info_sizes_agrees g r m o pos :
+  dom_read_known (dom_scan g) r o = Some pos ->
+  dom_map_check_known (dom_scan g) r m o = true ->
+  dom_info_matches pos (dom_sizes m o) (dom_info_sizes m o pos).
+Proof.
+  intros Hread Hmap. unfold dom_sizes, dom_info_sizes.
+  apply dom_info_size_fold_agrees.
+  - now apply (dom_info_read_closed g r m o pos).
+  - intros v Hv. rewrite rev_append_rev, app_nil_r in Hv.
+    destruct (dom_read_known_success g r o pos Hread)
+      as [_ [_ [_ [_ Hkeys]]]].
+    apply Hkeys. now apply (proj2 (in_rev o v)).
+  - apply dom_info_initial_agrees.
+Qed.
+
+(** Paired interval comparisons preserve containment. *)
+Local Lemma dom_info_interval_agrees pos sizes info u v :
+  dom_info_matches pos sizes info ->
+  dom_info_interval info u v = dom_interval pos sizes u v.
+Proof.
+  intro Hagree. unfold dom_info_interval, dom_interval. rewrite !Hagree.
+  destruct (trie_get u pos), (trie_get v pos); reflexivity.
+Qed.
+
+(** Paired parent tests preserve the original size-check result. *)
+Local Lemma dom_info_sizes_ok_agrees m pos sizes info o :
+  dom_info_matches pos sizes info ->
+  dom_info_sizes_ok m info o = dom_sizes_ok m pos sizes o.
+Proof.
+  intro Hagree. unfold dom_info_sizes_ok, dom_sizes_ok.
+  induction o as [|v rest IH]; cbn [forallb]; [reflexivity|].
+  rewrite IH. destruct (trie_get v m) as [p|]; [|reflexivity].
+  now rewrite (dom_info_interval_agrees pos sizes info p v Hagree).
+Qed.
+
+(** A cached source is compared to the same parent interval in either representation. *)
+Local Lemma dom_info_interval_from_agrees pos sizes info p pu su :
+  dom_info_matches pos sizes info ->
+  dom_info_interval_from info p pu su = dom_interval_from pos sizes p pu su.
+Proof.
+  intro Hagree. unfold dom_info_interval_from, dom_interval_from.
+  rewrite Hagree. destruct (trie_get p pos); reflexivity.
+Qed.
+
+(** Paired metadata preserves each low-high edge update. *)
+Local Lemma dom_info_edge_update_agrees r m pos sizes info u pu su acc v :
+  dom_info_matches pos sizes info ->
+  dom_info_edge_update r m pos info u pu su acc v =
+    dom_edge_update_from r m pos sizes u pu su acc v.
+Proof.
+  intro Hagree. unfold dom_info_edge_update, dom_edge_update_from.
+  destruct acc as [flags|]; [|reflexivity].
+  destruct (trie_get v pos); [|reflexivity].
+  destruct (Pos.eqb v r); [reflexivity|].
+  destruct (trie_get v m) as [p|]; [|reflexivity].
+  now rewrite (dom_info_interval_from_agrees pos sizes info p pu su Hagree).
+Qed.
+
+(** A paired source row preserves all edge flags and failure outcomes. *)
+Local Lemma dom_info_edges_from_agrees g r m pos sizes info acc u :
+  dom_info_matches pos sizes info ->
+  dom_info_edges_from g r m pos info acc u = dom_edges_from_fast g r m pos sizes acc u.
+Proof.
+  intro Hagree. unfold dom_info_edges_from, dom_edges_from_fast.
+  destruct acc as [flags|]; [|reflexivity].
+  rewrite Hagree. destruct (trie_get u pos) as [pu|]; [|reflexivity].
+  generalize (Some flags) as acc.
+  induction (succs (base g) u) as [|v rest IH]; intro acc; cbn [fold_left]; [reflexivity|].
+  rewrite (dom_info_edge_update_agrees r m pos sizes info u pu
+    (dom_size_get sizes u) acc v Hagree). apply IH.
+Qed.
+
+(** Paired intervals and short circuiting preserve the final low-high predicate. *)
+Local Lemma dom_info_low_high_agrees r pos sizes info flags v :
+  dom_info_matches pos sizes info ->
+  dom_info_low_high r info flags v = dom_low_high r pos sizes flags v.
+Proof.
+  intro Hagree. unfold dom_info_low_high, dom_low_high.
+  destruct (Pos.eqb v r); [reflexivity|]. rewrite Hagree.
+  destruct (trie_get v pos), (trie_get v flags) as [[[direct lo] hi]|]; reflexivity.
+Qed.
+
+(** The paired edge phase gives the same low-high decision. *)
+Local Lemma dom_info_edges_agrees g r m o pos sizes info :
+  dom_info_matches pos sizes info ->
+  dom_info_edges g r m o pos info = dom_edges g r m o pos sizes.
+Proof.
+  intro Hagree. unfold dom_info_edges, dom_edges.
+  assert (Hfold : forall acc,
+    fold_left (dom_info_edges_from g r m pos info) o acc =
+      fold_left (dom_edges_from_fast g r m pos sizes) o acc).
+  { induction o as [|v rest IH]; intro acc; cbn [fold_left]; [reflexivity|].
+    rewrite (dom_info_edges_from_agrees g r m pos sizes info acc v Hagree). apply IH. }
+  rewrite Hfold. destruct (fold_left (dom_edges_from_fast g r m pos sizes) o (Some Empty))
+    as [flags|]; [|reflexivity].
+  clear Hfold. induction o as [|v rest IH]; cbn [forallb]; [reflexivity|].
+  rewrite (dom_info_low_high_agrees r pos sizes info flags v Hagree), IH. reflexivity.
+Qed.
+
+(** The position-reusing checker remains the reference for paired metadata. *)
+Local Definition dom_check_positions_spec (g : prepared) (r : positive) (m : ptrie positive)
+    (o : list positive) : bool :=
+  let info := dom_scan g in
+  match dom_read_known info r o with
+  | None => false
+  | Some pos =>
+    if dom_map_check_pos info r m o pos then
+      let sizes := dom_sizes m o in
+      dom_sizes_ok m pos sizes o && dom_edges g r m o pos sizes
+    else false
+  end.
+
 (** The original phase composition specifies the checker independently of order reuse. *)
 Local Definition dom_check_spec (g : prepared) (r : positive) (m : ptrie positive)
     (o : list positive) : bool :=
@@ -2186,13 +2493,13 @@ Module DomCode <: DOM_OPS.
 
   Definition check (g : prepared) (r : positive) (m : ptrie positive)
       (o : list positive) : bool :=
-    let info := dom_scan g in
-    match dom_read_known info r o with
+    let scan := dom_scan g in
+    match dom_read_known scan r o with
     | None => false
     | Some pos =>
-      if dom_map_check_pos info r m o pos then
-        let sizes := dom_sizes m o in
-        dom_sizes_ok m pos sizes o && dom_edges g r m o pos sizes
+      if dom_map_check_pos scan r m o pos then
+        let info := dom_info_sizes m o pos in
+        if dom_info_sizes_ok m info o then dom_info_edges g r m o pos info else false
       else false
     end.
 
@@ -2219,11 +2526,28 @@ Module DomCode <: DOM_OPS.
     end.
 End DomCode.
 
-(** Reading the order once preserves acceptance for every candidate. *)
+(** Fused paired sizes leave the public checker result unchanged on every candidate. *)
+Local Lemma dom_check_record_agrees g r m o :
+  DomCode.check g r m o = dom_check_positions_spec g r m o.
+Proof.
+  unfold DomCode.check, dom_check_positions_spec.
+  destruct (dom_read_known (dom_scan g) r o) as [pos|] eqn:Hread; [|reflexivity].
+  destruct (dom_map_check_pos (dom_scan g) r m o pos) eqn:Hmap; [|reflexivity].
+  assert (Hknown : dom_map_check_known (dom_scan g) r m o = true).
+  { rewrite (dom_map_check_known_pos (dom_scan g) r m o pos Hread).
+    exact Hmap. }
+  pose proof (dom_info_sizes_agrees g r m o pos Hread Hknown) as Hagree.
+  rewrite (dom_info_sizes_ok_agrees m pos (dom_sizes m o) (dom_info_sizes m o pos) o Hagree).
+  rewrite (dom_info_edges_agrees g r m o pos (dom_sizes m o) (dom_info_sizes m o pos) Hagree).
+  destruct (dom_sizes_ok m pos (dom_sizes m o) o); reflexivity.
+Qed.
+
+(** Reused positions and paired metadata preserve the original phase composition. *)
 Local Lemma dom_check_agrees : forall g r m o,
   DomCode.check g r m o = dom_check_spec g r m o.
 Proof.
-  intros g r m o. unfold DomCode.check, dom_check_spec.
+  intros g r m o. rewrite dom_check_record_agrees.
+  unfold dom_check_positions_spec, dom_check_spec.
   destruct (dom_read_known (dom_scan g) r o) as [pos|] eqn:Hread; [|reflexivity].
   now rewrite (dom_map_check_known_pos (dom_scan g) r m o pos Hread).
 Qed.
@@ -4820,6 +5144,358 @@ Proof.
     clear -Hfold_time. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
 Qed.
 
+(** * Clock bounds for paired interval metadata *)
+
+(** Known cache hits are paid by the two writes already present in the original step. *)
+Local Lemma dom_time_info_add_size m pos sizes info v :
+  dom_info_matches pos sizes info -> dom_info_closed m pos ->
+  (exists i, trie_get v pos = Some i) ->
+  (T_dom_info_add_size m info v <= 10 * T_dom_add_size m sizes v)%N.
+Proof.
+  intros Hagree Hclosed [pv Hv].
+  pose proof (PTrieT.T_trie_get_hit (N * N) v info
+    ltac:(rewrite Hagree, Hv; discriminate)) as Hv_clock.
+  pose proof (PTrieT.T_set_lower N v (dom_size_get sizes v) sizes) as Hv_write.
+  change (N.of_nat (Pos.size_nat v) <=
+    PTrieCode.T_set v (dom_size_get sizes v) sizes)%N in Hv_write.
+  unfold T_dom_info_add_size, T_dom_add_size. rewrite Hagree, Hv.
+  destruct (trie_get v m) as [p|] eqn:Hparent.
+  - destruct (Hclosed v p (ex_intro _ pv Hv) Hparent) as [pp Hp].
+    rewrite Hagree, Hp.
+    pose proof (PTrieT.T_trie_get_hit (N * N) p info
+      ltac:(rewrite Hagree, Hp; discriminate)) as Hp_clock.
+    pose proof (PTrieT.T_set_lower N p
+      (N.add (dom_size_get (PTrieCode.set v (dom_size_get sizes v) sizes) p)
+        (dom_size_get sizes v)) (PTrieCode.set v (dom_size_get sizes v) sizes)) as Hp_write.
+    change (N.of_nat (Pos.size_nat p) <= PTrieCode.T_set p
+      (N.add (dom_size_get (PTrieCode.set v (dom_size_get sizes v) sizes) p)
+        (dom_size_get sizes v)) (PTrieCode.set v (dom_size_get sizes v) sizes))%N in Hp_write.
+    pose proof (PTrieT.replace_clock_bound (N * N) p
+      (Some (pp, N.add (dom_size_get sizes p) (dom_size_get sizes v))) info) as Hreplace.
+    rewrite dom_size_set_own in Hp_write |- *.
+    time_simpl. nia.
+  - time_simpl. nia.
+Qed.
+
+(** Related folds preserve their state relation and a multiplicative callback-clock bound. *)
+Local Lemma dom_info_fold_compare {A B C : Type} (f : A -> C -> A) (T_f : A -> C -> N)
+    (g : B -> C -> B) (T_g : B -> C -> N) (related : A -> B -> Prop) k xs :
+  (1 <= k)%N ->
+  (forall x, In x xs -> forall a b, related a b ->
+    related (f a x) (g b x) /\ (T_f a x <= k * T_g b x)%N) ->
+  forall a b, related a b ->
+    related (fold_left f xs a) (fold_left g xs b) /\
+    (List.T_fold_left f T_f xs a <= k * List.T_fold_left g T_g xs b)%N.
+Proof.
+  intro Hpositive. induction xs as [|x rest IH]; intros Hstep a b Hrelated.
+  - cbn [fold_left]. split; [exact Hrelated|]. time_unfold @List.T_fold_left. nia.
+  - destruct (Hstep x (or_introl eq_refl) a b Hrelated) as [Hnext Hcost].
+    destruct (IH (fun y Hy => Hstep y (or_intror Hy)) (f a x) (g b x) Hnext)
+      as [Hfinal Htail].
+    split; [exact Hfinal|]. time_unfold @List.T_fold_left. nia.
+Qed.
+
+(** The paired size fold is paid by the original size fold from any matching initial state. *)
+Local Lemma dom_time_info_size_fold m pos o sizes info :
+  dom_info_matches pos sizes info -> dom_info_closed m pos ->
+  (forall v, In v o -> exists i, trie_get v pos = Some i) ->
+  (List.T_fold_left (dom_info_add_size m) (T_dom_info_add_size m) o info <=
+    10 * List.T_fold_left (dom_add_size m) (T_dom_add_size m) o sizes)%N.
+Proof.
+  intros Hagree Hclosed Hkeys.
+  apply (proj2 (dom_info_fold_compare (dom_info_add_size m) (T_dom_info_add_size m)
+    (dom_add_size m) (T_dom_add_size m) (fun info sizes => dom_info_matches pos sizes info)
+    10%N o ltac:(lia) ltac:(intros v Hv before old Hbefore; split;
+      [apply (dom_info_add_size_agrees m pos)|apply (dom_time_info_add_size m pos)];
+      try assumption; now apply Hkeys) info sizes Hagree)).
+Qed.
+
+(** A paired cache hit reads the same key path as its position-table hit. *)
+Local Lemma dom_info_get_clock pos sizes info v :
+  dom_info_matches pos sizes info -> trie_get v pos <> None ->
+  T_trie_get v info = T_trie_get v pos.
+Proof.
+  intros Hagree Hhit. rewrite (PTrieT.T_trie_get_hit N v pos Hhit).
+  apply PTrieT.T_trie_get_hit. rewrite Hagree.
+  destruct (trie_get v pos); [discriminate|contradiction].
+Qed.
+
+(** Cached interval checks pay at most twice the original hit-path clock. *)
+Local Lemma dom_time_info_interval pos sizes info u v :
+  dom_info_matches pos sizes info ->
+  (exists i, trie_get u pos = Some i) -> (exists i, trie_get v pos = Some i) ->
+  (T_dom_info_interval info u v <= 2 * T_dom_interval pos sizes u v)%N.
+Proof.
+  intros Hagree [pu Hu] [pv Hv].
+  pose proof (dom_info_get_clock pos sizes info u Hagree ltac:(rewrite Hu; discriminate)) as Hcu.
+  pose proof (dom_info_get_clock pos sizes info v Hagree ltac:(rewrite Hv; discriminate)) as Hcv.
+  unfold T_dom_info_interval, T_dom_interval. rewrite !Hagree, Hu, Hv.
+  destruct (N.leb pu pv); time_simpl; lia.
+Qed.
+
+(** Cached parent containment pays at most twice the original parent hit and size lookup. *)
+Local Lemma dom_time_info_interval_from pos sizes info p pu su :
+  dom_info_matches pos sizes info -> (exists i, trie_get p pos = Some i) ->
+  (T_dom_info_interval_from info p pu su <= 2 * T_dom_interval_from pos sizes p pu su)%N.
+Proof.
+  intros Hagree [pp Hp].
+  pose proof (dom_info_get_clock pos sizes info p Hagree ltac:(rewrite Hp; discriminate)) as Hclock.
+  unfold T_dom_info_interval_from, T_dom_interval_from. rewrite Hagree, Hp.
+  destruct (N.leb pp pu); time_simpl; lia.
+Qed.
+
+(** Equal predicates lift a doubled callback-clock bound through list checking. *)
+Local Lemma dom_info_forallb_clock {A : Type} (f : A -> bool) (T_f : A -> N)
+    (g : A -> bool) (T_g : A -> N) xs :
+  (forall x, In x xs -> f x = g x /\ (T_f x <= 2 * T_g x)%N) ->
+  (List.T_forallb f T_f xs <= 2 * List.T_forallb g T_g xs)%N.
+Proof.
+  induction xs as [|x rest IH]; intro Hstep.
+  - time_unfold @List.T_forallb. lia.
+  - destruct (Hstep x (or_introl eq_refl)) as [Hsame Hcost].
+    specialize (IH (fun y Hy => Hstep y (or_intror Hy))).
+    time_unfold @List.T_forallb. rewrite Hsame. time_simpl. lia.
+Qed.
+
+(** Parent containment uses the same map observations and cheaper paired intervals. *)
+Local Lemma dom_time_info_sizes_ok m pos sizes info o :
+  dom_info_matches pos sizes info -> dom_info_closed m pos ->
+  (forall v, In v o -> exists i, trie_get v pos = Some i) ->
+  (T_dom_info_sizes_ok m info o <= 2 * T_dom_sizes_ok m pos sizes o)%N.
+Proof.
+  intros Hagree Hclosed. unfold T_dom_info_sizes_ok, T_dom_sizes_ok.
+  induction o as [|v rest IH]; intro Hkeys.
+  - time_unfold @List.T_forallb. time_simpl. lia.
+  - specialize (IH (fun x Hx => Hkeys x (or_intror Hx))).
+    pose proof (Hkeys v (or_introl eq_refl)) as Hv.
+    time_unfold @List.T_forallb.
+    destruct (trie_get v m) as [p|] eqn:Hparent.
+    + pose proof (dom_time_info_interval pos sizes info p v Hagree
+        (Hclosed v p Hv Hparent) Hv) as Hinterval.
+      rewrite (dom_info_interval_agrees pos sizes info p v Hagree).
+      time_simpl. lia.
+    + time_simpl. lia.
+Qed.
+
+(** Every edge compares the same flags and arithmetic after its cached parent lookup. *)
+Local Lemma dom_time_info_edge_update r m pos sizes info u pu su acc v :
+  dom_info_matches pos sizes info -> dom_info_closed m pos ->
+  (T_dom_info_edge_update r m pos info u pu su acc v <=
+    2 * T_dom_edge_update_from r m pos sizes u pu su acc v)%N.
+Proof.
+  intros Hagree Hclosed. unfold T_dom_info_edge_update, T_dom_edge_update_from.
+  destruct acc as [flags|]; [|time_simpl; lia].
+  destruct (trie_get v pos) as [pv|] eqn:Hv; [|time_simpl; lia].
+  destruct (Pos.eqb v r); [time_simpl; lia|].
+  destruct (trie_get v m) as [p|] eqn:Hparent; [|time_simpl; lia].
+  pose proof (dom_time_info_interval_from pos sizes info p pu su Hagree
+    (Hclosed v p (ex_intro _ pv Hv) Hparent)) as Hinterval.
+  rewrite (dom_info_interval_from_agrees pos sizes info p pu su Hagree).
+  destruct (dom_interval_from pos sizes p pu su); [|time_simpl; lia].
+  destruct (trie_get v flags) as [[[direct lo] hi]|];
+    [destruct direct|]; time_simpl; lia.
+Qed.
+
+(** A source cache hit and pointwise edge-clock comparison pay for one successor row. *)
+Local Lemma dom_time_info_edges_from g r m pos sizes info acc u :
+  dom_info_matches pos sizes info -> dom_info_closed m pos ->
+  (exists i, trie_get u pos = Some i) ->
+  (T_dom_info_edges_from g r m pos info acc u <=
+    2 * T_dom_edges_from_fast g r m pos sizes acc u)%N.
+Proof.
+  intros Hagree Hclosed [pu Hu].
+  pose proof (dom_info_get_clock pos sizes info u Hagree
+    ltac:(rewrite Hu; discriminate)) as Hsource.
+  unfold T_dom_info_edges_from, T_dom_edges_from_fast.
+  destruct acc as [flags|]; [|time_simpl; lia]. rewrite Hagree, Hu.
+  pose proof (dom_info_fold_compare
+    (dom_info_edge_update r m pos info u pu (dom_size_get sizes u))
+    (T_dom_info_edge_update r m pos info u pu (dom_size_get sizes u))
+    (dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u))
+    (T_dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u))
+    (@eq (option (ptrie (bool * N * N)))) 2%N (succs (base g) u) ltac:(lia)
+    ltac:(intros v Hv before after <-; split;
+      [now apply dom_info_edge_update_agrees|now apply (dom_time_info_edge_update r m pos sizes)])
+    (Some flags) (Some flags) eq_refl) as [_ Hfold].
+  time_simpl.
+  change (fun acc v => T_dom_info_edge_update r m pos info u pu (dom_size_get sizes u) acc v)
+    with (T_dom_info_edge_update r m pos info u pu (dom_size_get sizes u)).
+  change (fun acc v => T_dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u) acc v)
+    with (T_dom_edge_update_from r m pos sizes u pu (dom_size_get sizes u)).
+  lia.
+Qed.
+
+(** Paired low-high checks remove the size lookup and short-circuit existing witnesses. *)
+Local Lemma dom_time_info_low_high r pos sizes info flags v :
+  dom_info_matches pos sizes info -> (exists i, trie_get v pos = Some i) ->
+  (T_dom_info_low_high r info flags v <= 2 * T_dom_low_high r pos sizes flags v)%N.
+Proof.
+  intros Hagree [pv Hv].
+  pose proof (dom_info_get_clock pos sizes info v Hagree ltac:(rewrite Hv; discriminate)) as Hclock.
+  unfold T_dom_info_low_high, T_dom_low_high.
+  destruct (Pos.eqb v r); [time_simpl; lia|]. rewrite Hagree, Hv.
+  destruct (trie_get v flags) as [[[direct lo] hi]|]; [|time_simpl; lia].
+  destruct direct, (N.ltb lo pv); time_simpl; lia.
+Qed.
+
+(** The full paired edge phase is paid by twice the original edge phase. *)
+Local Lemma dom_time_info_edges g r m o pos sizes info :
+  dom_info_matches pos sizes info -> dom_info_closed m pos ->
+  (forall v, In v o -> exists i, trie_get v pos = Some i) ->
+  (T_dom_info_edges g r m o pos info <= 2 * T_dom_edges g r m o pos sizes)%N.
+Proof.
+  intros Hagree Hclosed Hkeys.
+  pose proof (dom_info_fold_compare (dom_info_edges_from g r m pos info)
+    (T_dom_info_edges_from g r m pos info) (dom_edges_from_fast g r m pos sizes)
+    (T_dom_edges_from_fast g r m pos sizes) (@eq (option (ptrie (bool * N * N))))
+    2%N o ltac:(lia) ltac:(intros v Hv before after <-; split;
+      [now apply dom_info_edges_from_agrees|apply (dom_time_info_edges_from g r m pos sizes);
+       try assumption; now apply Hkeys]) (Some Empty) (Some Empty) eq_refl) as [Hsame Hfold].
+  unfold T_dom_info_edges, T_dom_edges. rewrite Hsame.
+  destruct (fold_left (dom_edges_from_fast g r m pos sizes) o (Some Empty)) as [flags|].
+  - pose proof (dom_info_forallb_clock (dom_info_low_high r info flags)
+      (T_dom_info_low_high r info flags) (dom_low_high r pos sizes flags)
+      (T_dom_low_high r pos sizes flags) o ltac:(intros v Hv; split;
+        [now apply dom_info_low_high_agrees|apply (dom_time_info_low_high r pos sizes);
+         try assumption; now apply Hkeys])) as Hchecks.
+    time_simpl.
+    change (fun acc v => T_dom_info_edges_from g r m pos info acc v)
+      with (T_dom_info_edges_from g r m pos info).
+    change (fun acc v => T_dom_edges_from_fast g r m pos sizes acc v)
+      with (T_dom_edges_from_fast g r m pos sizes).
+    change (fun v => T_dom_info_low_high r info flags v) with (T_dom_info_low_high r info flags).
+    change (fun v => T_dom_low_high r pos sizes flags v) with (T_dom_low_high r pos sizes flags).
+    lia.
+  - time_simpl.
+    change (fun acc v => T_dom_info_edges_from g r m pos info acc v)
+      with (T_dom_info_edges_from g r m pos info).
+    change (fun acc v => T_dom_edges_from_fast g r m pos sizes acc v)
+      with (T_dom_edges_from_fast g r m pos sizes).
+    lia.
+Qed.
+
+(** The key-bit mass bounds the nodes created while numbering an order. *)
+Local Fixpoint dom_info_keymass (o : list positive) : nat :=
+  match o with
+  | [] => 0
+  | v :: rest => Pos.size_nat v + dom_info_keymass rest
+  end.
+
+(** Concatenation adds the key bits charged to the size phase. *)
+Local Lemma dom_info_keymass_app xs ys :
+  dom_info_keymass (xs ++ ys) = dom_info_keymass xs + dom_info_keymass ys.
+Proof.
+  induction xs as [|x rest IH]; cbn [app dom_info_keymass]; lia.
+Qed.
+
+(** Reversing the order preserves its total key-bit charge. *)
+Local Lemma dom_info_keymass_rev o : dom_info_keymass (rev o) = dom_info_keymass o.
+Proof.
+  induction o as [|v rest IH]; cbn [rev dom_info_keymass]; [reflexivity|].
+  rewrite dom_info_keymass_app. cbn [dom_info_keymass]. lia.
+Qed.
+
+(** Numbering increases trie nodes by at most the inserted key bits. *)
+Local Lemma dom_info_number_nodes : forall o next pos,
+  PTrie.nodes (snd (fold_left (fun acc v =>
+    let '(next, pos) := acc in
+    (N.succ next, PTrieCode.set v next pos)) o (next, pos))) <=
+  PTrie.nodes pos + dom_info_keymass o.
+Proof.
+  induction o as [|v rest IH]; intros next pos; cbn [fold_left snd dom_info_keymass].
+  - lia.
+  - pose proof (IH (N.succ next) (PTrieCode.set v next pos)) as Htail.
+    pose proof (PTrie.nodes_set N v next pos) as Hset. lia.
+Qed.
+
+(** The position trie has no more nodes than the order has key bits. *)
+Local Lemma dom_info_positions_nodes o :
+  PTrie.nodes (dom_positions o) <= dom_info_keymass o.
+Proof.
+  unfold dom_positions. exact (dom_info_number_nodes o 0%N Empty).
+Qed.
+
+(** The old size step always writes its own key, including roots and invalid maps. *)
+Local Lemma dom_info_add_size_lower m sizes v :
+  (N.of_nat (Pos.size_nat v) <= T_dom_add_size m sizes v)%N.
+Proof.
+  pose proof (PTrieT.T_set_lower N v (dom_size_get sizes v) sizes) as Hset.
+  change (N.of_nat (Pos.size_nat v) <=
+    PTrieCode.T_set v (dom_size_get sizes v) sizes)%N in Hset.
+  unfold T_dom_add_size. time_simpl.
+  destruct (trie_get v m); time_simpl; lia.
+Qed.
+
+(** The original size fold pays for every own-key write in its input. *)
+Local Lemma dom_info_size_fold_lower m o : forall sizes,
+  (N.of_nat (dom_info_keymass o) + 1 <=
+    List.T_fold_left (dom_add_size m) (T_dom_add_size m) o sizes)%N.
+Proof.
+  induction o as [|v rest IH]; intro sizes.
+  - time_simpl. reflexivity.
+  - pose proof (dom_info_add_size_lower m sizes v) as Hstep.
+    specialize (IH (dom_add_size m sizes v)).
+    time_unfold @List.T_fold_left. cbn [dom_info_keymass].
+    rewrite Nat2N.inj_add. lia.
+Qed.
+
+(** The original size phase pays for the key-bit mass in either order. *)
+Local Lemma dom_info_sizes_lower m o :
+  (N.of_nat (dom_info_keymass o) + 1 <= T_dom_sizes m o)%N.
+Proof.
+  pose proof (dom_info_size_fold_lower m (rev o) Empty) as Hfold.
+  rewrite dom_info_keymass_rev in Hfold.
+  unfold T_dom_sizes. time_simpl. rewrite rev_append_rev, app_nil_r.
+  change (fun (sizes : ptrie N) (v : positive) => T_dom_add_size m sizes v)
+    with (T_dom_add_size m).
+  lia.
+Qed.
+
+(** Cache initialization charges one constant-time callback per existing binding. *)
+Local Lemma dom_time_info_initial_nodes pos :
+  (T_dom_info_initial pos <= 17 * N.of_nat (PTrie.nodes pos + 1))%N.
+Proof.
+  pose proof (PTrieT.T3_filter N (N * N) (fun p => Some (p, 1%N))
+    (fun _ => 1%N) pos 1%N (fun _ => N.le_refl 1)) as Hfilter.
+  unfold PTrieT.k_filter in Hfilter.
+  unfold T_dom_info_initial. time_simpl. rewrite Nat2N.inj_add in *. nia.
+Qed.
+
+(** A successful read ties the cache skeleton to keys already paid by the old size phase. *)
+Local Lemma dom_time_info_initial g r m o pos :
+  dom_read_known (dom_scan g) r o = Some pos ->
+  (T_dom_info_initial pos <= 17 * T_dom_sizes m o)%N.
+Proof.
+  intro Hread.
+  pose proof (dom_read_known_positions (dom_scan g) r o pos Hread) as ->.
+  pose proof (dom_info_positions_nodes o) as Hnodes.
+  pose proof (dom_info_sizes_lower m o) as Hsizes.
+  pose proof (dom_time_info_initial_nodes (dom_positions o)) as Hinitial.
+  rewrite Nat2N.inj_add in Hinitial. nia.
+Qed.
+
+(** Initialization and fused accumulation fit within twenty-seven original size-phase clocks. *)
+Local Lemma dom_time_info_sizes g r m o pos :
+  dom_read_known (dom_scan g) r o = Some pos ->
+  dom_map_check_known (dom_scan g) r m o = true ->
+  (T_dom_info_sizes m o pos <= 27 * T_dom_sizes m o)%N.
+Proof.
+  intros Hread Hmap.
+  pose proof (dom_time_info_initial g r m o pos Hread) as Hinitial.
+  pose proof (dom_info_read_closed g r m o pos Hread Hmap) as Hclosed.
+  destruct (dom_read_known_success g r o pos Hread)
+    as [_ [_ [_ [_ Hkeys]]]].
+  pose proof (dom_time_info_size_fold m pos (rev o) Empty (dom_info_initial pos)
+    (dom_info_initial_agrees pos) Hclosed
+    (fun v Hv => Hkeys v (proj2 (in_rev o v) Hv))) as Hfold.
+  unfold T_dom_info_sizes, T_dom_sizes. unfold T_dom_sizes in Hinitial.
+  cbn beta iota zeta in Hinitial. time_simpl.
+  rewrite rev_append_rev, app_nil_r in Hinitial |- *.
+  change (fun info v => T_dom_info_add_size m info v) with (T_dom_info_add_size m).
+  change (fun sizes v => T_dom_add_size m sizes v) with (T_dom_add_size m) in Hinitial |- *.
+  nia.
+Qed.
+
 Module DomT <: DOM_ALL.
   Include Dom.
   TimeFun build.
@@ -5435,18 +6111,26 @@ Module DomT <: DOM_ALL.
   Proof.
     intros g r m o.
     unfold T_check, T_scan, T_read, T_map_check, T_sizes, T_sizes_ok, T_edges.
-    unfold scan, read, map_check, sizes, sizes_ok, k_check.
-    time_simpl.
+    unfold scan, read, map_check, sizes, sizes_ok, k_check. time_simpl.
     destruct (dom_read_known (dom_scan g) r o) as [pos|] eqn:Hread.
-    - pose proof (F2c_read g r o pos Hread) as [_ [_ [Hhead Hrest]]].
-      pose proof (dom_time_map_check_pos (dom_scan g) r m o pos Hread) as Hmap_time.
+    - pose proof (F2c_read g r o pos Hread) as [_ [_ [Hhead [_ Hkeys]]]].
+      pose proof (dom_time_map_check_pos (dom_scan g) r m o pos Hread)
+        as Hmap_time.
       rewrite <- (dom_map_check_known_pos (dom_scan g) r m o pos Hread).
       destruct o as [|h rest]; [discriminate|]. cbn in Hhead. injection Hhead as Hhead.
-      subst h.
-      unfold dom_read. cbn beta iota zeta.
-      rewrite Hread.
+      subst h. unfold dom_read. cbn beta iota zeta. rewrite Hread.
       destruct (dom_map_check_known (dom_scan g) r m (r :: rest)) eqn:Hmap.
-      all: time_simpl; nia.
+      + pose proof (dom_info_sizes_agrees g r m (r :: rest) pos Hread Hmap) as Hagree.
+        pose proof (dom_time_info_sizes g r m (r :: rest) pos Hread Hmap) as Hsizes.
+        pose proof (dom_info_read_closed g r m (r :: rest) pos Hread Hmap) as Hclosed.
+        pose proof (dom_time_info_sizes_ok m pos (dom_sizes m (r :: rest))
+          (dom_info_sizes m (r :: rest) pos) (r :: rest) Hagree Hclosed Hkeys) as Hintervals.
+        pose proof (dom_time_info_edges g r m (r :: rest) pos (dom_sizes m (r :: rest))
+          (dom_info_sizes m (r :: rest) pos) Hagree Hclosed Hkeys) as Hedges.
+        rewrite (dom_info_sizes_ok_agrees m pos (dom_sizes m (r :: rest))
+          (dom_info_sizes m (r :: rest) pos) (r :: rest) Hagree).
+        destruct (dom_sizes_ok m pos (dom_sizes m (r :: rest)) (r :: rest)); time_simpl; nia.
+      + time_simpl. nia.
     - time_simpl. nia.
   Qed.
 

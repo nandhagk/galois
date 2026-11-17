@@ -205,3 +205,24 @@ Example rejects_unlisted_wide_candidate_keys :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example paired_positions_and_subtree_sizes :
+  let o := [1; 2; 3; 4] in
+  let info := dom_info_sizes (parent_map Line.parents) o (dom_positions o) in
+  map (fun v => trie_get v info) [1; 2; 3; 4; 9] =
+    [Some (0%N, 4%N); Some (1%N, 3%N); Some (2%N, 2%N); Some (3%N, 1%N); None].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_noncontiguous_child_subtree :
+  let g := DigraphCode.prepare
+    (fixture_graph [1; 2; 3; 4] [(1, 2); (1, 3); (2, 4)]) in
+  let m := parent_map [(2, 1); (3, 1); (4, 2)] in
+  let o := [1; 2; 3; 4] in
+  (dom_map_check_known (dom_scan g) 1 m o,
+    dom_info_sizes_ok m (dom_info_sizes m o (dom_positions o)) o,
+    DomCode.check g 1 m o) = (true, false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
