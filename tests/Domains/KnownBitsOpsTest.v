@@ -15,7 +15,7 @@ Module Stages <: TNUM_CONFIG.
   Definition multiplier := MulStages.
 End Stages.
 Module Masks := KnownBitsCode WordLanguageCode Stages.
-Module Ops := KnownBitsOpsCode WordLanguageCode Stages Masks.
+Module Ops := KnownBitsOpsFastCode WordLanguageCode Stages Masks.
 Module Table := KnownBitsTableCode WordLanguageCode Stages Masks.
 
 (** Before clamping, these shifts returned 1, 2 and 2 respectively. *)
@@ -29,6 +29,34 @@ Example variable_logical_shift :
   Ops.tnum_forward_raw bvshl [(8%positive, tnum_const 8%positive 1); (8%positive, Tnum 252 0)]
     8%positive = Tnum 240 0.
 Proof. vm_compute. reflexivity. Qed.
+
+(** Extraction keeps the specified low bits and zero-fills positions above the source width. *)
+Example extract_shift_known_endpoints :
+  Ops.tnum_forward_raw (bvextract 7 4) [(4%positive, Tnum 8 1)]
+    4%positive = Tnum 15 0 /\
+  Ops.tnum_forward_raw (bvextract 3 0) [(4%positive, Tnum 8 1)]
+    4%positive = Tnum 8 1 /\
+  Ops.tnum_forward_raw (bvextract 7 4) [(8%positive, Tnum 240 15)]
+    4%positive = Tnum 15 0 /\
+  Ops.tnum_forward_raw (bvextract 3 0) [(8%positive, Tnum 240 15)]
+    4%positive = Tnum 0 15.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Unknown in-range bits stay unknown, while an unchecked high extraction is zero. *)
+Example extract_shift_unknown_endpoints :
+  Ops.tnum_forward_raw (bvextract 7 4) [(4%positive, Tnum 0 0)]
+    4%positive = Tnum 15 0 /\
+  Ops.tnum_forward_raw (bvextract 3 0) [(4%positive, Tnum 0 0)]
+    4%positive = Tnum 0 0 /\
+  Ops.tnum_forward_raw (bvextract 7 4) [(8%positive, Tnum 0 0)]
+    4%positive = Tnum 0 0 /\
+  Ops.tnum_forward_raw (bvextract 3 0) [(8%positive, Tnum 0 0)]
+    4%positive = Tnum 0 0.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
 
 Module Ranges := KnownBitsRangeCode WordLanguageCode Stages Masks.
 
@@ -79,4 +107,28 @@ Example unsigned_range_public_contract : forall c,
   in_bnd (Fin 7) (Fin 15) (KnownBitsNumU.num c).
 Proof.
   apply CheckedRanges.range_sound.
+Qed.
+
+(** Concatenation keeps the specification on narrow, raw, and wide endpoints. *)
+Definition shifted_concat_fixtures : list (positive * positive * tnum * tnum) :=
+  [(1%positive, 1%positive, Tnum 0 1, Tnum 1 0);
+   (8%positive, 8%positive, Tnum 240 15, Tnum 252 1);
+   (8%positive, 8%positive, Tnum (-16) 257, Tnum 0 0);
+   (8%positive, 1%positive, Tnum 7 7, Tnum 0 0);
+   (64%positive, 64%positive, Tnum 61680 3855, Tnum 65280 255)].
+
+Example shifted_concat_public_specification :
+  Forall (fun '(w, v, a, b) =>
+    Ops.tnum_forward_raw bvconcat [(w, a); (v, b)] (w + v)%positive =
+      tnum_concat w v a b) shifted_concat_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shifted_concat_known_endpoints :
+  Ops.tnum_forward_raw bvconcat [(8%positive, Tnum 240 15); (8%positive, Tnum 252 1)]
+    16%positive = Tnum 61692 3841.
+Proof.
+  vm_compute. reflexivity.
 Qed.
