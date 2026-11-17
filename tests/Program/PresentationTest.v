@@ -54,11 +54,15 @@ Module VariableTests.
 
   (** The universe of the program lists the variables 1, 0 and 2 in that order. *)
   Example universe_in_order : V.universe true = [1; 0; 2].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** A program without entries has an empty universe. *)
   Example empty_program_no_variables : V.universe false = [].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End VariableTests.
 
@@ -81,15 +85,21 @@ Module SsaTests.
   (** The program's entry parameters are [0], and it has no argument rows. *)
   Example entry_parameters_and_arg_rows :
     (S.entry_params true, S.entry_params false, S.arg_rows true) = ([0], [], []).
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** The guard of value 0 keeps both of its operands. *)
   Example guard_keeps_both_operands : S.guards true 0 = [(true, [0; 1])].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** Value 1 is defined by the operation over value 0. *)
   Example definition_of_value_one : S.def true 1 = Op tt [0].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End SsaTests.
 
@@ -113,11 +123,15 @@ Module PointTests.
   Example block_projections :
     (SP.block_params true 0, SP.block_edge_args true 1, SP.block_edge_of true 2) =
       ([0], [1], Some 2).
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** A point with no definition has none. *)
   Example absent_point_has_no_definition : SP.point_definition true 0 = None.
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End PointTests.
 
@@ -148,27 +162,37 @@ Module CallTests.
 
   (** The call inventory lists the pairs (0, 0) and (0, 1) in order. *)
   Example call_inventory_in_order : CallView.calls true = [(0, 0); (0, 1)].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** Site 0 of function 0 gives the call edges to 0 and to 1. *)
   Example self_call_edges :
     call_edges (CallView.resolve true) (CallView.sites_of true 0) = [CallEdge 0 0; CallEdge 0 1].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** An unresolved site has no targets. *)
   Example unresolved_site_no_targets : CallView.resolve true 1 = [].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** A function without sites has no call edges. *)
   Example function_without_sites_no_edges :
     call_edges (CallView.resolve true) (CallView.sites_of true 1) = [].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** The call graph of program true has successors 0 and 1 from node 0, in order. *)
   Example call_graph_successors :
     succs (CallView.call_graph true) (NatKeyCode.encode 0) =
       [NatKeyCode.encode 0; NatKeyCode.encode 1].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End CallTests.
 
@@ -188,7 +212,9 @@ Module IcfgTests.
   (** The three edges have the kinds call, internal and return. *)
   Example edge_kinds : (I.kind true 0, I.kind true 1, I.kind true 2) =
     (IcfgSig.Call 7, IcfgSig.Intra, IcfgSig.Return 7).
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End IcfgTests.
 
@@ -205,20 +231,28 @@ Module EffectTests.
 
   (** The flagged effect may trap and does not observe. *)
   Example flags_may_trap_not_observe : (F.may_trap tt, F.observes tt) = (true, false).
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** A barrier reads and writes the region of the program. *)
   Example barrier_reads_and_writes :
     (effect_reads true Barrier, effect_writes true Barrier) = ([true], [true]).
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** A pure write has no read. *)
   Example write_has_no_read : effect_reads true (Write false) = [].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** An allocation and a free each write their region. *)
   Example alloc_and_free_write :
     (effect_writes true (Alloc false), effect_writes true (Free false)) = ([false], [false]).
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End EffectTests.
