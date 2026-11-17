@@ -2,12 +2,17 @@
 
     Three Boolean flags represent signed word classes.
     For example, a zero-only payload represents the integer zero.
+
+    Main results
+    - [sign_entry_complexity] Sign table dispatch takes constant time.
+
     Builds on: SignSig and the fixed-width word operations. *)
 
 From Stdlib Require Import ZArith NArith List Bool Lia Ring PeanoNat.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Bits Require Import Word Fun Testbit Op Arith.
 From Galois.Domains Require Import SignSig WordSig BitsLang.
+Import ComplexityNotations.
 Import List.ListNotations.
 
 Local Open Scope Z_scope.
@@ -1208,9 +1213,8 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_ALL L S.
     exact sign_entry_ticks.
   Qed.
   (** Sign-table dispatch has a constant bound independent of word widths. *)
-  Lemma sign_entry_complexity : bigO
-    (X := L.op * (positive * list (positive * S.p))) (fun _ => True)
-    (fun _ => 0%N) (fun x => T_wfwd (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma sign_entry_complexity :
+    T_wfwd o rw xs ∈ 𝑂(0%N) for (o, (rw, xs)).
   Proof.
     exists c_sign_table. intros [o [rw xs]] _. cbn [fst snd].
     pose proof (T_sign_entry_le o rw xs) as Htime. nia.
