@@ -2,10 +2,19 @@
 
     Interners assign dense identifiers and indexes group values by key.
     For example, interning [a; b; a] allocates only two identifiers.
+
+    Main results
+    - [intern_complexity] Interning is linear in the key bits and the allocation frontier's width.
+    - [find_complexity] Forward lookup is linear in the key bits and the allocation
+      frontier's width.
+    - [name_complexity] Inverse lookup is linear in the identifier bits and the
+      allocation frontier's width.
+
     Builds on: InternSig, MapSig and KeySig. *)
 
 From Stdlib Require Import List Bool NArith PArith Lia Sorting.Sorted.
-From Argent Require Import Time Std Tactics BigO.
+From Argent Require Import Time Std Tactics Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import InternSig KeySig MapSig.
 From Galois.Base Require Import Trie.
 
@@ -239,9 +248,8 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
   Qed.
 
   (** Interning is linear in the key width and allocation frontier width. *)
-  Lemma intern_complexity : bigO (X := K.t * t) (fun xs => wf (snd xs))
-    (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
-    (fun xs => T_intern (fst xs) (snd xs)).
+  Lemma intern_complexity :
+    T_intern k s ∈ 𝑂(N.of_nat (K.bits k + N.size_nat (size s))) for (k, s) | wf s.
   Proof.
     exists c_intern. intros [k s] Hwf. cbn [fst snd] in Hwf |- *.
     pose proof (T_intern_le k s Hwf) as Hintern.
@@ -249,9 +257,8 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
   Qed.
 
   (** Forward lookup fits the key and allocation frontier width budget. *)
-  Lemma find_complexity : bigO (X := K.t * t) (fun _ => True)
-    (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
-    (fun xs => T_find (fst xs) (snd xs)).
+  Lemma find_complexity :
+    T_find k s ∈ 𝑂(N.of_nat (K.bits k + N.size_nat (size s))) for (k, s).
   Proof.
     exists c_intern. intros [k s] _. cbn [fst snd].
     pose proof (T_find_le k s) as Hfind.
@@ -259,9 +266,8 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
   Qed.
 
   (** Inverse lookup fits the identifier and allocation frontier width budget. *)
-  Lemma name_complexity : bigO (X := positive * t) (fun _ => True)
-    (fun xs => N.of_nat (Pos.size_nat (fst xs) + N.size_nat (size (snd xs))))
-    (fun xs => T_name (fst xs) (snd xs)).
+  Lemma name_complexity :
+    T_name i s ∈ 𝑂(N.of_nat (Pos.size_nat i + N.size_nat (size s))) for (i, s).
   Proof.
     exists c_intern. intros [i s] _. cbn [fst snd].
     pose proof (T_name_le i s) as Hname.
