@@ -1656,6 +1656,8 @@ Module CongruenceCode (L : WORD_LANGUAGE_OPS) <: CONGRUENCE_OPS L.
     let M := modulus w in wrap_class_at M (pow2_gcd_at M m) r.
   Definition congr_neg w a :=
     match congr_norm w a with CBot => CBot | C m r => wrap_class w m (-r) end.
+  Definition congr_neg_ref w a :=
+    match congr_norm w a with CBot => CBot | C m r => wrap_class_ref w m (-r) end.
   Definition congr_add_ref w a b :=
     match congr_norm w a, congr_norm w b with
     | C m r, C n s => wrap_class_ref w (Z.gcd m n) (r + s)
@@ -1687,6 +1689,8 @@ Module CongruenceCode (L : WORD_LANGUAGE_OPS) <: CONGRUENCE_OPS L.
     end.
   Definition congr_project source target a :=
     match congr_norm source a with CBot => CBot | C m r => wrap_class target m r end.
+  Definition congr_project_ref source target a :=
+    match congr_norm source a with CBot => CBot | C m r => wrap_class_ref target m r end.
   Definition congr_shl_ref w a b :=
     match congr_norm w a, congr_norm w b with
     | CBot, _ | _, CBot => CBot
@@ -1801,6 +1805,21 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     change (wrap_class_g w (pow2_gcd w m) r =
       congr_norm_ref w (C (Z.gcd m (modulus w)) r)).
     apply wrap_class_fast_eq.
+  Qed.
+
+  (** Negation preserves the reference gcd-based wrapping operation. *)
+  Lemma congr_neg_eq : forall w a, congr_neg w a = congr_neg_ref w a.
+  Proof.
+    intros w a. unfold congr_neg, congr_neg_ref.
+    destruct (congr_norm w a); [reflexivity | apply wrap_class_eq].
+  Qed.
+
+  (** Projection preserves the reference gcd-based wrapping operation. *)
+  Lemma congr_project_eq : forall source target a,
+    congr_project source target a = congr_project_ref source target a.
+  Proof.
+    intros source target a. unfold congr_project, congr_project_ref.
+    destruct (congr_norm source a); [reflexivity | apply wrap_class_eq].
   Qed.
 
   (** Addition uses the minimum of the two masked moduli. *)
