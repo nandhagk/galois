@@ -92,6 +92,55 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** Eliminating the unrelated coordinate derives a constant tautology. *)
+Definition prune_source : list (lcons positive) :=
+  [LCons _ [(3%positive, 1)] RLe 1;
+   LCons _ [(3%positive, -1)] RLe 0;
+   LCons _ [(1%positive, 2)] RLe 4].
+
+Definition prune_rows (b : Z) : list (poly_row positive) :=
+  poly_initial PosKeyCode.encode
+    ((poly_negate (upper_x b), true) :: map (fun r => (r, false)) prune_source).
+
+(** The next variable still proves the same target after the tautology is discarded. *)
+Example entails_pruned_tautology :
+  (FixturePoly.entails_row prune_source (upper_x 2),
+    full_run_entails_row prune_source (upper_x 2)) = (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Pruning keeps the contradiction and removes the unrelated constant row. *)
+Example prune_derived_tautology :
+  (map poly_constraint (poly_run_prune_stop PosKeyCode.encode PosKeyCode.eqb
+      [3%positive; 1%positive] (prune_rows 2)),
+    map poly_constraint (poly_run_stop PosKeyCode.encode PosKeyCode.eqb
+      [3%positive; 1%positive] (prune_rows 2))) =
+    ([LCons _ [] RLe 0], [LCons _ [] RLe 1; LCons _ [] RLe 0]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Removing constant tautologies also preserves an unsuccessful entailment search. *)
+Example entails_pruned_failure :
+  (FixturePoly.entails_row prune_source (upper_x 1),
+    full_run_entails_row prune_source (upper_x 1)) = (false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A failed run can discard both non-strict and strict-positive constant rows. *)
+Example prune_failed_tautologies :
+  (map poly_constraint (poly_run_prune_stop PosKeyCode.encode PosKeyCode.eqb
+      [3%positive; 1%positive] (prune_rows 1)),
+    map poly_constraint (poly_run_stop PosKeyCode.encode PosKeyCode.eqb
+      [3%positive; 1%positive] (prune_rows 1))) =
+    ([], [LCons _ [] RLe 1; LCons _ [] RLe 2]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+
 (** Opposite inequalities eliminate their common variable with exact multipliers. *)
 Example eliminate_opposite_rows :
   FixturePoly.fm_elim 1%positive
