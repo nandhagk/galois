@@ -10,7 +10,9 @@
     - [fold_spec] Folding follows enumeration order.
     - [is_empty_spec] A trie is reported empty exactly when it is the empty trie.
     - [get_complexity] Lookup is linear in the key bit length, O(|p|) for a key p.
-    - [set_complexity] Setting is linear in the key bit length.
+    - [get_worst_complexity] Some stored key of every length is read to its end, so the
+      worst-case lookup time is Θ(|p|).
+    - [set_complexity] Setting reads and rebuilds the whole key path, so its time is Θ(|p|).
     - [remove_complexity] Removal is linear in the key bit length.
     - [merge_complexity] Merging is linear in both skeletons for bounded callbacks.
     - [forall2b_complexity] Relational checking is linear in both skeletons for bounded
@@ -132,6 +134,9 @@ Module Type TRIE_TIME (Import T : TRIE).
   (** Setting takes time bounded by the key bit length. *)
   Parameter T_set_le : forall A p (a : A) m,
     (T_set p a m <= c_trie * N.of_nat (Pos.size_nat p + 1))%N.
+  (** Setting a key pays at least one unit for each key digit. *)
+  Parameter T_set_ge : forall A p (a : A) m,
+    (N.of_nat (Pos.size_nat p) <= T_set p a m)%N.
   (** Removal takes time bounded by the key bit length. *)
   Parameter T_remove_le : forall A p (m : t A),
     (T_remove p m <= c_trie * N.of_nat (Pos.size_nat p + 1))%N.
@@ -182,9 +187,13 @@ Module Type TRIE_TIME (Import T : TRIE).
   (** Lookup is linear in the key bit length. *)
   Parameter get_complexity : forall A,
     T_get (A := A) p m ∈ 𝑂(N.of_nat (Pos.size_nat p)) for (p, m).
-  (** Setting is linear in the key bit length. *)
+  (** A stored key of every length is read to its end, so the worst case of lookup is Θ of the
+      key length. *)
+  Parameter get_worst_complexity : forall A (a : A),
+    T_get (A := A) p m ∈ Θ_worst(N.of_nat (Pos.size_nat p)) for (p, m).
+  (** Setting reads and rebuilds the whole key path, so its time is Θ of the key length. *)
   Parameter set_complexity : forall A,
-    T_set (A := A) p a m ∈ 𝑂(N.of_nat (Pos.size_nat p)) for (p, a, m).
+    T_set (A := A) p a m ∈ Θ(N.of_nat (Pos.size_nat p)) for (p, a, m).
   (** Removal is linear in the key bit length. *)
   Parameter remove_complexity : forall A,
     T_remove (A := A) p m ∈ 𝑂(N.of_nat (Pos.size_nat p)) for (p, m).
