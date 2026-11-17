@@ -2,6 +2,12 @@
 
     Forests retain nested ownership and reducibility observations from graph fixtures.
     For example, the inner cycle assigns vertex 3 to header 2.
+
+    Groups:
+    - ForestTests: the parent and header of each vertex in the loop forest.
+    - ReducibilityTests: which fixture graphs are reducible.
+    - BodyTests: the natural loop body of each header.
+
     Builds on: graph fixtures, dominator construction and loop code. *)
 
 From Stdlib Require Import List PArith NArith.
@@ -9,100 +15,195 @@ From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data Digraph Dom LoopsSig Loops.
 From Galois.Tests.Graph Require Import Fixtures.
 Import List.ListNotations.
-Open Scope positive_scope.
 
+(** * Fixtures *)
+
+(** The dominator tree of a prepared graph, rooted at vertex 1. *)
 Definition fixture_tree (g : prepared) :=
   let '(parents, order) := DomCode.build g 1 in DomCode.tree g 1 parents order.
 
-Example nested_parents :
-  let g := DigraphCode.prepare NestedLoop.graph in
-  let l := LoopsCode.forest g (fixture_tree g) in
-  map (fun v => trie_get v (parent l)) [1; 2; 3; 4; 99] =
-    [None; Some 1; None; None; None].
-Proof. vm_compute. reflexivity. Qed.
+(** The loop forest of a graph, computed from its dominator tree. *)
+Definition forest_of (graph : digraph) :=
+  let g := DigraphCode.prepare graph in
+  LoopsCode.forest g (fixture_tree g).
 
-Example nested_innermost :
-  let g := DigraphCode.prepare NestedLoop.graph in
-  let l := LoopsCode.forest g (fixture_tree g) in
-  map (fun v => trie_get v (header l)) [1; 2; 3; 4; 99] =
-    [Some 1; Some 2; Some 2; Some 1; None].
-Proof. vm_compute. reflexivity. Qed.
+(** Whether the loop structure of a graph is reducible. *)
+Definition reducible_of (graph : digraph) :=
+  let g := DigraphCode.prepare graph in
+  LoopsCode.reducible_b g (fixture_tree g).
 
-Example line_has_no_loops :
-  let g := DigraphCode.prepare Line.graph in
-  trie_get 2 (header (LoopsCode.forest g (fixture_tree g))) = None.
-Proof. vm_compute. reflexivity. Qed.
+(** The loop forest of the nested-cycle fixture. *)
+Definition nested_forest := forest_of NestedLoop.graph.
 
-Example self_loop_owns_itself :
-  let g := DigraphCode.prepare SelfLoop.graph in
-  let l := LoopsCode.forest g (fixture_tree g) in
-  trie_get 1 (header l) = Some 1 /\ trie_get 1 (parent l) = None.
-Proof. vm_compute. split; reflexivity. Qed.
+(** The loop forest of the self-loop fixture. *)
+Definition self_loop_forest := forest_of SelfLoop.graph.
 
-Example reducibility_controls :
-  map (fun graph => let g := DigraphCode.prepare graph in
-    LoopsCode.reducible_b g (fixture_tree g))
-    [NestedLoop.graph; Irreducible.graph; Line.graph; SelfLoop.graph; EmptyGraph.graph] =
-    [true; false; true; true; true].
-Proof. vm_compute. reflexivity. Qed.
+(** * Forest *)
 
-(* The old empty-rank nested-tree observation was false; the new result is true. *)
+Module ForestTests.
 
-Example natural_inner :
-  let g := DigraphCode.prepare NestedLoop.graph in
-  let l := LoopsCode.forest g (fixture_tree g) in
-  map (fun v => existsb (Pos.eqb v) (loop_body l 2)) [1; 2; 3; 4] =
-    [false; true; true; false].
-Proof. vm_compute. reflexivity. Qed.
+  Local Open Scope positive_scope.
 
-Example natural_outer :
-  let g := DigraphCode.prepare NestedLoop.graph in
-  let l := LoopsCode.forest g (fixture_tree g) in
-  map (fun v => existsb (Pos.eqb v) (loop_body l 1)) [1; 2; 3; 4] =
-    [true; true; true; true].
-Proof. vm_compute. reflexivity. Qed.
+  (** The inner header 2 has the outer header 1 as its parent, and the others have none. *)
+  Example inner_header_has_outer_parent :
+    map (fun v => trie_get v (parent nested_forest)) [1; 2; 3; 4; 99] =
+      [None; Some 1; None; None; None].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
 
-Example natural_self :
-  let g := DigraphCode.prepare SelfLoop.graph in
-  loop_body (LoopsCode.forest g (fixture_tree g)) 1 = [1].
-Proof. vm_compute. reflexivity. Qed.
+  (** Each vertex of the nested cycles has its innermost header. *)
+  Example nested_cycles_innermost_headers :
+    map (fun v => trie_get v (header nested_forest)) [1; 2; 3; 4; 99] =
+      [Some 1; Some 2; Some 2; Some 1; None].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
 
-Example nested_headers :
-  let g := DigraphCode.prepare NestedLoop.graph in
-  let l := LoopsCode.forest g (fixture_tree g) in
-  filter (fun v => match trie_get v (body l) with Some _ => true | None => false end)
-    [1; 2; 3; 4] = [1; 2].
-Proof. vm_compute. reflexivity. Qed.
+  (** A path has no loop header, so vertex 2 has none. *)
+  Example path_has_no_header :
+    trie_get 2 (header (forest_of Line.graph)) = None.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
 
-Example empty_loop_projection :
-  let g := DigraphCode.prepare EmptyGraph.graph in
-  let l := LoopsCode.forest g (fixture_tree g) in
-  trie_get 99 (body l) = None.
-Proof. vm_compute. reflexivity. Qed.
+  (** A self-loop makes its vertex its own header. *)
+  Example self_loop_is_its_own_header :
+    trie_get 1 (header self_loop_forest) = Some 1.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
 
-Definition detached_predecessor := fixture_graph [1; 2; 3; 4]
-  [(1, 2); (2, 3); (3, 2); (4, 3)].
+  (** A self-loop has no parent loop. *)
+  Example self_loop_has_no_parent :
+    trie_get 1 (parent self_loop_forest) = None.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
 
-Example unreachable_predecessor_excluded :
-  let g := DigraphCode.prepare detached_predecessor in
-  let l := LoopsCode.forest g (fixture_tree g) in
-  existsb (Pos.eqb 4) (loop_body l 2) = false.
-Proof. vm_compute. reflexivity. Qed.
+End ForestTests.
 
-(** Duplicate raw roots may repeat classification, but their stored body stays distinct. *)
-Example duplicate_raw_vertices_body :
-  let g := DigraphCode.prepare (fixture_graph [1; 1] [(1, 1); (1, 1)]) in
-  let t := DomTree Empty Empty (PTrieCode.set 1 0%N Empty) (PTrieCode.set 1 1%N Empty) in
-  loop_body (LoopsCode.forest g t) 1 = [1].
-Proof.
-  vm_compute. reflexivity.
-Qed.
+(** * Reducibility *)
 
-(** Repeated latches and predecessor occurrences add each body vertex only once. *)
-Example repeated_latches_body :
-  let g := DigraphCode.prepare (fixture_graph [1; 2] [(1, 2); (2, 2); (2, 2)]) in
-  let t := DomTree Empty Empty (PTrieCode.set 1 0%N (PTrieCode.set 2 1%N Empty)) Empty in
-  collect g t 1 [2; 2; 2] = [1; 2].
-Proof.
-  vm_compute. reflexivity.
-Qed.
+Module ReducibilityTests.
+
+  Local Open Scope positive_scope.
+
+  (** Nested cycles with a single entry are reducible. *)
+  Example nested_cycles_are_reducible :
+    reducible_of NestedLoop.graph = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A cycle entered at two vertices is not reducible. *)
+  Example irreducible_cycle_is_not_reducible :
+    reducible_of Irreducible.graph = false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A path is reducible. *)
+  Example path_is_reducible :
+    reducible_of Line.graph = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A self-loop is reducible. *)
+  Example self_loop_is_reducible :
+    reducible_of SelfLoop.graph = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** An empty graph is reducible. *)
+  Example empty_graph_is_reducible :
+    reducible_of EmptyGraph.graph = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End ReducibilityTests.
+
+(** * Loop bodies *)
+
+Module BodyTests.
+
+  Local Open Scope positive_scope.
+
+  (** The body of the inner header 2 is the inner cycle, and it excludes the outer vertices. *)
+  Example inner_body_is_inner_cycle :
+    map (fun v => existsb (Pos.eqb v) (loop_body nested_forest 2)) [1; 2; 3; 4] =
+      [false; true; true; false].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The body of the outer header 1 contains every vertex of the nested cycles. *)
+  Example outer_body_is_every_vertex :
+    map (fun v => existsb (Pos.eqb v) (loop_body nested_forest 1)) [1; 2; 3; 4] =
+      [true; true; true; true].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The body of a self-loop is its own vertex. *)
+  Example self_loop_body_is_itself :
+    loop_body self_loop_forest 1 = [1].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Only the headers 1 and 2 of the nested cycles have a loop body. *)
+  Example only_headers_have_bodies :
+    filter (fun v => match trie_get v (body nested_forest) with
+      | Some _ => true
+      | None => false
+      end) [1; 2; 3; 4] = [1; 2].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** An empty graph has no loop body for any vertex. *)
+  Example empty_graph_has_no_body :
+    trie_get 99 (body (forest_of EmptyGraph.graph)) = None.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A predecessor that no path from the root reaches is not in the loop body. *)
+  Definition detached_predecessor_graph := fixture_graph [1; 2; 3; 4]
+    [(1, 2); (2, 3); (3, 2); (4, 3)].
+
+  Example unreachable_predecessor_is_not_in_body :
+    existsb (Pos.eqb 4) (loop_body (forest_of detached_predecessor_graph) 2) = false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A duplicated raw vertex is stored once in its loop body. *)
+  Definition duplicate_root_graph := DigraphCode.prepare (fixture_graph [1; 1] [(1, 1); (1, 1)]).
+
+  Definition duplicate_root_tree :=
+    DomTree Empty Empty (PTrieCode.set 1 0%N Empty) (PTrieCode.set 1 1%N Empty).
+
+  Example duplicate_raw_vertex_body_is_single :
+    loop_body (LoopsCode.forest duplicate_root_graph duplicate_root_tree) 1 = [1].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Repeated latches add each body vertex only once. *)
+  Definition latch_graph := DigraphCode.prepare (fixture_graph [1; 2] [(1, 2); (2, 2); (2, 2)]).
+
+  Definition latch_tree :=
+    DomTree Empty Empty (PTrieCode.set 1 0%N (PTrieCode.set 2 1%N Empty)) Empty.
+
+  Example repeated_latches_add_each_vertex_once :
+    collect latch_graph latch_tree 1 [2; 2; 2] = [1; 2].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End BodyTests.
