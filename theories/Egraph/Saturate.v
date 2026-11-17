@@ -2,14 +2,28 @@
 
     The front end checks its inputs, adds their nodes and runs the compiled engine program.
     For example, literal children are stored as values while constructor roots return classes.
+
+    Main results
+    - [check_front_spec] The front-end check accepts exactly the well-sorted rules and inputs.
+    - [saturate_sound] Class equalities imply equal denotations in every model of the rules, at
+      every outcome.
+    - [ematch_complete] A canonical database exposes every represented left side whose condition
+      holds.
+    - [check_front_complexity] Checking is linear in the front-end syntax.
+    - [add_expr_complexity] Adding an input costs its nodes at the identifier width, and its scaled
+      credit.
+    - [saturate_complexity] Saturation of accepted input costs its check, planning, loading, its
+      inputs and its run.
+
     Builds on: SaturateSig. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia Bool.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig RunSig Syntax Model Sorts
   ModelFacts.
 From Galois.Egraph Require Import Syntax CompileSig SaturateSig.
+Import ComplexityNotations.
 
 Import List.ListNotations.
 
@@ -4121,10 +4135,9 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
       E.run_cost B U p cp lim (inputs_db es db0))%N.
 
   (** Checking is linear in the front-end syntax. *)
-  Lemma check_front_complexity : bigO (fun _ => True)
-    (fun x : list decl * list (rewrite V.t) * list (rule V.t) * list (fexpr V.t) =>
-      let '(ds, rws, ans, es) := x in N.of_nat (front_size ds rws ans es + 1))
-    (fun x => let '(ds, rws, ans, es) := x in T_check_front ds rws ans es).
+  Lemma check_front_complexity :
+    T_check_front ds rws ans es ∈ 𝑂(N.of_nat (front_size ds rws ans es + 1))
+      for (ds, rws, ans, es).
   Proof.
     apply bigO_intro with (c := c_sat).
     intros [[[ds rws] ans] es] _. cbn beta iota zeta.
@@ -4140,15 +4153,13 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
   Qed.
 
   (** Adding an input costs its nodes at the identifier width, and its scaled credit. *)
-  Lemma add_expr_complexity : bigO
-    (fun x : N * nat * list decl * fexpr V.t * D.t =>
-      let '(B, U, ds, e, db) := x in
-      D.wf db /\ expr_ok ds db e /\ (D.ids (snd (add_expr e db)) <= B)%N /\
-      D.unit (snd (add_expr e db)) <= U)
-    (fun x => let '(B, U, _, e, db) := x in
-      (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1) *
-        N.of_nat (expr_work e) + N.of_nat U * D.potential B db)%N)
-    (fun x => let '(_, _, _, e, db) := x in T_add_expr e db).
+  Lemma add_expr_complexity :
+    T_add_expr e db ∈ 𝑂((N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) * N.of_nat (expr_work e) +
+        N.of_nat U * D.potential B db)%N)
+      for (B, U, ds, e, db) |
+        D.wf db /\ expr_ok ds db e /\ (D.ids (snd (add_expr e db)) <= B)%N /\
+        D.unit (snd (add_expr e db)) <= U.
   Proof.
     apply bigO_intro with (c := (c_sat + 1)%N).
     intros [[[[B U] ds] e] db] [Hwf [Hexpr [Hids HU]]]. cbn beta iota zeta.
@@ -4190,19 +4201,16 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
 
   (** Saturation of accepted input costs its check, planning, loading, its inputs and its
       run. *)
-  Lemma saturate_complexity : bigO
-    (fun x : N * nat * list decl * list (rewrite V.t) * list (rule V.t) * limits *
-        list (fexpr V.t) =>
-      let '(B, U, ds, rws, ans, lim, es) := x in
-      let p := C.compile ds rws ans in
-      let cp := E.plan p in
-      let db0 := E.load p cp in
-      front_ok ds rws ans es /\
-      (D.ids (inputs_db es db0) <= B)%N /\ D.unit (inputs_db es db0) <= U /\
-      (D.ids (snd (E.run p cp lim (inputs_db es db0))) <= B)%N /\
-      D.unit (snd (E.run p cp lim (inputs_db es db0))) <= U)
-    (fun x => let '(B, U, ds, rws, ans, lim, es) := x in saturate_cost B U ds rws ans lim es)
-    (fun x => let '(_, _, ds, rws, ans, lim, es) := x in T_saturate ds rws ans lim es).
+  Lemma saturate_complexity :
+    T_saturate ds rws ans lim es ∈ 𝑂(saturate_cost B U ds rws ans lim es)
+      for (B, U, ds, rws, ans, lim, es) |
+        let p := C.compile ds rws ans in
+        let cp := E.plan p in
+        let db0 := E.load p cp in
+        front_ok ds rws ans es /\
+        (D.ids (inputs_db es db0) <= B)%N /\ D.unit (inputs_db es db0) <= U /\
+        (D.ids (snd (E.run p cp lim (inputs_db es db0))) <= B)%N /\
+        D.unit (snd (E.run p cp lim (inputs_db es db0))) <= U.
   Proof.
     destruct E.plan_complexity as [c_plan Hplan_cost].
     destruct E.load_complexity as [c_load Hload_cost].
