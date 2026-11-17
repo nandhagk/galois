@@ -23476,22 +23476,42 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [[x e] s] _.
+    pose proof (T_assign_le x e s) as Hclock.
+    cbn [fst snd]. rewrite Nat2N.inj_add in Hclock.
+    change (N.of_nat 1) with 1%N in Hclock. nia.
+  Qed.
 
   Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x)))
     (fun x => T_havoc (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [x s] _.
+    pose proof (T_havoc_le x s) as Hclock.
+    cbn [fst snd]. rewrite Nat2N.inj_add in Hclock.
+    change (N.of_nat 1) with 1%N in Hclock. nia.
+  Qed.
 
   Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [[g es] s] _.
+    pose proof (T_assume_le g es s) as Hclock.
+    cbn [fst snd]. rewrite Nat2N.inj_add in Hclock.
+    change (N.of_nat 1) with 1%N in Hclock. nia.
+  Qed.
 
   Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
     (fun x => T_range (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [e s] _.
+    pose proof (T_range_le e s) as Hclock.
+    cbn [fst snd]. rewrite Nat2N.inj_add in Hclock.
+    change (N.of_nat 1) with 1%N in Hclock. nia.
+  Qed.
 
   Lemma leb_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (fst x) (snd x)))
@@ -23501,7 +23521,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma join_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (fst x) (snd x)))
     (fun x => T_join (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_karr). intros [a b] [Ha Hb].
+    pose proof (T_join_karr_le a b Ha Hb) as Hclock.
+    cbn [fst snd]. unfold elimination_work. rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   Lemma widen_bigO : bigO (fun x : wparam * t * t =>
       normal_s (snd (fst x)) /\ normal_s (snd x))
@@ -23513,11 +23537,19 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (fun x : list (lcons X.t) * list (lcons X.t) => normal (fst x) /\ normal (snd x))
     (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x))))
     (fun x => T_affine_hull (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_karr). intros [a b] [Ha Hb].
+    pose proof (T_affine_hull_le a b Ha Hb) as Hclock.
+    cbn [fst snd]. nia.
+  Qed.
 
   Lemma entail_cert_bigO : bigO
     (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
     (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x :: nil))))
     (fun x => T_entail_cert (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_karr). intros [P c] [HP Hc].
+    pose proof (T_entail_cert_le P c HP Hc) as Hclock.
+    cbn [fst snd]. nia.
+  Qed.
 End KarrT.
