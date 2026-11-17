@@ -4095,6 +4095,14 @@ Proof. intros [z o]. time_unfold T_ones. time_cbn. lia. Qed.
 TimeBound tnum_wrap_time tnum_lnot_time tnum_log2_time tnum_ones_time
   tnum_zeros_time tnum_ones_projection_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_wrap_m_bound : forall w z,
+  (T_tnum_wrap_m (Z.ones (Zpos w)) z <= 32 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+Proof.
+  intros w z. eapply N.le_trans; [apply tnum_wrap_m_time|apply tnum_wrap_time].
+Qed.
+TimeBound tnum_wrap_m_bound.
+
 (** Masked conjunction reads its width and raw operands linearly. *)
 Lemma tnum_wand_time : forall w x y,
   (T_tnum_wand w x y <=
@@ -4105,6 +4113,15 @@ Proof.
   rewrite !Nat2N.inj_add in *. nia.
 Qed.
 TimeBound tnum_wand_time.
+
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_wand_m_bound : forall w x y,
+  (T_tnum_wand_m (Z.ones (Zpos w)) x y <=
+    128 * N.of_nat (Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1))%N.
+Proof.
+  intros w x y. eapply N.le_trans; [apply tnum_wand_m_time|apply tnum_wand_time].
+Qed.
+TimeBound tnum_wand_m_bound.
 
 (** Masked disjunction reads its width and raw operands linearly. *)
 Lemma tnum_wor_time : forall w x y,
@@ -4117,6 +4134,15 @@ Proof.
 Qed.
 TimeBound tnum_wor_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_wor_m_bound : forall w x y,
+  (T_tnum_wor_m (Z.ones (Zpos w)) x y <=
+    128 * N.of_nat (Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1))%N.
+Proof.
+  intros w x y. eapply N.le_trans; [apply tnum_wor_m_time|apply tnum_wor_time].
+Qed.
+TimeBound tnum_wor_m_bound.
+
 (** Masked complementation reads the width and raw operand linearly. *)
 Lemma tnum_wnot_time : forall w z,
   (T_tnum_wnot w z <= 128 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
@@ -4127,6 +4153,14 @@ Proof.
 Qed.
 TimeBound tnum_wnot_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_wnot_m_bound : forall w z,
+  (T_tnum_wnot_m (Z.ones (Zpos w)) z <= 128 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+Proof.
+  intros w z. eapply N.le_trans; [apply tnum_wnot_m_time|apply tnum_wnot_time].
+Qed.
+TimeBound tnum_wnot_m_bound.
+
 (** The minimum endpoint reads only the known-one mask. *)
 Lemma tnum_min_time : forall w a,
   (T_tnum_min w a <= 40 * N.of_nat (Pos.to_nat w + Z.size_nat (ones a) + 1))%N.
@@ -4135,6 +4169,14 @@ Proof.
   rewrite !Nat2N.inj_add in *. nia.
 Qed.
 TimeBound tnum_min_time.
+
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_min_m_bound : forall w a,
+  (T_tnum_min_m (Z.ones (Zpos w)) a <= 40 * N.of_nat (Pos.to_nat w + Z.size_nat (ones a) + 1))%N.
+Proof.
+  intros w a. eapply N.le_trans; [apply tnum_min_m_time|apply tnum_min_time].
+Qed.
+TimeBound tnum_min_m_bound.
 
 (** The maximum endpoint reads only the known-zero mask. *)
 Lemma tnum_max_time : forall w a,
@@ -4145,6 +4187,14 @@ Proof.
 Qed.
 TimeBound tnum_max_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_max_m_bound : forall w a,
+  (T_tnum_max_m (Z.ones (Zpos w)) a <= 144 * N.of_nat (Pos.to_nat w + Z.size_nat (zeros a) + 1))%N.
+Proof.
+  intros w a. eapply N.le_trans; [apply tnum_max_m_time|apply tnum_max_time].
+Qed.
+TimeBound tnum_max_m_bound.
+
 (** Building the uncertainty mask reads the two stored masks linearly. *)
 Lemma tnum_mask_time : forall w a,
   (T_tnum_mask w a <= 512 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
@@ -4154,6 +4204,14 @@ Proof.
   rewrite !Nat2N.inj_add in *. nia.
 Qed.
 TimeBound tnum_mask_time.
+
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_mask_m_bound : forall w a,
+  (T_tnum_mask_m (Z.ones (Zpos w)) a <= 512 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. eapply N.le_trans; [apply tnum_mask_m_time|apply tnum_mask_time].
+Qed.
+TimeBound tnum_mask_m_bound.
 
 (** Testing subset inclusion reads both raw masks linearly. *)
 Lemma tnum_subset_time : forall w x y,
@@ -4166,6 +4224,15 @@ Proof.
 Qed.
 TimeBound tnum_subset_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_subset_m_bound : forall w x y,
+  (T_tnum_subset_m (Z.ones (Zpos w)) x y <=
+    320 * N.of_nat (Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1))%N.
+Proof.
+  intros w x y. eapply N.le_trans; [apply tnum_subset_m_time|apply tnum_subset_time].
+Qed.
+TimeBound tnum_subset_m_bound.
+
 (** Normalizing a payload reads its two raw masks linearly. *)
 Lemma tnum_normalise_time : forall w a,
   (T_tnum_normalise w a <= 96 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
@@ -4174,6 +4241,14 @@ Proof.
   unfold tnum_bits. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 TimeBound tnum_normalise_time.
+
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_normalise_m_bound : forall w a,
+  (T_tnum_normalise_m (Z.ones (Zpos w)) a <= 96 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. eapply N.le_trans; [apply tnum_normalise_m_time|apply tnum_normalise_time].
+Qed.
+TimeBound tnum_normalise_m_bound.
 
 (** Constructing a constant payload reads its width and literal bits linearly. *)
 Lemma tnum_const_time : forall w z,
@@ -4184,6 +4259,14 @@ Proof.
 Qed.
 TimeBound tnum_const_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_const_m_bound : forall w z,
+  (T_tnum_const_m (Z.ones (Zpos w)) z <= 192 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+Proof.
+  intros w z. eapply N.le_trans; [apply tnum_const_m_time|apply tnum_const_time].
+Qed.
+TimeBound tnum_const_m_bound.
+
 (** Joining payloads reads their stored masks linearly. *)
 Lemma tnum_join_time : forall w a b,
   (T_tnum_join w a b <= 288 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
@@ -4192,6 +4275,14 @@ Proof.
   unfold tnum_bits. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 TimeBound tnum_join_time.
+
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_join_m_bound : forall w a b,
+  (T_tnum_join_m (Z.ones (Zpos w)) a b <= 288 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. eapply N.le_trans; [apply tnum_join_m_time|apply tnum_join_time].
+Qed.
+TimeBound tnum_join_m_bound.
 
 (** Meeting payloads reads their stored masks linearly. *)
 Lemma tnum_meet_time : forall w a b,
@@ -4202,6 +4293,14 @@ Proof.
 Qed.
 TimeBound tnum_meet_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_meet_m_bound : forall w a b,
+  (T_tnum_meet_m (Z.ones (Zpos w)) a b <= 288 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. eapply N.le_trans; [apply tnum_meet_m_time|apply tnum_meet_time].
+Qed.
+TimeBound tnum_meet_m_bound.
+
 (** Recognizing an empty payload reads its two masks linearly. *)
 Lemma tnum_empty_time : forall w a,
   (T_tnum_empty w a <= 160 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
@@ -4211,6 +4310,14 @@ Proof.
   unfold tnum_bits. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 TimeBound tnum_empty_time.
+
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_empty_m_bound : forall w a,
+  (T_tnum_empty_m (Z.ones (Zpos w)) a <= 160 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. eapply N.le_trans; [apply tnum_empty_m_time|apply tnum_empty_time].
+Qed.
+TimeBound tnum_empty_m_bound.
 
 (** Point recognition reads the two masks and constructs its returned endpoint linearly. *)
 Lemma tnum_constant_time : forall w a,
@@ -4223,6 +4330,14 @@ Proof.
 Qed.
 TimeBound tnum_constant_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_constant_m_bound : forall w a,
+  (T_tnum_constant_m (Z.ones (Zpos w)) a <= 384 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. eapply N.le_trans; [apply tnum_constant_m_time|apply tnum_constant_time].
+Qed.
+TimeBound tnum_constant_m_bound.
+
 (** Bitwise negation reads and normalizes the two masks linearly. *)
 Lemma tnum_not_time : forall w a,
   (T_tnum_not w a <= 96 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
@@ -4231,6 +4346,14 @@ Proof.
   unfold tnum_bits. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 TimeBound tnum_not_time.
+
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_not_m_bound : forall w a,
+  (T_tnum_not_m (Z.ones (Zpos w)) a <= 96 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. eapply N.le_trans; [apply tnum_not_m_time|apply tnum_not_time].
+Qed.
+TimeBound tnum_not_m_bound.
 
 (** Computing a power of two uses a constant-cost doubling callback. *)
 Lemma tnum_pow2_time : forall n, 0 <= n ->
@@ -4600,6 +4723,15 @@ Proof.
 Qed.
 TimeBound tnum_adc_uncertain_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_adc_uncertain_m_bound : forall w a b c,
+  (T_tnum_adc_uncertain_m (Z.ones (Zpos w)) a b c <=
+    4096 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b c. eapply N.le_trans; [apply tnum_adc_uncertain_m_time|apply tnum_adc_uncertain_time].
+Qed.
+TimeBound tnum_adc_uncertain_m_bound.
+
 (** Adding with a carry performs a bounded number of linear mask operations. *)
 Lemma tnum_adc_time : forall w a b c,
   (T_tnum_adc w a b c <=
@@ -4624,6 +4756,15 @@ Proof.
 Qed.
 TimeBound tnum_adc_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_adc_m_bound : forall w a b c,
+  (T_tnum_adc_m (Z.ones (Zpos w)) a b c <=
+    8192 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b c. eapply N.le_trans; [apply tnum_adc_m_time|apply tnum_adc_time].
+Qed.
+TimeBound tnum_adc_m_bound.
+
 (** Addition is linear in width and the stored input masks. *)
 Lemma tnum_add_time : forall w a b,
   (T_tnum_add w a b <=
@@ -4632,6 +4773,15 @@ Proof.
   intros w a b. time_unfold T_tnum_add. time_cbn. time_pose. nia.
 Qed.
 TimeBound tnum_add_time.
+
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_add_m_bound : forall w a b,
+  (T_tnum_add_m (Z.ones (Zpos w)) a b <=
+    16384 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. eapply N.le_trans; [apply tnum_add_m_time|apply tnum_add_time].
+Qed.
+TimeBound tnum_add_m_bound.
 
 (** Subtraction first normalizes the complemented second operand. *)
 Lemma tnum_sub_time : forall w a b,
@@ -4644,6 +4794,15 @@ Proof.
 Qed.
 TimeBound tnum_sub_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_sub_m_bound : forall w a b,
+  (T_tnum_sub_m (Z.ones (Zpos w)) a b <=
+    32768 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. eapply N.le_trans; [apply tnum_sub_m_time|apply tnum_sub_time].
+Qed.
+TimeBound tnum_sub_m_bound.
+
 (** Negation constructs zero and performs one subtraction. *)
 Lemma tnum_neg_time : forall w a,
   (T_tnum_neg w a <=
@@ -4655,6 +4814,15 @@ Proof.
 Qed.
 TimeBound tnum_neg_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_neg_m_bound : forall w a,
+  (T_tnum_neg_m (Z.ones (Zpos w)) a <=
+    131072 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. eapply N.le_trans; [apply tnum_neg_m_time|apply tnum_neg_time].
+Qed.
+TimeBound tnum_neg_m_bound.
+
 (** Conjunction reads both stored masks linearly. *)
 Lemma tnum_and_time : forall w a b,
   (T_tnum_and w a b <=
@@ -4665,6 +4833,15 @@ Proof.
 Qed.
 TimeBound tnum_and_time.
 
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_and_m_bound : forall w a b,
+  (T_tnum_and_m (Z.ones (Zpos w)) a b <=
+    288 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. eapply N.le_trans; [apply tnum_and_m_time|apply tnum_and_time].
+Qed.
+TimeBound tnum_and_m_bound.
+
 (** Disjunction reads both stored masks linearly. *)
 Lemma tnum_or_time : forall w a b,
   (T_tnum_or w a b <=
@@ -4674,6 +4851,15 @@ Proof.
   unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. nia.
 Qed.
 TimeBound tnum_or_time.
+
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_or_m_bound : forall w a b,
+  (T_tnum_or_m (Z.ones (Zpos w)) a b <=
+    288 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. eapply N.le_trans; [apply tnum_or_m_time|apply tnum_or_time].
+Qed.
+TimeBound tnum_or_m_bound.
 
 (** Exclusive disjunction combines four bounded intermediate masks. *)
 Lemma tnum_xor_time : forall w a b,
@@ -4689,6 +4875,15 @@ Proof.
   unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. nia.
 Qed.
 TimeBound tnum_xor_time.
+
+(** The shared-mask helper retains the specification's published numeric budget. *)
+Lemma tnum_xor_m_bound : forall w a b,
+  (T_tnum_xor_m (Z.ones (Zpos w)) a b <=
+    2048 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. eapply N.le_trans; [apply tnum_xor_m_time|apply tnum_xor_time].
+Qed.
+TimeBound tnum_xor_m_bound.
 
 (** The nonrotation cutoff uses no more bits than the width itself. *)
 Lemma tnum_shift_cutoff_size : forall w,
