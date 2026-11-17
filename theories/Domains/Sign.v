@@ -25,8 +25,10 @@ Module SignCode (L : WORD_LANGUAGE_OPS) <: SIGN_OPS L.
   Definition ptop (_ : positive) : p := Sgn true true true.
   Definition pis_bot (_ : positive) (a : p) : bool :=
     negb (neg a || zero a || pos a).
-  Definition pconst (w : positive) (z : Z) : p :=
+  Definition pconst_spec (w : positive) (z : Z) : p :=
     Sgn (Word.signed w z <? 0) (Word.signed w z =? 0) (0 <? Word.signed w z).
+  Definition pconst (w : positive) (z : Z) : p :=
+    let s := Word.signed w z in Sgn (s <? 0) (s =? 0) (0 <? s).
   Definition ppoint (_ : positive) (a : p) : option Z :=
     match a with
     | Sgn false true false => Some 0
@@ -116,6 +118,12 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Include SIGN_SPEC L.
   Definition pgamma := sign_gamma.
   Definition pwrank (_ : pwparam) (_ : positive) (a : p) : nat := 3 - sign_level a.
+
+  (** Sharing the signed value preserves the three constant flags. *)
+  Lemma pconst_agrees : forall w z, pconst w z = pconst_spec w z.
+  Proof.
+    intros w z. reflexivity.
+  Qed.
 
   (** Each inhabited signed class requires its corresponding flag. *)
   Local Lemma pgamma_cases w a z : pgamma w a z <->
@@ -1199,10 +1207,14 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_ALL L S.
   Proof.
     exact sign_entry_ticks.
   Qed.
+  (** Sign-table dispatch has a constant bound independent of word widths. *)
   Lemma sign_entry_bigO : bigO
     (X := L.op * (positive * list (positive * S.p))) (fun _ => True)
     (fun _ => 0%N) (fun x => T_wfwd (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_sign_table. intros [o [rw xs]] _. cbn [fst snd].
+    pose proof (T_sign_entry_le o rw xs) as Htime. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
     (N.of_nat (S.psize rw r) <= c_word_table * N.of_nat

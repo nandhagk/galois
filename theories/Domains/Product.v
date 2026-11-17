@@ -1109,14 +1109,24 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
     pose proof (T_forward_le o xs) as Htime.
     rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
   Qed.
+  (** Backward transfer has the published work-plus-request class. *)
   Lemma backward_bigO : (bigO (fun _ => True)
     (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
     (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val. intros [o [r xs]] _. cbn [fst snd].
+    pose proof (T_backward_le o r xs) as Htime.
+    rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
+  Qed.
+  (** Guard transfer has the published guard-work class. *)
   Lemma guard_bigO : (bigO (fun _ => True)
     (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
     (fun gx => T_guard (fst gx) (snd gx)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val. intros [g xs] _. cbn [fst snd].
+    pose proof (T_guard_le g xs) as Htime.
+    rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
+  Qed.
 
   Definition k_product_lists : N := 16%N.
   Lemma F1_gamma : forall a b c,

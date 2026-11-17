@@ -158,3 +158,23 @@ Proof.
   vm_compute. repeat split; reflexivity.
 Qed.
 
+(** Constant signs share one signed conversion for normalized and overflowing words. *)
+Example sign_constants_width_64 :
+  Payload.pconst 64%positive (2 ^ 64 + 5) = Sgn false false true /\
+  Payload.pconst 64%positive 5 = Sgn false false true /\
+  Payload.pconst 64%positive (-1) = Sgn true false false.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Raw tagged abstraction accepts precisely the unsigned range. *)
+Example tagged_constants_width_64 :
+  Base.abst (64%positive, 2 ^ 64 + 5) = TAny /\
+  Base.abst (64%positive, 5) = TVal 64%positive (Sgn false false true) /\
+  Base.abst (64%positive, -1) = TAny /\
+  Base.abst (64%positive, 0) = TVal 64%positive (Sgn false true false) /\
+  Base.abst (64%positive, 2 ^ 64 - 1) = TVal 64%positive (Sgn true false false) /\
+  Base.abst (64%positive, 2 ^ 64) = TAny.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.

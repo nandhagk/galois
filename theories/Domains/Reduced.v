@@ -31,12 +31,19 @@ Module ReducedCode (L : LANG_OPS) (A B : VALUE_DOMAIN_OPS L)
   Definition widen := product_widen A.is_bot B.is_bot A.widen B.widen.
   Definition narrow := product_narrow A.is_bot B.is_bot A.narrow B.narrow.
   Definition red (x : t) : t := normalize (Nat.iter K.rounds R.reduce x).
-  Definition forward (o : L.op) (xs : list t) : t :=
+  Definition forward_spec (o : L.op) (xs : list t) : t :=
     red (product_forward A.is_bot B.is_bot A.bot B.bot A.forward B.forward o xs).
-  Definition backward (o : L.op) (r : t) (xs : list t) : list t :=
+  Definition backward_spec (o : L.op) (r : t) (xs : list t) : list t :=
     map red (product_backward A.is_bot B.is_bot A.bot B.bot A.backward B.backward o r xs).
-  Definition guard (g : L.guard) (xs : list t) : list t :=
+  Definition guard_spec (g : L.guard) (xs : list t) : list t :=
     map red (product_guard A.is_bot B.is_bot A.bot B.bot A.guard B.guard g xs).
+  Definition forward (o : L.op) (xs : list t) : t :=
+    red (A.forward o (map fst xs), B.forward o (map snd xs)).
+  Definition backward (o : L.op) (r : t) (xs : list t) : list t :=
+    map red (combine (A.backward o (fst r) (map fst xs))
+      (B.backward o (snd r) (map snd xs))).
+  Definition guard (g : L.guard) (xs : list t) : list t :=
+    map red (combine (A.guard g (map fst xs)) (B.guard g (map snd xs))).
 End ReducedCode.
 
 Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
@@ -184,6 +191,52 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
       split; [eapply A.leb_trans|eapply B.leb_trans]; eassumption.
   Qed.
 
+  (** Reduction rounds retain recognition of a bottom component. *)
+  Lemma iter_reduce_bot : forall n x,
+    is_bot x = true -> is_bot (Nat.iter n R.reduce x) = true.
+  Proof.
+    intros n x Hbot. destruct (iter_lower n x) as [Ha Hb].
+    eapply (is_bot_below _ x); [now apply P.components_below|exact Hbot].
+  Qed.
+
+  (** Reducing a recognized bottom returns the canonical bottom pair. *)
+  Lemma red_bot : forall x, is_bot x = true -> red x = bot.
+  Proof.
+    intros x Hbot. unfold red, normalize, product_normalize.
+    change ((if is_bot (Nat.iter K.rounds R.reduce x) then bot
+      else Nat.iter K.rounds R.reduce x) = bot).
+    now rewrite (iter_reduce_bot K.rounds x Hbot).
+  Qed.
+
+  (** Normalizing before reduction does not change the final value. *)
+  Lemma red_normalize : forall x, red (normalize x) = red x.
+  Proof.
+    intro x. change (red (if is_bot x then bot else x) = red x).
+    destruct (is_bot x) eqn:Hbot; [|reflexivity].
+    now rewrite (red_bot bot is_bot_bot), (red_bot x Hbot).
+  Qed.
+
+  (** Forward reduction agrees with the normalized-product specification. *)
+  Lemma forward_agrees : forall o xs, forward o xs = forward_spec o xs.
+  Proof.
+    intros o xs. unfold forward, forward_spec, product_forward.
+    symmetry. apply red_normalize.
+  Qed.
+
+  (** Backward reduction agrees positionwise with the product specification. *)
+  Lemma backward_agrees : forall o r xs, backward o r xs = backward_spec o r xs.
+  Proof.
+    intros o r xs. unfold backward, backward_spec, product_backward.
+    rewrite map_map. apply map_ext. intro x. symmetry. apply red_normalize.
+  Qed.
+
+  (** Guard reduction agrees positionwise with the product specification. *)
+  Lemma guard_agrees : forall g xs, guard g xs = guard_spec g xs.
+  Proof.
+    intros g xs. unfold guard, guard_spec, product_guard.
+    rewrite map_map. apply map_ext. intro x. symmetry. apply red_normalize.
+  Qed.
+
   (** Bottom normalization preserves the meaning of the completed reduction. *)
   Lemma red_sound : forall x c, gamma x c -> gamma (red x) c.
   Proof.
@@ -231,7 +284,7 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
   Proof.
-    intros o xs cs c Hfacts Heval. apply red_sound.
+    intros o xs cs c Hfacts Heval. rewrite forward_agrees. apply red_sound.
     exact (P.forward_sound o xs cs c Hfacts Heval).
   Qed.
   (** Backward transfer retains operands consistent with the abstract result. *)
@@ -239,27 +292,27 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
     Forall2 gamma (backward o r xs) cs.
   Proof.
-    intros o r xs cs c Hfacts Heval Hr. apply map_red_sound.
+    intros o r xs cs c Hfacts Heval Hr. rewrite backward_agrees. apply map_red_sound.
     exact (P.backward_sound o r xs cs c Hfacts Heval Hr).
   Qed.
   (** Backward transfer refines each operand in its original position. *)
   Lemma backward_refines : forall o r xs,
     Forall2 (fun y x => leb y x = true) (backward o r xs) xs.
   Proof.
-    intros o r xs. apply map_red_refines. apply P.backward_refines.
+    intros o r xs. rewrite backward_agrees. apply map_red_refines. apply P.backward_refines.
   Qed.
   (** Guard transfer retains operands satisfying the concrete guard. *)
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L.holds g cs -> Forall2 gamma (guard g xs) cs.
   Proof.
-    intros g xs cs Hfacts Hholds. apply map_red_sound.
+    intros g xs cs Hfacts Hholds. rewrite guard_agrees. apply map_red_sound.
     exact (P.guard_sound g xs cs Hfacts Hholds).
   Qed.
   (** Guard transfer refines each operand in its original position. *)
   Lemma guard_refines : forall g xs,
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
   Proof.
-    intros g xs. apply map_red_refines. apply P.guard_refines.
+    intros g xs. rewrite guard_agrees. apply map_red_refines. apply P.guard_refines.
   Qed.
 End Reduced.
 
@@ -278,6 +331,9 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   TimeFun widen.
   TimeFun narrow.
   TimeFun red.
+  TimeFun forward_spec.
+  TimeFun backward_spec.
+  TimeFun guard_spec.
   TimeFun forward.
   TimeFun backward.
   TimeFun guard.
@@ -606,31 +662,95 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     reflexivity.
   Qed.
 
-  (** Forward transfer pays for the plain product and its final reduction. *)
+  (** The forward specification pays for the product and its final reduction. *)
   Lemma forward_time_parts : forall o xs,
-    (T_forward o xs <= PT.T_forward o xs + T_red (PT.forward o xs) + 1)%N.
+    (T_forward_spec o xs <= PT.T_forward o xs + T_red (PT.forward o xs) + 1)%N.
   Proof.
-    intros o xs. time_unfold T_forward. time_unfold PT.T_forward.
+    intros o xs. time_unfold T_forward_spec. time_unfold PT.T_forward.
     unfold PT.forward. lia.
   Qed.
 
-  (** Backward transfer pays for the plain product and a reduction of each result. *)
+  (** The backward specification pays for the product and each result's reduction. *)
   Lemma backward_time_parts : forall o r xs,
-    (T_backward o r xs <= PT.T_backward o r xs +
+    (T_backward_spec o r xs <= PT.T_backward o r xs +
       ListDef.T_map red (fun x => T_red x) (PT.backward o r xs) + 1)%N.
   Proof.
-    intros o r xs. time_unfold T_backward. time_unfold PT.T_backward.
+    intros o r xs. time_unfold T_backward_spec. time_unfold PT.T_backward.
     unfold PT.backward. lia.
   Qed.
 
-  (** Guard transfer pays for the plain product and a reduction of each result. *)
+  (** The guard specification pays for the product and each result's reduction. *)
   Lemma guard_time_parts : forall g xs,
-    (T_guard g xs <= PT.T_guard g xs +
+    (T_guard_spec g xs <= PT.T_guard g xs +
       ListDef.T_map red (fun x => T_red x) (PT.guard g xs) + 1)%N.
   Proof.
-    intros g xs. time_unfold T_guard. time_unfold PT.T_guard.
+    intros g xs. time_unfold T_guard_spec. time_unfold PT.T_guard.
     unfold PT.guard. lia.
   Qed.
+
+  (** The product clock bounds raw assembly before forward reduction. *)
+  Lemma forward_fast_time_parts : forall o xs,
+    (T_forward o xs <= PT.T_forward o xs +
+      T_red (A.forward o (map fst xs), B.forward o (map snd xs)) + 1)%N.
+  Proof.
+    intros o xs. time_unfold T_forward. time_unfold PT.T_forward.
+    time_unfold @T_product_forward. time_cbn. lia.
+  Qed.
+
+  (** The product clock bounds raw assembly before backward reduction. *)
+  Lemma backward_fast_time_parts : forall o r xs,
+    (T_backward o r xs <= PT.T_backward o r xs +
+      ListDef.T_map red (fun x => T_red x)
+        (combine (A.backward o (fst r) (map fst xs))
+          (B.backward o (snd r) (map snd xs))) + 1)%N.
+  Proof.
+    intros o r xs. time_unfold T_backward. time_unfold PT.T_backward.
+    time_unfold @T_product_backward. time_cbn. lia.
+  Qed.
+
+  (** The product clock bounds raw assembly before guard reduction. *)
+  Lemma guard_fast_time_parts : forall g xs,
+    (T_guard g xs <= PT.T_guard g xs +
+      ListDef.T_map red (fun x => T_red x)
+        (combine (A.guard g (map fst xs)) (B.guard g (map snd xs))) + 1)%N.
+  Proof.
+    intros g xs. time_unfold T_guard. time_unfold PT.T_guard.
+    time_unfold @T_product_guard. time_cbn. lia.
+  Qed.
+
+  Local Lemma scale_component : forall ticks coefficient own budget,
+    (ticks <= coefficient * N.of_nat own)%N -> (own <= budget)%nat ->
+    (ticks <= coefficient * N.of_nat budget)%N.
+  Proof.
+    intros ticks coefficient own budget Hticks Hsize.
+    eapply N.le_trans; [exact Hticks|]. apply N.mul_le_mono_l. lia.
+  Qed.
+
+  Local Lemma component_budget : forall sa sb budget,
+    (sa <= A.c_val * budget)%N -> (sb <= B.c_val * budget)%N ->
+    (sa + sb <= PT.c_val * budget)%N.
+  Proof.
+    intros sa sb budget Ha Hb.
+    assert (Hcore : (16 <= PT.k_core /\ A.c_val + B.c_val <= PT.k_core)%N).
+    { unfold PT.k_core. lia. }
+    assert (Hcoefficient : (A.c_val + B.c_val <= PT.c_val)%N).
+    { unfold PT.c_val. nia. }
+    pose proof (N.mul_le_mono_r _ _ budget Hcoefficient) as Hscaled.
+    rewrite N.mul_add_distr_r in Hscaled. lia.
+  Qed.
+
+  (** Raw paired outputs fit in the product budget without bottom normalization. *)
+  Lemma raw_list_size_budget : forall xs ys budget,
+    (N.of_nat (fold_right Nat.add 0%nat (map A.size xs)) <= A.c_val * budget)%N ->
+    (N.of_nat (fold_right Nat.add 0%nat (map B.size ys)) <= B.c_val * budget)%N ->
+    (N.of_nat (fold_right Nat.add 0%nat (map size (combine xs ys))) <=
+      PT.c_val * budget)%N.
+  Proof.
+    intros xs ys budget Ha Hb. eapply N.le_trans.
+    - apply nat_bound. exact (PT.combine_size_bound xs ys).
+    - rewrite Nat2N.inj_add. now apply component_budget.
+  Qed.
+
   Local Lemma scalar_reduction_budget : forall x budget,
     (1 <= budget)%N -> (N.of_nat (size x) <= PT.c_val * budget)%N ->
     (T_red x <= k_red_budget * (PT.c_val + 1) * budget)%N /\
@@ -712,10 +832,13 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     { unfold budget. rewrite Nat2N.inj_add. lia. }
     pose proof (PT.T_forward_le o xs) as Hproduct.
     change (PT.T_forward o xs <= PT.c_val * budget)%N in Hproduct.
-    assert (Hsize : (N.of_nat (size (PT.forward o xs)) <= PT.c_val * budget)%N).
-    { exact (PT.forward_size o xs). }
+    assert (Hsize : (N.of_nat (size
+      (A.forward o (map fst xs), B.forward o (map snd xs))) <= PT.c_val * budget)%N).
+    { unfold size. cbn [fst snd]. rewrite Nat2N.inj_add. apply component_budget.
+      - eapply scale_component; [apply A.forward_size|]. unfold work. lia.
+      - eapply scale_component; [apply B.forward_size|]. unfold work. lia. }
     destruct (scalar_reduction_budget _ budget Hbudget Hsize) as [Hred Hredsize].
-    pose proof (forward_time_parts o xs) as Hparts.
+    pose proof (forward_fast_time_parts o xs) as Hparts.
     pose proof (composed_budget budget) as Htotal. lia.
   Qed.
   Lemma T_backward_le : forall o r xs,
@@ -727,13 +850,20 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     pose proof (PT.T_backward_le o r xs) as Hproduct.
     change (PT.T_backward o r xs <= PT.c_val * budget)%N in Hproduct.
     assert (Hsize : (N.of_nat (fold_right Nat.add 0%nat
-      (map size (PT.backward o r xs))) <= PT.c_val * budget)%N).
-    { exact (PT.backward_size o r xs). }
-    assert (Hlength : (N.of_nat (length (PT.backward o r xs)) <= budget)%N).
-    { pose proof (Forall2_length (PT.backward_refines o r xs)) as Heq.
-      rewrite Heq. unfold budget, work, t. rewrite !Nat2N.inj_add. lia. }
+      (map size (combine (A.backward o (fst r) (map fst xs))
+        (B.backward o (snd r) (map snd xs))))) <= PT.c_val * budget)%N).
+    { apply raw_list_size_budget.
+      - eapply scale_component; [apply A.backward_size|]. unfold work, size. lia.
+      - eapply scale_component; [apply B.backward_size|]. unfold work, size. lia. }
+    assert (Hlength : (N.of_nat (length
+      (combine (A.backward o (fst r) (map fst xs))
+        (B.backward o (snd r) (map snd xs)))) <= budget)%N).
+    { pose proof (Forall2_length (A.backward_refines o (fst r) (map fst xs))) as Heq.
+      rewrite length_map in Heq. rewrite length_combine, Heq.
+      pose proof (Nat.le_min_l (length xs) (length (B.backward o (snd r) (map snd xs)))).
+      unfold budget, work, t. lia. }
     destruct (list_reduction_budget _ budget Hsize Hlength) as [Hred Hredsize].
-    pose proof (backward_time_parts o r xs) as Hparts.
+    pose proof (backward_fast_time_parts o r xs) as Hparts.
     pose proof (composed_budget budget) as Htotal. lia.
   Qed.
   Lemma T_guard_le : forall g xs,
@@ -745,19 +875,25 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     pose proof (PT.T_guard_le g xs) as Hproduct.
     change (PT.T_guard g xs <= PT.c_val * budget)%N in Hproduct.
     assert (Hsize : (N.of_nat (fold_right Nat.add 0%nat
-      (map size (PT.guard g xs))) <= PT.c_val * budget)%N).
-    { exact (PT.guard_size g xs). }
-    assert (Hlength : (N.of_nat (length (PT.guard g xs)) <= budget)%N).
-    { pose proof (Forall2_length (PT.guard_refines g xs)) as Heq.
-      rewrite Heq. unfold budget, gwork, t. rewrite !Nat2N.inj_add. lia. }
+      (map size (combine (A.guard g (map fst xs)) (B.guard g (map snd xs))))) <=
+      PT.c_val * budget)%N).
+    { apply raw_list_size_budget.
+      - eapply scale_component; [apply A.guard_size|]. unfold gwork. lia.
+      - eapply scale_component; [apply B.guard_size|]. unfold gwork. lia. }
+    assert (Hlength : (N.of_nat (length
+      (combine (A.guard g (map fst xs)) (B.guard g (map snd xs)))) <= budget)%N).
+    { pose proof (Forall2_length (A.guard_refines g (map fst xs))) as Heq.
+      rewrite length_map in Heq. rewrite length_combine, Heq.
+      pose proof (Nat.le_min_l (length xs) (length (B.guard g (map snd xs)))).
+      unfold budget, gwork, t. lia. }
     destruct (list_reduction_budget _ budget Hsize Hlength) as [Hred Hredsize].
-    pose proof (guard_time_parts g xs) as Hparts.
+    pose proof (guard_fast_time_parts g xs) as Hparts.
     pose proof (composed_budget budget) as Htotal. lia.
   Qed.
   Lemma forward_size : forall o xs,
     (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
   Proof.
-    intros o xs. set (budget := N.of_nat (work o xs + 1)).
+    intros o xs. rewrite forward_agrees. set (budget := N.of_nat (work o xs + 1)).
     assert (Hbudget : (1 <= budget)%N).
     { unfold budget. rewrite Nat2N.inj_add. lia. }
     assert (Hsize : (N.of_nat (size (PT.forward o xs)) <= PT.c_val * budget)%N).
@@ -789,7 +925,8 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
       c_val * N.of_nat (work o xs + size r + 1))%N.
   Proof.
-    intros o r xs. set (budget := N.of_nat (work o xs + size r + 1)).
+    intros o r xs. rewrite backward_agrees.
+    set (budget := N.of_nat (work o xs + size r + 1)).
     assert (Hsize : (N.of_nat (fold_right Nat.add 0%nat
       (map size (PT.backward o r xs))) <= PT.c_val * budget)%N).
     { exact (PT.backward_size o r xs). }
@@ -805,7 +942,7 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
       c_val * N.of_nat (gwork g xs + 1))%N.
   Proof.
-    intros g xs. set (budget := N.of_nat (gwork g xs + 1)).
+    intros g xs. rewrite guard_agrees. set (budget := N.of_nat (gwork g xs + 1)).
     assert (Hsize : (N.of_nat (fold_right Nat.add 0%nat
       (map size (PT.guard g xs))) <= PT.c_val * budget)%N).
     { exact (PT.guard_size g xs). }
@@ -841,14 +978,24 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     pose proof (T_forward_le o xs) as Htime.
     rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
   Qed.
+  (** Backward transfer has the published work-plus-request class. *)
   Lemma backward_bigO : (bigO (fun _ => True)
     (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
     (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val. intros [o [r xs]] _. cbn [fst snd].
+    pose proof (T_backward_le o r xs) as Htime.
+    rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
+  Qed.
+  (** Guard transfer has the published guard-work class. *)
   Lemma guard_bigO : (bigO (fun _ => True)
     (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
     (fun gx => T_guard (fst gx) (snd gx)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val. intros [g xs] _. cbn [fst snd].
+    pose proof (T_guard_le g xs) as Htime.
+    rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
+  Qed.
 
   Definition k_red : N := 16%N.
   Lemma F1_red_eq : forall x,

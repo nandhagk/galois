@@ -262,6 +262,11 @@ Proof.
       [exact Hhi | reflexivity].
 Qed.
 
+(** Outward cutting already supplies the proof needed by the bounded carrier. *)
+Definition cut_direct (bits : nat) (a : itv) : cut_itv bits :=
+  exist _ (cut_interval bits a) (cut_interval_valid bits a).
+TimeFun cut_direct.
+
 (** Cutting a checked interval is the identity. *)
 Lemma cut_interval_fixed : forall bits a,
   cut_interval_ok bits a = true -> cut_interval bits a = a.
@@ -356,8 +361,10 @@ Module CutIntervalCode (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_OPS)
   Definition t := cut_itv C.bits.
   Definition wparam := ttree.
 
-  Definition cut (a : itv) : t :=
+  Definition cut_spec (a : itv) : t :=
     pack_cut C.bits (cut_interval C.bits a).
+
+  Definition cut (a : itv) : t := cut_direct C.bits a.
 
   Definition bot : t := exist _ IBot eq_refl.
   Definition top : t := exist _ (I NegInf PosInf) eq_refl.
@@ -386,7 +393,14 @@ Module CutInterval (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE)
   (** Cutting stores exactly the total outward-cut representation. *)
   Lemma cut_agrees : forall a, cut_raw (cut a) = cut_interval C.bits a.
   Proof.
-    intro a. apply pack_cut_agrees, cut_interval_valid.
+    reflexivity.
+  Qed.
+
+  (** Direct packing retains the same carrier value as the checked specification. *)
+  Lemma cut_spec_agrees : forall a, cut a = cut_spec a.
+  Proof.
+    intro a. apply cut_raw_injective. rewrite cut_agrees.
+    symmetry. unfold cut_spec. apply pack_cut_agrees, cut_interval_valid.
   Qed.
 
   (** Every carrier value has a normalized shape and bounded endpoints. *)
@@ -955,6 +969,7 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     <: CUT_INTERVAL_ALL C L T R RL.
   Include CutInterval C L T R RL.
 
+  TimeFun cut_spec.
   TimeFun cut.
   TimeFun bot.
   TimeFun top.
@@ -1102,8 +1117,7 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Lemma T_cut_pack : forall a,
     (T_cut a <= k_cut * (T_cut_interval C.bits a + 1))%N.
   Proof.
-    intro a. pose proof (cut_pack_interval_scan C.bits a) as Hpack.
-    unfold T_cut, k_cut. cbn beta iota zeta. lia.
+    intro a. unfold T_cut, T_cut_direct, k_cut. cbn beta iota zeta. lia.
   Qed.
   (** Mapping adds one list step to each bounded callback and one terminal step. *)
   Lemma map_scan_bound : forall (A B : Type) (f : A -> B) (clock cost : A -> N)
@@ -1174,8 +1188,7 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Proof.
     intros o xs.
     pose proof (cut_projection_scan C.bits xs) as Hprojection.
-    pose proof (cut_pack_interval_scan C.bits (R.forward o (map cut_raw xs))) as Hpack.
-    unfold T_forward, T_cut, T_cut_raw, k_cut in *.
+    unfold T_forward, T_cut, T_cut_direct, T_cut_raw, k_cut in *.
     unfold t, R.t in *.
     cbn beta iota zeta in *.
     lia.
@@ -1228,8 +1241,7 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
        T_cut_interval C.bits (R.widen q (cut_raw a) (cut_raw b)) + 1))%N.
   Proof.
     intros q a b.
-    pose proof (cut_pack_interval_scan C.bits (R.widen q (cut_raw a) (cut_raw b))) as Hpack.
-    unfold T_widen, T_cut, T_cut_raw, k_cut. cbn beta iota zeta. lia.
+    unfold T_widen, T_cut, T_cut_direct, T_cut_raw, k_cut. cbn beta iota zeta. lia.
   Qed.
 
   (** The wrapper constant covers the raw constant and its fixed call overhead. *)
@@ -1420,12 +1432,6 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     rewrite <- RL.raw_wrank.
     apply R.F3_wrank_le.
   Qed.
-
-  (** Forward transfer has the published operator-work class. *)
-  Lemma forward_bigO : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
-    (fun ox => T_forward (fst ox) (snd ox)))%N.
-  Proof. Admitted. (* STUB *)
 
   (** Operator work accounts for every operand size. *)
   Lemma work_sizes : forall o xs,
@@ -1788,6 +1794,16 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     - eapply N.le_trans; [exact Hsize|]. apply N.mul_le_mono_l. lia.
     - exact Hcut.
     - lia.
+  Qed.
+
+  (** Forward transfer has the published operator-work class. *)
+  Lemma forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
+    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Proof.
+    exists c_val. intros [o xs] _. cbn [fst snd].
+    pose proof (T_forward_le o xs) as Htime.
+    rewrite Nat2N.inj_add in Htime. exact Htime.
   Qed.
 
   (** Backward transfer charges operator work and the requested result. *)
