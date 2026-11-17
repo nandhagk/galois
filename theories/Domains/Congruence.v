@@ -2962,7 +2962,10 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     (fun x => N.of_nat
       (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
     (fun x => T_congr_urem (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_congruence. intros [w [a b]] _. cbn [fst snd].
+    pose proof (T_congr_urem_le w a b). nia.
+  Qed.
   (** Canonical payloads normalize in linear time. *)
   Lemma congr_norm_lin_bigO : bigO (X := positive * congr)
     (fun x => canonical (fst x) (snd x))
