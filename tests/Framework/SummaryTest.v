@@ -4,8 +4,8 @@
     For example, the all-true candidate satisfies both call rows.
 
     Groups:
-    - Rows: the local and call rows come out in their fixed order.
-    - Candidates: the all-true candidate is accepted and the all-false candidate is rejected.
+    - [RowsTests] The local and call rows come out in their fixed order.
+    - [CandidateTests] The all-true candidate is accepted and the all-false candidate is rejected.
 
     Builds on: Framework.Summary and Fixpoint.Query. *)
 
