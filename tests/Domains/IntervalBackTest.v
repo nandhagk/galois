@@ -2,12 +2,12 @@
 
     These examples exercise direct backward interval refinement.
     For example, an addition result narrows its first operand.
+    Builds on: IntervalBack and Thresholds.
 
     Groups:
     - [AddTests] Backward addition narrows an operand.
     - [UnsignedTests] A false unsigned comparison narrows both operands.
-    - [ResizeTests] A truncated result keeps an operand that already fits.
-    Builds on: IntervalBack and Thresholds. *)
+    - [ResizeTests] A truncated result keeps an operand that already fits. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Op.
