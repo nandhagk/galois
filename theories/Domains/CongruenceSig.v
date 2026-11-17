@@ -6,13 +6,20 @@
     Main results
     - [mul_complexity] Congruence multiplication is quadratic in the width and the payload
       sizes, O((w + a + b + 1)^2).
-    - [congr_urem_complexity] Remainder has the published quadratic class, because it takes a gcd.
-    - [congr_norm_lin_complexity] Canonical payloads normalize in time linear in the width and size.
-    - [congr_neg_lin_complexity] Negation of a canonical payload is linear in the width and size.
-    - [congr_add_lin_complexity] Addition of canonical payloads is linear in their sizes.
-    - [congr_sub_lin_complexity] Subtraction of canonical payloads is linear in their sizes.
-    - [congr_shl_lin_complexity] Shifting a canonical payload by a canonical amount is linear.
-    - [congr_project_lin_complexity] Projection of a canonical payload is linear in both widths.
+    - [congr_urem_complexity] Remainder has the published quadratic class, because it takes a gcd,
+      O((w + a + b + 1)^2).
+    - [congr_norm_lin_complexity] Canonical payloads normalize in time linear in the width and size,
+      O(w + a + 1).
+    - [congr_neg_lin_complexity] Negation of a canonical payload is linear in the width and size,
+      O(w + a + 1).
+    - [congr_add_lin_complexity] Addition of canonical payloads is linear in their sizes,
+      O(w + a + b + 1).
+    - [congr_sub_lin_complexity] Subtraction of canonical payloads is linear in their sizes,
+      O(w + a + b + 1).
+    - [congr_shl_lin_complexity] Shifting a canonical payload by a canonical amount is linear,
+      O(w + a + b + 1).
+    - [congr_project_lin_complexity] Projection of a canonical payload is linear in both widths,
+      O(source + target + a + 1).
 
     Builds on: WordSig. *)
 
