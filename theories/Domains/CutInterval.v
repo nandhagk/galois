@@ -1433,12 +1433,6 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     apply R.F3_wrank_le.
   Qed.
 
-  (** Forward transfer has the published operator-work class. *)
-  Lemma forward_bigO : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
-    (fun ox => T_forward (fst ox) (snd ox)))%N.
-  Proof. Admitted. (* STUB *)
-
   (** Operator work accounts for every operand size. *)
   Lemma work_sizes : forall o xs,
     fold_right Nat.add 0%nat (map size xs) <= work o xs.
@@ -1800,6 +1794,16 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     - eapply N.le_trans; [exact Hsize|]. apply N.mul_le_mono_l. lia.
     - exact Hcut.
     - lia.
+  Qed.
+
+  (** Forward transfer has the published operator-work class. *)
+  Lemma forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
+    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Proof.
+    exists c_val. intros [o xs] _. cbn [fst snd].
+    pose proof (T_forward_le o xs) as Htime.
+    rewrite Nat2N.inj_add in Htime. exact Htime.
   Qed.
 
   (** Backward transfer charges operator work and the requested result. *)

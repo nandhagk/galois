@@ -1207,10 +1207,14 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_ALL L S.
   Proof.
     exact sign_entry_ticks.
   Qed.
+  (** Sign-table dispatch has a constant bound independent of word widths. *)
   Lemma sign_entry_bigO : bigO
     (X := L.op * (positive * list (positive * S.p))) (fun _ => True)
     (fun _ => 0%N) (fun x => T_wfwd (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_sign_table. intros [o [rw xs]] _. cbn [fst snd].
+    pose proof (T_sign_entry_le o rw xs) as Htime. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
     (N.of_nat (S.psize rw r) <= c_word_table * N.of_nat

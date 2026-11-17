@@ -642,18 +642,35 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Proof.
     exact meet_all_time_bound.
   Qed.
+  (** Forward transfer has the published operator-work class. *)
   Lemma forward_bigO : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val. intros [o xs] _. cbn [fst snd].
+    pose proof (T_forward_le o xs) as Htime.
+    rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
+  Qed.
+
+  (** Backward transfer also charges the size of its requested result. *)
   Lemma backward_bigO : (bigO (fun _ => True)
     (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
     (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val. intros [o [r xs]] _. cbn [fst snd].
+    pose proof (T_backward_le o r xs) as Htime.
+    rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
+  Qed.
+
+  (** Guard transfer has the published guard-work class. *)
   Lemma guard_bigO : (bigO (fun _ => True)
     (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
     (fun gx => T_guard (fst gx) (snd gx)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val. intros [g xs] _. cbn [fst snd].
+    pose proof (T_guard_le g xs) as Htime.
+    rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
+  Qed.
 
   Definition k_points : N := 1%N.
   Definition k_meet : N := c_harness.

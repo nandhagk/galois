@@ -1390,6 +1390,16 @@ Module WordTime.
     - clearbody budget base raw. unfold word, width in *. time_cbn_all. lia.
   Qed.
 
+  (** Concrete word evaluation is quadratic in operator widths and raw operand sizes. *)
+  Theorem eval_op_bigO : bigO (X := Op.op * list (positive * Z)) (fun _ => True)
+    (fun x => N.of_nat (((Op.op_widths (fst x) +
+      fold_right Nat.add 0
+        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) (snd x)) + 1) ^ 2)%nat))
+    (fun x => Op.T_eval_op (fst x) (snd x)).
+  Proof.
+    exists 524288%N. intros [o xs] _. cbn [fst snd].
+    pose proof (word_eval_time_bound o xs) as Htime. nia.
+  Qed.
 End WordTime.
 
 
@@ -1519,10 +1529,14 @@ Module WordLanguageT <: WORD_LANGUAGE_T.
     unfold word, width in *. time_cbn_all. lia.
   Qed.
 
+  (** Word-language evaluation retains its published quadratic work class. *)
   Lemma eval_op_bigO : bigO (X := op * list (positive * Z)) (fun _ => True)
     (fun x => N.of_nat (((Op.op_widths (fst x) +
       fold_right Nat.add 0
         (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) (snd x)) + 1) ^ 2)%nat))
     (fun x => T_eval_op (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_word. intros [o cs] _. cbn [fst snd].
+    pose proof (T_eval_op_le o cs) as Htime. nia.
+  Qed.
 End WordLanguageT.
