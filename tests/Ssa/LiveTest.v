@@ -33,6 +33,10 @@ Module Ops <: OPS.
   Definition mov := tt.
 End Ops.
 
+(** A search that has seen nothing, has nothing to visit and has found nothing. *)
+Definition fresh_search : live_state (positive * N)%type :=
+  {| live_seen := @Empty unit; live_todo := []; live_done := [] |}.
+
 (** The source functions of the examples. *)
 Module Source.
   Definition t := func positive unit unit.
@@ -188,20 +192,23 @@ Module EncodingReuseTests.
 
   (** Discovery reuses the point encoding that it is given. *)
   Example discovery_reuses_point_encoding :
-    let st := {| live_seen := @Empty unit; live_todo := []; live_done := [] |} in
-    live_discover PointKey.encode (2, 3%N) st =
-      live_discover_spec PointKey.encode (2, 3%N) st.
+    live_discover PointKey.encode (2, 3%N) fresh_search =
+      live_discover_spec PointKey.encode (2, 3%N) fresh_search.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
+  (** The prepared function whose predecessors are added, and the point that they lead to. *)
+  Definition inside_query := View.R.prepare entry_and_inside.
+
+  Definition inside_point := (2, 2%N).
+
   (** Adding predecessors reuses the point encodings that the presentation gives. *)
   Example predecessors_reuse_point_encodings :
-    let q := View.R.prepare entry_and_inside in
-    let n := (2, 2%N) in
-    let st := {| live_seen := @Empty unit; live_todo := []; live_done := [] |} in
-    L.add_predecessors q (L.reverse_kills q) 9 n (View.C.inc q n) st =
-      L.add_predecessors_spec q (L.reverse_kills q) 9 n (View.C.inc q n) st.
+    L.add_predecessors inside_query (L.reverse_kills inside_query) 9 inside_point
+      (View.C.inc inside_query inside_point) fresh_search =
+    L.add_predecessors_spec inside_query (L.reverse_kills inside_query) 9 inside_point
+      (View.C.inc inside_query inside_point) fresh_search.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -212,37 +219,43 @@ End EncodingReuseTests.
 
 Module CachedPredecessorTests.
 
+  (** The point of block 1 that the cached edges come from. *)
+  Definition cached_source := (1, 0%N).
+
+  (** A cached edge from the source whose kill set holds variable 9. *)
+  Definition killing_nine :=
+    LiveEdge cached_source (PointKey.encode cached_source) (PTrieCode.set 9 tt Empty).
+
+  (** A cached edge from the source whose kill set holds variables 9 and 8. *)
+  Definition killing_nine_and_eight :=
+    LiveEdge cached_source (PointKey.encode cached_source)
+      (PTrieCode.set 9 tt (PTrieCode.set 8 tt Empty)).
+
+  (** A cached edge from the source that kills nothing. *)
+  Definition clear_edge := LiveEdge cached_source (PointKey.encode cached_source) Empty.
+
+  (** The predecessors found for variable 9 at point (2, 0) when the cache holds these edges. *)
+  Definition cached_found (edges : list (live_edge (positive * N)%type)) :=
+    live_done (L.cached_predecessors
+      (PTrieCode.set (PointKey.encode (2, 0%N)) edges Empty) 9 (2, 0%N) fresh_search).
+
   (** One cached edge that does not kill the variable lets it propagate to block 1. *)
   Example one_clear_cached_edge_propagates :
-    let n := (1, 0%N) in
-    let killing := LiveEdge n (PointKey.encode n) (PTrieCode.set 9 tt Empty) in
-    let clear := LiveEdge n (PointKey.encode n) Empty in
-    live_done (L.cached_predecessors
-      (PTrieCode.set (PointKey.encode (2, 0%N)) [killing; clear] Empty) 9 (2, 0%N)
-      {| live_seen := Empty; live_todo := []; live_done := [] |}) = [n].
+    cached_found [killing_nine; clear_edge] = [cached_source].
   Proof.
     vm_compute. reflexivity.
   Qed.
 
   (** Cached parallel edges that all kill the variable stop its propagation. *)
   Example cached_killing_edges_stop_propagation :
-    let n := (1, 0%N) in
-    let first := LiveEdge n (PointKey.encode n) (PTrieCode.set 9 tt Empty) in
-    let second := LiveEdge n (PointKey.encode n) (PTrieCode.set 9 tt (PTrieCode.set 8 tt Empty)) in
-    live_done (L.cached_predecessors
-      (PTrieCode.set (PointKey.encode (2, 0%N)) [first; second] Empty) 9 (2, 0%N)
-      {| live_seen := Empty; live_todo := []; live_done := [] |}) = [].
+    cached_found [killing_nine; killing_nine_and_eight] = [].
   Proof.
     vm_compute. reflexivity.
   Qed.
 
   (** A predecessor reached by two equal cached edges is found once. *)
   Example cached_repeated_predecessor_is_found_once :
-    let n := (1, 0%N) in
-    let clear := LiveEdge n (PointKey.encode n) Empty in
-    live_done (L.cached_predecessors
-      (PTrieCode.set (PointKey.encode (2, 0%N)) [clear; clear] Empty) 9 (2, 0%N)
-      {| live_seen := Empty; live_todo := []; live_done := [] |}) = [n].
+    cached_found [clear_edge; clear_edge] = [cached_source].
   Proof.
     vm_compute. reflexivity.
   Qed.
