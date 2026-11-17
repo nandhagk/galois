@@ -187,9 +187,8 @@ Module Type HARNESS_TIME (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Parameter forward_complexity :
     T_forward o xs ∈ 𝑂(N.of_nat ((work o xs)%nat)) for (o, xs).
   (** Backward transfer has the published work-plus-request class. *)
-  Parameter backward_complexity : (bigO (fun _ => True)
-    (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
-    (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
+  Parameter backward_complexity :
+    T_backward o r xs ∈ 𝑂(N.of_nat ((work o xs + size r)%nat)) for (o, (r, xs)).
   (** Guard transfer has the published guard-work class. *)
   Parameter guard_complexity :
     T_guard g xs ∈ 𝑂(N.of_nat ((gwork g xs)%nat)) for (g, xs).
