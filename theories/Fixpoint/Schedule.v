@@ -2,10 +2,21 @@
 
     This file constructs schedules from dependency graphs and checked WTOs.
     For example, a self-dependency requires its target to be a widening head.
+
+    Main results
+    - [plan_spec] Planning accepts a built WTO only when its checker accepts it.
+    - [cuts_spec] Every non-increasing dependency edge enters a configured head.
+    - [dep_graph_complexity] Dependency graph construction is linear in occurrences and edges.
+    - [cuts_complexity] Cut checking is linear in occurrences times the key and priority widths.
+    - [plan_complexity] Planning is linear in occurrences and edges times the nesting depth.
+    - [of_wto_complexity] WTO conversion is linear in the order length times the key and rank
+      widths.
+
     Builds on: Fixpoint.ScheduleSig, Fixpoint.PolicySig and Graph.WtoSig. *)
 
 From Stdlib Require Import List PArith Arith NArith Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Graph Require Import Data Spec DigraphSig WtoSig.
@@ -1822,10 +1833,10 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Dependency graph construction is linear in occurrences and edges. *)
-  Lemma dep_graph_complexity : bigO (X := S.prog) (fun p => S.wf p)
-    (fun p => (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
+  Lemma dep_graph_complexity :
+    T_dep_graph p ∈ 𝑂((N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
         N.of_nat (S.kw p + 1) + N.of_nat (row_count p) * (S.row_work p 0 + 1))%N)
-    (fun p => T_dep_graph p).
+    for p | S.wf p.
   Proof.
     apply bigO_intro with (c := c_sched).
     intros p Hwf; cbn [fst snd].
@@ -1834,11 +1845,11 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Cut checking is linear in occurrences times the key and priority widths. *)
-  Lemma cuts_complexity : bigO (X := S.prog * policy L.wparam) (fun x => S.wf (fst x))
-    (fun x => (N.of_nat (row_count (fst x) + occurrence_count (fst x) + 1) *
-        N.of_nat (S.kw (fst x) + prio_width (fst x) (snd x) + 1) +
-        N.of_nat (row_count (fst x)) * (S.row_work (fst x) 0 + 1))%N)
-    (fun x => T_cuts (fst x) (snd x)).
+  Lemma cuts_complexity :
+    T_cuts p pol ∈ 𝑂((N.of_nat (row_count p + occurrence_count p + 1) *
+        N.of_nat (S.kw p + prio_width p pol + 1) +
+        N.of_nat (row_count p) * (S.row_work p 0 + 1))%N)
+    for (p, pol) | S.wf p.
   Proof.
     apply bigO_intro with (c := c_sched).
     intros [p pol] Hwf; cbn [fst snd] in *.
@@ -1847,12 +1858,11 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Planning is linear in occurrences and edges times the nesting depth. *)
-  Lemma plan_complexity : bigO (X := S.prog * head_cfg * L.wparam * nat)
-    (fun '(p, _, _, _) => S.wf p)
-    (fun '(p, _, _, _) => (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
+  Lemma plan_complexity :
+    T_plan p cfg wp n ∈ 𝑂((N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
         N.of_nat (wto_depth (W.build (G.prepare (dep_graph p)) (verts (dep_graph p))) + 1) *
         N.of_nat (S.kw p + 1) + N.of_nat (row_count p) * (S.row_work p 0 + 1))%N)
-    (fun '(p, cfg, wp, n) => T_plan p cfg wp n).
+    for (p, cfg, wp, n) | S.wf p.
   Proof.
     apply bigO_intro with (c := c_sched).
     intros [[[p cfg] wp] n] Hwf; cbn [fst snd] in *.
@@ -1861,10 +1871,10 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** WTO conversion is linear in the order length times the key and rank widths. *)
-  Lemma of_wto_complexity : bigO (X := wto * head_cfg * L.wparam * nat) (fun _ => True)
-    (fun '(w, _, _, _) => N.of_nat ((length (wto_order w) + 1) *
+  Lemma of_wto_complexity :
+    T_of_wto w cfg wp n ∈ 𝑂(N.of_nat ((length (wto_order w) + 1) *
       (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1)))
-    (fun '(w, cfg, wp, n) => T_of_wto w cfg wp n).
+    for (w, cfg, wp, n).
   Proof.
     apply bigO_intro with (c := c_sched).
     intros [[[w cfg] wp] n] _; cbn [fst snd].
