@@ -2,13 +2,13 @@
 
     The executable interval tower cuts every raw result to the endpoint budget.
     For example, an eight-bit upper endpoint of 256 becomes positive infinity.
+    Builds on: CutInterval, Interval, Thresholds and ZLang.
 
     Groups:
     - [TransferTests] Outward transfers construct their already-checked results.
     - [BudgetTests] Endpoints within the budget are kept, and malformed ones are bottom.
     - [OverflowTests] Results and operands beyond the budget become top or are kept.
-    - [PermutedRawTests] A lawful raw domain can still break the cutoff's bottom laws.
-    Builds on: CutInterval, Interval, Thresholds and ZLang. *)
+    - [PermutedRawTests] A lawful raw domain can still break the cutoff's bottom laws. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Domains Require Import ValueSig IntervalSig CutIntervalSig CutInterval Interval
@@ -260,7 +260,7 @@ Module BudgetTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** An upper endpoint above the budget becomes positive infinity. *)
+  (** An interval whose endpoints lie above the budget gives the unbounded interval. *)
   Example cut_above_budget_gives_top :
     cut_raw (Cut.cut (I (Fin 256) (Fin 300))) = I NegInf PosInf.
   Proof.
