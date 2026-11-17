@@ -65,7 +65,9 @@ Module HeadTests.
     | Some pol => (is_head pol 0, is_head pol 1, is_head pol 2)
     | None => (false, false, false)
     end = (true, true, false).
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End HeadTests.
 
@@ -76,7 +78,9 @@ Module EdgeTests.
   (** Function 0 calls itself at site 0, so the call edges are to 0 and to 1. *)
   Example self_call_edges :
     call_edges (AllCalls.resolve 0) (AllCalls.sites_of 0 0) = [CallEdge 0 0; CallEdge 0 1].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End EdgeTests.
 
@@ -88,6 +92,8 @@ Module ReachTests.
   Example prepared_reach_sets :
     map (fun f => map (reachable_from f) [1; 2; 3]%positive) [1; 2; 3]%positive =
       [[true; true; true]; [false; true; true]; [false; true; true]].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End ReachTests.
