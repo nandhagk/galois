@@ -2,14 +2,27 @@
 
     A certificate relates imperative variables to SSA values at each block entry.
     For example, incoming arguments supply the values named by the target block's certificate.
+
+    Main results
+    - [check_sound] An accepted translation has the same result at every fuel and input list.
+    - [check_ssa_sound] Acceptance of the SSA checker establishes the language's strict
+      definition discipline.
+    - [check_core_ssa_sound] Accepted SSA functions also meet the supplied core presentation's
+      laws.
+    - [check_complexity] Translation checking has the published certificate-sensitive
+      bit-cost bound.
+    - [check_ssa_complexity] SSA checking has the published syntax and dominator bit-cost
+      bound.
+
     Builds on: Ssa.Lang, core SSA presentations, graph preparation and dominator checking. *)
 
 From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time Std BigO Loop.
+From Argent Require Import Time Std Complexity Loop.
 From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig.
 From Galois.Program Require Import CfgSig SsaSig.
 From Galois.Ssa Require Import Lang LiveSig.
+Import ComplexityNotations.
 Import List.ListNotations.
 
 Definition renaming := list (positive * positive).
@@ -203,13 +216,13 @@ Module Type VALIDATE_TIME (O : OPS)
     (T_check_ssa s <= c_val * (N.of_nat (function_size s + 1) + dom_bound s) *
       N.of_nat (function_width s + 1))%N.
   (** Translation checking has the published certificate-sensitive bit-cost bound. *)
-  Parameter check_complexity : bigO (fun _ : P.t * P.t * cert => True)
-    (fun '(p, s, c) => N.of_nat ((function_size p + function_size s + cert_size c + 1) *
-      (check_width p s c + 1) + op_bits p + 1)) (fun '(p, s, c) => T_check p s c).
+  Parameter check_complexity :
+    T_check p s c ∈ 𝑂(N.of_nat ((function_size p + function_size s + cert_size c + 1) *
+      (check_width p s c + 1) + op_bits p + 1)) for (p, s, c).
   (** SSA checking has the published syntax and dominator bit-cost bound. *)
-  Parameter check_ssa_complexity : bigO (fun _ : P.t => True)
-    (fun s => ((N.of_nat (function_size s + 1) + dom_bound s) *
-      N.of_nat (function_width s + 1))%N) T_check_ssa.
+  Parameter check_ssa_complexity :
+    T_check_ssa s ∈ 𝑂(((N.of_nat (function_size s + 1) + dom_bound s) *
+      N.of_nat (function_width s + 1))%N) for s.
 End VALIDATE_TIME.
 
 Module Type VALIDATE_T (O : OPS)
