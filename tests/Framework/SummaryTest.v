@@ -64,7 +64,9 @@ Module RowsTests.
   (** The rows are the two local rows followed by the two call rows, in that order. *)
   Example rows_in_order : A.rows tt =
     [SummaryLocal 0; SummaryLocal 1; SummaryCall 0 1; SummaryCall 1 0].
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End RowsTests.
 
@@ -74,10 +76,14 @@ Module CandidateTests.
 
   (** The all-true candidate satisfies every row. *)
   Example all_true_accepted : check (fun _ => true) = true.
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** The all-false candidate fails some row. *)
   Example all_false_rejected : check (fun _ => false) = false.
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End CandidateTests.
