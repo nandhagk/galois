@@ -46,7 +46,33 @@ Proof.
 Qed.
 
 Example unused_inequality_is_equality :
-  Certificates.combine [le_x] [0] = Some (LCons _ [(1%positive, 0)] REq 0).
+  Certificates.combine [le_x] [0] = Some (LCons _ [] REq 0).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition five_zero_equalities : list (lcons positive) :=
+  [LCons _ [(1%positive, 1)] REq 0; LCons _ [(2%positive, 1)] REq 0;
+   LCons _ [(3%positive, 1)] REq 0; LCons _ [(4%positive, 1)] REq 0;
+   LCons _ [(5%positive, 1)] REq 0].
+
+Example sparse_combination_skips_unused_rows :
+  Certificates.combine five_zero_equalities [0; 0; 3; 0; 0] =
+    Some (LCons _ [(3%positive, 3)] REq 0).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example sparse_certificate_checks_scaled_conclusion :
+  Certificates.check_entails five_zero_equalities (LCons _ [(3%positive, 1)] REq 0)
+    (Cert [0; 0; 3; 0; 0] 3 false) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example sparse_certificate_rejects_wrong_scale :
+  Certificates.check_entails five_zero_equalities (LCons _ [(3%positive, 1)] REq 0)
+    (Cert [0; 0; 3; 0; 0] 1 false) = false.
 Proof.
   vm_compute. reflexivity.
 Qed.

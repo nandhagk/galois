@@ -40,11 +40,30 @@ Module LinCertCode (X : KEY_OPS) <: LINCERT_OPS X.
   Definition equality_used (r : lcons X.t) (m : Z) : bool :=
     match lrel r with REq => true | RLe => (m =? 0)%Z end.
 
-  Fixpoint combine_rows (P : list (lcons X.t)) (ms : list Z) : option (lc_sum X.t) :=
+  (** The original traversal retains zero-coefficient occurrences as a specification. *)
+  Fixpoint combine_rows_spec (P : list (lcons X.t)) (ms : list Z)
+      : option (lc_sum X.t) :=
     match P, ms with
     | nil, nil => Some (LCSum _ nil (0%Z, 0%Z) true)
     | p :: ps, m :: ns =>
       if allowed p m then
+        match combine_rows_spec ps ns with
+        | Some s => Some (LCSum _ (scale_terms m (lhs p) ++ lc_terms s)
+            (lc_add_signed (m * rhs p)%Z (lc_sums s))
+            (equality_used p m && lc_equal s))
+        | None => None
+        end
+      else None
+    | _, _ => None
+    end.
+
+  (** A zero multiplier contributes no terms, sums or inequality provenance. *)
+  Fixpoint combine_rows (P : list (lcons X.t)) (ms : list Z) : option (lc_sum X.t) :=
+    match P, ms with
+    | nil, nil => Some (LCSum _ nil (0%Z, 0%Z) true)
+    | p :: ps, m :: ns =>
+      if Z.eqb m 0 then combine_rows ps ns
+      else if allowed p m then
         match combine_rows ps ns with
         | Some s => Some (LCSum _ (scale_terms m (lhs p) ++ lc_terms s)
             (lc_add_signed (m * rhs p)%Z (lc_sums s))
@@ -61,6 +80,11 @@ Module LinCertCode (X : KEY_OPS) <: LINCERT_OPS X.
 
   Definition combine (P : list (lcons X.t)) (ms : list Z) : option (lcons X.t) :=
     match combine_rows P ms with Some s => Some (finish_sum s) | None => None end.
+
+  (** The original public result keeps zero occurrences in its term list. *)
+  Definition combine_spec_value (P : list (lcons X.t)) (ms : list Z)
+      : option (lcons X.t) :=
+    match combine_rows_spec P ms with Some s => Some (finish_sum s) | None => None end.
 
   Definition insert_term (acc : PTrieCode.t (Z * Z)) (p : X.t * Z)
       : PTrieCode.t (Z * Z) :=
@@ -111,6 +135,13 @@ End LinCertCode.
 Module LinCert (X : KEY) <: LINCERT X.
   Include LinCertCode X.
   Include LINCERT_SPEC X.
+
+  (** Omitting zero-weight rows never enlarges the certificate input measure. *)
+  Lemma csize_nz_le : forall P ms, csize_nz P ms <= csize P ms.
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns]; cbn [csize_nz csize]; try lia.
+    specialize (IH ns). destruct (m =? 0)%Z; nia.
+  Qed.
   (** Rational evaluation embeds each stored integer coefficient. *)
   Definition eval_coefQ (v : X.t -> Q) (xs : list (X.t * Z)) : Q :=
     fold_right (fun p q => (inject_Z (snd p) * v (fst p) + q)%Q) 0%Q xs.
@@ -359,7 +390,11 @@ Module LinCert (X : KEY) <: LINCERT X.
     induction P as [|p ps IH]; intros [|m ns] s Hcombine;
       cbn [combine_rows] in Hcombine; try discriminate.
     - split; [reflexivity|constructor].
-    - destruct (allowed p m) eqn:Hallowed; [|discriminate].
+    - destruct (m =? 0)%Z eqn:Hzero.
+      { apply Z.eqb_eq in Hzero. subst m.
+        destruct (IH ns s Hcombine) as [Hlength Hweights].
+        split; [cbn; congruence|constructor; [intros _; lia|exact Hweights]]. }
+      destruct (allowed p m) eqn:Hallowed; [|discriminate].
       destruct (combine_rows ps ns) as [tail|] eqn:Htail; [|discriminate].
       destruct (IH ns tail Htail) as [Hlength Hweights].
       split; [cbn; congruence|constructor; [|exact Hweights]].
@@ -376,7 +411,8 @@ Module LinCert (X : KEY) <: LINCERT X.
     - inversion Hweights as [|p' m' ps' ns' Hallowed Htail]; subst.
       assert (Hallow : allowed p m = true) by (apply allowed_spec; exact Hallowed).
       destruct (IH ns) as [s Hsum]; [split; [lia|exact Htail]|].
-      cbn [combine_rows]. rewrite Hallow, Hsum. eexists. reflexivity.
+      cbn [combine_rows]. destruct (m =? 0)%Z; rewrite ?Hallow, Hsum;
+        eexists; reflexivity.
   Qed.
 
   (** The raw sum records the specified coefficients, bound and relation flag. *)
@@ -388,7 +424,19 @@ Module LinCert (X : KEY) <: LINCERT X.
     induction P as [|p ps IH]; intros [|m ns] s Hcombine;
       cbn [combine_rows] in Hcombine; try discriminate.
     - inversion Hcombine; subst. repeat split; reflexivity.
-    - destruct (allowed p m) eqn:Hallowed; [|discriminate].
+    - destruct (m =? 0)%Z eqn:Hzero.
+      { apply Z.eqb_eq in Hzero. subst m.
+        destruct (IH ns s Hcombine) as [Hcoef [Hrhs Hrel]].
+        split.
+        - intro x. rewrite Hcoef.
+          change (comb_coef ps ns x = 0 * coef_of x (lhs p) + comb_coef ps ns x)%Z.
+          ring.
+        - split.
+          + rewrite Hrhs.
+            change (comb_rhs ps ns = 0 * rhs p + comb_rhs ps ns)%Z. ring.
+          + rewrite Hrel. cbn [comb_eq List.combine forallb fst snd].
+            destruct (lrel p); reflexivity. }
+      destruct (allowed p m) eqn:Hallowed; [|discriminate].
       destruct (combine_rows ps ns) as [tail|] eqn:Htail; [|discriminate].
       inversion Hcombine; subst s.
       destruct (IH ns tail Htail) as [Hcoef [Hrhs Hrel]].
@@ -399,6 +447,63 @@ Module LinCert (X : KEY) <: LINCERT X.
           change (comb_rhs ps ns + m * rhs p = m * rhs p + comb_rhs ps ns)%Z.
           ring.
         * rewrite Hrel. reflexivity.
+  Qed.
+
+  (** Skipping zero rows preserves failure, coefficients, sums and relation provenance. *)
+  Lemma combine_rows_agrees : forall P ms,
+    match combine_rows P ms, combine_rows_spec P ms with
+    | Some s, Some original =>
+      (forall x, coef_of x (lc_terms s) = coef_of x (lc_terms original)) /\
+      lc_sums s = lc_sums original /\ lc_equal s = lc_equal original
+    | None, None => True
+    | _, _ => False
+    end.
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns]; cbn [combine_rows combine_rows_spec].
+    - repeat split; reflexivity.
+    - exact I.
+    - exact I.
+    - specialize (IH ns). destruct (m =? 0)%Z eqn:Hzero.
+      + apply Z.eqb_eq in Hzero. subst m.
+        assert (Hallowed : allowed p 0 = true) by (destruct p as [xs [] b]; reflexivity).
+        assert (Hequal : equality_used p 0 = true)
+          by (destruct p as [xs [] b]; reflexivity).
+        rewrite Hallowed.
+        destruct (combine_rows ps ns) as [s|], (combine_rows_spec ps ns) as [original|];
+          try exact IH.
+        destruct IH as [Hcoef [Hsums Hrel]].
+        cbn [lc_terms lc_sums lc_equal]. split.
+        * intro x. rewrite coef_of_app, coef_of_scale, Hcoef. ring.
+        * split.
+          -- rewrite Hsums, Z.mul_0_l. unfold lc_add_signed.
+             destruct (lc_sums original) as [a b].
+             change ((a, b) = (a + 0, b))%Z. now rewrite Z.add_0_r.
+          -- rewrite Hequal, Hrel. reflexivity.
+      + destruct (allowed p m); [|exact I].
+        destruct (combine_rows ps ns) as [s|], (combine_rows_spec ps ns) as [original|];
+          try exact IH.
+        destruct IH as [Hcoef [Hsums Hrel]].
+        cbn [lc_terms lc_sums lc_equal]. split.
+        * intro x. rewrite !coef_of_app, Hcoef. reflexivity.
+        * now rewrite Hsums, Hrel.
+  Qed.
+
+  (** The public result differs from its original only by zero-coefficient occurrences. *)
+  Lemma combine_spec_value_agrees : forall P ms,
+    match combine P ms, combine_spec_value P ms with
+    | Some s, Some original =>
+      (forall x, coef_of x (lhs s) = coef_of x (lhs original)) /\
+      rhs s = rhs original /\ lrel s = lrel original
+    | None, None => True
+    | _, _ => False
+    end.
+  Proof.
+    intros P ms. pose proof (combine_rows_agrees P ms) as Hagrees.
+    unfold combine, combine_spec_value.
+    destruct (combine_rows P ms) as [s|], (combine_rows_spec P ms) as [original|];
+      try exact Hagrees.
+    destruct Hagrees as [Hcoef [Hsums Hrel]].
+    cbn [finish_sum lhs rhs lrel]. rewrite Hsums, Hrel. auto.
   Qed.
 
   (** A trie entry denotes its positive sum minus its negative sum. *)
@@ -517,7 +622,9 @@ Module LinCert (X : KEY) <: LINCERT X.
     induction P as [|p ps IH]; intros [|m ns] s Hcombine v Hmodels;
       cbn [combine_rows] in Hcombine; try discriminate.
     - inversion Hcombine; subst. reflexivity.
-    - destruct (allowed p m) eqn:Hallowed; [|discriminate].
+    - destruct (m =? 0)%Z.
+      { apply (IH ns s Hcombine v). now inversion Hmodels. }
+      destruct (allowed p m) eqn:Hallowed; [|discriminate].
       destruct (combine_rows ps ns) as [tail|] eqn:Htail; [|discriminate].
       inversion Hcombine; subst s.
       inversion Hmodels as [|p' ps' Hp Hps]; subst.
@@ -637,7 +744,9 @@ Module LinCert (X : KEY) <: LINCERT X.
     induction P as [|p ps IH]; intros [|m ns] s Hcombine v Hmodels;
       cbn [combine_rows] in Hcombine; try discriminate.
     - inversion Hcombine; subst. reflexivity.
-    - destruct (allowed p m) eqn:Hallowed; [|discriminate].
+    - destruct (m =? 0)%Z.
+      { apply (IH ns s Hcombine v). now inversion Hmodels. }
+      destruct (allowed p m) eqn:Hallowed; [|discriminate].
       destruct (combine_rows ps ns) as [tail|] eqn:Htail; [|discriminate].
       inversion Hcombine; subst s.
       inversion Hmodels as [|p' ps' Hp Hps]; subst.
@@ -1172,7 +1281,8 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     induction P as [|p ps IH]; intros [|m ns] s Hsum;
       cbn [combine_rows] in Hsum; try discriminate.
     - inversion Hsum; cbn [lc_sums fst snd]; lia.
-    - destruct (allowed p m); [|discriminate].
+    - destruct (m =? 0)%Z; [exact (IH ns s Hsum)|].
+      destruct (allowed p m); [|discriminate].
       destruct (combine_rows ps ns) as [u|] eqn:Hu; [|discriminate].
       inversion Hsum; subst s. cbn [lc_sums].
       specialize (IH ns u Hu). destruct (lc_sums u) as [a b].
@@ -1180,34 +1290,48 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   Qed.
 
   (** Total input bit mass bounds both right-hand-side accumulators together. *)
-  Lemma combine_rows_sums_size : forall P ms s, combine_rows P ms = Some s ->
-    (Z.size_nat (fst (lc_sums s)) + Z.size_nat (snd (lc_sums s)) <= csize P ms)%nat.
+  Lemma combine_rows_sums_size_nz : forall P ms s, combine_rows P ms = Some s ->
+    (Z.size_nat (fst (lc_sums s)) + Z.size_nat (snd (lc_sums s)) <= csize_nz P ms)%nat.
   Proof.
     induction P as [|p ps IH]; intros [|m ns] s Hsum;
       cbn [combine_rows] in Hsum; try discriminate.
-    - inversion Hsum. cbn [lc_sums fst snd csize Z.size_nat]. lia.
-    - destruct (allowed p m); [|discriminate].
+    - inversion Hsum. cbn [lc_sums fst snd csize_nz Z.size_nat]. lia.
+    - cbn [csize_nz]. destruct (m =? 0)%Z.
+      { specialize (IH ns s Hsum). lia. }
+      destruct (allowed p m); [|discriminate].
       destruct (combine_rows ps ns) as [u|] eqn:Hu; [|discriminate].
       specialize (IH ns u Hu).
       pose proof (combine_rows_nonnegative ps ns u Hu) as [Ha Hb].
-      inversion Hsum; subst s. cbn [lc_sums csize].
+      inversion Hsum; subst s. cbn [lc_sums].
       destruct (lc_sums u) as [a b]. cbn [fst snd] in *.
       pose proof (lc_add_signed_size (m * rhs p) a b Ha Hb).
       pose proof (lc_size_mul m (rhs p)). pose proof (row_bits_rhs p). nia.
   Qed.
 
+  (** The original input measure also bounds this nonzero-row estimate. *)
+  Lemma combine_rows_sums_size : forall P ms s, combine_rows P ms = Some s ->
+    (Z.size_nat (fst (lc_sums s)) + Z.size_nat (snd (lc_sums s)) <= csize P ms)%nat.
+  Proof.
+    intros P ms s Hsum.
+    pose proof (combine_rows_sums_size_nz P ms s Hsum) as Hbound.
+    pose proof (csize_nz_le P ms) as Hsize. nia.
+  Qed.
+
   (** Row combination carries the set-bit potential across its recursive sums. *)
-  Lemma T_combine_rows_ones : forall P ms,
+  Lemma T_combine_rows_ones_nz : forall P ms,
     (T_combine_rows P ms +
       match combine_rows P ms with Some s => lc_pair_ones (lc_sums s) | None => 0 end <=
-      96 * N.of_nat (csize P ms + 1))%N.
+      96 * N.of_nat (csize_nz P ms + 1))%N.
   Proof.
     induction P as [|p ps IH]; intros [|m ns];
-      time_unfold T_combine_rows; cbn [combine_rows csize].
+      time_unfold T_combine_rows; cbn [combine_rows csize_nz].
     - unfold lc_pair_ones, lc_ones_Z. time_cbn. lia.
     - time_cbn. lia.
     - time_cbn. lia.
-    - specialize (IH ns). pose proof (T_allowed_le p m) as Hallowed.
+    - specialize (IH ns). pose proof (Z.T_eqb_le m 0) as HzeroClock.
+      destruct (m =? 0)%Z eqn:Hzero.
+      { apply Z.eqb_eq in Hzero. subst m. time_cbn_all. lia. }
+      pose proof (T_allowed_le p m) as Hallowed.
       destruct (allowed p m) eqn:Hallow; [|time_cbn; nia].
       destruct (combine_rows ps ns) as [s|] eqn:Hsum; [|time_cbn_all; nia].
       pose proof (combine_rows_nonnegative ps ns s Hsum) as [Ha Hb].
@@ -1224,6 +1348,7 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
       set (w := (length (lhs p) + 1) *
         (row_key_bits p + (Z.size_nat m + 1) * (row_bits p + 1))).
       assert (Hw : (1 <= w)%nat) by (unfold w; nia).
+      assert (HzeroW : (Z.T_eqb m 0 <= N.of_nat w + 1)%N) by (unfold w; nia).
       assert (HscaleW : (T_scale_terms m (lhs p) <= 16 * N.of_nat w)%N)
         by (unfold w; nia).
       assert (HmulW : (Z.T_mul m (rhs p) <= 8 * N.of_nat w)%N)
@@ -1235,9 +1360,20 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
         by (unfold w; nia).
       assert (HappW : (Datatypes.T_app (scale_terms m (lhs p)) (lc_terms s) <=
         2 * N.of_nat w)%N) by (unfold w, scale_terms; nia).
-      clear Hscale Hmul Hadd Hequal Happ Hbits Hrhs Ha Hb Hallow.
+      clear Hscale Hmul Hadd Hequal Happ Hbits Hrhs Ha Hb Hallow HzeroClock Hzero.
       cbn [lc_sums] in *. rewrite ?Hsums in *. clear Hsum Hsums.
       time_simpl. time_cbn_all. fold w. lia.
+  Qed.
+
+  (** The original input measure also bounds this nonzero-row estimate. *)
+  Lemma T_combine_rows_ones : forall P ms,
+    (T_combine_rows P ms +
+      match combine_rows P ms with Some s => lc_pair_ones (lc_sums s) | None => 0 end <=
+      96 * N.of_nat (csize P ms + 1))%N.
+  Proof.
+    intros P ms.
+    pose proof (T_combine_rows_ones_nz P ms) as Hbound.
+    pose proof (csize_nz_le P ms) as Hsize. nia.
   Qed.
 
   (** Finishing a combination subtracts its two stored right-hand-side sums once. *)
@@ -1251,14 +1387,23 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   Qed.
 
   (** Raw combination has linear cost in the certificate-weighted input size. *)
+  Lemma T_combine_weighted_nz : forall P ms,
+    (T_combine P ms <= 112 * N.of_nat (csize_nz P ms + 1))%N.
+  Proof.
+    intros P ms. pose proof (T_combine_rows_ones_nz P ms) as Hrows.
+    time_unfold T_combine. destruct (combine_rows P ms) as [s|] eqn:Hsum.
+    - pose proof (T_finish_sum_le s) as Hfinish.
+      pose proof (combine_rows_sums_size_nz P ms s Hsum) as Hsize. nia.
+    - nia.
+  Qed.
+
+  (** The original input measure also bounds this nonzero-row estimate. *)
   Lemma T_combine_weighted : forall P ms,
     (T_combine P ms <= 112 * N.of_nat (csize P ms + 1))%N.
   Proof.
-    intros P ms. pose proof (T_combine_rows_ones P ms) as Hrows.
-    time_unfold T_combine. destruct (combine_rows P ms) as [s|] eqn:Hsum.
-    - pose proof (T_finish_sum_le s) as Hfinish.
-      pose proof (combine_rows_sums_size P ms s Hsum) as Hsize. nia.
-    - nia.
+    intros P ms.
+    pose proof (T_combine_weighted_nz P ms) as Hbound.
+    pose proof (csize_nz_le P ms) as Hsize. nia.
   Qed.
 
   (** Magnitude is used only to prove binary-size bounds. *)
@@ -1429,38 +1574,67 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   Qed.
 
   (** Successful raw combinations retain at most the certificate's occurrence weight. *)
-  Lemma combine_rows_terms_weight : forall P ms s, combine_rows P ms = Some s ->
-    (lc_terms_weight (lc_terms s) <= N.of_nat (csize P ms))%N.
+  Lemma combine_rows_terms_weight_nz : forall P ms s, combine_rows P ms = Some s ->
+    (lc_terms_weight (lc_terms s) <= N.of_nat (csize_nz P ms))%N.
   Proof.
     induction P as [|p ps IH]; intros [|m ns] s Hsum;
       cbn [combine_rows] in Hsum; try discriminate.
-    - inversion Hsum. cbn [lc_terms lc_terms_weight csize]. lia.
-    - destruct (allowed p m); [|discriminate].
+    - inversion Hsum. cbn [lc_terms lc_terms_weight csize_nz]. lia.
+    - cbn [csize_nz]. destruct (m =? 0)%Z.
+      { specialize (IH ns s Hsum). nia. }
+      destruct (allowed p m); [|discriminate].
       destruct (combine_rows ps ns) as [u|] eqn:Hu; [|discriminate].
-      specialize (IH ns u Hu). inversion Hsum; subst s. cbn [lc_terms csize].
+      specialize (IH ns u Hu). inversion Hsum; subst s. cbn [lc_terms].
       rewrite lc_terms_weight_app. pose proof (lc_terms_weight_scale_row p m). nia.
   Qed.
 
+  (** The original input measure also bounds this nonzero-row estimate. *)
+  Lemma combine_rows_terms_weight : forall P ms s, combine_rows P ms = Some s ->
+    (lc_terms_weight (lc_terms s) <= N.of_nat (csize P ms))%N.
+  Proof.
+    intros P ms s Hsum.
+    pose proof (combine_rows_terms_weight_nz P ms s Hsum) as Hbound.
+    pose proof (csize_nz_le P ms) as Hsize. nia.
+  Qed.
+
   (** The public combination retains the same raw occurrence weight. *)
-  Lemma combine_terms_weight : forall P ms s, combine P ms = Some s ->
-    (lc_terms_weight (lhs s) <= N.of_nat (csize P ms))%N.
+  Lemma combine_terms_weight_nz : forall P ms s, combine P ms = Some s ->
+    (lc_terms_weight (lhs s) <= N.of_nat (csize_nz P ms))%N.
   Proof.
     intros P ms s Hsum. unfold combine in Hsum.
     destruct (combine_rows P ms) as [u|] eqn:Hu; [|discriminate].
     inversion Hsum; subst s. cbn [finish_sum lhs].
-    exact (combine_rows_terms_weight P ms u Hu).
+    exact (combine_rows_terms_weight_nz P ms u Hu).
+  Qed.
+
+  (** The original input measure also bounds this nonzero-row estimate. *)
+  Lemma combine_terms_weight : forall P ms s, combine P ms = Some s ->
+    (lc_terms_weight (lhs s) <= N.of_nat (csize P ms))%N.
+  Proof.
+    intros P ms s Hsum.
+    pose proof (combine_terms_weight_nz P ms s Hsum) as Hbound.
+    pose proof (csize_nz_le P ms) as Hsize. nia.
   Qed.
 
   (** Total input bit mass also bounds the finished right-hand side. *)
-  Lemma combine_rhs_coarse_size : forall P ms s, combine P ms = Some s ->
-    (Z.size_nat (rhs s) <= csize P ms)%nat.
+  Lemma combine_rhs_coarse_size_nz : forall P ms s, combine P ms = Some s ->
+    (Z.size_nat (rhs s) <= csize_nz P ms)%nat.
   Proof.
     intros P ms s Hsum. unfold combine in Hsum.
     destruct (combine_rows P ms) as [u|] eqn:Hu; [|discriminate].
     pose proof (combine_rows_nonnegative P ms u Hu) as [Ha Hb].
-    pose proof (combine_rows_sums_size P ms u Hu) as Hsize.
+    pose proof (combine_rows_sums_size_nz P ms u Hu) as Hsize.
     inversion Hsum; subst s. cbn [finish_sum rhs].
     pose proof (lc_size_difference (fst (lc_sums u)) (snd (lc_sums u)) Ha Hb). lia.
+  Qed.
+
+  (** The original input measure also bounds this nonzero-row estimate. *)
+  Lemma combine_rhs_coarse_size : forall P ms s, combine P ms = Some s ->
+    (Z.size_nat (rhs s) <= csize P ms)%nat.
+  Proof.
+    intros P ms s Hsum.
+    pose proof (combine_rhs_coarse_size_nz P ms s Hsum) as Hbound.
+    pose proof (csize_nz_le P ms) as Hsize. nia.
   Qed.
 
   (** A proof-only sum accounts for every stored signed pair exactly once. *)
@@ -1915,15 +2089,24 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   Qed.
 
   (** A successful combination supplies a certificate-weighted contradiction test. *)
+  Lemma T_empty_row_combined_nz : forall P ms s, combine P ms = Some s ->
+    (T_empty_row s <= (lc_zero_factor + 13) * N.of_nat (csize_nz P ms + 1))%N.
+  Proof.
+    intros P ms s Hsum. pose proof (T_empty_row_weighted s) as Hrow.
+    pose proof (combine_terms_weight_nz P ms s Hsum) as Hterms.
+    assert (HtermsW : (lc_zero_factor * (lc_terms_weight (lhs s) + 1) <=
+      lc_zero_factor * N.of_nat (csize_nz P ms + 1))%N).
+    { apply N.mul_le_mono_l. lia. }
+    pose proof (combine_rhs_coarse_size_nz P ms s Hsum) as Hrhs. nia.
+  Qed.
+
+  (** The original input measure also bounds this nonzero-row estimate. *)
   Lemma T_empty_row_combined : forall P ms s, combine P ms = Some s ->
     (T_empty_row s <= (lc_zero_factor + 13) * N.of_nat (csize P ms + 1))%N.
   Proof.
-    intros P ms s Hsum. pose proof (T_empty_row_weighted s) as Hrow.
-    pose proof (combine_terms_weight P ms s Hsum) as Hterms.
-    assert (HtermsW : (lc_zero_factor * (lc_terms_weight (lhs s) + 1) <=
-      lc_zero_factor * N.of_nat (csize P ms + 1))%N).
-    { apply N.mul_le_mono_l. lia. }
-    pose proof (combine_rhs_coarse_size P ms s Hsum) as Hrhs. nia.
+    intros P ms s Hsum.
+    pose proof (T_empty_row_combined_nz P ms s Hsum) as Hbound.
+    pose proof (csize_nz_le P ms) as Hsize. nia.
   Qed.
 
   (** A checked row charges the conclusion and the incoming right-hand-side width. *)
@@ -1970,31 +2153,40 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
 
   (** A common constant covers combination, two trie scans and scaled bound checks. *)
   Definition c_lc : N := (512 + 4 * X.c_key + 16 * PTrieT.c_trie)%N.
+  Lemma T_combine_le_nz : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize_nz P ms +
+    1)%nat))%N.
+  Proof.
+    intros P ms. pose proof (T_combine_weighted_nz P ms). unfold c_lc. nia.
+  Qed.
+
+  (** The original input measure also bounds this nonzero-row estimate. *)
   Lemma T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
     1)%nat))%N.
   Proof.
-    intros P ms. pose proof (T_combine_weighted P ms). unfold c_lc. nia.
+    intros P ms.
+    pose proof (T_combine_le_nz P ms) as Hbound.
+    pose proof (csize_nz_le P ms) as Hsize. nia.
   Qed.
   (** Entailment checking charges the certificate and conclusion. *)
-  Lemma T_check_entails_le : forall P c k,
+  Lemma T_check_entails_le_nz : forall P c k,
     (T_check_entails P c k <= c_lc * N.of_nat
-      ((csize P (mults k) + (Z.size_nat (scale k) + 1) *
+      ((csize_nz P (mults k) + (Z.size_nat (scale k) + 1) *
         (lsize c + cbits P (mults k) + 1))%nat))%N.
   Proof.
     intros P c k.
-    set (w := csize P (mults k) + (Z.size_nat (scale k) + 1) *
+    set (w := csize_nz P (mults k) + (Z.size_nat (scale k) + 1) *
       (lsize c + cbits P (mults k) + 1)).
     assert (Hw : (1 <= w)%nat) by (unfold w; nia).
-    pose proof (T_combine_weighted P (mults k)) as Hcombine.
+    pose proof (T_combine_weighted_nz P (mults k)) as Hcombine.
     assert (HcombineW : (T_combine P (mults k) <= 112 * N.of_nat w)%N).
     { eapply N.le_trans; [exact Hcombine|]. apply N.mul_le_mono_l. unfold w. nia. }
     clear Hcombine. time_unfold T_check_entails.
     destruct (combine P (mults k)) as [s|] eqn:Hsum.
-    - pose proof (T_empty_row_combined P (mults k) s Hsum) as Hempty.
+    - pose proof (T_empty_row_combined_nz P (mults k) s Hsum) as Hempty.
       assert (HemptyW : (T_empty_row s <= (lc_zero_factor + 13) * N.of_nat w)%N).
       { eapply N.le_trans; [exact Hempty|]. apply N.mul_le_mono_l. unfold w. nia. }
       pose proof (combine_rhs_size P (mults k) s Hsum) as Hrhs.
-      pose proof (combine_terms_weight P (mults k) s Hsum) as Hterms.
+      pose proof (combine_terms_weight_nz P (mults k) s Hsum) as Hterms.
       pose proof (T_check_row_weighted s c k (cbits P (mults k)) Hrhs) as Hrow.
       assert (HrowW : (T_check_row s c k <= (lc_zero_factor + 110) * N.of_nat w)%N).
       { eapply N.le_trans; [exact Hrow|]. apply N.mul_le_mono_l. unfold w. nia. }
@@ -2003,21 +2195,44 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
         unfold c_lc, lc_zero_factor, lc_insert_factor in *; nia.
     - time_simpl. unfold c_lc. nia.
   Qed.
+
+  (** The original input measure also bounds this nonzero-row estimate. *)
+  Lemma T_check_entails_le : forall P c k,
+    (T_check_entails P c k <= c_lc * N.of_nat
+      ((csize P (mults k) + (Z.size_nat (scale k) + 1) *
+        (lsize c + cbits P (mults k) + 1))%nat))%N.
+  Proof.
+    intros P c k.
+    pose proof (T_check_entails_le_nz P c k) as Hbound.
+    pose proof (csize_nz_le P (mults k)) as Hsize. nia.
+  Qed.
   (** Contradiction checking charges the certificate-weighted input. *)
+  Lemma T_check_empty_le_nz : forall P ms,
+    (T_check_empty P ms <= c_lc * N.of_nat ((csize_nz P ms + 1)%nat))%N.
+  Proof.
+    intros P ms. pose proof (T_combine_weighted_nz P ms) as Hcombine.
+    time_unfold T_check_empty. destruct (combine P ms) as [s|] eqn:Hsum.
+    - pose proof (T_empty_row_combined_nz P ms s Hsum) as Hrow.
+      unfold c_lc, lc_zero_factor, lc_insert_factor in *. nia.
+    - unfold c_lc. nia.
+  Qed.
+
+  (** The original input measure also bounds this nonzero-row estimate. *)
   Lemma T_check_empty_le : forall P ms,
     (T_check_empty P ms <= c_lc * N.of_nat ((csize P ms + 1)%nat))%N.
   Proof.
-    intros P ms. pose proof (T_combine_weighted P ms) as Hcombine.
-    time_unfold T_check_empty. destruct (combine P ms) as [s|] eqn:Hsum.
-    - pose proof (T_empty_row_combined P ms s Hsum) as Hrow.
-      unfold c_lc, lc_zero_factor, lc_insert_factor in *. nia.
-    - unfold c_lc. nia.
+    intros P ms.
+    pose proof (T_check_empty_le_nz P ms) as Hbound.
+    pose proof (csize_nz_le P ms) as Hsize. nia.
   Qed.
   (** Combination charges the rows with a nonzero multiplier. *)
   Lemma combine_bigO : bigO (fun _ : list (lcons X.t) * list Z => True)
     (fun x => N.of_nat (csize_nz (fst x) (snd x)))
     (fun x => T_combine (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_lc). intros [P ms] _.
+    pose proof (T_combine_le_nz P ms). cbn [fst snd]. nia.
+  Qed.
   (** Entailment checking charges the nonzero rows, the certificate scale and the conclusion. *)
   Lemma check_entails_bigO :
     bigO (fun _ : list (lcons X.t) * lcons X.t * cert => True)
@@ -2025,12 +2240,18 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
       (Z.size_nat (scale (snd x)) + 1) *
         (lsize (snd (fst x)) + cbits (fst (fst x)) (mults (snd x)) + 1)))
     (fun x => T_check_entails (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_lc). intros [[P c] k] _.
+    pose proof (T_check_entails_le_nz P c k). cbn [fst snd]. nia.
+  Qed.
   (** Contradiction checking charges the nonzero rows. *)
   Lemma check_empty_bigO : bigO (fun _ : list (lcons X.t) * list Z => True)
     (fun x => N.of_nat (csize_nz (fst x) (snd x)))
     (fun x => T_check_empty (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_lc). intros [P ms] _.
+    pose proof (T_check_empty_le_nz P ms). cbn [fst snd]. nia.
+  Qed.
   Definition accumulate_term (m : Z) (acc : PTrieCode.t (Z * Z)) (p : X.t * Z)
       : PTrieCode.t (Z * Z) :=
     let key := X.encode (fst p) in
