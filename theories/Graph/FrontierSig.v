@@ -262,12 +262,6 @@ Module Type FRONTIER_PLAN (Import F : FRONTIER_T).
       fold_right (fun y cost => T_df_column g t y + cost)%N 0%N (nodes g) +
       T_df_transpose (df_columns g t)))%N.
 
-  (** Column accounting and transposition give the published frontier bound. *)
-  Parameter T_df_plan_le : forall g t r,
-    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
-    (T_df g t <= c_frontier * N.of_nat (graph_n (base g) + graph_e (base g) + df_size g t + 1) *
-      N.of_nat (graph_width (base g) + 1))%N.
-
   Parameter idf_step : ptrie (list positive) -> idf_state -> idf_state + list positive.
   Parameter T_idf_step : ptrie (list positive) -> idf_state -> N.
   Parameter idf_walk : ptrie (list positive) -> list positive -> list positive.

@@ -321,8 +321,6 @@ Module Type VALIDATE_PLAN (O : OPS)
   (** The SSA checker validates the dominator certificate it uses. *)
   Parameter check_ssa_dom_checked : forall s, check_ssa s = true ->
     D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) = true.
-  (** Accepted strict local-order and dominance checks establish language SSA form. *)
-  Parameter check_ssa_sound_plan : forall s, check_ssa s = true -> ssa_wf s.
   (** Graph preparation and certificate work fit the syntax and dominator budget. *)
   Parameter T_dom_phases_le : forall s,
     (T_graph s + T_dom_cert s +

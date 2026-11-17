@@ -909,11 +909,6 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Parameter T_rebuild_split : forall db,
     (T_rebuild db <= T_rebuild_fuel db +
       T_loopN rstep T_rstep (rebuild_fuel db) (db, []) + k_driver)%N.
-  (** Slot lookup charges its binary slot code. *)
-  Parameter T_index_plan_le : forall s new db,
-    (T_index s new db <= c_db * N.of_nat (N.to_nat (N.log2 s) + 1))%N.
-  (** Advancing clears each maintained slot once. *)
-  Parameter T_advance_plan_le : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
   (** Stored counters agree with the occurrence inventory and pending queue. *)
   Parameter counters_spec : forall db work, inv_on db work ->
     N.to_nat (nuses db) = length (uses_entries db) /\ N.of_nat (pending db) = npending db.

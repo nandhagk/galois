@@ -287,10 +287,6 @@ Parameter anc_iff_interval : forall g r m o u v, dom_cert g r m o -> In u o -> I
   (tree_anc m u v <->
    (pos_of o u <= pos_of o v /\ pos_of o v + size_of m o v <= pos_of o u + size_of m o u)%N).
 
-(** Numbering an accepted certificate gives an exact tree. *)
-Parameter tree_exact_plan : forall g r m o, check g r m o = true ->
-  domtree_exact g r (tree g r m o).
-
   Parameter lt_ops : prepared -> positive -> list lt_op.
   Parameter lt_forest : Type.
   Parameter lt_init : prepared -> positive -> lt_forest.

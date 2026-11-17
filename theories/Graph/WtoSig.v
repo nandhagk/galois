@@ -347,9 +347,6 @@ Module Type WTO_PLAN (Import W : WTO_T).
   (** Search completeness supplies rooted coverage even for raw graphs and unlisted roots. *)
   Parameter live_spec : forall g roots v, In v (live g roots) <-> reach (base g) roots v.
 
-  (** Acceptance and the index relation establish the public WTO specification. *)
-  Parameter check_sound_plan : forall g roots w, check g roots w = true -> is_wto g roots w.
-
   (** An enclosing head belongs to both the structural order and its head projection. *)
   Parameter encloses_heads : forall w h v,
     wto_encloses h v w -> In h (wto_heads w) /\ In h (wto_order w).
@@ -367,12 +364,6 @@ Module Type WTO_PLAN (Import W : WTO_T).
     (NoDup (wto_order w) -> forall v i,
       nth_error (wto_order w) i = Some v ->
       trie_get v (ranks w) = Some (Pos.of_succ_nat i)).
-
-  (** Position comparison becomes the accepted edge's rank comparison. *)
-  Parameter ranks_forward_plan : forall g roots w u v,
-    check g roots w = true -> edge (base g) u v -> reach (base g) roots u ->
-    exists ru rv, trie_get u (ranks w) = Some ru /\ trie_get v (ranks w) = Some rv /\
-      ((ru < rv)%positive \/ (In v (heads w) /\ (rv <= ru)%positive)).
 
   (** Selection removes exactly one header occurrence from a nonempty component. *)
   Parameter select_perm : forall preferred c h body,
@@ -462,12 +453,6 @@ Module Type WTO_PLAN (Import W : WTO_T).
      k_check * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
        N.of_nat (graph_width (base g) + 1))%N.
 
-  (** Index and edge phases combine with trie coverage and the raw search bound. *)
-  Parameter T_check_plan_le : forall g roots w,
-    (T_check g roots w <= c_wto *
-      N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
-      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
-
   (** A child expansion pays scope materialization, SCC, entries and task assembly separately. *)
   Parameter T_wto_step_expand_split : forall g within entries owners c tasks partial parents h body,
     wto_select (wto_preferred owners entries c) c = Some (h, body) -> body <> [] ->
@@ -478,12 +463,6 @@ Module Type WTO_PLAN (Import W : WTO_T).
         T_wto_entries (wto_scoped g (Some body)) (rev body)
           (wto_components (wto_scoped g (Some body)) (rev body)) +
         N.of_nat (length body) + N.of_nat (length c) + 1))%N.
-
-  (** The unchanged builder target needs depth charging for materialized scopes and root scans. *)
-  Parameter T_build_plan_le : forall g roots,
-    (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
-      N.of_nat (wto_depth (build g roots) + 1) *
-      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
 
   (** Accumulating traversals compute the structural lists. *)
   Parameter heads_order_into_eq : forall w acc,
@@ -498,10 +477,6 @@ Module Type WTO_PLAN (Import W : WTO_T).
   Parameter T_wto_heads_into_le : forall w acc,
     (T_wto_heads_into w acc <= k_heads * N.of_nat (2 * length (wto_order w) + 2))%N.
 
-  (** The accumulating head traversal meets the linear target. *)
-  Parameter T_heads_plan_le : forall w,
-    (T_heads w <= c_wto * N.of_nat (length (wto_order w) + 1))%N.
-
   (** Ranking flattens by accumulation before inserting binary positions. *)
   Parameter T_ranks_split : forall w,
     (T_ranks w <= k_ranks * (T_wto_order_into w [] +
@@ -515,11 +490,6 @@ Module Type WTO_PLAN (Import W : WTO_T).
   Parameter T_wto_rank_rows_le : forall vs,
     (T_wto_rank_rows 1%positive vs <= k_ranks * N.of_nat (length vs + 1) *
       N.of_nat (vertex_width vs + Nat.log2 (length vs) + 1))%N.
-
-  (** Accumulating flattening and trie insertion meet the public rank target. *)
-  Parameter T_ranks_plan_le : forall w,
-    (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
-      N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
 
   (** Scoped components and entries read the materialized rows once. *)
   Parameter T_wto_components_scoped_amort : forall g vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->

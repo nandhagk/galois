@@ -440,12 +440,6 @@ Module Type SEARCH_PLAN (V : VISITOR_T) (Import S : SEARCH_T V).
     (T_dfs g roots s <= k_trace * (T_search_trace g roots +
       T_fold_events V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge
         (trace g roots) s + 1))%N.
-
-  (** The public bound includes the widths of both binary count caches. *)
-  Parameter T_dfs_plan_le : forall g roots s B, work_bounded g roots s B ->
-    (T_dfs g roots s <= c_dfs * (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
-      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
-        N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
 End SEARCH_PLAN.
 
 Module Type SEARCH_ALL (V : VISITOR_T) := SEARCH_T V <+ SEARCH_PLAN V.

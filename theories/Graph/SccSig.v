@@ -218,12 +218,6 @@ Module Type SCC_PLAN (Import S : SCC_T).
       exists block, nth_error (rev (tarjan_emitted result))
         (Nat.pred (Pos.to_nat i)) = Some block /\ In v block.
 
-  (** Distinct closed emitted blocks are maximal mutual-reachability classes. *)
-  Parameter comp_spec_plan : forall g, wf_graph (base g) -> forall u v,
-    (exists i, trie_get u (comp (run g)) = Some i /\
-      trie_get v (comp (run g)) = Some i) <->
-    In u (nodes g) /\ In v (nodes g) /\ mutually_reachable (base g) u v.
-
   (** Pop credit pays the consumed cells and retains the tail's credit. *)
   Parameter T_tarjan_pop_amort : forall w root index pending low active owners
       members tail low' active' owners',
@@ -259,11 +253,6 @@ Module Type SCC_PLAN (Import S : SCC_T).
       T_fold_events tarjan_enter T_tarjan_enter tarjan_leave T_tarjan_leave
         tarjan_edge T_tarjan_edge (tarjan_trace g) tarjan_initial +
       N.of_nat (length (tarjan_emitted (prefix_state (tarjan_trace g)))) + 1))%N.
-
-  (** Filtered trace size and callback credit yield the unrestricted public bound. *)
-  Parameter T_run_plan_le : forall g,
-    (T_run g <= c_scc * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (graph_width (base g) + 1))%N.
 End SCC_PLAN.
 
 Module Type SCC_ALL := SCC_T <+ SCC_PLAN.

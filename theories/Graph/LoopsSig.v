@@ -521,12 +521,6 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
         0%N (headers g t) + T_assemble (forest_rows g t) +
       N.of_nat (graph_n (base g) + 1) * N.of_nat (graph_width (base g) + 1) + 1))%N.
 
-  (** Nested bodies and occurrence budgets absorb all collector fuel widths and installation. *)
-  Parameter T_forest_plan_le : forall g t r,
-    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
-    (T_forest g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (loop_depth g (forest g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.
-
   (** One graph DFS and membership tests have a linear graph bit-cost bound. *)
   Parameter T_retreat_test_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -542,12 +536,6 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
       T_retreat_trace g (firstn 1 (loop_order (classify g t))) +
       T_test_back (loop_back_rows (classify g t))
         (retreat_trace g (firstn 1 (loop_order (classify g t)))) + 1))%N.
-
-  (** Linear classification and testing imply the published nesting-sensitive Boolean bound. *)
-  Parameter T_reducible_b_plan_le : forall g t r,
-    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
-    (T_reducible_b g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (loop_depth g (forest g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.
 End LOOPS_PLAN.
 
 Module Type LOOPS_ALL := LOOPS_T <+ LOOPS_PLAN.

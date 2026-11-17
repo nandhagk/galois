@@ -242,8 +242,6 @@ Module Type SCHEDULE_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     forall c, In c (verts (dep_graph p)) <->
       exists r x, In r (S.rows p) /\ In x ((S.target p r :: S.sides p r) ++ S.deps p r) /\
         S.key_code x = c.
-  (** Every emitted adjacency occurrence comes from a declared dependency product. *)
-  Parameter dep_graph_edges_plan : forall p u v, edge (dep_graph p) u v <-> dependency_edge p u v.
   (** Preparation retains a well-formed graph whose vertices are all roots. *)
   Parameter dep_graph_prepare_wf : forall p,
     wf_graph (dep_graph p) /\ base (G.prepare (dep_graph p)) = dep_graph p /\
@@ -255,23 +253,12 @@ Module Type SCHEDULE_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   (** Cut checking uses the maximum dependency rank for each row. *)
   Parameter cuts_def : forall p pol, cuts p pol =
     forallb (schedule_cut_row S.key_code (S.target p) (S.deps p) (S.sides p) pol) (S.rows p).
-  (** Maximum-rank checking is equivalent to the public dependency-edge criterion. *)
-  Parameter cuts_spec_plan : forall p pol, cuts p pol = true <-> forall u v,
-    dependency_edge p u v -> (priority pol u < priority pol v)%positive \/
-      exists cfg, trie_get v (heads pol) = Some cfg.
-  (** Checked WTO forward ranks discharge every non-head dependency. *)
-  Parameter of_wto_cuts_plan : forall p w cfg wp n,
-    W.check (G.prepare (dep_graph p)) (verts (dep_graph p)) w = true ->
-    cuts p (of_wto w cfg wp n) = true.
   (** Program vertices and edge occurrences fit the declared occurrence budgets. *)
   Parameter dep_graph_size_counts : forall p,
     graph_n (dep_graph p) <= occurrence_count p /\
     graph_e (dep_graph p) = edge_count p.
   (** All dependency graph identifiers fit the program's key budget. *)
   Parameter dep_graph_width_le_kw : forall p, S.wf p -> graph_width (dep_graph p) <= S.kw p.
-  (** Unique bounded-width identifiers bound the width of their assigned positive ranks. *)
-  Parameter plan_prio_width_plan : forall p cfg wp n pol, S.wf p ->
-    plan p cfg wp n = Some pol -> prio_width p pol <= S.kw p + 1.
   (** Accepted WTO conversion scans distinct program vertices with bounded identifiers. *)
   Parameter checked_wto_size_le : forall p w,
     W.check (G.prepare (dep_graph p)) (verts (dep_graph p)) w = true ->
@@ -301,13 +288,6 @@ Module Type SCHEDULE_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     (T_plan p cfg wp n <= k_plan * (T_dep_graph p + G.T_prepare graph +
       W.T_build prepared roots + W.T_check prepared roots order +
       (if W.check prepared roots order then T_of_wto order cfg wp n else 0) + 1))%N.
-  (** The phase bounds discharge the unchanged public schedule contract. *)
-  Parameter T_plan_plan_le : forall p cfg wp n, S.wf p ->
-    (T_plan p cfg wp n <= c_sched *
-      (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
-       N.of_nat (wto_depth (W.build (G.prepare (dep_graph p)) (verts (dep_graph p))) + 1) *
-       N.of_nat (S.kw p + 1) +
-       N.of_nat (row_count p) * (S.row_work p 0 + 1)))%N.
 End SCHEDULE_PLAN.
 
 Module Type SCHEDULE_ALL (L : WLATTICE_T) (S : SYSTEM_T L)
