@@ -84,7 +84,7 @@ Module Type FOO_OPS  (K : KEY_OPS).                            (* what runs; thi
 Module Type FOO_SPEC (K : KEY_OPS) (Import F : FOO_OPS K).     (* optional; Definitions only *)
 Module Type FOO_LAWS (K : KEY) (Import F : FOO_OPS K).         (* spec Parameters and functional laws *)
 Module Type FOO      (K : KEY)   := FOO_OPS K <+ FOO_SPEC K <+ FOO_LAWS K.   (* the functional layer *)
-Module Type FOO_TIME (K : KEY_T) (Import F : FOO K).           (* T_op, constants, contracts, bigO *)
+Module Type FOO_TIME (K : KEY_T) (Import F : FOO K).           (* T_op, constants, contracts, <op>_complexity *)
 Module Type FOO_T    (K : KEY_T) := FOO K <+ FOO_TIME K.
 Module Type FOO_PLAN (K : KEY_T) (Import F : FOO_T K).         (* internals, named constants, lemma chain *)
 Module Type FOO_ALL  (K : KEY_T) := FOO_T K <+ FOO_PLAN K.
@@ -93,8 +93,8 @@ Module Type FOO_ALL  (K : KEY_T) := FOO_T K <+ FOO_PLAN K.
 - `_OPS` holds types, functions and closed constants, and nothing else.
 - `_SPEC` holds derived definitions with bodies (`bits`, `post_solution`). A signature gets them through `<+`, an implementation through `Include FOO_SPEC K.`, so each is written once and Rocq checks the bodies agree (V5).
 - `_LAWS` holds spec-only parameters, named in a `(* spec: … *)` pragma, and the laws.
-- `_TIME` holds one `Parameter T_op` per operation (with a companion after each function argument), named constants `c_foo`, contracts `T_op x <= c_foo * (…)` or amortised contracts over an exported potential, and the published `bigO` corollaries.
-- `_PLAN` holds the internals the proof talks about (as `Parameter`s, with their `T_`), named constants `k_*` whose values the implementer chooses, invariants and potentials as manifest definitions, and the chain: `F`-lemmas, then `T`-lemmas, ending at the contracts.
+- `_TIME` holds one `Parameter T_op` per operation (with a companion after each function argument), named constants `c_foo`, contracts `T_op x <= c_foo * (…)` or amortised contracts over an exported potential, and the published `<op>_complexity` corollaries.
+- `_PLAN` holds the internals the proof talks about (as `Parameter`s, with their `T_`), named constants `k_*` whose values the implementer chooses, invariants and potentials as manifest definitions, and the chain: functional facts, then time facts, ending at the contracts.
 - Laws are written with `Parameter` inside module types (Argent's lint reads that keyword). `Axiom` is a synonym there and creates no axiom.
 
 **R2. Three modules per component, in `Foo.v`, as an `Include` chain.**
@@ -193,9 +193,19 @@ The two tables are copied without change from core §9, lines 1794–1819.
   every theorem a session proves has a frozen statement (plan conflict 8).
 - The modules of a component are `FooCode`, `Foo` and `FooT` (R2), and a soundness functor is
   `FooSound`.
-- In the time layer, the time function of `op` is `T_op`, its contract is `T_op_le`, a contract
-  constant is `c_<name>`, a plan constant is `k_<name>`, the plan lemmas are `F1_<name>`,
-  `F2_<name>`, … and `T1_<name>`, `T2_<name>`, …, and a published corollary is `<op>_bigO`.
+- In the time layer, the time function of `op` is `T_op`, its contract is `T_op_le` (`T_op_amort`
+  with a potential, `T_op_ge` for a lower bound), a contract constant is `c_<name>`, a plan
+  constant is `k_<name>`, and the complexity of `op` is `<op>_complexity`, written in the
+  notation of `Argent.Complexity`.
+- A plan lemma has no number. A time fact about `T_f` is `T_f_le`, `T_f_split` (bounded by the
+  times of its parts), `T_f_sum_le` (by the times of its callbacks), `T_f_amort` (with a
+  potential) or `T_f_<case>_credit` (one loop step paid by the potential), and
+  `T_f_plan_<shape>` when the signature already has the contract of that shape. A functional
+  fact is `<subject>_<fact>`, and an unfolding equation is `<subject>_def`. A plan lists its
+  facts in the order of the proof.
+- Each file in `theories/` opens with a header that lists its main results under `Main results`.
+  A signature lists its main laws and every complexity field. Whoever adds, renames or removes a
+  listed result updates the list in the same commit.
 - Inductive types and records are declared at top level, parameterised by types (R6).
 - Each package depends on the packages below, besides `Stdlib` and `Argent`. Lane 1 writes these
   dependencies into the dune files. Two edges are missing from the package map of core §2.
@@ -226,7 +236,7 @@ complete model is `UnionFindSig.v` in core §6, lines 1327–1439. Write a signa
 following order.
 
 1. Write the requires. Import `From Argent Require Import Time.` for the commands, and also
-   `BigO` when a statement uses `bigO`.
+   `Complexity` with `Import ComplexityNotations.` when a statement uses the complexity notation.
 2. Put above the first module type the top-level data and helper functions that the statements
    mention (R6, R7), each executable helper followed by its `TimeFun` line. This top-level code
    is part of the frozen statement.
@@ -243,13 +253,13 @@ following order.
    A time function returns `N`, and that type adds a companion with values in `N` right after
    each function argument, so the time function of `merge` has the type
    `forall {A B C}, (option A -> option B -> option C) -> (option A -> option B -> N) -> t A -> t B -> N`.
-   Then declare the named constants, the contracts, and the published `bigO` corollaries, all by
-   the rule "Time values are binary" below.
+   Then declare the named constants, the contracts, and the published `<op>_complexity`
+   corollaries, all by the rule "Time values are binary" below.
 7. In `_PLAN`, declare the internals that the proof talks about as `Parameter`s with their `T_`,
-   the plan constants `k_*`, the invariants and potentials as definitions, and the chain of `F`
-   lemmas and then `T` lemmas that ends at the contracts. A plan is good when a session can prove
-   its lemmas in order, each from the earlier ones and the layers above. Check each lemma against
-   the code before you write it down.
+   the plan constants `k_*`, the invariants and potentials as definitions, and the chain of
+   functional facts and then time facts that ends at the contracts. A plan is good when a session
+   can prove its lemmas in order, each from the earlier ones and the layers above. Check each
+   lemma against the code before you write it down.
 8. Compile with `just vo`. The layers fit together when the three modules of the matching `Foo.v`
    ascribe to them (§9). Test that a wrong implementation is rejected only by applying a checking
    functor (V4), never with `Fail Module` (F6).
@@ -265,9 +275,26 @@ every statement about time in a signature, an implementation, a helper and a tes
   `T_get k m <= c_map * (K.bits k + 1)` becomes
   `(T_get k m <= c_map * N.of_nat (K.bits k + 1))%N`. A size that is already an `N` enters as
   it is.
-- Write each time statement in `N_scope`, with `%N` on the statement. The size function of a
-  `bigO` statement returns `N`.
+- Write each time statement in `N_scope`, with `%N` on the statement. The size function of an
+  `<op>_complexity` statement returns `N`.
 - A design document that states a time contract in `nat` is read by this rule.
+
+**Complexity fields use the notation of `Argent.Complexity`.** A complexity field is
+`<op>_complexity` and states its bound in the notation. A file that writes the notation opts
+into it with `From Argent Require Import Complexity.` and `Import ComplexityNotations.`
+
+- An upper bound is `T ∈ 𝑂(g) for x | P`. The binder `x` is a name or a tuple pattern such as
+  `(k, m)`. The time `T`, the measure `g` and the precondition `P` may use the variables that `x`
+  binds. A bound without a precondition leaves out `| P`.
+- A lower bound is `T ∈ Ω(g) for x | P`, and a tight bound is `T ∈ Θ(g) for x | P`. Their
+  worst-case forms are `T ∈ Ω_worst(g) for x | P` and `T ∈ Θ_worst(g) for x | P`. An amortised
+  upper bound is `T ∈ 𝑂(g) amortised a ↦ b for x | P`, where `a` is the potential before the
+  operation and `b` is the potential after it.
+- The notation reads the time, the measure and the potentials in `N_scope`, and leaves the
+  precondition in the scope of the statement.
+- The precondition extends to the end of the statement, as the body of `forall` does. A bound
+  with a precondition is therefore wrapped in parentheses when more text follows it, as in
+  `(T ∈ 𝑂(g) for x | P) -> Q`. Without them, `P -> Q` would be the precondition.
 
 ## 9. Writing `Foo.v`
 
@@ -289,7 +316,7 @@ Write `Foo.v` in the following order.
    the laws, as `Lemma`s with the names of the signature.
 4. `Module FooT (K : KEY_T) <: FOO_ALL K.` starts with `Include Foo K.` Then come the `TimeFun`
    lines, the constants, the definitions that the plan declares as parameters, the plan lemmas,
-   the contracts and the `bigO` corollaries.
+   the contracts and the `<op>_complexity` corollaries.
 5. A soundness functor `FooSound` is a sibling of `FooT` and starts with `Include Foo …` (R2).
 
 A level that has no content is left out, so a solver's `WorklistT` includes `WorklistCode`.
@@ -302,7 +329,8 @@ of `f` and places it beside `f`. Use it as follows.
 - Import `From Argent Require Import Time Tactics Std.` in a file that derives or bounds time
   functions. `Std` holds the time functions of the standard library (`Nat.T_add`, `Pos.T_compare`
   and so on), and `TimeFun` needs them for every standard function that the code calls. Import
-  `Loop` for `loop` and `loop_fuel`, and `BigO` for `bigO`.
+  `Loop` for `loop` and `loop_fuel`, and `Complexity` for the complexity bounds, followed by
+  `Import ComplexityNotations.` for their notation.
 - Run `TimeFun` on a top-level helper at top level, right after its definition. Run it on the
   operations of a component inside `FooT`, after `Include Foo K.`, with one `TimeFun` per
   definition of `FooCode`, callees first. After `Include`, `TimeFun` finds the included
@@ -389,6 +417,14 @@ and 7 are the textual steps that a lane file gives to Luna.
 
 - A test is an `Example` in `tests/<Pkg>/<Name>Test.v`, proved by `vm_compute` and
   `reflexivity`.
+- A test file groups its examples in `Module <Topic>Tests. ... End <Topic>Tests.` blocks, one
+  per operation or topic, and lists the groups in its header. Shared setup and fixtures stay at
+  the top under `(** * Fixtures *)`, and a fixture that one group uses lives in that group.
+- An example is named for the behaviour it checks, without the group's topic or a plan number,
+  and has one `(** ... *)` line that says what it shows.
+- An input is a named `Definition`. An example checks one observation against a value that a
+  reader can check, and keeps an exact large term only when that term is the contract under test
+  or the example guards a defect that a review found.
 - A ported test keeps the expected value of the old test. Paste the old value, and do not
   recompute it (recipe step 8). When the new code gives a different value, turn the `Example`
   into a comment that holds both values, and add a line under "Open problems".
