@@ -4,8 +4,7 @@
     For example, a declared empty list cannot evaluate a query that reads one key.
 
     Groups:
-    - Fixtures: a system whose row reads a key that it does not declare.
-    - Summary: the solver and the certified analysis both reject the incomplete summary.
+    - [SummaryTests] The solver and the certified analysis both reject the incomplete summary.
 
     Builds on: Fixpoint.Worklist and Fixpoint.Certified. *)
 
