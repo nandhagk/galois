@@ -2,10 +2,23 @@
 
     The harness combines concrete singleton evaluation with abstract transfer tables.
     For example, an unmodeled forward operation returns top.
+
+    Main results
+    - [is_bot_sound] Recognized bottoms represent no value.
+    - [point_sound] A recognized singleton identifies every represented value.
+    - [abst_sound] Abstraction retains its concrete argument.
+    - [fwd_sound] A modeled forward entry retains concrete results.
+    - [bwd_sound] A modeled backward entry retains consistent operands.
+    - [grd_sound] A modeled guard entry retains satisfying operands.
+    - [forward_complexity] Forward transfer has the published operator-work class.
+    - [backward_complexity] Backward transfer has the published work-plus-request class.
+    - [guard_complexity] Guard transfer has the published guard-work class.
+
     Builds on: HarnessSig. *)
 
 From Stdlib Require Import List Arith NArith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Domains Require Import LangSig HarnessSig.
 
 Module HarnessCode (L : LANG_OPS) (B : HARNESS_BASE_OPS L) (T : TABLE_OPS L B)
@@ -643,9 +656,8 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
     exact meet_all_time_bound.
   Qed.
   (** Forward transfer has the published operator-work class. *)
-  Lemma forward_complexity : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
-    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Lemma forward_complexity :
+    T_forward o xs ∈ 𝑂(N.of_nat ((work o xs)%nat)) for (o, xs).
   Proof.
     exists c_val. intros [o xs] _. cbn [fst snd].
     pose proof (T_forward_le o xs) as Htime.
@@ -663,9 +675,8 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Qed.
 
   (** Guard transfer has the published guard-work class. *)
-  Lemma guard_complexity : (bigO (fun _ => True)
-    (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
-    (fun gx => T_guard (fst gx) (snd gx)))%N.
+  Lemma guard_complexity :
+    T_guard g xs ∈ 𝑂(N.of_nat ((gwork g xs)%nat)) for (g, xs).
   Proof.
     exists c_val. intros [g xs] _. cbn [fst snd].
     pose proof (T_guard_le g xs) as Htime.
