@@ -2,6 +2,10 @@
 
     Scalar keys use positive encodings and reflected equality.
     For example, the positive key uses its value as its encoding.
+
+    Main results
+    - [eqb_spec] The Boolean test decides key equality.
+
     Builds on: Stdlib binary arithmetic and Argent time interfaces. *)
 
 From Stdlib Require Import Bool NArith PArith ZArith Lia.
