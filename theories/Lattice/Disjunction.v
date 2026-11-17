@@ -613,20 +613,44 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
     lia.
   Qed.
 
+  (** Inclusion is linear in both disjunction sizes for the fixed cap. *)
   Lemma leb_bigO : bigO (X := t * t) (fun _ => True)
     (fun xy => N.of_nat (size (fst xy) + size (snd xy)))
     (fun xy => T_leb (fst xy) (snd xy)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_lat).
+    intros [a b] _; cbn [fst snd].
+    pose proof (T_leb_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Joining is linear in both disjunction sizes for the fixed cap. *)
   Lemma join_bigO : bigO (X := t * t) (fun _ => True)
     (fun xy => N.of_nat (size (fst xy) + size (snd xy)))
     (fun xy => T_join (fst xy) (snd xy)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_lat).
+    intros [a b] _; cbn [fst snd].
+    pose proof (T_join_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Bottom testing is linear in the disjunction size. *)
   Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_lat).
+    intros a _.
+    pose proof (T_is_bot_le a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Clipping within twice the cap is linear in raw length and component sizes. *)
   Lemma clip_bigO : bigO (fun xs : list L.t => length xs <= 2 * C.k)
     (fun xs => N.of_nat (length xs + fold_right (fun a n => L.size a + n) 0 xs)) T_clip.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_lat).
+    intros xs Hlength.
+    pose proof (T_clip_le xs Hlength) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 End DisjunctionT.
