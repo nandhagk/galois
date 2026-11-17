@@ -1472,6 +1472,60 @@ Module PTrieT <: TRIE_ALL.
         Hcallback Hleft Hright n u) as Hmerge.
       unfold k_merge. time_step.
   Qed.
+
+  (** Constant one-sided handlers let either input skeleton pay for the traversal. *)
+  Local Lemma merge_ne_clock_sides {A B C} (f : option A -> option B -> option C)
+      T_f (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr c
+      (Hcallback : forall a b, (T_f a b <= c)%N)
+      (Hleft : forall a, (T_fl a <= c)%N)
+      (Hright : forall b, (T_fr b <= c)%N)
+      (n : ne A) : forall u,
+    (T_merge_ne f T_f fl T_fl fr T_fr n u <=
+      16 * (c + 1) * N.of_nat (nodes_ne n) + c + 1)%N /\
+    (T_merge_ne f T_f fl T_fl fr T_fr n u <=
+      16 * (c + 1) * N.of_nat (nodes u) + c + 1)%N.
+  Proof.
+    remember (16 * (c + 1))%N as budget eqn:Hbudget.
+    assert (Hroot : (3 * c + 16 <= budget)%N) by nia.
+    clear Hbudget.
+    induction n; intros [|other].
+    all: try solve [split; time_unfold @T_merge_ne; time_pose;
+      cbn [nodes]; time_cbn; nia].
+    all: try destruct (IHn (left (Nodes other))) as [Hll Hlr].
+    all: try destruct (IHn (right (Nodes other))) as [Hrl Hrr].
+    all: try destruct (IHn1 (left (Nodes other))) as [Hll Hlr].
+    all: try destruct (IHn2 (right (Nodes other))) as [Hrl Hrr].
+    all: pose proof (f_equal (fun count => budget * N.of_nat count)%N
+      (nodes_components_ne other)) as Hnodes.
+    all: split; time_unfold @T_merge_ne.
+    all: unfold T_merge_value, T_left, T_value, T_right,
+      T_trie_left, T_trie_value, T_trie_right; time_simpl; time_pose.
+    all: cbn [nodes nodes_ne] in *;
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *; time_cbn_all.
+    all: repeat rewrite N.mul_add_distr_l in *.
+    all: lia.
+  Qed.
+
+  (** A merge with constant handlers visits at most the smaller input skeleton. *)
+  Lemma T_merge_with_min : forall A B C (f : option A -> option B -> option C) T_f
+      (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr m u c,
+    ((forall a b, T_f a b <= c) ->
+    (forall a, T_fl a <= c) -> (forall b, T_fr b <= c) ->
+    T_merge_with f T_f fl T_fl fr T_fr m u <=
+      2 * k_merge * (c + 1) * N.of_nat (Nat.min (nodes m) (nodes u) + 1))%N.
+  Proof.
+    intros A B C f T_f fl T_fl fr T_fr [|n] u c Hcallback Hleft Hright.
+    - pose proof (Hright u). unfold k_merge. time_step.
+    - destruct (merge_ne_clock_sides f T_f fl T_fl fr T_fr c
+        Hcallback Hleft Hright n u) as [Hleft_bound Hright_bound].
+      unfold k_merge. time_unfold @T_merge_with. cbn [nodes].
+      destruct (Nat.le_ge_cases (nodes_ne n) (nodes u)) as [Hle|Hge].
+      + rewrite Nat.min_l by exact Hle.
+        rewrite Nat2N.inj_add. time_cbn_all. nia.
+      + rewrite Nat.min_r by exact Hge.
+        rewrite Nat2N.inj_add. time_cbn_all. nia.
+  Qed.
+
   (** Merging charges the callbacks at shared and one-sided bindings. *)
   Local Lemma merging_sum_app (xs ys : list N) :
     fold_right N.add 0%N (xs ++ ys) =
