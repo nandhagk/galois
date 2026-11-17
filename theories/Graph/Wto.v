@@ -71,6 +71,63 @@ Definition wto_components g roots :=
   Scc (tarjan_owners s) (rev_append (tarjan_emitted s) []).
 TimeFun wto_components.
 
+(** A scoped search refreshes only its count caches, preserving its materialized rows. *)
+Definition wto_recount (g : prepared) : prepared :=
+  let b := base g in
+  Prepared b Empty (N.of_nat (graph_n b)) (N.of_nat (graph_e b)).
+TimeFun wto_recount.
+
+(** Rebuilding a materialized scope is equal to refreshing just its two count caches. *)
+Lemma wto_scoped_recount g vs :
+  scc_graph (wto_scoped g (Some vs)) = wto_recount (wto_scoped g (Some vs)).
+Proof.
+  exact (scc_graph_filtered (base g) vs (nv g) (ne g)).
+Qed.
+
+(** A scope has already rebuilt all rows and removed every external successor. *)
+Lemma wto_scoped_graph g vs :
+  base (scc_graph (wto_scoped g (Some vs))) = base (wto_scoped g (Some vs)).
+Proof.
+  exact (f_equal base (wto_scoped_recount g vs)).
+Qed.
+
+(** Refreshing scoped counts costs no more than the former graph rebuild. *)
+Lemma wto_recount_clock g vs :
+  (T_wto_recount (wto_scoped g (Some vs)) <=
+    T_scc_graph (wto_scoped g (Some vs)))%N.
+Proof.
+  pose proof (scc_graph_cache_clock (wto_scoped g (Some vs))) as Hcache.
+  rewrite wto_scoped_graph in Hcache.
+  time_unfold @T_wto_recount. unfold T_base. lia.
+Qed.
+
+(** Component production on a materialized scope skips rebuilding its row tries. *)
+Definition wto_components_ready g roots :=
+  let ready := wto_recount g in
+  let listed_roots := filter (fun v =>
+    match trie_get v (succ (base ready)) with Some _ => true | None => false end) roots in
+  let s := TarjanSearch.dfs ready listed_roots tarjan_initial in
+  Scc (tarjan_owners s) (rev_append (tarjan_emitted s) []).
+TimeFun wto_components_ready.
+
+(** The scoped component shortcut has exactly the same component order and owner table. *)
+Lemma wto_components_ready_agrees g vs roots :
+  wto_components_ready (wto_scoped g (Some vs)) roots =
+    wto_components (wto_scoped g (Some vs)) roots.
+Proof.
+  unfold wto_components_ready, wto_components. now rewrite wto_scoped_recount.
+Qed.
+
+(** The component shortcut fits the original component clock on every materialized scope. *)
+Lemma wto_components_ready_clock g vs roots :
+  (T_wto_components_ready (wto_scoped g (Some vs)) roots <=
+    T_wto_components (wto_scoped g (Some vs)) roots)%N.
+Proof.
+  pose proof (wto_recount_clock g vs) as Hcache.
+  time_unfold @T_wto_components_ready. time_unfold @T_wto_components.
+  rewrite wto_scoped_recount. lia.
+Qed.
+
 (** Reversing the component list preserves its multiset of vertices. *)
 Lemma wto_components_reverse : forall (cs : list (list positive)),
   Permutation (concat cs) (concat (rev cs)).
@@ -391,7 +448,8 @@ Proof.
   time_unfold @T_wto_expand_tasks. time_cbn. lia.
 Qed.
 
-Definition wto_step (g : prepared) (s : wto_state) : wto_state + wto :=
+(** The former expansion step remains the behavioral specification. *)
+Definition wto_step_spec (g : prepared) (s : wto_state) : wto_state + wto :=
   match s with
   | WtoState [] partial _ => inr (wto_reverse_into partial WNil)
   | WtoState (WtoClose h :: tasks) partial (parent :: parents) =>
@@ -416,7 +474,45 @@ Definition wto_step (g : prepared) (s : wto_state) : wto_state + wto :=
         WNil (partial :: parents))
     end
   end.
+
+Definition wto_step (g : prepared) (s : wto_state) : wto_state + wto :=
+  match s with
+  | WtoState [] partial _ => inr (wto_reverse_into partial WNil)
+  | WtoState (WtoClose h :: tasks) partial (parent :: parents) =>
+    inl (WtoState tasks (WLoop h (wto_reverse_into partial WNil) parent) parents)
+  | WtoState (WtoClose _ :: tasks) partial [] => inl (WtoState tasks partial [])
+  | WtoState (WtoExpand within entries owners c :: tasks) partial parents =>
+    match wto_select (wto_preferred owners entries c) c with
+    | None => inl (WtoState tasks partial parents)
+    | Some (h, []) =>
+      let tree := if wto_member h (succs (base g) h)
+        then WLoop h WNil partial else WVertex h partial in
+      inl (WtoState tasks tree parents)
+    | Some (h, body) =>
+      let child := Some body in
+      let scoped := wto_scoped g child in
+      let roots := rev_append body [] in
+      let r := wto_components_ready scoped roots in
+      let entries' := wto_entries scoped roots r in
+      inl (WtoState
+        (wto_expand_tasks child entries' (comp r) (rev_append (comps r) []) ++
+          WtoClose h :: tasks)
+        WNil (partial :: parents))
+    end
+  end.
 TimeFun wto_step.
+
+(** The optimized transition preserves the complete former builder state. *)
+Lemma wto_step_agrees g st : wto_step g st = wto_step_spec g st.
+Proof.
+  destruct st as [tasks partial parents].
+  destruct tasks as [|task tasks]; [reflexivity|].
+  destruct task as [within entries owners c|h]; [|reflexivity].
+  cbn [wto_step wto_step_spec].
+  destruct (wto_select (wto_preferred owners entries c) c) as [[h body]|];
+    [destruct body as [|first body]|]; try reflexivity.
+  now rewrite wto_components_ready_agrees.
+Qed.
 
 (** A nontrivial expansion pays its scoped phases and their already charged output lists. *)
 Lemma wto_expand_step_clock : forall g within entries owners c tasks partial parents h body,
@@ -435,6 +531,8 @@ Proof.
   set (scoped := wto_scoped g (Some members)).
   set (r := wto_components scoped (rev members)).
   set (entries' := wto_entries scoped (rev members) r).
+  pose proof (wto_components_ready_clock g members (rev members)) as Hready.
+  fold scoped in Hready.
   pose proof (wto_components_output_clock scoped (rev members)) as Houtput.
   pose proof (List.T_rev_append_le members []) as Hroots.
   pose proof (List.T_rev_append_le (comps r) []) as Hreverse.
@@ -449,7 +547,8 @@ Proof.
   { unfold wto_expand_tasks. rewrite length_map, length_rev. reflexivity. }
   rewrite Hlength in Happ. rewrite length_rev in Htasks. fold r in Houtput.
   time_unfold @T_wto_step. rewrite Hselect. cbn beta iota zeta.
-  rewrite !rev_append_rev, !app_nil_r. fold members scoped r entries'.
+  rewrite !rev_append_rev, !app_nil_r, wto_components_ready_agrees.
+  fold members scoped r entries'.
   time_simpl. nia.
 Qed.
 
@@ -481,7 +580,7 @@ Proof.
   destruct tasks as [|task tasks]; [discriminate Hstep|].
   inversion Htasks as [|task' tasks' Hhead Htail]; subst task' tasks'.
   destruct task as [within entries owners c|h].
-  - cbn [wto_step] in Hstep.
+  - rewrite wto_step_agrees in Hstep. cbn [wto_step_spec] in Hstep.
     destruct (wto_select (wto_preferred owners entries c) c) as [[h body]|].
     + destruct body as [|first body].
       * inversion Hstep; subst next. exact Htail.
@@ -539,7 +638,7 @@ Proof.
   destruct tasks as [|task tasks]; [discriminate Hstep|].
   inversion Htasks as [|task' tasks' Hhead Htail]; subst task' tasks'.
   destruct task as [within entries owners c|h].
-  - cbn [wto_step] in Hstep.
+  - rewrite wto_step_agrees in Hstep. cbn [wto_step_spec] in Hstep.
     destruct (wto_select (wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
     + pose proof (Permutation_length (wto_select_spec _ _ _ _ Hselect)) as Hlength.
       cbn [length] in Hlength. destruct body as [|first body].
@@ -4062,7 +4161,8 @@ Module WtoT <: WTO_ALL.
     intros g level [tasks partial parents] next Hstep.
     destruct tasks as [|task tasks]; [discriminate Hstep|].
     destruct task as [within entries owners c|h].
-    - cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+    - unfold wto_step in Hstep. rewrite wto_step_agrees in Hstep.
+      cbn [wto_step_spec] in Hstep.
       destruct (Galois.Graph.Wto.wto_select
         (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
       + pose proof (source_mass_permutation g _ _ (wto_select_spec _ _ _ _ Hselect))
@@ -4200,7 +4300,8 @@ Module WtoT <: WTO_ALL.
     intros g [tasks partial parents] next Hstep.
     destruct tasks as [|task tasks]; [discriminate Hstep|].
     destruct task as [within entries owners c|h].
-    - cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+    - unfold wto_step in Hstep. rewrite wto_step_agrees in Hstep.
+      cbn [wto_step_spec] in Hstep.
       destruct (Galois.Graph.Wto.wto_select (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
       + destruct body as [|v body]; inversion Hstep; subst next;
           unfold state_depth; cbn [wto_partial wto_parents fold_left wto_depth].
@@ -4231,7 +4332,9 @@ Module WtoT <: WTO_ALL.
     unfold frames_balanced in *. cbn [wto_tasks wto_parents] in Hbalance.
     destruct tasks as [|task tasks]; [discriminate Hstep|].
     destruct task as [within entries owners c|h].
-    - cbn [filter] in Hbalance. cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+    - cbn [filter] in Hbalance.
+      unfold wto_step in Hstep. rewrite wto_step_agrees in Hstep.
+      cbn [wto_step_spec] in Hstep.
       destruct (Galois.Graph.Wto.wto_select (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
       + destruct body as [|v body]; inversion Hstep; subst next;
           cbn [wto_tasks wto_parents length].
@@ -4256,10 +4359,12 @@ Module WtoT <: WTO_ALL.
       w = wto_reverse_into (wto_partial st) WNil.
   Proof.
     intros g [tasks partial parents] w Hstep. destruct tasks as [|task tasks].
-    - cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+    - unfold wto_step in Hstep. rewrite wto_step_agrees in Hstep.
+      cbn [wto_step_spec] in Hstep.
       inversion Hstep; subst w. split; reflexivity.
     - destruct task as [within entries owners c|h].
-      + cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+      + unfold wto_step in Hstep. rewrite wto_step_agrees in Hstep.
+        cbn [wto_step_spec] in Hstep.
         destruct (Galois.Graph.Wto.wto_select (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|];
           [destruct body|]; discriminate.
       + destruct parents; discriminate Hstep.
@@ -5270,7 +5375,8 @@ Module WtoT <: WTO_ALL.
     inversion Hdomain as [|? ? Hhead Htail]; subst.
     destruct task as [within entries owners c|h].
     - cbn [task_domain] in Hhead. destruct Hhead as [Hnonempty [Hunique [Hlisted Howners]]].
-      cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+      unfold wto_step in Hstep. rewrite wto_step_agrees in Hstep.
+      cbn [wto_step_spec] in Hstep.
       destruct (Galois.Graph.Wto.wto_select
         (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
       + destruct body as [|v body]; inversion Hstep; subst next.
@@ -5383,7 +5489,8 @@ Module WtoT <: WTO_ALL.
     inversion Hdomain as [|? ? Hhead Htail]; subst.
     destruct task as [within entries owners c|h].
     - cbn [task_domain] in Hhead. destruct Hhead as [Hnonempty [Hunique [Hlisted Howners]]].
-      cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+      unfold wto_step in Hstep. rewrite wto_step_agrees in Hstep.
+      cbn [wto_step_spec] in Hstep.
       destruct (Galois.Graph.Wto.wto_select
         (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
       + pose proof (wto_select_spec _ _ _ _ Hselect) as Hselect_perm.
@@ -5814,7 +5921,8 @@ Module WtoT <: WTO_ALL.
     intros g level [tasks partial parents] next Hbalance Hstep.
     destruct tasks as [|task tasks]; [discriminate Hstep|].
     destruct task as [within entries owners c|h].
-    - cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+    - unfold wto_step in Hstep. rewrite wto_step_agrees in Hstep.
+      cbn [wto_step_spec] in Hstep.
       destruct (Galois.Graph.Wto.wto_select
         (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
       + pose proof (Permutation_length (wto_select_spec _ _ _ _ Hselect)) as Hlength.

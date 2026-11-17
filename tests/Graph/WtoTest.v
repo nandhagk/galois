@@ -42,6 +42,25 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Definition scoped_nested_graph := fixture_graph [1; 2; 3; 4; 5; 6]
+  [(1, 2); (2, 3); (3, 4); (4, 3); (4, 5); (5, 2); (5, 6)].
+
+(** Nested component expansion retains the order computed before the scoped shortcut. *)
+Example scoped_nested_order_agrees :
+  WtoCode.build (DigraphCode.prepare scoped_nested_graph) [1] =
+    WVertex 1 (WLoop 2 (WLoop 3 (WVertex 4 WNil) (WVertex 5 WNil)) (WVertex 6 WNil)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The independent checker accepts the nested order built by the scoped shortcut. *)
+Example scoped_nested_order_accepts :
+  let g := DigraphCode.prepare scoped_nested_graph in
+  WtoCode.check g [1] (WtoCode.build g [1]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example irreducible_order_agrees :
   WtoCode.build (DigraphCode.prepare Irreducible.graph) [1] = Irreducible.order.
 Proof.
