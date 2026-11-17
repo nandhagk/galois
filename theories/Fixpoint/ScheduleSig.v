@@ -112,25 +112,25 @@ Module Type SCHEDULE_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
        N.of_nat (S.kw p + prio_width p pol + 1) +
        N.of_nat (row_count p) * (S.row_work p 0 + 1)))%N.
   (** Dependency graph construction is linear in occurrences and edges. *)
-  Parameter dep_graph_bigO : bigO (X := S.prog) (fun p => S.wf p)
+  Parameter dep_graph_complexity : bigO (X := S.prog) (fun p => S.wf p)
     (fun p => (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
         N.of_nat (S.kw p + 1) + N.of_nat (row_count p) * (S.row_work p 0 + 1))%N)
     (fun p => T_dep_graph p).
   (** Cut checking is linear in occurrences times the key and priority widths. *)
-  Parameter cuts_bigO : bigO (X := S.prog * policy L.wparam) (fun x => S.wf (fst x))
+  Parameter cuts_complexity : bigO (X := S.prog * policy L.wparam) (fun x => S.wf (fst x))
     (fun x => (N.of_nat (row_count (fst x) + occurrence_count (fst x) + 1) *
         N.of_nat (S.kw (fst x) + prio_width (fst x) (snd x) + 1) +
         N.of_nat (row_count (fst x)) * (S.row_work (fst x) 0 + 1))%N)
     (fun x => T_cuts (fst x) (snd x)).
   (** Planning is linear in occurrences and edges times the nesting depth. *)
-  Parameter plan_bigO : bigO (X := S.prog * head_cfg * L.wparam * nat)
+  Parameter plan_complexity : bigO (X := S.prog * head_cfg * L.wparam * nat)
     (fun '(p, _, _, _) => S.wf p)
     (fun '(p, _, _, _) => (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
         N.of_nat (wto_depth (W.build (G.prepare (dep_graph p)) (verts (dep_graph p))) + 1) *
         N.of_nat (S.kw p + 1) + N.of_nat (row_count p) * (S.row_work p 0 + 1))%N)
     (fun '(p, cfg, wp, n) => T_plan p cfg wp n).
   (** WTO conversion is linear in the order length times the key and rank widths. *)
-  Parameter of_wto_bigO : bigO (X := wto * head_cfg * L.wparam * nat) (fun _ => True)
+  Parameter of_wto_complexity : bigO (X := wto * head_cfg * L.wparam * nat) (fun _ => True)
     (fun '(w, _, _, _) => N.of_nat ((length (wto_order w) + 1) *
       (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1)))
     (fun '(w, cfg, wp, n) => T_of_wto w cfg wp n).
@@ -235,65 +235,65 @@ Module Type SCHEDULE_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     (G : DIGRAPH_T) (W : WTO_T) (Import H : SCHEDULE_T L S G W).
   Parameter k_graph k_heads k_cuts k_plan : N.
   (** Construction uses the shared first-order graph builder. *)
-  Parameter F1_graph : forall p, dep_graph p =
+  Parameter dep_graph_def : forall p, dep_graph p =
     schedule_graph S.key_code (S.target p) (S.deps p) (S.sides p) (S.rows p).
   (** The graph builder lists each read or write code exactly once. *)
-  Parameter F2_vertices : forall p, NoDup (verts (dep_graph p)) /\
+  Parameter dep_graph_vertices_spec : forall p, NoDup (verts (dep_graph p)) /\
     forall c, In c (verts (dep_graph p)) <->
       exists r x, In r (S.rows p) /\ In x ((S.target p r :: S.sides p r) ++ S.deps p r) /\
         S.key_code x = c.
   (** Every emitted adjacency occurrence comes from a declared dependency product. *)
-  Parameter F3_edges : forall p u v, edge (dep_graph p) u v <-> dependency_edge p u v.
+  Parameter dep_graph_edges_plan : forall p u v, edge (dep_graph p) u v <-> dependency_edge p u v.
   (** Preparation retains a well-formed graph whose vertices are all roots. *)
-  Parameter F4_prepared : forall p,
+  Parameter dep_graph_prepare_wf : forall p,
     wf_graph (dep_graph p) /\ base (G.prepare (dep_graph p)) = dep_graph p /\
     forall u, In u (verts (dep_graph p)) ->
       reach (base (G.prepare (dep_graph p))) (verts (dep_graph p)) u.
   (** WTO conversion pairs its public ranks with its configured structural heads. *)
-  Parameter F5_policy : forall w cfg wp n, of_wto w cfg wp n =
+  Parameter of_wto_def : forall w cfg wp n, of_wto w cfg wp n =
     @Policy L.wparam (W.ranks w) (schedule_head_map cfg (W.heads w)) wp n.
   (** Cut checking uses the maximum dependency rank for each row. *)
-  Parameter F6_cut_code : forall p pol, cuts p pol =
+  Parameter cuts_def : forall p pol, cuts p pol =
     forallb (schedule_cut_row S.key_code (S.target p) (S.deps p) (S.sides p) pol) (S.rows p).
   (** Maximum-rank checking is equivalent to the public dependency-edge criterion. *)
-  Parameter F7_cut_spec : forall p pol, cuts p pol = true <-> forall u v,
+  Parameter cuts_spec_plan : forall p pol, cuts p pol = true <-> forall u v,
     dependency_edge p u v -> (priority pol u < priority pol v)%positive \/
       exists cfg, trie_get v (heads pol) = Some cfg.
   (** Checked WTO forward ranks discharge every non-head dependency. *)
-  Parameter F8_wto_cuts : forall p w cfg wp n,
+  Parameter of_wto_cuts_plan : forall p w cfg wp n,
     W.check (G.prepare (dep_graph p)) (verts (dep_graph p)) w = true ->
     cuts p (of_wto w cfg wp n) = true.
   (** Program vertices and edge occurrences fit the declared occurrence budgets. *)
-  Parameter F9_graph_sizes : forall p,
+  Parameter dep_graph_size_counts : forall p,
     graph_n (dep_graph p) <= occurrence_count p /\
     graph_e (dep_graph p) = edge_count p.
   (** All dependency graph identifiers fit the program's key budget. *)
-  Parameter F10_width : forall p, S.wf p -> graph_width (dep_graph p) <= S.kw p.
+  Parameter dep_graph_width_le_kw : forall p, S.wf p -> graph_width (dep_graph p) <= S.kw p.
   (** Unique bounded-width identifiers bound the width of their assigned positive ranks. *)
-  Parameter F11_rank_width : forall p cfg wp n pol, S.wf p ->
+  Parameter plan_prio_width_plan : forall p cfg wp n pol, S.wf p ->
     plan p cfg wp n = Some pol -> prio_width p pol <= S.kw p + 1.
   (** Accepted WTO conversion scans distinct program vertices with bounded identifiers. *)
-  Parameter F12_checked_size : forall p w,
+  Parameter checked_wto_size_le : forall p w,
     W.check (G.prepare (dep_graph p)) (verts (dep_graph p)) w = true ->
     length (wto_order w) <= graph_n (dep_graph p) /\
     vertex_width (wto_order w) <= graph_width (dep_graph p).
   (** Graph construction charges readers, encoded occurrences and emitted edges. *)
-  Parameter T1_graph : forall p, S.wf p ->
+  Parameter T_dep_graph_plan_le : forall p, S.wf p ->
     (T_dep_graph p <= k_graph *
       (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) * N.of_nat (S.kw p + 1) +
        N.of_nat (row_count p) * (S.row_work p 0 + 1)))%N.
   (** WTO conversion charges the public projections and configured-head insertion. *)
-  Parameter T2_policy : forall w cfg wp n,
+  Parameter T_of_wto_split : forall w cfg wp n,
     (T_of_wto w cfg wp n <= k_heads *
       (W.T_ranks w + W.T_heads w + T_schedule_head_map cfg (W.heads w) + 1))%N.
   (** Maximum-rank cut checking retains the linear public occurrence bound. *)
-  Parameter T3_cuts : forall p pol, S.wf p ->
+  Parameter T_cuts_plan_le : forall p pol, S.wf p ->
     (T_cuts p pol <= k_cuts *
       (N.of_nat (row_count p + occurrence_count p + 1) *
         N.of_nat (S.kw p + prio_width p pol + 1) +
        N.of_nat (row_count p) * (S.row_work p 0 + 1)))%N.
   (** Planning pays each graph, WTO and conversion phase explicitly. *)
-  Parameter T4_plan_phases : forall p cfg wp n,
+  Parameter T_plan_split : forall p cfg wp n,
     let graph := dep_graph p in
     let prepared := G.prepare graph in
     let roots := verts graph in
@@ -302,7 +302,7 @@ Module Type SCHEDULE_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       W.T_build prepared roots + W.T_check prepared roots order +
       (if W.check prepared roots order then T_of_wto order cfg wp n else 0) + 1))%N.
   (** The phase bounds discharge the unchanged public schedule contract. *)
-  Parameter T5_plan_public : forall p cfg wp n, S.wf p ->
+  Parameter T_plan_plan_le : forall p cfg wp n, S.wf p ->
     (T_plan p cfg wp n <= c_sched *
       (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
        N.of_nat (wto_depth (W.build (G.prepare (dep_graph p)) (verts (dep_graph p))) + 1) *

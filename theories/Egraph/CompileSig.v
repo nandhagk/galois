@@ -100,7 +100,7 @@ Module Type COMPILE_TIME (V : VALUE_T) (Import C : COMPILE V).
     (N.of_nat (rule_bits (compile_rule rw)) <=
       c_compile * N.of_nat (rewrite_size rw + 1) * N.of_nat (rewrite_size rw + 1))%N.
   (** Compilation is linear in the rewrites and the analysis rules. *)
-  Parameter compile_bigO : bigO (fun _ => True)
+  Parameter compile_complexity : bigO (fun _ => True)
     (fun x : list decl * list (rewrite V.t) * list (rule V.t) =>
       let '(_, rws, ans) := x in
       N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0 rws + length ans + 1))
@@ -114,26 +114,26 @@ Module Type COMPILE_PLAN (V : VALUE_T) (Import C : COMPILE_T V).
   Parameter T_flatten_pat : fpat V.t -> positive -> N.
   Parameter k_compile : N.
   (** A compiled rewrite is valid on well-sorted environments when the rewrite is valid. *)
-  Parameter F1_compile_rule_valid : forall (M : model (V := V.t)) ds rw g,
+  Parameter compile_rule_valid : forall (M : model (V := V.t)) ds rw g,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
     valid_rw V.prim M (lookup_sorts ds) (lookup_kind ds) rw ->
     rule_valid_sorted V.prim M (lookup_sorts ds) (lookup_kind ds) (compile_rule rw).
   (** A well-sorted rewrite compiles to a well-sorted rule. *)
-  Parameter F2_compile_rule_sorted : forall ds rw g,
+  Parameter compile_rule_sorted : forall ds rw g,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
     rule_ok (lookup_sorts ds) (lookup_kind ds) (compile_rule rw).
   (** Flattening the left side uses the rewrite's chosen root variable. *)
-  Parameter F3_flatten_spec : forall rw,
+  Parameter flatten_spec : forall rw,
     flatten_lhs rw = flatten_pat (lhs V.t rw) (root_var rw) ++ cond V.t rw.
   (** Compiling a list pays for each rewrite and one step per rewrite. *)
-  Parameter T1_compile_split : forall ds rws ans,
+  Parameter T_compile_split : forall ds rws ans,
     (T_compile ds rws ans <= fold_right (fun rw n => T_compile_rule rw + n) 0 rws +
       k_compile * N.of_nat (length rws + length ans + 1))%N.
   (** Compiling one rewrite is linear in its size. *)
-  Parameter T2_compile_rule_le : forall rw,
+  Parameter T_compile_rule_le : forall rw,
     (T_compile_rule rw <= k_compile * N.of_nat (rewrite_size rw + 1))%N.
   (** Compiling one rewrite is in the linear class of its size. *)
-  Parameter compile_rule_bigO : bigO (fun _ => True)
+  Parameter compile_rule_complexity : bigO (fun _ => True)
     (fun rw => N.of_nat (rewrite_size rw + 1)) T_compile_rule.
 End COMPILE_PLAN.
 

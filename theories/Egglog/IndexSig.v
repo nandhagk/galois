@@ -136,30 +136,30 @@ Module Type INDEX_TIME (V : VALUE_T) (Import X : INDEX V).
   Parameter T_degree_le : forall ix n,
     (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
   (** Insertion is linear in the tuple length and the stored bit width. *)
-  Parameter insert_bigO : bigO
+  Parameter insert_complexity : bigO
     (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
     (fun x => N.of_nat ((length (snd (fst x)) + 1) *
       (width (snd x) (snd (fst x)) + 1)))
     (fun x => T_insert (snd (fst x)) (snd x)).
   (** Removal is linear in the tuple length and the stored bit width. *)
-  Parameter remove_bigO : bigO
+  Parameter remove_complexity : bigO
     (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
     (fun x => N.of_nat ((length (snd (fst x)) + 1) *
       (width (snd x) (snd (fst x)) + 1)))
     (fun x => T_remove (snd (fst x)) (snd x)).
   (** Child lookup is linear in the bit width of one edge. *)
-  Parameter child_bigO : bigO (fun _ => True)
+  Parameter child_complexity : bigO (fun _ => True)
     (fun x : t * positive * cell V.t =>
       N.of_nat (width (fst (fst x)) [snd x] + 1))
     (fun x => T_child (fst (fst x)) (snd (fst x)) (snd x)).
   (** Child enumeration is linear in the degree and the bit width of a node. *)
-  Parameter children_bigO : bigO
+  Parameter children_complexity : bigO
     (fun x : nat * t * positive => wf (fst (fst x)) (snd (fst x)))
     (fun x => N.of_nat ((N.to_nat (degree (snd (fst x)) (snd x)) + 1) *
       (width (snd (fst x)) [] + 1)))
     (fun x => T_children (snd (fst x)) (snd x)).
   (** Degree lookup is linear in the bit width of a node. *)
-  Parameter degree_bigO : bigO (fun _ => True)
+  Parameter degree_complexity : bigO (fun _ => True)
     (fun x : t * positive => N.of_nat (width (fst x) [] + 1))
     (fun x => T_degree (fst x) (snd x)).
 End INDEX_TIME.
@@ -209,10 +209,10 @@ Module Type INDEX_PLAN (V : VALUE_T) (Import X : INDEX_T V).
       k_walk * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
 
   (** Insertion follows its named state walk. *)
-  Parameter F_insert_steps : forall r ix, inv ix ->
+  Parameter insert_def : forall r ix, inv ix ->
     insert r ix = insert_finish r ix (fold_left insert_step_st r (start ix)).
   (** Removal follows its named state walk. *)
-  Parameter F_remove_steps : forall r ix, inv ix ->
+  Parameter remove_def : forall r ix, inv ix ->
     remove r ix = remove_finish r ix (fold_left remove_step_st r (start ix)).
   (** Insertion aggregates the path-step charges. *)
   Parameter T_insert_steps : forall r ix, inv ix ->

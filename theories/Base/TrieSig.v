@@ -140,7 +140,7 @@ Module Type TRIE_TIME (Import T : TRIE).
   Parameter T_elements_le : forall A (m : t A),
     (T_elements m <= c_trie * N.of_nat (weight m + 1))%N.
   (** Lookup of a stored key reads every key bit. *)
-  Parameter get_tight : forall A p (m : t A),
+  Parameter T_get_hit_ge : forall A p (m : t A),
     get p m <> None -> (N.of_nat (Pos.size_nat p) <= T_get p m)%N.
   Parameter T_merge_sum_le : forall A B C (f : option A -> option B -> option C) T_f m1 m2,
     (T_merge f T_f m1 m2 <= c_trie *
@@ -162,37 +162,37 @@ Module Type TRIE_TIME (Import T : TRIE).
         (f (fst bw) (fst ka) (snd ka), snd bw + T_f (fst bw) (fst ka) (snd ka)))
         (elements m) (b, 0))))%N.
   (** Lookup is linear in the key bit length. *)
-  Parameter get_bigO : forall A, bigO (X := positive * t A) (fun _ => True)
+  Parameter get_complexity : forall A, bigO (X := positive * t A) (fun _ => True)
     (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_get (fst x) (snd x)).
   (** Setting is linear in the key bit length. *)
-  Parameter set_bigO : forall A, bigO (X := positive * A * t A) (fun _ => True)
+  Parameter set_complexity : forall A, bigO (X := positive * A * t A) (fun _ => True)
     (fun x => N.of_nat (Pos.size_nat (fst (fst x))))
     (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
   (** Removal is linear in the key bit length. *)
-  Parameter remove_bigO : forall A, bigO (X := positive * t A) (fun _ => True)
+  Parameter remove_complexity : forall A, bigO (X := positive * t A) (fun _ => True)
     (fun x => N.of_nat (Pos.size_nat (fst x))) (fun x => T_remove (fst x) (snd x)).
   (** Merging is linear in both skeletons for bounded callbacks. *)
-  Parameter merge_bigO : forall A B C,
+  Parameter merge_complexity : forall A B C,
     bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
       (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
       (fun '(f, T_f, _, m1, m2) => T_merge f T_f m1 m2).
   (** Relational checking is linear in both skeletons for bounded callbacks. *)
-  Parameter forall2b_bigO : forall A B,
+  Parameter forall2b_complexity : forall A B,
     bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
       (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
       (fun '(f, T_f, _, m1, m2) => T_forall2b f T_f m1 m2).
   (** Folding is linear in the skeleton and the key mass for bounded callbacks. *)
-  Parameter fold_bigO : forall A B,
+  Parameter fold_complexity : forall A B,
     bigO (X := (B -> positive -> A -> B) * (B -> positive -> A -> N) * N * t A * B)
       (fun '(_, T_f, k, _, _) => forall acc p a, (T_f acc p a <= k)%N)
       (fun '(_, _, k, m, _) => ((k + 1) * N.of_nat (nodes m + 1) + N.of_nat (weight m))%N)
       (fun '(f, T_f, _, m, b) => T_fold f T_f m b).
   (** Enumeration is linear in the binding weight. *)
-  Parameter elements_bigO : forall A, bigO (X := t A) (fun _ => True)
+  Parameter elements_complexity : forall A, bigO (X := t A) (fun _ => True)
     (fun m => N.of_nat (weight m)) (fun m => T_elements m).
 End TRIE_TIME.
 
@@ -244,49 +244,49 @@ Module Type TRIE_PLAN (Import T : TRIE_T).
       (elements m) (b, 0%N)).
 
   (** Rebuilding from the three observations gives the original canonical trie. *)
-  Parameter F1_node : forall A (m : t A), node (left m) (value m) (right m) = m.
+  Parameter node_def : forall A (m : t A), node (left m) (value m) (right m) = m.
   (** Rebuilding allocates at most one node beyond the children. *)
-  Parameter F2_nodes_node : forall A (l r : t A) o,
+  Parameter nodes_node_le : forall A (l r : t A) o,
     nodes (node l o r) <= S (nodes l + nodes r).
   (** Weight consists of materialized key bits and one unit per binding. *)
-  Parameter F3_weight : forall A (m : t A), weight m = key_mass m + bindings m.
+  Parameter weight_def : forall A (m : t A), weight m = key_mass m + bindings m.
   (** Every binding occupies a skeleton node. *)
-  Parameter F4_bindings : forall A (m : t A), bindings m <= nodes m.
+  Parameter bindings_le_nodes : forall A (m : t A), bindings m <= nodes m.
   (** Path folding applies the supplied prefix function to each emitted key. *)
-  Parameter F5_fold_path : forall A B (f : B -> positive -> A -> B) path m b,
+  Parameter fold_path_def : forall A B (f : B -> positive -> A -> B) path m b,
     fold_path f path m b =
       fold_left (fun acc kv => f acc (path (fst kv)) (snd kv)) (elements m) b.
   (** A uniform callback bound bounds the sum at the reached accumulators. *)
-  Parameter F6_fold_work : forall A B (f : B -> positive -> A -> B) T_f m b c,
+  Parameter fold_work_le : forall A B (f : B -> positive -> A -> B) T_f m b c,
     ((forall acc p a, T_f acc p a <= c) -> fold_work f T_f m b <= c * N.of_nat (bindings m))%N.
   (** Replacement changes precisely the selected key. *)
-  Parameter F7_replace : forall A p q o (m : t A),
+  Parameter get_replace : forall A p q o (m : t A),
     get p (replace q o m) = if Pos.eqb p q then o else get p m.
   (** Filtering acts independently on present bindings. *)
-  Parameter F8_filter : forall A B (f : A -> option B) m p,
+  Parameter get_filter_map : forall A B (f : A -> option B) m p,
     get p (filter_map f m) = match get p m with Some a => f a | None => None end.
 
   (** Value-only folding has the same order and avoids constructing keys. *)
-  Parameter F9_fold_values : forall A B (f : B -> A -> B) m b,
+  Parameter fold_values_def : forall A B (f : B -> A -> B) m b,
     fold_values f m b =
       fold_left (fun acc kv => f acc (snd kv)) (elements m) b.
 
   (** Child observations and canonical rebuilding take constant time. *)
-  Parameter T1_node : forall A (l r : t A) o,
+  Parameter T_node_parts_le : forall A (l r : t A) o,
     (T_left l + T_value l + T_right l + T_node l o r <= k_node)%N.
   (** Replacement descends once per bit and rebuilds the selected path. *)
-  Parameter T2_replace : forall A p o (m : t A),
+  Parameter T_replace_le : forall A p o (m : t A),
     (T_replace p o m <= k_replace * N.of_nat (Pos.size_nat p + 1))%N.
   (** Filtering visits one skeleton and charges its present-value callbacks. *)
-  Parameter T3_filter : forall A B (f : A -> option B) T_f m c,
+  Parameter T_filter_map_le : forall A B (f : A -> option B) T_f m c,
     ((forall a, T_f a <= c) ->
     T_filter_map f T_f m <= k_filter * (c + 1) * N.of_nat (nodes m + 1))%N.
   (** Filtering charges each callback at its present binding. *)
-  Parameter T3_filter_sum : forall A B (f : A -> option B) T_f m,
+  Parameter T_filter_map_sum_le : forall A B (f : A -> option B) T_f m,
     (T_filter_map f T_f m <= k_filter * (N.of_nat (nodes m + 1) +
       fold_right N.add 0 (List.map (fun ka => T_f (snd ka)) (elements m))))%N.
   (** General merging charges shared nodes and the delegated one-sided traversals. *)
-  Parameter T4_merge_with : forall A B C (f : option A -> option B -> option C) T_f
+  Parameter T_merge_with_le : forall A B C (f : option A -> option B -> option C) T_f
       (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr m u c cl cr,
     ((forall a b, T_f a b <= c) ->
     (forall a, T_fl a <= cl * N.of_nat (nodes a + 1)) ->
@@ -294,7 +294,7 @@ Module Type TRIE_PLAN (Import T : TRIE_T).
     T_merge_with f T_f fl T_fl fr T_fr m u <=
       k_merge * (c + cl + cr + 1) * N.of_nat (nodes m + nodes u + 1))%N.
   (** Merging charges the callbacks at shared and one-sided bindings. *)
-  Parameter T4_merge_with_sum : forall A B C (f : option A -> option B -> option C) T_f
+  Parameter T_merge_with_sum_le : forall A B C (f : option A -> option B -> option C) T_f
       (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr m u cl cr,
     (forall a, T_fl a <= cl * (N.of_nat (nodes a + 1) + fold_right N.add 0
        (List.map (fun ka => T_f (Some (snd ka)) None) (elements a))))%N ->
@@ -305,29 +305,29 @@ Module Type TRIE_PLAN (Import T : TRIE_T).
        fold_right N.add 0 (List.map (fun p => T_f (get p m) (get p u))
          (List.map fst (elements m) ++ List.map fst (elements u)))))%N.
   (** One directional check visits the left skeleton and may stop early. *)
-  Parameter T5_forall2 : forall A B (f : A -> option B -> bool) T_f m u c,
+  Parameter T_forall2_le : forall A B (f : A -> option B -> bool) T_f m u c,
     ((forall a b, T_f a b <= c) ->
     T_forall2 f T_f m u <= k_check * (c + 1) * N.of_nat (nodes m + 1))%N.
   (** Directional checking charges each visited binding against its lookup result. *)
-  Parameter T5_forall2_sum : forall A B (f : A -> option B -> bool) T_f m u,
+  Parameter T_forall2_sum_le : forall A B (f : A -> option B -> bool) T_f m u,
     (T_forall2 f T_f m u <= k_check * (N.of_nat (nodes m + 1) +
       fold_right N.add 0
         (List.map (fun ka => T_f (snd ka) (get (fst ka) u)) (elements m))))%N.
   (** Path folding charges each reconstructed key and the supplied prefix callback. *)
-  Parameter T6_fold_path : forall A B (f : B -> positive -> A -> B) T_f path T_path m b c d,
+  Parameter T_fold_path_le : forall A B (f : B -> positive -> A -> B) T_f path T_path m b c d,
     ((forall acc p a, T_f acc p a <= c) -> (forall p, T_path p <= d) ->
     T_fold_path f T_f path T_path m b <=
       k_fold * (N.of_nat (nodes m + key_mass m) + (c + d + 1) * N.of_nat (bindings m) + 1))%N.
   (** Public folding retains the materialized-key charge of the landed algorithm. *)
-  Parameter T7_fold_work : forall A B (f : B -> positive -> A -> B) T_f m b,
+  Parameter T_fold_work_le : forall A B (f : B -> positive -> A -> B) T_f m b,
     (T_fold f T_f m b <=
       k_fold * (N.of_nat (nodes m + key_mass m) + fold_work f T_f m b + 1))%N.
   (** Enumeration adds the final reversal to keyed fold work. *)
-  Parameter T8_elements : forall A (m : t A),
+  Parameter T_elements_plan_le : forall A (m : t A),
     (T_elements m <= k_elements * N.of_nat (nodes m + key_mass m + bindings m + 1))%N.
 
   (** Value-only folding supports skeleton-linear map and set wrappers over stored keys. *)
-  Parameter T9_fold_values : forall A B (f : B -> A -> B) T_f m b c,
+  Parameter T_fold_values_le : forall A B (f : B -> A -> B) T_f m b c,
     ((forall acc a, T_f acc a <= c) ->
     T_fold_values f T_f m b <= k_fold * (c + 1) * N.of_nat (nodes m + 1))%N.
 

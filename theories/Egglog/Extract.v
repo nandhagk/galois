@@ -5125,7 +5125,7 @@ Proof.
     search_trie_weight weight (PTrieCode.left m) +
     (match PTrieCode.value m with Some a => weight a | None => 0 end) +
     search_trie_weight weight (PTrieCode.right m)).
-  all: try (rewrite <- (PTrieT.F1_node A m) at 1; apply search_trie_weight_node).
+  all: try (rewrite <- (PTrieT.node_def A m) at 1; apply search_trie_weight_node).
   all: cbn [PTrieCode.replace];
     rewrite search_trie_weight_node, Hweight, PTrie.get_equation.
   - specialize (IHp value (PTrieCode.right m)). lia.
@@ -7900,7 +7900,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Qed.
 
 
-  Lemma F1_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Lemma initial_inv : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     finalised (initial cs db) = [] /\ knuth_inv db (initial cs db).
   Proof.
     intros cs db Hwf Hcanonical Hinventory.
@@ -7912,14 +7912,14 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     intros c n ch Hin. contradiction.
   Qed.
 
-  Lemma F2_counter_spec : forall cs db s c, D.wf db -> D.canonical db ->
+  Lemma counter_spec : forall cs db s c, D.wf db -> D.canonical db ->
     ctor_inventory cs db -> reachable cs db s ->
     counter s c = length (filter
       (fun i => negb (existsb (fun entry => Pos.eqb i (fst entry)) (finalised s)))
       (children db c)).
   Proof. intros cs db s c Hwf Hcanonical Hinventory Hreach. reflexivity. Qed.
 
-  Lemma F3_ready : forall cs db s c n, reachable cs db s ->
+  Lemma ready_spec : forall cs db s c n, reachable cs db s ->
     In (c, n) (ready s) -> counter s c = 0.
   Proof.
     intros cs db s c n Hreach Hin.
@@ -7964,7 +7964,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     exists (f, k). exact Hin.
   Qed.
 
-  Lemma F4_pop_final : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Lemma pop_final : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
     reachable cs db s -> knuth_inv db s -> step cs db s = inl s' -> knuth_inv db s'.
   Proof.
     intros cs db s next Hwf Hcanonical Hinventory Hreach Hknuth Hstep.
@@ -7973,7 +7973,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     now apply rt_step.
   Qed.
 
-  Lemma F5_finalised_attained : forall cs db s c n ch, D.wf db -> D.canonical db ->
+  Lemma finalised_attained_spec : forall cs db s c n ch, D.wf db -> D.canonical db ->
     ctor_inventory cs db -> reachable cs db s -> In (c, (n, ch)) (finalised s) ->
     exists e, represents (D.view db) (Id c) e /\ tree_cost e = n.
   Proof.
@@ -7987,7 +7987,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       Hwf (fun f k i Hstored => proj1 (Hrows f k i) Hstored) (Id c) e Hrep).
   Qed.
 
-  Lemma F6_best_loop : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Lemma best_loop_spec : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     loop_fuel (step cs db) (R db + 1) (initial cs db) = inr (best cs db).
   Proof.
     intros cs db Hwf Hcanonical Hinventory.
@@ -8367,7 +8367,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
         destruct (trie_get i (search_final_costs s)); discriminate.
   Qed.
 
-  Lemma T1b_step_stop : forall cs db s out, D.wf db -> D.canonical db ->
+  Lemma T_step_stop_le : forall cs db s out, D.wf db -> D.canonical db ->
     ctor_inventory cs db -> reachable cs db s -> step cs db s = inr out ->
     (T_step cs db s <= k_step * N.of_nat (R db + 1))%N.
   Proof.
@@ -8380,7 +8380,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Qed.
 
   (** The bounded extraction loop charges its initialization, steps and fuel. *)
-  Lemma T2_best_loop : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Lemma T_best_split : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_best cs db <= T_initial cs db +
       T_loop_fuel (step cs db) (T_step cs db) (R db + 1) (initial cs db) +
       k_step * N.of_nat (R db + 1))%N.
@@ -8442,7 +8442,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     assert (Hstop : forall s out, reachable cs db s -> step cs db s = inr out ->
       (T_step cs db s <= k_step * N.of_nat (R db + 1))%N).
     { intros s out Hreach Hrun.
-      exact (T1b_step_stop cs db s out Hwf Hcanonical Hinventory Hreach Hrun). }
+      exact (T_step_stop_le cs db s out Hwf Hcanonical Hinventory Hreach Hrun). }
     assert (Hstart : reachable cs db (initial cs db)).
     { unfold reachable. apply rt_refl. }
     pose proof (extraction_loop_clock_amort (step cs db) (T_step cs db)
@@ -8451,7 +8451,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
         N.of_nat (cost_width db + 1))%N
       (k_step * N.of_nat (R db + 1))%N Hadvance Hstop (R db + 1) (initial cs db) Hstart)
       as Hloop.
-    pose proof (T2_best_loop cs db Hwf Hcanonical Hinventory) as Hdriver.
+    pose proof (T_best_split cs db Hwf Hcanonical Hinventory) as Hdriver.
     assert (Hcoefficient : (1 <= k_step)%N) by (unfold k_step; nia).
     assert (Harity : N.of_nat (a db + Nat.log2 (R db) + 2) =
       (N.of_nat (a db) + N.of_nat (Nat.log2 (R db)) + 2)%N).
@@ -8511,7 +8511,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     exact (extraction_step_amort cs db s next Hwf Hcanonical Hinventory Hreach Hstep).
   Qed.
 
-  Lemma T0_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Lemma T_initial_amort : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_initial cs db + heap_potential (initial cs db) <= k_step *
       N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
       N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
@@ -8521,7 +8521,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     unfold heap_potential, extraction_observer_potential. lia.
   Qed.
 
-  Lemma T1_step_amort : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Lemma T_step_amort : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
     reachable cs db s -> knuth_inv db s ->
     step cs db s = inl s' ->
     (T_step cs db s + heap_potential s' <= heap_potential s + k_step *
@@ -8546,7 +8546,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Qed.
 
   (** Inventory construction is linear in the layout bits times the slot logarithm. *)
-  Lemma inventory_bigO : bigO (fun _ => True)
+  Lemma inventory_complexity : bigO (fun _ => True)
     (fun x : list decl * list (positive * list nat) =>
       N.of_nat ((layout_bits (fst x) (snd x) + 1) * (Nat.log2 (length (snd x)) + 1)))
     (fun x => T_inventory (fst x) (snd x)).
@@ -8559,7 +8559,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Qed.
 
   (** Best-row search charges its inventory, incidences and heap at the database widths. *)
-  Lemma best_bigO : bigO
+  Lemma best_complexity : bigO
     (fun x : list (positive * (N * nat)) * D.t =>
       D.wf (snd x) /\ D.canonical (snd x) /\ ctor_inventory (fst x) (snd x))
     (fun x => N.of_nat ((inventory_bits (fst x) + (R (snd x) + 1) * (a (snd x) + 1) +
@@ -8576,7 +8576,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Qed.
 
   (** Certificate checking is linear in the certificate size at its database and cost widths. *)
-  Lemma check_dag_bigO : bigO
+  Lemma check_dag_complexity : bigO
     (fun x : D.t * positive * extraction_dag V.t => D.wf (fst (fst x)))
     (fun x => let '(db, c, g) := x in
       N.of_nat ((cert_size V.encode g + Pos.size_nat c + 1) * (D.unit db + 1) *
@@ -8591,7 +8591,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Qed.
 
   (** Extraction adds one incidence traversal to the best-row search budget. *)
-  Lemma extract_bigO : bigO
+  Lemma extract_complexity : bigO
     (fun x : list (positive * (N * nat)) * D.t * positive =>
       let '(cs, db, _) := x in D.wf db /\ D.canonical db /\ ctor_inventory cs db)
     (fun x => let '(cs, db, _) := x in

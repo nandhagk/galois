@@ -75,7 +75,7 @@ Module Type SUMMARY_LAWS (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
   (** Function keys use the client's encoding. *)
   Parameter key_code_spec : key_code = F.encode.
   (** Function keys use the client's equality test. *)
-  Parameter key_eqb_specification : key_eqb = F.eqb.
+  Parameter key_eqb_def : key_eqb = F.eqb.
   (** Local rows precede calls in function, site and resolver order. *)
   Parameter rows_spec : forall p, CL.wf p -> rows p = map SummaryLocal (CL.functions p) ++
     flat_map (fun f => flat_map (fun site => map (SummaryCall site) (CL.resolve p site))
@@ -105,20 +105,20 @@ Module Type SUMMARY_TIME (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
       (map (fun sg => Site.bits (fst sg)) (CL.calls p))))%N
     with Definition kw := CL.function_width.
   (** Listing the rows is linear in their number. *)
-  Parameter rows_bigO : bigO (X := prog) (fun p => wf p)
+  Parameter rows_complexity : bigO (X := prog) (fun p => wf p)
     (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
   (** Starting a row is linear in the row budget at the empty value. *)
-  Parameter start_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter start_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
   (** Listing the dependencies of a row is linear in their number times the key width. *)
-  Parameter deps_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter deps_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_deps p r).
   (** The target of a listed row fits the row budget at the empty value. *)
-  Parameter target_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter target_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
   (** Listing the sides of a row is linear in their number times the key width. *)
-  Parameter sides_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter sides_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_sides p r).
 End SUMMARY_TIME.

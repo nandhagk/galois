@@ -233,12 +233,12 @@ Module Type EXTRACT_TIME (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
     (T_extract cs db c <= T_best cs db + c_ex * N.of_nat (R db + 1) *
       N.of_nat (a db + 1) * N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
   (** Building the inventory costs the layout bits times the logarithm of the slot count. *)
-  Parameter inventory_bigO : bigO (fun _ => True)
+  Parameter inventory_complexity : bigO (fun _ => True)
     (fun x : list decl * list (positive * list nat) =>
       N.of_nat ((layout_bits (fst x) (snd x) + 1) * (Nat.log2 (length (snd x)) + 1)))
     (fun x => T_inventory (fst x) (snd x)).
   (** Best rows cost the inventory, the incidences and the heap, at the database unit. *)
-  Parameter best_bigO : bigO
+  Parameter best_complexity : bigO
     (fun x : list (positive * (N * nat)) * D.t =>
       D.wf (snd x) /\ D.canonical (snd x) /\ ctor_inventory (fst x) (snd x))
     (fun x => N.of_nat ((inventory_bits (fst x) + (R (snd x) + 1) * (a (snd x) + 1) +
@@ -247,7 +247,7 @@ Module Type EXTRACT_TIME (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
     (fun x => T_best (fst x) (snd x)).
   (** Checking costs the certificate syntax at the database unit and the accepted root cost
       width. *)
-  Parameter check_dag_bigO : bigO
+  Parameter check_dag_complexity : bigO
     (fun x : D.t * positive * extraction_dag V.t => D.wf (fst (fst x)))
     (fun x => let '(db, c, g) := x in
       N.of_nat ((cert_size V.encode g + Pos.size_nat c + 1) * (D.unit db + 1) *
@@ -255,7 +255,7 @@ Module Type EXTRACT_TIME (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
     (fun x => let '(db, c, g) := x in T_check_dag db c g).
   (** Extraction costs its best rows and the traversal of their witness at the database
       unit. *)
-  Parameter extract_bigO : bigO
+  Parameter extract_complexity : bigO
     (fun x : list (positive * (N * nat)) * D.t * positive =>
       let '(cs, db, _) := x in D.wf db /\ D.canonical db /\ ctor_inventory cs db)
     (fun x => let '(cs, db, _) := x in
@@ -286,45 +286,45 @@ Module Type EXTRACT_PLAN (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
     forall c n ch, In (c, (n, ch)) (finalised s) ->
       forall e, represents (D.view db) (Id c) e -> (n <= tree_cost e)%N.
   (** Initialisation has no finalised class and establishes the minimum-cost invariant. *)
-  Parameter F1_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Parameter initial_inv : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     finalised (initial cs db) = [] /\ knuth_inv db (initial cs db).
   (** A row's counter counts its unfinalised identifier children. *)
-  Parameter F2_counter_spec : forall cs db s c, D.wf db -> D.canonical db ->
+  Parameter counter_spec : forall cs db s c, D.wf db -> D.canonical db ->
     ctor_inventory cs db -> reachable cs db s ->
     counter s c = length (filter
       (fun i => negb (existsb (fun entry => Pos.eqb i (fst entry)) (finalised s)))
       (children db c)).
   (** Every ready entry has no unfinalised child. *)
-  Parameter F3_ready : forall cs db s c n, reachable cs db s ->
+  Parameter ready_spec : forall cs db s c n, reachable cs db s ->
     In (c, n) (ready s) -> counter s c = 0.
   (** Popping the minimum ready entry keeps finalised costs optimal. *)
-  Parameter F4_pop_final : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Parameter pop_final : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
     reachable cs db s -> knuth_inv db s -> step cs db s = inl s' -> knuth_inv db s'.
   (** Finalised entries have finite witnesses attaining their costs. *)
-  Parameter F5_finalised_attained : forall cs db s c n ch, D.wf db -> D.canonical db ->
+  Parameter finalised_attained_spec : forall cs db s c n ch, D.wf db -> D.canonical db ->
     ctor_inventory cs db -> reachable cs db s -> In (c, (n, ch)) (finalised s) ->
     exists e, represents (D.view db) (Id c) e /\ tree_cost e = n.
   (** The driver uses one more step than the constructor-row count. *)
-  Parameter F6_best_loop : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Parameter best_loop_spec : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     loop_fuel (step cs db) (R db + 1) (initial cs db) = inr (best cs db).
   (** Initialisation reads the inventory and every constructor row, and funds the heap. *)
-  Parameter T0_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Parameter T_initial_amort : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_initial cs db + heap_potential (initial cs db) <= k_step *
       N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
       N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
   (** A continuing step pays its work through heap potential and its row allowance. *)
-  Parameter T1_step_amort : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Parameter T_step_amort : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
     reachable cs db s -> knuth_inv db s ->
     step cs db s = inl s' ->
     (T_step cs db s + heap_potential s' <= heap_potential s + k_step *
       N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
       N.of_nat (cost_width db + 1))%N.
   (** The stopping step returns the finished table. *)
-  Parameter T1b_step_stop : forall cs db s out, D.wf db -> D.canonical db ->
+  Parameter T_step_stop_le : forall cs db s out, D.wf db -> D.canonical db ->
     ctor_inventory cs db -> reachable cs db s -> step cs db s = inr out ->
     (T_step cs db s <= k_step * N.of_nat (R db + 1))%N.
   (** The driver initialises once, counts its fuel and runs its bounded loop. *)
-  Parameter T2_best_loop : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+  Parameter T_best_split : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_best cs db <= T_initial cs db +
       T_loop_fuel (step cs db) (T_step cs db) (R db + 1) (initial cs db) +
       k_step * N.of_nat (R db + 1))%N.

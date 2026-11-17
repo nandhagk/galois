@@ -56,7 +56,7 @@ Module IcfgT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Edge classification is linear in the edge key. *)
-  Lemma kind_bigO : bigO (X := P.t * E.t) (fun _ => True)
+  Lemma kind_complexity : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(_, e) => N.of_nat (E.bits e)) (fun '(p, e) => T_kind p e).
   Proof.
     apply bigO_intro with (c := c_icfg).

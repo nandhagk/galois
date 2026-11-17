@@ -1796,7 +1796,7 @@ Module BuildT (O : OPS)
     place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x.
 
   (** The definition index lists each variable's definition blocks. *)
-  Lemma F1_graph_wf : forall p, wf_graph (base (graph p)).
+  Lemma graph_wf : forall p, wf_graph (base (graph p)).
   Proof.
     intro p. destruct (PB.prepared_wf p) as [Hblocks _].
     unfold graph. rewrite DG.prepare_base. split.
@@ -1805,7 +1805,7 @@ Module BuildT (O : OPS)
         as [e [Hin Htarget]]. subst v.
       exact (proj2 (BC.edges_nodes (R.prepare p) e Hblocks Hin)).
   Qed.
-  Lemma F2a_def_index : forall p x,
+  Lemma def_index_spec : forall p x,
     frontier_row (def_index p) x = definition_blocks p x.
   Proof.
     intros p x. change (index_row (def_index p) x = definition_blocks p x).
@@ -1814,7 +1814,7 @@ Module BuildT (O : OPS)
     destruct (existsb (Pos.eqb x) (inputs _ _ _ p)); reflexivity.
   Qed.
   (** The live sets answer certificate membership. *)
-  Lemma F2b_live_sets : forall rows b x,
+  Lemma live_sets_spec : forall rows b x,
     (exists m, trie_get b (live_sets rows) = Some m /\ trie_get x m = Some tt) <->
       In x (cert_live ([], rows) b).
   Proof.
@@ -1829,25 +1829,25 @@ Module BuildT (O : OPS)
     - split; [intros [m [Heq _]]; discriminate|contradiction].
   Qed.
   (** Every variable enters a placement worklist at most once per block. *)
-  Lemma F2_place_unique : forall p x, NoDup (placed p x).
+  Lemma placed_nodup : forall p x, NoDup (placed p x).
   Proof.
     intros p x. unfold placed, place_var. apply NoDup_filter, F.idf_unique.
   Qed.
   (** Pruned placement uses iterated-frontier blocks with a certified live entry. *)
-  Lemma F3_place_region : forall p x b, In b (placed p x) ->
+  Lemma placed_region : forall p x b, In b (placed p x) ->
     In b (phi_sites p x) /\ In x (cert_live ([], L.live_in p) b).
   Proof.
     intros p x b Hin. unfold placed, place_var in Hin.
     apply filter_In in Hin as [Hregion Hlive]. split.
-    - unfold phi_sites. now rewrite F2a_def_index in Hregion.
-    - apply (proj1 (F2b_live_sets (L.live_in p) b x)).
+    - unfold phi_sites. now rewrite def_index_spec in Hregion.
+    - apply (proj1 (live_sets_spec (L.live_in p) b x)).
       destruct (trie_get b (live_sets (L.live_in p))) as [xs|] eqn:Hrow;
         [|discriminate].
       exists xs; split; [reflexivity|]. unfold val_mem in Hlive.
       destruct (trie_get x xs) as [[]|]; [reflexivity|discriminate].
   Qed.
   (** The placement table lists exactly the placed variables of each block. *)
-  Lemma F3a_placement : forall p b x,
+  Lemma placement_spec : forall p b x,
     In x (frontier_row (placement p) b) <->
       In x (U.universe (R.prepare p)) /\ In b (placed p x).
   Proof.
@@ -1855,7 +1855,7 @@ Module BuildT (O : OPS)
     apply placement_with_spec.
   Qed.
   (** Renaming uses a bounded explicit stack with one entering and one leaving visit per block. *)
-  Lemma F4_rename_loop : forall p t rows live,
+  Lemma rename_spec : forall p t rows live,
     rename p t rows live =
       match loop_fuel (rename_step p t rows live) (2 * length (blocks _ _ _ p) + 1)
         (rename_init p) with
@@ -1866,7 +1866,7 @@ Module BuildT (O : OPS)
     reflexivity.
   Qed.
   (** The producer checks dominators before using their numbered tree. *)
-  Lemma F5_produce_checked : forall p s c, produce p = Some (s, c) ->
+  Lemma produce_checked : forall p s c, produce p = Some (s, c) ->
     D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true /\
     rename p (dom_tree p) (placement p) (L.live_in p) = Some (s, c).
   Proof.
@@ -2105,7 +2105,7 @@ Module BuildT (O : OPS)
   Lemma placement_row_width p b x : In x (index_row (placement p) b) ->
     Pos.size_nat x <= function_width p.
   Proof.
-    intro Hin; apply F3a_placement in Hin as [Hin _]; now apply universe_width.
+    intro Hin; apply placement_spec in Hin as [Hin _]; now apply universe_width.
   Qed.
 
   (** Distinct source variables produce distinct parameter rows. *)
@@ -2187,7 +2187,7 @@ Module BuildT (O : OPS)
     intro Hunique. rewrite placement_full.
     eapply Nat.le_trans; [apply placement_rows_size; exact Hunique|].
     unfold placement_work, build_sum. apply val_sum_mono; intros x Hin.
-    unfold place_var. rewrite F2a_def_index. eapply Nat.le_trans; [apply filter_length_le|].
+    unfold place_var. rewrite def_index_spec. eapply Nat.le_trans; [apply filter_length_le|].
     unfold phi_sites.
     induction (F.idf (frontiers p) (definition_blocks p x)); cbn [length fold_right]; lia.
   Qed.
@@ -2472,7 +2472,7 @@ Module BuildT (O : OPS)
   Lemma rename_inventory p t rows live s c : rename p t rows live = Some (s, c) ->
     rename_result_info p rows live s c.
   Proof.
-    rewrite F4_rename_loop.
+    rewrite rename_spec.
     destruct (loop_fuel (rename_step p t rows live)
       (2 * length (blocks _ _ _ p) + 1) (rename_init p)) as [next|answer] eqn:Hrun;
       [discriminate|].
@@ -2751,7 +2751,7 @@ Module BuildT (O : OPS)
   Lemma rename_values p t s c : rename p t (placement p) (L.live_in p) = Some (s, c) ->
     rename_result_values p s c.
   Proof.
-    rewrite F4_rename_loop.
+    rewrite rename_spec.
     destruct (loop_fuel (rename_step p t (placement p) (L.live_in p))
       (2 * length (blocks _ _ _ p) + 1) (rename_init p)) as [next|answer] eqn:Hrun;
       [discriminate|].
@@ -2920,7 +2920,7 @@ Module BuildT (O : OPS)
   Lemma produce_operation_bits p s c : produce p = Some (s, c) -> Va.op_bits s = Va.op_bits p.
   Proof.
     intro Hrun. pose proof (produce_unique _ _ _ Hrun) as Hunique.
-    apply F5_produce_checked in Hrun as [_ Hrename].
+    apply produce_checked in Hrun as [_ Hrename].
     eapply rename_operation_bits; eassumption.
   Qed.
 
@@ -3003,7 +3003,7 @@ Module BuildT (O : OPS)
       16 * N.of_nat (function_width p + 1))%N.
   Proof.
     intro Hproduce. pose proof (produce_unique _ _ _ Hproduce) as Hunique.
-    pose proof (F5_produce_checked _ _ _ Hproduce) as [_ Hrename].
+    pose proof (produce_checked _ _ _ Hproduce) as [_ Hrename].
     pose proof (rename_inventory _ _ _ _ _ _ Hrename) as [_ [_ [_ [Hkeys _]]]].
     split; [exact Hkeys|]. split.
     - pose proof (rename_syntax_size _ _ _ _ Hunique Hrename) as Hsyntax.
@@ -3135,7 +3135,7 @@ Module BuildT (O : OPS)
   Qed.
 
   (** A candidate keeps the source blocks and stays within the published work and width. *)
-  Lemma F6_produce_size : forall p s c, produce p = Some (s, c) ->
+  Lemma produce_size_le : forall p s c, produce p = Some (s, c) ->
     map fst (blocks _ _ _ s) = map fst (blocks _ _ _ p) /\
     (N.of_nat (function_size s + cert_size c) <= k_size * N.of_nat (build_work p))%N /\
     (N.of_nat (function_width s + vertex_width (cert_ids c)) <=
@@ -3263,9 +3263,9 @@ Module BuildT (O : OPS)
     assert (Hexact : domtree_exact (graph p) (entry _ _ _ p) (dom_tree p))
       by (apply D.tree_exact; exact Hcheck).
     apply (proj1 (F.df_spec (graph p) (dom_tree p) (entry _ _ _ p) x y
-      (F1_graph_wf p) (DG.prepare_correct _) Hexact)) in Hin.
+      (graph_wf p) (DG.prepare_correct _) Hexact)) in Hin.
     rewrite place_nodes_base.
-    eapply build_place_frontier_listed; [apply F1_graph_wf|exact (proj1 Hexact)|].
+    eapply build_place_frontier_listed; [apply graph_wf|exact (proj1 Hexact)|].
     exact Hin.
   Qed.
 
@@ -3278,9 +3278,9 @@ Module BuildT (O : OPS)
     assert (Hexact : domtree_exact (graph p) (entry _ _ _ p) (dom_tree p))
       by (apply D.tree_exact; exact Hcheck).
     apply (proj1 (F.idf_spec (graph p) (dom_tree p) (entry _ _ _ p)
-      (definition_blocks p x) b (F1_graph_wf p) (DG.prepare_correct _) Hexact)) in Hin.
+      (definition_blocks p x) b (graph_wf p) (DG.prepare_correct _) Hexact)) in Hin.
     rewrite place_nodes_base.
-    eapply build_place_iterated_listed; [apply F1_graph_wf|exact (proj1 Hexact)|].
+    eapply build_place_iterated_listed; [apply graph_wf|exact (proj1 Hexact)|].
     exact Hin.
   Qed.
 
@@ -3599,7 +3599,7 @@ Module BuildT (O : OPS)
     lazymatch goal with |- (_ <= ?rhs)%N =>
       replace rhs with (place_variable_coefficient * budget)%N by
         (unfold budget, work, width; ring) end.
-    time_unfold T_place_var; time_simpl; rewrite F2a_def_index.
+    time_unfold T_place_var; time_simpl; rewrite def_index_spec.
     lazymatch goal with |- context [List.T_filter ?f ?Tf ?xs] =>
       pose proof (build_place_filter_clock f Tf xs (8 * width)%N
         ltac:(intros b Hin;
@@ -3720,7 +3720,7 @@ Module BuildT (O : OPS)
           pose proof (place_variable_sites p x) as Hsites;
           assert (Hcount : length (place_var (frontiers p) (def_index p)
             (live_sets (L.live_in p)) x) <= length (phi_sites p x))
-            by (unfold place_var; rewrite F2a_def_index; apply filter_length_le);
+            by (unfold place_var; rewrite def_index_spec; apply filter_length_le);
           time_simpl;
           lazymatch goal with |- context [List.T_fold_right ?g ?Tg ?state ?sites] =>
             pose proof (val_fold_right_uniform g Tg sites
@@ -3728,7 +3728,7 @@ Module BuildT (O : OPS)
               ltac:(intros b acc Hmember;
                 assert (Hb : Pos.size_nat b <= function_width p)
                   by (eapply place_phi_width; [exact Hcheck|];
-                    exact (proj1 (F3_place_region p x b Hmember)));
+                    exact (proj1 (placed_region p x b Hmember)));
                 pose proof (val_row_time acc b (function_width p) Hb) as Hrow;
                 pose proof (PTrieT.T_set_le (list positive) b (x :: index_row acc b) acc)
                   as Hset;
@@ -3774,7 +3774,7 @@ Module BuildT (O : OPS)
     pose proof (proj1 (proj2 (Hparent child b Hin))) as Hreach.
     pose proof (proj1 (D.tree_exact _ _ _ _ Hchecked)) as Hentry.
     assert (Hlisted : In child (verts (base (graph p)))).
-    { eapply build_reach_listed; [apply F1_graph_wf| |exact Hreach].
+    { eapply build_reach_listed; [apply graph_wf| |exact Hreach].
       intros root [Heq|Hnone]; [now subst root|contradiction]. }
     unfold graph in Hlisted; rewrite DG.prepare_base in Hlisted; exact Hlisted.
   Qed.
@@ -3926,7 +3926,7 @@ Module BuildT (O : OPS)
     intro Hunique; rewrite placement_full.
     eapply Nat.le_trans; [apply placement_rows_size; exact Hunique|].
     unfold placement_work, build_sum; apply val_sum_mono; intros x Hin.
-    unfold place_var; rewrite F2a_def_index.
+    unfold place_var; rewrite def_index_spec.
     eapply Nat.le_trans; [apply filter_length_le|].
     unfold phi_sites.
     induction (F.idf (frontiers p) (definition_blocks p x)); cbn [length fold_right]; lia.
@@ -5045,7 +5045,7 @@ Module BuildT (O : OPS)
       N.of_nat (function_width p + 1))%N.
   Proof.
     intro Hcheck. eapply N.le_trans.
-    - eapply F.T_df_le; [apply F1_graph_wf|apply Clock.ssa_graph_prepared|].
+    - eapply F.T_df_le; [apply graph_wf|apply Clock.ssa_graph_prepared|].
       apply D.tree_exact; exact Hcheck.
     - apply N.mul_le_mono.
       + apply N.mul_le_mono_l; apply time_of_nat_le.
@@ -5246,7 +5246,7 @@ Module BuildT (O : OPS)
   Qed.
 
   (** The wrapper charges the actual certificate and candidate validators. *)
-  Lemma T4_wrapper : forall p,
+  Lemma T_build_split : forall p,
     (T_build p <= T_produce p +
       match produce p with
       | None => k_wrap
@@ -5342,7 +5342,7 @@ Module BuildT (O : OPS)
   Definition k_rename : N := rename_cached_coefficient.
 
   (** The two indexes charge syntax and emitted live rows once. *)
-  Lemma T0_indexes : forall p,
+  Lemma T_indexes_le : forall p,
     (T_def_index p + T_live_sets (L.live_in p) <= k_place *
       N.of_nat (function_size p + L.live_size p + 1) * N.of_nat (function_width p + 1))%N.
   Proof.
@@ -5351,7 +5351,7 @@ Module BuildT (O : OPS)
   Qed.
   (** One placement search for a variable of the universe charges its seeds, their frontier
       rows and the discovered frontier rows. *)
-  Lemma T1_place_var : forall p x, In x (U.universe (R.prepare p)) ->
+  Lemma T_place_var_le : forall p x, In x (U.universe (R.prepare p)) ->
     D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
     (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x <= k_place *
       N.of_nat (length (definition_blocks p x) +
@@ -5364,7 +5364,7 @@ Module BuildT (O : OPS)
     apply N.mul_le_mono_r, N.mul_le_mono_r; unfold k_place; lia.
   Qed.
   (** Initialization charges the source inventory at its syntax width. *)
-  Lemma T2a_rename_init : forall p,
+  Lemma T_rename_init_le : forall p,
     (T_rename_init p <= k_rename * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
   Proof.
@@ -5374,7 +5374,7 @@ Module BuildT (O : OPS)
   Qed.
   (** Renaming distinct blocks along a checked dominator tree charges the source, the live
       rows and the placement work. *)
-  Lemma T2_rename : forall p, NoDup (map fst (blocks _ _ _ p)) ->
+  Lemma T_rename_le : forall p, NoDup (map fst (blocks _ _ _ p)) ->
     D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
     (T_rename p (dom_tree p) (placement p) (L.live_in p) <=
       k_rename * N.of_nat (function_size p + L.live_size p + placement_work p + 1) *
@@ -5383,18 +5383,18 @@ Module BuildT (O : OPS)
     intros p Hunique Hcheck; unfold k_rename; exact (rename_cached_time p Hunique Hcheck).
   Qed.
   (** The producer stays within the published construction work at the source width. *)
-  Lemma T3_produce : forall p,
+  Lemma T_produce_le : forall p,
     (T_produce p <= k_graph * N.of_nat (build_work p) * N.of_nat (function_width p + 1))%N.
   Proof.
     intro p; unfold k_graph; exact (budget_producer_clock p).
   Qed.
 
   (** Producing a candidate is linear in the construction work times the width. *)
-  Lemma produce_bigO : bigO (fun _ : P.t => True)
+  Lemma produce_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (build_work p * (function_width p + 1))) T_produce.
   Proof.
     apply (bigO_intro _ _ _ k_graph); intros p _.
-    pose proof (T3_produce p) as Hproduce.
+    pose proof (T_produce_le p) as Hproduce.
     rewrite Nat2N.inj_mul; nia.
   Qed.
 
@@ -5406,7 +5406,7 @@ Module BuildT (O : OPS)
     (T_build p <= c_build * N.of_nat (build_work p) * N.of_nat (function_width p + 1) +
       c_build * N.of_nat (Va.op_bits p + 1))%N.
   Proof.
-    intro p. pose proof (T4_wrapper p) as Hwrapper.
+    intro p. pose proof (T_build_split p) as Hwrapper.
     pose proof (budget_producer_clock p) as Hproducer.
     assert (Hunit : (1 <= N.of_nat (build_work p) * N.of_nat (function_width p + 1))%N).
     { pose proof (budget_size_lower p). rewrite !Nat2N.inj_add; nia. }
@@ -5423,7 +5423,7 @@ Module BuildT (O : OPS)
   Qed.
 
   (** Construction has the published asymptotic syntax and operation-bit budget. *)
-  Lemma build_bigO : bigO (fun _ : P.t => True)
+  Lemma build_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (build_work p * (function_width p + 1) + Va.op_bits p + 1)) T_build.
   Proof.
     exists c_build; intros p Htrue.

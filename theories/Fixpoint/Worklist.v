@@ -720,26 +720,26 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** Binary enumeration retains the original observable identifiers and occurrence order. *)
-  Lemma F0_row_ids : forall p,
+  Lemma row_ids_def : forall p,
     row_ids p = List.map Pos.of_succ_nat (seq 0 (C p)).
   Proof.
     intro p; apply (ids_from_seq (C p) 0).
   Qed.
 
   (** Projecting a prepared state retains every lookup in the original store. *)
-  Lemma F0_view_look : forall s x, reference_look (wl_view s) x = look s x.
+  Lemma wl_view_look : forall s x, reference_look (wl_view s) x = look s x.
   Proof.
     reflexivity.
   Qed.
 
   (** Projecting a prepared state retains every strict-update counter. *)
-  Lemma F0_view_counter : forall s c, reference_counter (wl_view s) c = counter s c.
+  Lemma wl_view_counter : forall s c, reference_counter (wl_view s) c = counter s c.
   Proof.
     reflexivity.
   Qed.
 
   (** Numbered lookup agrees with the corresponding original row occurrence. *)
-  Lemma F1_numbering : forall p n,
+  Lemma source_row_numbering : forall p n,
     source_row p (Pos.of_succ_nat n) = nth_error (S.rows p) n.
   Proof.
     intros p n; unfold source_row; rewrite SuccNat2Pos.id_succ.
@@ -747,7 +747,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** Reader buckets retain every reading row occurrence once. *)
-  Lemma F2_readers : forall p c,
+  Lemma source_readers_spec : forall p c,
     source_readers p c = filter (fun id => match source_row p id with
       | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
       | None => false
@@ -757,7 +757,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** Evaluation observes the current store through the system's public evaluator. *)
-  Lemma F3_eval : forall p r m,
+  Lemma eval_row_spec : forall p r m,
     eval_row p r m = S.eval p r (look_or S.key_code L.bot m).
   Proof.
     reflexivity.
@@ -766,13 +766,13 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** There is one identifier per source row occurrence. *)
   Lemma row_ids_length : forall p, length (row_ids p) = C p.
   Proof.
-    intro p; rewrite F0_row_ids, length_map, length_seq; reflexivity.
+    intro p; rewrite row_ids_def, length_map, length_seq; reflexivity.
   Qed.
 
   (** Numbered row occurrences have distinct identifiers even when rows repeat. *)
   Lemma row_ids_nodup : forall p, NoDup (row_ids p).
   Proof.
-    intro p; rewrite F0_row_ids.
+    intro p; rewrite row_ids_def.
     pose proof (seq_NoDup (C p) 0) as Hids.
     induction Hids as [|n ns Hfresh Hids IH]; cbn [List.map].
     - constructor.
@@ -785,7 +785,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma row_ids_member : forall p id,
     In id (row_ids p) <-> Pos.to_nat id <= C p.
   Proof.
-    intros p id; rewrite F0_row_ids, in_map_iff; split.
+    intros p id; rewrite row_ids_def, in_map_iff; split.
     - intros [n [<- Hin]]; apply in_seq in Hin; rewrite SuccNat2Pos.id_succ; lia.
     - intro Hid; exists (Pos.to_nat id - 1); split.
       + apply SuccNat2Pos.inv; pose proof (Pos2Nat.is_pos id); lia.
@@ -816,7 +816,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** A reader bucket names exactly the source occurrences that declare that read code. *)
-  Lemma source_readers_spec : forall p c id,
+  Lemma source_readers_spec_aux : forall p c id,
     In id (source_readers p c) <-> exists r x,
       source_row p id = Some r /\ In x (S.deps p r) /\ S.key_code x = c.
   Proof.
@@ -1196,7 +1196,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma row_ids_nth : forall p n, n < C p ->
     nth_error (row_ids p) n = Some (Pos.of_succ_nat n).
   Proof.
-    intros p n Hn; rewrite F0_row_ids, nth_error_map, nth_error_seq.
+    intros p n Hn; rewrite row_ids_def, nth_error_map, nth_error_seq.
     rewrite (proj2 (Nat.ltb_lt n (C p)) Hn); reflexivity.
   Qed.
 
@@ -1209,7 +1209,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       destruct (nth_error (S.rows p) n) as [row|] eqn:Hrow.
       + assert (Hn : n < C p) by (apply nth_error_Some; congruence).
         rewrite (row_ids_nth p n Hn) in Hpair; injection Hpair as Hid Hr.
-        subst id row; rewrite F1_numbering; exact Hrow.
+        subst id row; rewrite source_row_numbering; exact Hrow.
       + destruct (nth_error (row_ids p) n); discriminate.
     - intro Hrow; unfold source_row in Hrow.
       assert (Hn : Pos.to_nat id - 1 < C p) by (apply nth_error_Some; congruence).
@@ -1515,7 +1515,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** Initial queue construction preserves the complete indexed seed invariant. *)
-  Lemma prepare_prepared : forall p pol, prepared p pol (prepare p pol).
+  Lemma prepare_prepared_aux : forall p pol, prepared p pol (prepare p pol).
   Proof.
     intros p pol; rewrite prepare_eq; apply enqueue_prepared, prepare_seed_prepared.
   Qed.
@@ -1670,7 +1670,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma row_ids_bits : forall p id, In id (row_ids p) ->
     Pos.size_nat id <= Nat.log2 (C p) + 1.
   Proof.
-    intros p id Hin; rewrite F0_row_ids in Hin.
+    intros p id Hin; rewrite row_ids_def in Hin.
     apply in_map_iff in Hin as [n [<- Hin]]; apply in_seq in Hin.
     rewrite pos_size_log2, SuccNat2Pos.id_succ.
     apply Nat.add_le_mono_r, Nat.log2_le_mono; lia.
@@ -1848,7 +1848,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** Preparation starts at bottom and zero counters and establishes queue and value invariants. *)
-  Lemma F4_prepare : forall p pol, S.wf p -> prio_ok p pol ->
+  Lemma prepare_invariant : forall p pol, S.wf p -> prio_ok p pol ->
     invariant p pol (prepare p pol) /\
     (forall x, look (prepare p pol) x = L.bot) /\
     (forall c, counter (prepare p pol) c = 0%N) /\
@@ -1870,12 +1870,12 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         * intros id Hin; now apply prepare_queued.
   Qed.
   (** Preparation starts at bottom independently of priority validity. *)
-  Lemma F4_bottom : forall p pol x, look (prepare p pol) x = L.bot.
+  Lemma prepare_look_bot : forall p pol x, look (prepare p pol) x = L.bot.
   Proof.
     intros p pol x; now rewrite prepare_eq, enqueue_look, prepare_seed_look.
   Qed.
   (** Enqueue changes the queue alone and guards every push by live absence. *)
-  Lemma F5_enqueue : forall p pol ids s,
+  Lemma reference_enqueue_spec : forall p pol ids s,
     wl_store (reference_enqueue p pol ids s) = wl_store s /\
     wl_counters (reference_enqueue p pol ids s) = wl_counters s /\
     wl_queue (reference_enqueue p pol ids s) = fold_left
@@ -1891,7 +1891,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       rewrite ?rank_with_top_agrees; apply IH.
   Qed.
   (** An update writes the policy result and enqueues its readers after a strict value change. *)
-  Lemma F6_update : forall p pol s x a,
+  Lemma reference_update_spec : forall p pol s x a,
     let c := S.key_code x in
     let ac := P.update pol c (reference_counter s c) (reference_look s x) a in
     let s1 := WlState (PTrieCode.set c (x, fst ac) (wl_store s))
@@ -1903,7 +1903,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     reflexivity.
   Qed.
   (** Each callback pops one row and processes its primary and side outputs in occurrence order. *)
-  Lemma F7_step : forall p pol s,
+  Lemma reference_step_spec : forall p pol s,
     reference_step p pol s = match Q.pop (wl_queue s) with
     | None => inr (Solved (wl_store s))
     | Some (_, id, q1) =>
@@ -1921,23 +1921,23 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     reflexivity.
   Qed.
   (** Indexed lookup reads the prepared row table without traversing the source rows. *)
-  Lemma F1_row_at : forall s id, row_at s id = trie_get id (ws_rows s).
+  Lemma row_at_def : forall s id, row_at s id = trie_get id (ws_rows s).
   Proof.
     reflexivity.
   Qed.
   (** Reader lookup reads the prepared bucket and maps an absent bucket to the empty list. *)
-  Lemma F2_reader_at : forall s c,
+  Lemma readers_spec : forall s c,
     readers s c = match trie_get c (ws_readers s) with Some ids => ids | None => nil end.
   Proof.
     reflexivity.
   Qed.
   (** Preparation establishes all cache and live facts within the solver. *)
-  Lemma F4_metadata : forall p pol, prepared p pol (prepare p pol).
+  Lemma prepare_prepared : forall p pol, prepared p pol (prepare p pol).
   Proof.
-    apply prepare_prepared.
+    apply prepare_prepared_aux.
   Qed.
   (** Enqueue preserves the immutable indexes and the original value components. *)
-  Lemma F5_fields : forall p pol ids s,
+  Lemma enqueue_tables_kept : forall p pol ids s,
     ws_store (enqueue p pol ids s) = ws_store s /\
     ws_counters (enqueue p pol ids s) = ws_counters s /\
     ws_rows (enqueue p pol ids s) = ws_rows s /\
@@ -1948,7 +1948,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     intros p pol ids s; unfold enqueue; repeat split; reflexivity.
   Qed.
   (** Guarded pushes update the queue and live set together in occurrence order. *)
-  Lemma F5_indexed : forall p pol ids s,
+  Lemma enqueue_spec : forall p pol ids s,
     (ws_queue (enqueue p pol ids s), ws_live (enqueue p pol ids s)) =
     fold_left (fun ql id => match trie_get id (snd ql), row_at s id with
       | None, Some r =>
@@ -1965,19 +1965,19 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     reflexivity.
   Qed.
   (** Enqueue agrees with the original helper after projection from prepared states. *)
-  Lemma F5_agreement : forall p pol ids s, prepared p pol s ->
+  Lemma enqueue_reference_agrees : forall p pol ids s, prepared p pol s ->
     wl_view (enqueue p pol ids s) = reference_enqueue p pol ids (wl_view s).
   Proof.
     apply enqueue_agreement.
   Qed.
   (** Enqueue maintains the metadata and live facts that justify projected agreement. *)
-  Lemma F5_prepared : forall p pol ids s, prepared p pol s ->
+  Lemma enqueue_prepared_preserved : forall p pol ids s, prepared p pol s ->
     prepared p pol (enqueue p pol ids s).
   Proof.
     apply enqueue_prepared.
   Qed.
   (** Indexed updates retain metadata while writing the policy result and enqueueing readers. *)
-  Lemma F6_indexed : forall p pol s x a,
+  Lemma update_one_def : forall p pol s x a,
     let c := S.key_code x in
     let ac := P.update pol c (counter s c) (look s x) a in
     let s1 := WorklistState (PTrieCode.set c (x, fst ac) (ws_store s))
@@ -1993,11 +1993,11 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     reflexivity.
   Qed.
   (** Indexed updates preserve both tables independently of the input cache validity. *)
-  Lemma F6_tables : forall p pol s xa,
+  Lemma update_one_tables_kept : forall p pol s xa,
     ws_rows (update_one p pol s xa) = ws_rows s /\
     ws_readers (update_one p pol s xa) = ws_readers s.
   Proof.
-    intros p pol s [x a]; rewrite F6_indexed.
+    intros p pol s [x a]; rewrite update_one_def.
     destruct (L.leb a (look s x));
       [split; reflexivity|].
     destruct (trie_get (S.key_code x) (ws_armed s));
@@ -2073,7 +2073,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - apply arm_prepared; [apply enqueue_prepared, update_base_prepared, Hprepared|].
       intros id Hin; change (In id (readers s (S.key_code x))) in Hin.
       pose proof Hin as Hrequested; rewrite (proj2 (proj1 Hprepared)) in Hin.
-      apply source_readers_spec in Hin as [r [y [Hsource Hread]]].
+      apply source_readers_spec_aux in Hin as [r [y [Hsource Hread]]].
       eapply enqueue_contains.
       + apply update_base_prepared, Hprepared.
       + exact Hrequested.
@@ -2096,13 +2096,13 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** Every update has the original projected behavior on prepared states. *)
-  Lemma F6_agreement : forall p pol s xa, prepared p pol s ->
+  Lemma update_one_reference_agrees : forall p pol s xa, prepared p pol s ->
     wl_view (update_one p pol s xa) = reference_update p pol (wl_view s) xa.
   Proof.
     intros p pol s [x a] Hprepared; now apply update_agreement.
   Qed.
   (** Every intermediate update maintains prepared-state agreement without client duties. *)
-  Lemma F6_prepared : forall p pol s xa, prepared p pol s ->
+  Lemma update_one_prepared_preserved : forall p pol s xa, prepared p pol s ->
     prepared p pol (update_one p pol s xa).
   Proof.
     intros p pol s [x a] Hprepared; now apply update_prepared.
@@ -2115,7 +2115,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** A pop removes its live identifier and clears every reader flag used by that row. *)
-  Lemma F7_indexed : forall p pol s,
+  Lemma step_def : forall p pol s,
     step p pol s = match Q.pop (ws_queue s) with
     | None => inr (Solved (ws_store s))
     | Some (_, id, q1) =>
@@ -2157,14 +2157,14 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       destruct (existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)) eqn:Hclear;
         [discriminate|].
       split; [exact Hflag|]; intro Hin; rewrite Hreaders in Hin.
-      apply source_readers_spec in Hin as [row [x [Hsource [Hread Hcode]]]].
+      apply source_readers_spec_aux in Hin as [row [x [Hsource [Hread Hcode]]]].
       rewrite <- (Hrows id), Hrow in Hsource; injection Hsource as Heq; subst row.
       assert (Hpresent : existsb (fun y => Pos.eqb c (S.key_code y)) (S.deps p r) = true).
       { apply existsb_exists; exists x; split; [exact Hread|].
         apply Pos.eqb_eq; symmetry; exact Hcode. }
       congruence.
     - split; [exact Hflag|]; intro Hin; rewrite Hreaders in Hin.
-      apply source_readers_spec in Hin as [r [x [Hsource Hread]]].
+      apply source_readers_spec_aux in Hin as [r [x [Hsource Hread]]].
       rewrite <- (Hrows id), Hrow in Hsource; discriminate.
   Qed.
 
@@ -2210,9 +2210,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     intros p pol outs; induction outs as [|xa outs IH]; intros s Hprepared.
     - split; [exact Hprepared|split; reflexivity].
     - cbn [fold_left].
-      destruct (IH (update_one p pol s xa) (F6_prepared p pol s xa Hprepared))
+      destruct (IH (update_one p pol s xa) (update_one_prepared_preserved p pol s xa Hprepared))
         as [Hfinal [Hrows Hreaders]].
-      destruct (F6_tables p pol s xa) as [Hrow_step Hreader_step].
+      destruct (update_one_tables_kept p pol s xa) as [Hrow_step Hreader_step].
       split; [exact Hfinal|]; split; congruence.
   Qed.
 
@@ -2223,44 +2223,44 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Proof.
     intros p pol outs; induction outs as [|xa outs IH]; intros s Hprepared;
       [reflexivity|].
-    cbn [fold_left]; rewrite IH by (apply F6_prepared; exact Hprepared).
-    now rewrite F6_agreement by exact Hprepared.
+    cbn [fold_left]; rewrite IH by (apply update_one_prepared_preserved; exact Hprepared).
+    now rewrite update_one_reference_agrees by exact Hprepared.
   Qed.
 
   (** Popping preserves cache agreement and restores live agreement for the residual queue. *)
-  Lemma F7_pop_prepared : forall p pol s pr id q1, prepared p pol s ->
+  Lemma pop_prepared_preserved : forall p pol s pr id q1, prepared p pol s ->
     Q.pop (ws_queue s) = Some (pr, id, q1) ->
     prepared p pol (after_pop p s id q1).
   Proof.
     apply pop_prepared.
   Qed.
   (** The full callback retains every observable behavior of the original callback. *)
-  Lemma F7_agreement : forall p pol s, prepared p pol s ->
+  Lemma step_reference_agrees : forall p pol s, prepared p pol s ->
     view_result (step p pol s) = reference_step p pol (wl_view s).
   Proof.
-    intros p pol s Hprepared; rewrite F7_indexed; unfold reference_step, view_result.
+    intros p pol s Hprepared; rewrite step_def; unfold reference_step, view_result.
     cbn [wl_view wl_store wl_counters wl_queue].
     destruct (Q.pop (ws_queue s)) as [[[pr id] q1]|] eqn:Hpop; [|reflexivity].
     rewrite <- (proj1 (proj1 Hprepared) id).
     destruct (row_at s id) as [r|] eqn:Hrow; [|reflexivity].
     destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|reflexivity].
-    f_equal; rewrite updates_agreement by (eapply F7_pop_prepared; eassumption).
+    f_equal; rewrite updates_agreement by (eapply pop_prepared_preserved; eassumption).
     reflexivity.
   Qed.
   (** Continuing callbacks retain both tables and all prepared-state facts. *)
-  Lemma F7_prepared : forall p pol s s1, prepared p pol s -> step p pol s = inl s1 ->
+  Lemma step_prepared_preserved : forall p pol s s1, prepared p pol s -> step p pol s = inl s1 ->
     prepared p pol s1 /\ ws_rows s1 = ws_rows s /\ ws_readers s1 = ws_readers s.
   Proof.
-    intros p pol s s1 Hprepared Hstep; rewrite F7_indexed in Hstep.
+    intros p pol s s1 Hprepared Hstep; rewrite step_def in Hstep.
     destruct (Q.pop (ws_queue s)) as [[[pr id] q1]|] eqn:Hpop; [|discriminate].
     destruct (row_at s id) as [r|] eqn:Hrow; [|discriminate].
     destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
     injection Hstep as <-.
     exact (updates_prepared p pol ((S.target p r, a) :: ss) (after_pop p s id q1)
-      (F7_pop_prepared p pol s pr id q1 Hprepared Hpop)).
+      (pop_prepared_preserved p pol s pr id q1 Hprepared Hpop)).
   Qed.
   (** The public solver is the binary-fuel loop over these callbacks. *)
-  Lemma F8_run : forall p pol fuel,
+  Lemma run_def : forall p pol fuel,
     run p pol fuel = match loopN (step p pol) fuel (prepare p pol) with
     | inl s => OutOfFuel (ws_store s)
     | inr result => result
@@ -2269,7 +2269,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     reflexivity.
   Qed.
   (** The original three-field loop has the same public result for every fuel. *)
-  Lemma F8_reference_run : forall p pol fuel,
+  Lemma run_reference_agrees : forall p pol fuel,
     run p pol fuel =
     match loopN (reference_step p pol) fuel (wl_view (prepare p pol)) with
     | inl s => OutOfFuel (wl_store s)
@@ -2283,9 +2283,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       | inr result => inr result
       end = loopN (reference_step p pol) fuel (wl_view (prepare p pol))).
     { apply (loopN_view (step p pol) (reference_step p pol) wl_view (prepared p pol)).
-      - intros s Hprepared; exact (F7_agreement p pol s Hprepared).
-      - intros s s1 Hprepared Hstep; exact (proj1 (F7_prepared p pol s s1 Hprepared Hstep)).
-      - apply F4_metadata. }
+      - intros s Hprepared; exact (step_reference_agrees p pol s Hprepared).
+      - intros s s1 Hprepared Hstep; exact (proj1 (step_prepared_preserved p pol s s1 Hprepared Hstep)).
+      - apply prepare_prepared. }
     unfold run; rewrite <- Hview.
     destruct (loopN (step p pol) fuel (prepare p pol)); reflexivity.
   Qed.
@@ -2345,7 +2345,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     raw_value (update_one p pol s (x, a)) (S.key_code x) =
       fst (P.update pol (S.key_code x) (counter s (S.key_code x)) (look s x) a).
   Proof.
-    intros p pol s x a; rewrite F6_indexed; cbn beta iota zeta.
+    intros p pol s x a; rewrite update_one_def; cbn beta iota zeta.
     destruct (L.leb a (look s x)) eqn:Hcovered.
     - rewrite (P.update_stable pol (S.key_code x) (counter s (S.key_code x))
         (look s x) a Hcovered); apply raw_value_look.
@@ -2359,7 +2359,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma raw_value_update_other : forall p pol s x a c, c <> S.key_code x ->
     raw_value (update_one p pol s (x, a)) c = raw_value s c.
   Proof.
-    intros p pol s x a c Hother; rewrite F6_indexed; cbn beta iota zeta.
+    intros p pol s x a c Hother; rewrite update_one_def; cbn beta iota zeta.
     destruct (L.leb a (look s x)); [reflexivity|].
     destruct (trie_get (S.key_code x) (ws_armed s)) as [u|].
     - unfold raw_value; cbn [ws_store]; now rewrite PTrie.get_set_other.
@@ -2401,7 +2401,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     forall c, B.inv p (raw_value s1 c).
   Proof.
     intros p pol s s1 Hwf Hprepared Hinv Hstep c.
-    rewrite F7_indexed in Hstep.
+    rewrite step_def in Hstep.
     destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop; [|discriminate].
     destruct (row_at s id) as [r|] eqn:Hrow; [|discriminate].
     destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
@@ -2430,9 +2430,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     { intros start ys last Hys; induction Hys as [st|st st1 zs final Hstep Hys IH];
         intros Hp Hi c; [exact (Hi c)|].
       apply IH.
-      - exact (proj1 (F7_prepared p pol st st1 Hp Hstep)).
+      - exact (proj1 (step_prepared_preserved p pol st st1 Hp Hstep)).
       - eapply raw_inv_step; eassumption. }
-    eapply Hpres; [exact Hpath|apply F4_metadata|].
+    eapply Hpres; [exact Hpath|apply prepare_prepared|].
     intro c; rewrite raw_value_prepare; apply B.inv_bot.
   Qed.
 
@@ -2483,7 +2483,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Proof.
     intros p pol s pr id q1 [Hstruct [Hvalues Hprepared]] Hpop.
     split; [eapply after_pop_structural; eassumption|].
-    split; [exact Hvalues|eapply F7_pop_prepared; eassumption].
+    split; [exact Hvalues|eapply pop_prepared_preserved; eassumption].
   Qed.
 
   (** Replacing a stored value and its counter affects no queue or metadata property. *)
@@ -2518,14 +2518,14 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       match trie_get (S.key_code x) (ws_armed s) with
       | Some _ => base | None => arm (S.key_code x) (enqueue p pol (readers s (S.key_code x)) base)
       end) by reflexivity.
-    pose proof (F6_prepared p pol s (x, a) Hprepared) as Hfinal.
+    pose proof (update_one_prepared_preserved p pol s (x, a) Hprepared) as Hfinal.
     rewrite Hshape in Hfinal |- *.
     destruct (L.leb a (look s x)); [exact Hinv|].
     destruct (trie_get (S.key_code x) (ws_armed s)); [exact Hbase|].
     assert (Henqueue : invariant p pol (enqueue p pol (readers s (S.key_code x)) base)).
     { apply enqueue_invariant; try assumption.
       intros id Hid; rewrite (proj2 (proj1 Hprepared)) in Hid.
-      apply source_readers_spec in Hid as [r [y [Hsource _]]].
+      apply source_readers_spec_aux in Hid as [r [y [Hsource _]]].
       exact (proj1 (source_row_member p id r Hsource)). }
     destruct Henqueue as [Hqueue [Hvals Hprep]].
     split; [exact Hqueue|]; split; [exact Hvals|exact Hfinal].
@@ -2547,7 +2547,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     Q.prio (ws_queue s) id = Some pr ->
     exists next, Q.prio (ws_queue (update_one p pol s (x, a))) id = Some next.
   Proof.
-    intros p pol s x a id pr Hprio; rewrite F6_indexed; cbn beta iota zeta.
+    intros p pol s x a id pr Hprio; rewrite update_one_def; cbn beta iota zeta.
     destruct (L.leb a (look s x)); [now exists pr|].
     destruct (trie_get (S.key_code x) (ws_armed s)); [now exists pr|].
     eapply enqueue_retains; exact Hprio.
@@ -2560,49 +2560,49 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     exists pr, Q.prio (ws_queue (update_one p pol s (x, a))) id = Some pr.
   Proof.
     intros p pol s x a id Hprepared Hstrict Hreader.
-    rewrite F6_indexed; cbn beta iota zeta; rewrite Hstrict.
+    rewrite update_one_def; cbn beta iota zeta; rewrite Hstrict.
     destruct (trie_get (S.key_code x) (ws_armed s)) as [[]|] eqn:Harmed.
     - exact (proj1 (proj2 (proj2 (proj2 (proj2 Hprepared))))
         (S.key_code x) id Harmed Hreader).
     - pose proof Hreader as Hsource.
       rewrite (proj2 (proj1 Hprepared)) in Hsource.
-      apply source_readers_spec in Hsource as [r [y [Hsource _]]].
+      apply source_readers_spec_aux in Hsource as [r [y [Hsource _]]].
       eapply enqueue_contains with (r := r); [exact Hprepared|exact Hreader|exact Hsource].
   Qed.
 
   (** Every state reached by the public solver satisfies its internal preparation duties. *)
-  Lemma F9_reachable_prepared : forall p pol s, reachable p pol s -> prepared p pol s.
+  Lemma reachable_prepared : forall p pol s, reachable p pol s -> prepared p pol s.
   Proof.
     intros p pol s [xs Hpath].
     assert (Hpres : forall start ys last,
       wl_path (step p pol) start ys last -> prepared p pol start -> prepared p pol last).
     { intros start ys last Hys; induction Hys as [st|st st1 zs final Hstep Hys IH];
         intro Hp; [exact Hp|].
-      apply IH; exact (proj1 (F7_prepared p pol st st1 Hp Hstep)). }
-    eapply Hpres; [exact Hpath|apply F4_metadata].
+      apply IH; exact (proj1 (step_prepared_preserved p pol st st1 Hp Hstep)). }
+    eapply Hpres; [exact Hpath|apply prepare_prepared].
   Qed.
   (** Every reachable store satisfies the client invariant with arbitrary priorities. *)
-  Lemma F9_reachable_inv : forall p pol s, S.wf p -> reachable p pol s ->
+  Lemma reachable_inv : forall p pol s, S.wf p -> reachable p pol s ->
     forall x, B.inv p (look s x).
   Proof.
     intros p pol s Hwf Hreachable x; rewrite <- raw_value_look.
     eapply reachable_raw_inv; eassumption.
   Qed.
   (** Prepared ranks equal each row's least non-head write priority. *)
-  Lemma F4_rank_cache : forall p pol id r, row_at (prepare p pol) id = Some r ->
+  Lemma prepare_rank_cache : forall p pol id r, row_at (prepare p pol) id = Some r ->
     trie_get id (ws_ranks (prepare p pol)) = Some (row_rank p pol r).
   Proof.
     intros p pol id r Hrow.
-    destruct (prepare_prepared p pol) as [_ [_ [_ [_ [_ Hranks]]]]].
+    destruct (prepare_prepared_aux p pol) as [_ [_ [_ [_ [_ Hranks]]]]].
     now apply Hranks.
   Qed.
   (** Every continuing callback keeps the structural and client value invariants. *)
-  Lemma F9_step_inv : forall p pol s s1, S.wf p -> prio_ok p pol -> invariant p pol s ->
+  Lemma step_invariant_preserved : forall p pol s s1, S.wf p -> prio_ok p pol -> invariant p pol s ->
     step p pol s = inl s1 -> invariant p pol s1.
   Proof.
     intros p pol s s1 Hwf Hprio Hinv Hstep.
     pose proof Hinv as [Hstruct [Hvalues Hprepared]].
-    rewrite F7_indexed in Hstep.
+    rewrite step_def in Hstep.
     destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop; [|discriminate].
     destruct (row_at s id) as [r|] eqn:Hrow; [|discriminate].
     destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
@@ -2618,7 +2618,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - constructor; assumption.
   Qed.
   (** Each intermediate primary or side update keeps the same invariant. *)
-  Lemma F9_update_inv : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
+  Lemma update_one_invariant_preserved : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
     B.inv p a -> In (S.key_code x) (key_support p) ->
     invariant p pol (update_one p pol s (x, a)).
   Proof.
@@ -2698,11 +2698,11 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Proof.
     intros p pol s x a id r Hprepared Hsource Hnone y Hy.
     destruct (L.leb a (look s x)) eqn:Hstrict.
-    - rewrite F6_indexed; cbn beta iota zeta; now rewrite Hstrict.
+    - rewrite update_one_def; cbn beta iota zeta; now rewrite Hstrict.
     - assert (Hneq : S.key_code y <> S.key_code x).
       { intro Heq.
         assert (Hreader : In id (readers s (S.key_code x))).
-        { rewrite (proj2 (proj1 Hprepared)); apply source_readers_spec.
+        { rewrite (proj2 (proj1 Hprepared)); apply source_readers_spec_aux.
           exists r, y; split; [exact Hsource|]; split; [exact Hy|exact Heq]. }
         destruct (update_reader_live p pol s x a id Hprepared Hstrict Hreader)
           as [pr Hprio]; congruence. }
@@ -2721,7 +2721,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - split; [exact Hnone|intros; reflexivity].
     - cbn [fold_left] in Hnone |- *.
       destruct (IH (update_one p pol s (x, a)) id r
-        (F6_prepared p pol s (x, a) Hp) Hr Hnone) as [Hbefore Hreads].
+        (update_one_prepared_preserved p pol s (x, a) Hp) Hr Hnone) as [Hbefore Hreads].
       split.
       + eapply update_outside_before; exact Hbefore.
       + intros y Hy; rewrite (Hreads y Hy).
@@ -2733,13 +2733,13 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     accepted p s -> step p pol s = inl s1 -> accepted p s1.
   Proof.
     intros p pol s s1 Hwf Hprepared Haccepted Hstep.
-    rewrite F7_indexed in Hstep.
+    rewrite step_def in Hstep.
     destruct (Q.pop (ws_queue s)) as [[[pr popped] q]|] eqn:Hpop; [|discriminate].
     destruct (row_at s popped) as [producer|] eqn:Hrow; [|discriminate].
     destruct (eval_row p producer (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
     injection Hstep as <-.
     intros id r Hsource Hnone.
-    pose proof (F7_pop_prepared p pol s pr popped q Hprepared Hpop) as Hafter.
+    pose proof (pop_prepared_preserved p pol s pr popped q Hprepared Hpop) as Hafter.
     destruct (fold_outside_reads p pol ((S.target p producer, a) :: ss)
       (after_pop p s popped q) id r Hafter Hsource Hnone) as [Hbefore Hreads].
     assert (Hr : In r (S.rows p)) by exact (proj2 (source_row_member p id r Hsource)).
@@ -2772,7 +2772,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** Reachable states satisfy every row outside their queue. *)
-  Lemma F9_accepted : forall p pol s, S.wf p -> reachable p pol s -> accepted p s.
+  Lemma reachable_accepted : forall p pol s, S.wf p -> reachable p pol s -> accepted p s.
   Proof.
     intros p pol s Hwf [xs Hpath].
     assert (Hinitial : accepted p (prepare p pol)).
@@ -2785,9 +2785,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     { intros start ys last Hys; induction Hys as [st|st st1 zs final Hstep Hys IH];
         intros Hp Ha; [exact Ha|].
       apply IH.
-      - exact (proj1 (F7_prepared p pol st st1 Hp Hstep)).
+      - exact (proj1 (step_prepared_preserved p pol st st1 Hp Hstep)).
       - eapply accepted_step; eassumption. }
-    eapply Hpres; [exact Hpath|apply F4_metadata|exact Hinitial].
+    eapply Hpres; [exact Hpath|apply prepare_prepared|exact Hinitial].
   Qed.
 
 
@@ -2801,9 +2801,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       wl_path (step p pol) start ys last -> invariant p pol start -> invariant p pol last).
     { intros start ys last Hys; induction Hys as [st|st st1 zs final Hstep Hys IH];
         intro Hinv; [exact Hinv|].
-      apply IH; eapply F9_step_inv; eassumption. }
+      apply IH; eapply step_invariant_preserved; eassumption. }
     eapply Hpres; [exact Hpath|].
-    exact (proj1 (F4_prepare p pol Hwf Hprio)).
+    exact (proj1 (prepare_invariant p pol Hwf Hprio)).
   Qed.
 
   (** Every emitted primary or side occurrence has a declared write key. *)
@@ -2814,7 +2814,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     intros p r m a ss x b Hwf Hr Heval Hin.
     destruct Hin as [Hequal|Hin].
     - injection Hequal as <- <-; now left.
-    - right; rewrite F3_eval in Heval.
+    - right; rewrite eval_row_spec in Heval.
       exact (S.sides_within p r (look_or S.key_code L.bot m) a ss x b Hwf Hr Heval Hin).
   Qed.
 
@@ -3288,13 +3288,13 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       { unfold next; apply enqueue_invariant; auto.
         intros id1 [Heq|[]]; now subst id1. }
       assert (Hpair : (ws_queue next, ws_live next) = f (ws_queue st, ws_live st) id).
-      { unfold next; rewrite F5_indexed; cbn [fold_left fst snd].
+      { unfold next; rewrite enqueue_spec; cbn [fold_left fst snd].
         unfold f, row_at; now rewrite Hrows, Hranks. }
       split.
       - exists next; split; [exact Hnext|].
         split; [rewrite <- Hpair; reflexivity|].
         split; [rewrite <- Hpair; reflexivity|].
-        destruct (F5_fields p pol [id] st) as [_ [_ [Hnext_rows [_ [_ Hnext_ranks]]]]].
+        destruct (enqueue_tables_kept p pol [id] st) as [_ [_ [Hnext_rows [_ [_ Hnext_ranks]]]]].
         unfold next; split; congruence.
       - destruct (source_row_total p id Hid) as [r Hsource].
         pose proof (proj2 (proj2 Hinv)) as Hprepared.
@@ -3344,7 +3344,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     rewrite fold_constant_cost in Hfold.
     assert (Hpair : (ws_queue (enqueue p pol ids s), ws_live (enqueue p pol ids s)) =
       fold_left f ids (ws_queue s, ws_live s)).
-    { unfold f; apply F5_indexed. }
+    { unfold f; apply enqueue_spec. }
     assert (Hphi : queue_phi p (enqueue p pol ids s) =
       Phi (fold_left f ids (ws_queue s, ws_live s))).
     { unfold queue_phi, Phi; rewrite <- Hpair; reflexivity. }
@@ -3514,7 +3514,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     { unfold degree; now rewrite (proj2 (proj1 (proj2 (proj2 Hinv))) c). }
     change (queue_phi p s1) with (queue_phi p s) in Henqueue.
     rewrite Hdegree in Henqueue.
-    rewrite F6_indexed; cbn beta iota zeta; fold c ac s1.
+    rewrite update_one_def; cbn beta iota zeta; fold c ac s1.
     unfold push_work; fold c.
     destruct (L.leb a (look s x)) eqn:Hstable.
     - cbn beta iota zeta in Hbase |- *.
@@ -4354,7 +4354,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** W1 charges indexing, numbering and initial guarded enqueue to preparation. *)
-  Lemma W1_prepare : forall p pol, S.wf p -> prio_ok p pol ->
+  Lemma T_prepare_le : forall p pol, S.wf p -> prio_ok p pol ->
     (T_prepare p pol <= k_prepare * (N.of_nat (prep p) + N.of_nat (C p) * unit p + 1))%N.
   Proof.
     intros p pol Hwf Hprio.
@@ -4377,7 +4377,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     clear -Htables Henqueue Htable_scale Hqueue_scale Htotal Hscale; nia.
   Qed.
   (** Initial guarded pushes supply the potential consumed by later queue operations. *)
-  Lemma W1_queue_phi : forall p pol, S.wf p -> prio_ok p pol ->
+  Lemma prepare_queue_potential_le : forall p pol, S.wf p -> prio_ok p pol ->
     (queue_phi p (prepare p pol) <= k_prepare * N.of_nat (C p + D p) * unit p)%N.
   Proof.
     intros p pol Hwf Hprio; destruct (Nat.eq_dec (C p) 0) as [Hzero|Hpositive].
@@ -4397,7 +4397,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       + apply N.mul_le_mono_r, N.mul_le_mono_r; unfold c_enqueue, k_prepare; nia.
   Qed.
   (** W2 charges every dependency-resume occurrence on invariant stores. *)
-  Lemma W2_eval : forall p pol r s, S.wf p -> In r (S.rows p) -> invariant p pol s ->
+  Lemma T_eval_row_le : forall p pol r s, S.wf p -> In r (S.rows p) -> invariant p pol s ->
     (T_eval_row p r (ws_store s) <=
       k_eval * N.of_nat (length (S.deps p r) + length (S.sides p r) + 1) * unit p)%N.
   Proof.
@@ -4406,7 +4406,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     exact (invariant_sizes p pol s Hinv).
   Qed.
   (** Reading a numbered row pays for the bits of its identifier. *)
-  Lemma W2_row_at : forall p s id, In id (row_ids p) ->
+  Lemma T_row_at_le : forall p s id, In id (row_ids p) ->
     (T_row_at s id <= k_eval * unit p)%N.
   Proof.
     intros p s id Hid; pose proof (row_ids_bits p id Hid) as Hbits.
@@ -4419,7 +4419,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     unfold k_eval, c_lookup; nia.
   Qed.
   (** Reading a reader bucket pays for the bits of its declared key code. *)
-  Lemma W2_readers : forall p s c, S.wf p -> In c (key_support p) ->
+  Lemma T_readers_le : forall p s c, S.wf p -> In c (key_support p) ->
     (T_readers s c <= k_update * unit p)%N.
   Proof.
     intros p s c Hwf Hc; pose proof (key_support_bits p c Hwf Hc) as Hbits.
@@ -4432,7 +4432,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     unfold k_update, c_lookup; nia.
   Qed.
   (** Guarded enqueue pays each supplied reader occurrence even when it is already live. *)
-  Lemma W3_enqueue : forall p pol ids s, S.wf p -> prio_ok p pol -> invariant p pol s ->
+  Lemma T_enqueue_amort : forall p pol ids s, S.wf p -> prio_ok p pol -> invariant p pol s ->
     incl ids (row_ids p) ->
     (T_enqueue p pol ids s + queue_phi p (enqueue p pol ids s) <=
       k_update * N.of_nat (length ids + 1) * unit p + queue_phi p s)%N.
@@ -4443,7 +4443,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     unfold c_enqueue, k_update; nia.
   Qed.
   (** W3 keeps the value invariant and charges reader pushes against queue potential. *)
-  Lemma W3_update : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
+  Lemma T_update_one_amort : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
     B.inv p a -> In (S.key_code x) (key_support p) ->
     B.inv p (look (update_one p pol s (x, a)) x) /\
     (T_update_one p pol s (x, a) + queue_phi p (update_one p pol s (x, a)) <=
@@ -4451,11 +4451,11 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       k_update * strict_head_work pol s x a + queue_phi p s)%N.
   Proof.
     intros p pol s x a Hwf Hprio Hinv Ha Hsupport; split.
-    - exact (proj1 (proj2 (F9_update_inv p pol s x a Hwf Hprio Hinv Ha Hsupport)) x).
+    - exact (proj1 (proj2 (update_one_invariant_preserved p pol s x a Hwf Hprio Hinv Ha Hsupport)) x).
     - now apply T_update_queue_bound.
   Qed.
   (** Callback accounting retains every emitted occurrence and every intermediate update cost. *)
-  Lemma W3_step : forall p pol s pr id q1 r a ss, S.wf p -> invariant p pol s ->
+  Lemma T_step_split : forall p pol s pr id q1 r a ss, S.wf p -> invariant p pol s ->
     Q.pop (ws_queue s) = Some (pr, id, q1) -> source_row p id = Some r ->
     eval_row p r (ws_store s) = Some (a, ss) ->
     (T_step p pol s <= k_loop * (Q.T_pop (ws_queue s) + T_row_at s id +
@@ -4550,8 +4550,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     intros p f; transitivity (fold_right Nat.add 0 (List.map (fun n =>
       match nth_error (S.rows p) n with Some r => f r | None => 0 end)
       (seq 0 (length (S.rows p))))).
-    - rewrite F0_row_ids, map_map; f_equal; apply map_ext; intro n.
-      now rewrite F1_numbering.
+    - rewrite row_ids_def, map_map; f_equal; apply map_ext; intro n.
+      now rewrite source_row_numbering.
     - apply incidence_sum_nth.
   Qed.
 
@@ -4773,7 +4773,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     intros p pol rk h s x a Hinv Ha Hsupport Hrank.
     destruct (L.leb a (look s x)) eqn:Hstable.
     - assert (Hsame : update_one p pol s (x, a) = s).
-      { rewrite F6_indexed; cbn beta iota zeta; now rewrite Hstable. }
+      { rewrite update_one_def; cbn beta iota zeta; now rewrite Hstable. }
       rewrite Hsame; unfold push_work; rewrite Hstable; lia.
     - pose proof (height_debt_strict_update p pol rk h s x a Hinv Ha Hsupport Hrank Hstable)
         as Hdebt.
@@ -4786,7 +4786,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         match trie_get c (ws_armed s) with
         | Some _ => base | None => arm c (enqueue p pol (readers s c) base)
         end).
-      { rewrite F6_indexed; cbn beta iota zeta; now rewrite Hstable. }
+      { rewrite update_one_def; cbn beta iota zeta; now rewrite Hstable. }
       unfold push_work; rewrite Hstable; fold c.
       destruct (trie_get c (ws_armed s)) as [[]|] eqn:Harmed.
       + assert (Hqueue : queue_credit p (update_one p pol s (x, a)) = queue_credit p s).
@@ -4867,7 +4867,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       pose proof (T_update_height p pol rk h s x a
         Hwf Hprio Hfree Hinv Ha Hsupport Hcoeff Hrank) as Hhead.
       specialize (IH (update_one p pol s (x, a)) Hwf Hprio Hfree
-        (F9_update_inv p pol s x a Hwf Hprio Hinv Ha Hsupport) Htail Hcoeff Hrank).
+        (update_one_invariant_preserved p pol s x a Hwf Hprio Hinv Ha Hsupport) Htail Hcoeff Hrank).
       rewrite output_cost_cons; cbn [fold_left length]; rewrite Nat2N.inj_succ; nia.
   Qed.
 
@@ -4904,7 +4904,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     destruct (source_row_member p id r Hsource) as [Hid Hr].
     pose proof (T_step_accounting p pol s pr id q1 r a ss Hwf Hinv Hpop Hsource Heval)
       as Hstep.
-    pose proof (W2_eval p pol r s Hwf Hr Hinv) as Heval_cost.
+    pose proof (T_eval_row_le p pol r s Hwf Hr Hinv) as Heval_cost.
     pose proof (S.T_target_le p r Hwf Hr) as Htarget.
     pose proof (T_row_at_bits s id) as Hrow.
     pose proof (row_ids_bits p id Hid) as Hidbits.
@@ -5024,7 +5024,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     (T_step p pol s + height_phi p rk h s1 + c_loopN <= height_phi p rk h s)%N.
   Proof.
     intros p pol rk h s s1 Hwf Hprio Hfree Hrank Hinv Hstep.
-    rewrite F7_indexed in Hstep.
+    rewrite step_def in Hstep.
     destruct (Q.pop (ws_queue s)) as [[[pr id] q1]|] eqn:Hpop; [|discriminate].
     destruct (row_at s id) as [r|] eqn:Hrow; [|discriminate].
     destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
@@ -5083,7 +5083,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** W4 spends weighted rank credit for each callback in a widening-free run. *)
-  Lemma W4_credit : forall p pol rk h s s1, S.wf p -> prio_ok p pol -> widening_free pol ->
+  Lemma T_step_height_credit : forall p pol rk h s s1, S.wf p -> prio_ok p pol -> widening_free pol ->
     (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
       rk a < rk b /\ rk b <= h) ->
     reachable p pol s -> step p pol s = inl s1 ->
@@ -5095,7 +5095,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - exact Hstep.
   Qed.
   (** Weighted source credit fits the public weighted incidence budget. *)
-  Lemma W4_initial : forall p pol rk h, S.wf p -> prio_ok p pol -> widening_free pol ->
+  Lemma height_phi_initial_le : forall p pol rk h, S.wf p -> prio_ok p pol -> widening_free pol ->
     (height_phi p rk h (prepare p pol) <=
       k_credit * N.of_nat (D p + h * DW p) * unit p + queue_phi p (prepare p pol))%N.
   Proof.
@@ -5223,7 +5223,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     counter (enqueue p pol ids s) c = counter s c.
   Proof.
     intros p pol ids s c; unfold counter.
-    now rewrite (proj1 (proj2 (F5_fields p pol ids s))).
+    now rewrite (proj1 (proj2 (enqueue_tables_kept p pol ids s))).
   Qed.
 
   (** Arming a reader bucket leaves every strict-update counter unchanged. *)
@@ -5244,7 +5244,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     counter (update_one p pol s (x, a)) (S.key_code x) =
       snd (P.update pol (S.key_code x) (counter s (S.key_code x)) (look s x) a).
   Proof.
-    intros p pol s x a; rewrite F6_indexed; cbn beta iota zeta.
+    intros p pol s x a; rewrite update_one_def; cbn beta iota zeta.
     destruct (L.leb a (look s x)) eqn:Hcovered.
     - rewrite (P.update_stable pol (S.key_code x) (counter s (S.key_code x))
         (look s x) a Hcovered); reflexivity.
@@ -5258,7 +5258,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma counter_update_other : forall p pol s x a c, c <> S.key_code x ->
     counter (update_one p pol s (x, a)) c = counter s c.
   Proof.
-    intros p pol s x a c Hother; rewrite F6_indexed; cbn beta iota zeta.
+    intros p pol s x a c Hother; rewrite update_one_def; cbn beta iota zeta.
     destruct (L.leb a (look s x)); [reflexivity|].
     destruct (trie_get (S.key_code x) (ws_armed s)) as [u|].
     - unfold counter; cbn [ws_counters].
@@ -5336,7 +5336,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       L.leb a (look s x) = false /\ In id (source_readers p (S.key_code x)).
   Proof.
     intros p pol s x a id pr Hprepared Hlive.
-    rewrite F6_indexed in Hlive; cbn beta iota zeta in Hlive.
+    rewrite update_one_def in Hlive; cbn beta iota zeta in Hlive.
     destruct (L.leb a (look s x)) eqn:Hcovered.
     - left; exists pr; exact Hlive.
     - destruct (trie_get (S.key_code x) (ws_armed s)) as [u|].
@@ -5363,7 +5363,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - destruct (heads_unchanged_fold_cons p pol (x, a) outs s Hstable)
         as [Hfirst Htail].
       cbn [fold_left] in Hlive.
-      destruct (IH (update_one p pol s (x, a)) (F6_prepared p pol s (x, a) Hprepared)
+      destruct (IH (update_one p pol s (x, a)) (update_one_prepared_preserved p pol s (x, a) Hprepared)
         Htail id pr Hlive) as [[old Hold]|[y [b [Hin [Hhead Hreader]]]]].
       + destruct (update_queue_sources p pol s x a id old Hprepared Hold)
           as [Hbefore|[Hstrict Hreader]].
@@ -5425,7 +5425,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Proof.
     intros p pol s s1 pr id q r Hwf Hprio Hreach Hpop Hrow Hstep Hstable j pj Hlive.
     pose proof (proj2 (proj2 (reachable_invariant p pol s Hwf Hprio Hreach))) as Hprepared.
-    rewrite F7_indexed, Hpop in Hstep.
+    rewrite step_def, Hpop in Hstep.
     rewrite (proj1 (proj1 Hprepared) id), Hrow in Hstep.
     destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
     injection Hstep as <-.
@@ -5433,7 +5433,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       (fold_left (update_one p pol) ((S.target p r, a) :: ss) (after_pop p s id q))).
     { intros c cfg Hhead; rewrite counter_after_pop; exact (Hstable c cfg Hhead). }
     destruct (stable_fold_sources p pol ((S.target p r, a) :: ss) (after_pop p s id q)
-      (F7_pop_prepared p pol s pr id q Hprepared Hpop) Hfold j pj Hlive)
+      (pop_prepared_preserved p pol s pr id q Hprepared Hpop) Hfold j pj Hlive)
       as [Hold|[x [b [Hin [Hhead Hreader]]]]].
     - left; exact Hold.
     - right; exists x; split.
@@ -5465,7 +5465,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - right.
       destruct (reachable_live_row p pol s1 j pj Hwf Hprio Hreach1 Hlive)
         as [r1 [Hrow1 [Hr1 Hrank1]]].
-      apply source_readers_spec in Hreader.
+      apply source_readers_spec_aux in Hreader.
       destruct Hreader as [r2 [y [Hrow2 [Hread Hcode]]]].
       rewrite Hrow1 in Hrow2; injection Hrow2 as <-.
       pose proof (row_rank_write_le p pol r x Hwrite Hhead) as Hwriter.
@@ -5506,7 +5506,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma continuing_pop : forall p pol s s1, step p pol s = inl s1 ->
     exists pr id q, Q.pop (ws_queue s) = Some (pr, id, q).
   Proof.
-    intros p pol s s1 Hstep; rewrite F7_indexed in Hstep.
+    intros p pol s s1 Hstep; rewrite step_def in Hstep.
     destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop; [|discriminate].
     now exists pr, id, q.
   Qed.
@@ -5680,7 +5680,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** Cut edges make popped row ranks nondecreasing in a stable segment. *)
-  Lemma W5_priority : forall p pol s xs last i j a b,
+  Lemma stable_segment_priority_order : forall p pol s xs last i j a b,
     fits p pol -> reachable p pol s ->
     wl_path (step p pol) s xs last -> stable_segment p pol xs ->
     i < j -> nth_error (popped_ranks xs) i = Some a ->
@@ -5846,7 +5846,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     trie_get (S.key_code x) (ws_armed (update_one p pol s (x, a))) =
       if L.leb a (look s x) then trie_get (S.key_code x) (ws_armed s) else Some tt.
   Proof.
-    intros p pol s x a; rewrite F6_indexed; cbn beta iota zeta.
+    intros p pol s x a; rewrite update_one_def; cbn beta iota zeta.
     destruct (L.leb a (look s x)); [reflexivity|].
     destruct (trie_get (S.key_code x) (ws_armed s)) as [[]|] eqn:Harmed.
     - cbn [ws_armed]; exact Harmed.
@@ -5859,7 +5859,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma scan_update_other : forall p pol s x a c, c <> S.key_code x ->
     trie_get c (ws_armed (update_one p pol s (x, a))) = trie_get c (ws_armed s).
   Proof.
-    intros p pol s x a c Hother; rewrite F6_indexed; cbn beta iota zeta.
+    intros p pol s x a c Hother; rewrite update_one_def; cbn beta iota zeta.
     destruct (L.leb a (look s x)); [reflexivity|].
     destruct (trie_get (S.key_code x) (ws_armed s)); [reflexivity|].
     change (trie_get c (PTrieCode.set (S.key_code x) tt (ws_armed s)) =
@@ -5880,7 +5880,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     intros p pol lower s x a Hsupport Hstrict.
     destruct (L.leb a (look s x)) eqn:Hcovered.
     - assert (Hsame : update_one p pol s (x, a) = s).
-      { rewrite F6_indexed; cbn beta iota zeta; now rewrite Hcovered. }
+      { rewrite update_one_def; cbn beta iota zeta; now rewrite Hcovered. }
       rewrite Hsame; unfold push_work; rewrite Hcovered; lia.
     - destruct (Hstrict eq_refl) as [Hhead Hlower].
       assert (Heligible : N.leb lower (N.pos (priority pol (S.key_code x))) = true).
@@ -5977,7 +5977,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     assert (Hsupport : In (S.key_code x) (key_support p)).
     { apply key_support_spec; exists r, x; split; [exact Hr|].
       split; [apply in_or_app; now left|reflexivity]. }
-    pose proof (proj2 (W3_update p pol s x a Hwf Hprio Hinv Ha Hsupport)) as Hcost.
+    pose proof (proj2 (T_update_one_amort p pol s x a Hwf Hprio Hinv Ha Hsupport)) as Hcost.
     rewrite (stable_head_work_zero p pol s x a Hstable) in Hcost.
     pose proof (scan_credit_update_write p pol r lower s x a Hr Hwrite Hlower Hstable)
       as Hscan.
@@ -6051,7 +6051,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       rewrite Hsource in Hsource'; injection Hsource' as <-; exact Hrank. }
     assert (Hstate : s1 = fold_left (update_one p pol) ((S.target p r, a) :: ss)
       (after_pop p s id q)).
-    { rewrite F7_indexed in Hstep; rewrite Hpop, Hrow, Heval in Hstep.
+    { rewrite step_def in Hstep; rewrite Hpop, Hrow, Heval in Hstep.
       injection Hstep as Heq; symmetry; exact Heq. }
     pose proof (proj2 (source_row_member p id r Hsource)) as Hr.
     pose proof (after_pop_invariant p pol s pr id q Hinv Hpop) as Hafter.
@@ -6148,7 +6148,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       assert (Hrow : row_at s id = Some r).
       { rewrite (proj1 (proj1 (proj2 (proj2 Hinv)))); exact Hsource. }
       assert (Heval : exists a ss, eval_row p r (ws_store s) = Some (a, ss)).
-      { pose proof Hstep as Hgo; rewrite F7_indexed in Hgo; rewrite Hpop, Hrow in Hgo.
+      { pose proof Hstep as Hgo; rewrite step_def in Hgo; rewrite Hpop, Hrow in Hgo.
         destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval;
           [now exists a, ss|discriminate]. }
       destruct Heval as [a [ss Heval]].
@@ -6197,7 +6197,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** W5 uses cuts to bound each numbered row's visits between strict head updates. *)
-  Lemma W5_round : forall p pol s xs last,
+  Lemma stable_segment_round_cost : forall p pol s xs last,
     fits p pol -> reachable p pol s ->
     wl_path (step p pol) s xs last -> stable_segment p pol xs ->
     (forall id, count_occ Pos.eq_dec (popped_ids xs) id <= 1) /\
@@ -6302,16 +6302,16 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       P.run_updates pol c (counter s c) (raw_value s c) (code_news c outs).
   Proof.
     intros p pol s s1 Hwf Hreach Hstep.
-    pose proof (F9_reachable_prepared p pol s Hreach) as Hprepared.
-    rewrite F7_indexed in Hstep.
+    pose proof (reachable_prepared p pol s Hreach) as Hprepared.
+    rewrite step_def in Hstep.
     destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop; [|discriminate].
     rewrite (proj1 (proj1 Hprepared) id) in Hstep.
     destruct (source_row p id) as [r|] eqn:Hrow; [|discriminate].
     destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
     injection Hstep as <-.
     assert (Hlook : forall x, B.inv p (look s x)).
-    { exact (F9_reachable_inv p pol s Hwf Hreach). }
-    pose proof Heval as Hsystem; rewrite F3_eval in Hsystem.
+    { exact (reachable_inv p pol s Hwf Hreach). }
+    pose proof Heval as Hsystem; rewrite eval_row_spec in Hsystem.
     destruct (B.inv_rows p r (look s) a ss Hwf
       (proj2 (source_row_member p id r Hrow)) Hlook Hsystem) as [Ha Hss].
     exists ((S.target p r, a) :: ss); split; [now constructor|].
@@ -6394,7 +6394,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** W6 bounds every finite prefix's strict head events by the advertised round count. *)
-  Lemma W6_rounds : forall p pol xs last, S.wf p -> prio_ok p pol ->
+  Lemma head_events_le_rounds : forall p pol xs last, S.wf p -> prio_ok p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     head_events pol (prepare p pol) last + 1 <= rounds p pol /\
     (forall c, In c (key_support p) ->
@@ -6425,7 +6425,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma counter_step_mono : forall p pol s s1 c, step p pol s = inl s1 ->
     (counter s c <= counter s1 c)%N.
   Proof.
-    intros p pol s s1 c Hstep; rewrite F7_indexed in Hstep.
+    intros p pol s s1 c Hstep; rewrite step_def in Hstep.
     destruct (Q.pop (ws_queue s)) as [[[pr id] q]|]; [|discriminate].
     destruct (row_at s id) as [r|]; [|discriminate].
     destruct (eval_row p r (ws_store s)) as [[a ss]|]; [|discriminate].
@@ -6563,7 +6563,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       k_update * N.of_nat (scan_credit p pol 0%N s) * unit p + queue_phi p s)%N.
   Proof.
     intros p pol s x a Hwf Hprio Hinv Ha Hsupport Hcounter.
-    pose proof (proj2 (W3_update p pol s x a Hwf Hprio Hinv Ha Hsupport)) as Hcost.
+    pose proof (proj2 (T_update_one_amort p pol s x a Hwf Hprio Hinv Ha Hsupport)) as Hcost.
     pose proof (strict_head_work_event p pol s x a Hinv Ha Hcounter) as Hpolicy.
     pose proof (boundary_scan_spending p pol s x a Hsupport) as Hscan.
     assert (HscanN : (N.of_nat (push_work p s x a +
@@ -6686,13 +6686,13 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     assert (Hrow : row_at s id = Some r).
     { rewrite (proj1 (proj1 (proj2 (proj2 Hinv)))); exact Hsource. }
     assert (Heval : exists a ss, eval_row p r (ws_store s) = Some (a, ss)).
-    { pose proof Hstep as Hgo; rewrite F7_indexed in Hgo; rewrite Hpop, Hrow in Hgo.
+    { pose proof Hstep as Hgo; rewrite step_def in Hgo; rewrite Hpop, Hrow in Hgo.
       destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval;
         [now exists a, ss|discriminate]. }
     destruct Heval as [a [ss Heval]].
     assert (Hstate : s1 = fold_left (update_one p pol) ((S.target p r, a) :: ss)
       (after_pop p s id q)).
-    { rewrite F7_indexed in Hstep; rewrite Hpop, Hrow, Heval in Hstep.
+    { rewrite step_def in Hstep; rewrite Hpop, Hrow, Heval in Hstep.
       injection Hstep as Heq; symmetry; exact Heq. }
     destruct (source_row_member p id r Hsource) as [Hid Hr].
     pose proof (after_pop_invariant p pol s pr id q Hinv Hpop) as Hafter.
@@ -6742,7 +6742,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** A callback that ends a stable segment is charged to its strict head events. *)
-  Lemma W5_boundary : forall p pol s s1, fits p pol -> reachable p pol s ->
+  Lemma T_step_boundary_amort : forall p pol s s1, fits p pol -> reachable p pol s ->
     step p pol s = inl s1 -> 0 < head_events pol s s1 ->
     (T_step p pol s + c_loopN + queue_phi p s1 <=
       k_round * N.of_nat (head_events pol s s1) * N.of_nat (C p + D p) * unit p +
@@ -6846,7 +6846,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** The visit count supplies fuel without charging abstract value sizes to fuel construction. *)
-  Lemma W7_visits : forall p pol xs last, fits p pol ->
+  Lemma visits_lt_fuel : forall p pol xs last, fits p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     (N.of_nat (length xs) < k_fuel * N.of_nat ((C p + D p) * rounds p pol + 1))%N.
   Proof.
@@ -6855,7 +6855,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     pose proof (path_visit_bound p pol (prepare p pol) xs last Hfits Hinitial Hpath) as Hvisits.
     destruct Hfits as [Hwf [Hcuts Hprio]].
     assert (Hfits : fits p pol) by now repeat split.
-    pose proof (proj1 (W6_rounds p pol xs last Hwf Hprio Hpath)) as Hrounds.
+    pose proof (proj1 (head_events_le_rounds p pol xs last Hwf Hprio Hpath)) as Hrounds.
     pose proof (visits_C_le_D p) as Hoccurrences.
     assert (Hnumeric : length xs < (C p + D p) * rounds p pol + 1).
     { destruct (Nat.eq_dec (C p) 0) as [Hempty|Hnonempty]; [|nia].
@@ -6946,7 +6946,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
           { rewrite Hxs, length_app in Hlength; cbn [length] in Hlength; lia. }
           pose proof (IH after suffix last Hsuffix_length Hfits Hafter Hsuffix) as Htail.
           pose proof (Hround p pol s prefix before Hfits Hreach Hprefix Hstable) as Hprefix_cost.
-          pose proof (W5_boundary p pol before after Hfits Hbefore Hevent Hpositive)
+          pose proof (T_step_boundary_amort p pol before after Hfits Hbefore Hevent Hpositive)
             as Hboundary.
           destruct (trace_event_allowance p pol s before after suffix last prefix
             Hprefix Hevent Hsuffix Hpositive) as [Hevents Hcoefficients].
@@ -6995,7 +6995,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       pose proof (path_trace_bound p pol (prepare p pol) xs last Hfits Hinitial Hpath)
         as Hcost.
       destruct Hfits as [Hwf [Hcuts Hprio]].
-      pose proof (proj1 (W6_rounds p pol xs last Hwf Hprio Hpath)) as Hrounds.
+      pose proof (proj1 (head_events_le_rounds p pol xs last Hwf Hprio Hpath)) as Hrounds.
       assert (Hrow_coefficient : (N.of_nat
         (2 * head_events pol (prepare p pol) last + 1) <= 2 * N.of_nat (rounds p pol))%N)
         by lia.
@@ -7021,7 +7021,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   End TraceComposition.
 
   (** W7 charges arbitrary finite prefixes by partitioning at strict head events. *)
-  Lemma W7_trace : forall p pol xs last, fits p pol ->
+  Lemma trace_cost_le_work : forall p pol xs last, fits p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
       k_loop * work p pol + queue_phi p (prepare p pol))%N.
@@ -7106,7 +7106,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma step_solved_queue : forall p pol s m,
     step p pol s = inr (Solved m) -> Q.pop (ws_queue s) = None /\ m = ws_store s.
   Proof.
-    intros p pol s m Hstep; rewrite F7_indexed in Hstep.
+    intros p pol s m Hstep; rewrite step_def in Hstep.
     destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop.
     - destruct (row_at s id) as [r|]; [|discriminate].
       destruct (eval_row p r (ws_store s)) as [[a ss]|]; discriminate.
@@ -7120,7 +7120,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Proof.
     intros p pol s result Hwf [Hstruct [Hvalues Hprepared]] Hstep.
     pose proof Hstruct as [Hqueue [Hfits [Hpending [Hcount Hsupport]]]].
-    rewrite F7_indexed in Hstep.
+    rewrite step_def in Hstep.
     destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop.
     - pose proof (proj1 (Q.pop_min _ _ _ _ Hqueue Hpop)) as Hlive.
       destruct (Hsupport pr id Hlive) as [Hin [r [Hsource Hrank]]].
@@ -7142,7 +7142,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma prepare_empty_step : forall p pol, C p = 0 ->
     step p pol (prepare p pol) = inr (Solved (ws_store (prepare p pol))).
   Proof.
-    intros p pol Hempty; rewrite F7_indexed; rewrite prepare_empty_queue by exact Hempty.
+    intros p pol Hempty; rewrite step_def; rewrite prepare_empty_queue by exact Hempty.
     rewrite (proj2 (Q.pop_none Q.empty Q.wf_empty) Q.prio_empty); reflexivity.
   Qed.
 
@@ -7243,7 +7243,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** Stopping callbacks must solve and must fit the final driver budget. *)
-  Lemma W7_stop : forall p pol s result, S.wf p -> prio_ok p pol -> reachable p pol s ->
+  Lemma T_step_stop_le : forall p pol s result, S.wf p -> prio_ok p pol -> reachable p pol s ->
     step p pol s = inr result ->
     (exists m, result = Solved m) /\
     (T_step p pol s <= k_loop * (N.of_nat (C p) * unit p + 1) + queue_phi p s)%N.
@@ -7318,7 +7318,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** Binary fuel charges the loop from finite-prefix accounting and the final callback. *)
-  Lemma W7_loop : forall p pol fuel, fits p pol ->
+  Lemma T_step_loop_le : forall p pol fuel, fits p pol ->
     (T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) <= k_loop *
       (work p pol + queue_phi p (prepare p pol) +
         N.of_nat (N.size_nat fuel) + 1))%N.
@@ -7326,11 +7326,11 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     intros; apply T_loop_from_rounds; assumption.
   Qed.
   (** Fuel is chosen from the row-visit budget and includes the final empty pop. *)
-  Lemma W7_fuel : forall p pol,
+  Lemma fuel_for_def : forall p pol,
     (fuel_for p pol = k_fuel * N.of_nat ((C p + D p) * rounds p pol + 1))%N.
   Proof. reflexivity. Qed.
   (** W7 connects the derived solver time to preparation and the derived binary-loop time. *)
-  Lemma W7_run : forall p pol fuel,
+  Lemma T_run_split : forall p pol fuel,
     (T_run p pol fuel <= k_loop * (T_prepare p pol +
       T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) + 1))%N.
   Proof.
@@ -7433,7 +7433,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       pose proof (Hweights id (or_introl eq_refl)) as Hhead.
       specialize (IH (fun other Hin => Hweights other (or_intror Hin))); lia. }
     apply Hsum; intros id Hin.
-    apply source_readers_spec in Hin as [r [x [Hrow _]]].
+    apply source_readers_spec_aux in Hin as [r [x [Hrow _]]].
     unfold weight; rewrite Hrow; lia.
   Qed.
 
@@ -7472,7 +7472,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma reachable_head_capped : forall p pol s, S.wf p -> prio_ok p pol ->
     reachable p pol s -> head_capped p pol s.
   Proof.
-    intros p pol s Hwf Hprio [xs Hpath]; exact (proj2 (W6_rounds p pol xs s Hwf Hprio Hpath)).
+    intros p pol s Hwf Hprio [xs Hpath]; exact (proj2 (head_events_le_rounds p pol xs s Hwf Hprio Hpath)).
   Qed.
 
   (** Other support codes retain their remaining head-update allowance. *)
@@ -7550,7 +7550,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         | Some _ => 0 | None => weighted_degree p (S.key_code x)
         end.
   Proof.
-    intros p pol s x a Hprepared; rewrite F6_indexed; cbn beta iota zeta.
+    intros p pol s x a Hprepared; rewrite update_one_def; cbn beta iota zeta.
     destruct (L.leb a (look s x)); [lia|].
     set (c := S.key_code x).
     set (ac := P.update pol c (counter s c) (look s x) a).
@@ -7582,7 +7582,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     pose proof (queue_credit_update_bound p pol s x a Hprepared) as Hqueue.
     destruct (L.leb a (look s x)) eqn:Hstable.
     - assert (Hsame : update_one p pol s (x, a) = s).
-      { rewrite F6_indexed; cbn beta iota zeta; now rewrite Hstable. }
+      { rewrite update_one_def; cbn beta iota zeta; now rewrite Hstable. }
       rewrite Hsame; unfold push_work; rewrite Hstable; lia.
     - destruct (Hheads (S.key_code x) Hsupport) as [cfg Hhead].
       pose proof (head_debt_strict p pol s x a cfg Hsupport Hhead Hstable Hcap) as Hdebt.
@@ -7607,7 +7607,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     assert (Hcoeff : (k_update <= k_credit)%N) by (unfold k_credit; lia).
     destruct (L.leb a (look s x)) eqn:Hstable.
     - assert (Hsame : update_one p pol s (x, a) = s).
-      { rewrite F6_indexed; cbn beta iota zeta; now rewrite Hstable. }
+      { rewrite update_one_def; cbn beta iota zeta; now rewrite Hstable. }
       rewrite Hsame; unfold strict_head_work; rewrite Hstable; nia.
     - destruct (Hheads (S.key_code x) Hsupport) as [cfg Hhead].
       pose proof (head_left_strict p pol s x a cfg Hsupport Hhead Hstable Hcap) as Hleft.
@@ -7670,7 +7670,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       pose proof (T_update_all_heads p pol s x a
         Hwf Hprio Hheads Hinv Ha Hsupport Hnextcap) as Hhead.
       specialize (IH (update_one p pol s (x, a)) Hwf Hprio Hheads
-        (F9_update_inv p pol s x a Hwf Hprio Hinv Ha Hsupport) Htail Hcap).
+        (update_one_invariant_preserved p pol s x a Hwf Hprio Hinv Ha Hsupport) Htail Hcap).
       rewrite output_cost_cons; cbn [fold_left length]; rewrite Nat2N.inj_succ; nia.
   Qed.
 
@@ -7699,7 +7699,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     (T_step p pol s + all_head_phi p pol s1 + c_loopN <= all_head_phi p pol s)%N.
   Proof.
     intros p pol s s1 Hwf Hprio Hheads Hinv Hcap Hstep.
-    rewrite F7_indexed in Hstep.
+    rewrite step_def in Hstep.
     destruct (Q.pop (ws_queue s)) as [[[pr id] q1]|] eqn:Hpop; [|discriminate].
     destruct (row_at s id) as [r|] eqn:Hrow; [|discriminate].
     destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
@@ -7782,7 +7782,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
   (** All-head credit decreases per callback without the stable-segment lemma. *)
-  Lemma W7_all_heads_credit : forall p pol s s1, S.wf p -> prio_ok p pol -> all_heads p pol ->
+  Lemma T_step_all_heads_credit : forall p pol s s1, S.wf p -> prio_ok p pol -> all_heads p pol ->
     reachable p pol s -> step p pol s = inl s1 ->
     (T_step p pol s + all_head_phi p pol s1 + c_loopN <= all_head_phi p pol s)%N.
   Proof.
@@ -7794,7 +7794,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - exact Hstep.
   Qed.
   (** The independent widening fallback needs weighted degree absorbed by its public budget. *)
-  Lemma W7_all_heads_initial : forall p pol, S.wf p -> prio_ok p pol -> all_heads p pol ->
+  Lemma all_head_phi_initial_le : forall p pol, S.wf p -> prio_ok p pol -> all_heads p pol ->
     (all_head_phi p pol (prepare p pol) <=
       2 * k_credit * all_head_work p pol + queue_phi p (prepare p pol))%N.
   Proof.
@@ -7807,12 +7807,12 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     intros p pol fuel m [Hwf [Hcuts Hprio]] Hrun.
     destruct (run_solved_path p pol fuel m Hrun) as [s [Hreachable Hstop]].
     destruct (step_solved_queue p pol s m Hstop) as [Hempty ->].
-    pose proof (F9_reachable_prepared p pol s Hreachable) as Hprepared.
+    pose proof (reachable_prepared p pol s Hreachable) as Hprepared.
     pose proof (proj1 (Q.pop_none (ws_queue s)
       (proj1 (proj2 (proj2 Hprepared)))) Hempty) as Hnone.
     intros r Hr; apply In_nth_error in Hr as [n Hnth].
-    eapply (F9_accepted p pol s Hwf Hreachable (Pos.of_succ_nat n) r).
-    - now rewrite F1_numbering.
+    eapply (reachable_accepted p pol s Hwf Hreachable (Pos.of_succ_nat n) r).
+    - now rewrite source_row_numbering.
     - apply Hnone.
   Qed.
   (** Solved candidates satisfy the client value budget. *)
@@ -7822,7 +7822,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     intros p pol fuel m Hwf Hrun x.
     destruct (run_solved_path p pol fuel m Hrun) as [s [Hreachable Hstop]].
     destruct (step_solved_queue p pol s m Hstop) as [Hempty ->].
-    eapply F9_reachable_inv; eassumption.
+    eapply reachable_inv; eassumption.
   Qed.
   (** Height credit always includes the queue's own amortized potential. *)
   Lemma driver_height_queue : forall p rk h s,
@@ -7871,11 +7871,11 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       (T_step p pol s + c_loopN <= Phi s +
         (k_loop * (N.of_nat (C p) * unit p + 1) + c_loopN))%N).
     { intros s result Hreachable Hstep.
-      pose proof (proj2 (W7_stop p pol s result Hwf Hprio Hreachable Hstep)) as Hcost.
+      pose proof (proj2 (T_step_stop_le p pol s result Hwf Hprio Hreachable Hstep)) as Hcost.
       pose proof (Hqueue s); lia. }
     pose proof (T_run_credit p pol fuel Phi
       (k_loop * (N.of_nat (C p) * unit p + 1) + c_loopN)%N Hcontinue Hstop) as Hcost.
-    pose proof (W1_prepare p pol Hwf Hprio) as Hprepare.
+    pose proof (T_prepare_le p pol Hwf Hprio) as Hprepare.
     rewrite Nat2N.inj_add in Hcost; change (N.of_nat 1) with 1%N in Hcost.
     set (queued_work := (N.of_nat (C p) * unit p)%N) in *.
     eapply N.le_trans; [|apply driver_credit_absorb].
@@ -7924,8 +7924,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Proof.
     intros p pol fuel Hwf Hprio Hheads.
     destruct (driver_all_head_work_bounds p pol) as [Hprep [Hcount Hincidence]].
-    pose proof (W7_all_heads_initial p pol Hwf Hprio Hheads) as Hinitial.
-    pose proof (W1_queue_phi p pol Hwf Hprio) as Hphi.
+    pose proof (all_head_phi_initial_le p pol Hwf Hprio Hheads) as Hinitial.
+    pose proof (prepare_queue_potential_le p pol Hwf Hprio) as Hphi.
     assert (Hqueue : (queue_phi p (prepare p pol) <=
       2 * k_prepare * all_head_work p pol)%N).
     { eapply N.le_trans; [exact Hphi|].
@@ -7936,17 +7936,17 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       now apply N.mul_le_mono_l. }
     assert (Hcontinue : forall s s1, reachable p pol s -> step p pol s = inl s1 ->
       (T_step p pol s + c_loopN + all_head_phi p pol s1 <= all_head_phi p pol s)%N).
-    { intros; pose proof (W7_all_heads_credit p pol s s1 Hwf Hprio Hheads
+    { intros; pose proof (T_step_all_heads_credit p pol s s1 Hwf Hprio Hheads
         ltac:(assumption) ltac:(assumption)); lia. }
     assert (Hstop : forall s result, reachable p pol s -> step p pol s = inr result ->
       (T_step p pol s + c_loopN <= all_head_phi p pol s +
         (k_loop * (N.of_nat (C p) * unit p + 1) + c_loopN))%N).
     { intros s result Hreachable Hstep.
-      pose proof (proj2 (W7_stop p pol s result Hwf Hprio Hreachable Hstep)) as Hcost.
+      pose proof (proj2 (T_step_stop_le p pol s result Hwf Hprio Hreachable Hstep)) as Hcost.
       pose proof (driver_all_head_queue p pol s); lia. }
     pose proof (T_run_credit p pol fuel (all_head_phi p pol)
       (k_loop * (N.of_nat (C p) * unit p + 1) + c_loopN)%N Hcontinue Hstop) as Hcost.
-    pose proof (W1_prepare p pol Hwf Hprio) as Hprepare.
+    pose proof (T_prepare_le p pol Hwf Hprio) as Hprepare.
     rewrite Nat2N.inj_add in Hcost; change (N.of_nat 1) with 1%N in Hcost.
     set (w := all_head_work p pol) in *.
     set (queued_work := (N.of_nat (C p) * unit p)%N) in *.
@@ -7959,9 +7959,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Proof.
     intros p pol fuel Hfits.
     destruct (driver_work_bounds p pol) as [Hprep [Hqueue [Hcount Hvisits]]].
-    pose proof (W1_prepare p pol (proj1 Hfits) (proj2 (proj2 Hfits))) as Hprepare.
-    pose proof (W1_queue_phi p pol (proj1 Hfits) (proj2 (proj2 Hfits))) as Hphi.
-    pose proof (W7_loop p pol fuel Hfits) as Hloop.
+    pose proof (T_prepare_le p pol (proj1 Hfits) (proj2 (proj2 Hfits))) as Hprepare.
+    pose proof (prepare_queue_potential_le p pol (proj1 Hfits) (proj2 (proj2 Hfits))) as Hphi.
+    pose proof (T_step_loop_le p pol fuel Hfits) as Hloop.
     pose proof (T_run_additive p pol fuel) as Hrun.
     assert (Hqueue_phi : (queue_phi p (prepare p pol) <= k_prepare * work p pol)%N).
     { eapply N.le_trans; [exact Hphi|].
@@ -7981,7 +7981,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       as [s|result] eqn:Hloop.
     - destruct (loop_fuel_path (step p pol) (N.to_nat fuel) (prepare p pol) s Hloop)
         as [xs [Hpath Hlength]].
-      pose proof (W7_visits p pol xs s Hfits Hpath) as Hbound.
+      pose proof (visits_lt_fuel p pol xs s Hfits Hpath) as Hbound.
       rewrite Hlength, N2Nat.id in Hbound; unfold fuel_for in Hfuel; lia.
     - destruct (loop_fuel_stop_path (step p pol) (N.to_nat fuel) (prepare p pol)
         result Hloop) as [xs [last [Hpath [Hstop Hlength]]]].
@@ -8009,8 +8009,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         ((2 * N.of_nat (D p + h * DW p)) * unit p)%N by ring.
       apply N.mul_le_mono_r; pose proof (visits_C_le_D p); lia. }
     apply (T_run_budget p pol fuel (height_phi p rk h) budget); try assumption.
-    - pose proof (W4_initial p pol rk h Hwf Hprio Hfree) as Hheight.
-      pose proof (W1_queue_phi p pol Hwf Hprio) as Hqueue.
+    - pose proof (height_phi_initial_le p pol rk h Hwf Hprio Hfree) as Hheight.
+      pose proof (prepare_queue_potential_le p pol Hwf Hprio) as Hqueue.
       assert (Hq : (queue_phi p (prepare p pol) <= 2 * k_prepare * budget)%N).
       { eapply N.le_trans; [exact Hqueue|].
         replace (k_prepare * N.of_nat (C p + D p) * unit p)%N with
@@ -8022,7 +8022,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       clear -Hheight Hq; nia.
     - intro s; apply driver_height_queue.
     - intros s s1 Hreachable Hstep.
-      pose proof (W4_credit p pol rk h s s1 Hwf Hprio Hfree Hrank Hreachable Hstep).
+      pose proof (T_step_height_credit p pol rk h s s1 Hwf Hprio Hfree Hrank Hreachable Hstep).
       lia.
   Qed.
 
@@ -8032,7 +8032,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Proof.
     intros; apply T_run_all_head_budget; assumption.
   Qed.
-  Lemma run_bigO : bigO
+  Lemma run_complexity : bigO
     (fun x : S.prog * policy L.wparam => fits (fst x) (snd x))
     (fun x => work (fst x) (snd x))
     (fun x => T_run (fst x) (snd x) (fuel_for (fst x) (snd x))).
@@ -8064,7 +8064,7 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
   Proof.
     intros p id r Hrow.
     replace id with (Pos.of_succ_nat (Pos.to_nat id - 1)) in Hrow.
-    - rewrite V.F1_numbering in Hrow; eapply nth_error_In; exact Hrow.
+    - rewrite V.source_row_numbering in Hrow; eapply nth_error_In; exact Hrow.
     - apply SuccNat2Pos.inv; pose proof (Pos2Nat.is_pos id); lia.
   Qed.
 
@@ -8080,8 +8080,8 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
   (** Preparation has the least possible store for every policy. *)
   Lemma prepare_below : forall p pol u, state_below p pol u (V.prepare p pol).
   Proof.
-    intros p pol u; split; [apply V.F4_metadata|].
-    intro x; rewrite V.F4_bottom; apply L.bot_least.
+    intros p pol u; split; [apply V.prepare_prepared|].
+    intro x; rewrite V.prepare_look_bot; apply L.bot_least.
   Qed.
 
   (** A policy with no heads writes the join on each strict update. *)
@@ -8090,12 +8090,12 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
     if L.leb a (V.look s x) then ws_store s
     else PTrieCode.set (S.key_code x) (x, L.join (V.look s x) a) (ws_store s).
   Proof.
-    intros p pol s x a Hfree; rewrite V.F6_indexed.
+    intros p pol s x a Hfree; rewrite V.update_one_def.
     destruct (L.leb a (V.look s x)) eqn:Hcovered; [reflexivity|].
     rewrite P.update_spec, Hcovered, Hfree.
     destruct (trie_get (S.key_code x) (ws_armed s)); cbn [fst snd ws_store V.arm].
     - reflexivity.
-    - exact (proj1 (V.F5_fields p pol (V.readers s (S.key_code x))
+    - exact (proj1 (V.enqueue_tables_kept p pol (V.readers s (S.key_code x))
         (WorklistState (PTrieCode.set (S.key_code x)
           (x, L.join (V.look s x) a) (ws_store s))
           (PTrieCode.set (S.key_code x) (V.counter s (S.key_code x)) (ws_counters s))
@@ -8130,7 +8130,7 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
       cbn [fold_left].
     - split; assumption.
     - apply IH; split.
-      + apply V.F6_prepared; exact Hprepared.
+      + apply V.update_one_prepared_preserved; exact Hprepared.
       + apply update_below; assumption.
   Qed.
 
@@ -8156,7 +8156,7 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
     Forall (fun xa => L.leb (snd xa) (u (fst xa)) = true) ((S.target p r, a) :: ss).
   Proof.
     intros p r u s a ss Hmono Hr Hpost Hstore Heval.
-    rewrite V.F3_eval in Heval.
+    rewrite V.eval_row_spec in Heval.
     specialize (Hmono r (look_or S.key_code L.bot (ws_store s)) u Hr Hstore).
     specialize (Hpost r Hr); rewrite Heval in Hmono.
     destruct (S.eval p r u) as [[b ts]|] eqn:Hout; cbn [out_leb] in Hmono;
@@ -8181,7 +8181,7 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
     end.
   Proof.
     intros p pol u Hmono Hfree Hpost s [Hprepared Hstore].
-    rewrite V.F7_indexed.
+    rewrite V.step_def.
     destruct (Q.pop (ws_queue s)) as [[[rank id] q]|] eqn:Hpop; [|exact Hstore].
     destruct (V.row_at s id) as [r|] eqn:Hrow; [|exact I].
     destruct (V.eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|exact I].
@@ -8189,7 +8189,7 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
     - eapply outputs_below; [exact Hmono| |exact Hpost|exact Hstore|exact Heval].
       eapply row_at_listed; eassumption.
     - split.
-      + eapply V.F7_pop_prepared; eassumption.
+      + eapply V.pop_prepared_preserved; eassumption.
       + exact Hstore.
   Qed.
 
@@ -8207,7 +8207,7 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
       now rewrite Hstep in Hnext.
   Qed.
   (** Widening-free reachable stores lie below every post-solution of a monotone system. *)
-  Lemma F10_least : forall p pol s s', S.wf p -> S.monotone p -> widening_free pol ->
+  Lemma reachable_least : forall p pol s s', S.wf p -> S.monotone p -> widening_free pol ->
     V.reachable p pol s -> S.post_solution p s' ->
     forall x, L.leb (V.look s x) (s' x) = true.
   Proof.
@@ -8222,7 +8222,7 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
     forall x, L.leb (look_or S.key_code L.bot m x) (s' x) = true.
   Proof.
     intros p pol fuel m u Hwf Hmono Hfree Hrun Hpost x.
-    rewrite V.F8_run, loopN_fuel in Hrun.
+    rewrite V.run_def, loopN_fuel in Hrun.
     destruct (loop_fuel (V.step p pol) (N.to_nat fuel) (V.prepare p pol))
       as [last|result] eqn:Hloop; [discriminate Hrun|].
     destruct result as [candidate|candidate|reason];

@@ -69,11 +69,11 @@ Module Type PARMOVE_TIME (Import P : PARMOVE).
     (T_check_moves par tmp sq <= c_pm * N.of_nat (length par + length sq + 1) *
       N.of_nat (bits_of (par ++ sq) + 1))%N.
   (** Sequentialisation is linear in the moves times the identifier width. *)
-  Parameter seq_bigO : bigO (X := moves * positive) (fun _ => True)
+  Parameter seq_complexity : bigO (X := moves * positive) (fun _ => True)
     (fun '(par, _) => N.of_nat ((length par + 1) * (bits_of par + 1)))
     (fun '(par, tmp) => T_seq par tmp).
   (** Checking is linear in both sequences times the identifier width. *)
-  Parameter check_moves_bigO : bigO (X := moves * positive * moves) (fun _ => True)
+  Parameter check_moves_complexity : bigO (X := moves * positive * moves) (fun _ => True)
     (fun '(par, _, sq) => N.of_nat ((length par + length sq + 1) * (bits_of (par ++ sq) + 1)))
     (fun '(par, tmp, sq) => T_check_moves par tmp sq).
 End PARMOVE_TIME.
@@ -88,40 +88,40 @@ Module Type PARMOVE_PLAN (Import P : PARMOVE_T).
   Parameter cycle_search : moves -> list positive.
   Parameter T_cycle_search : moves -> N.
   (** Every cycle representative is a distinct parallel destination. *)
-  Parameter F0_cycle_search : forall par,
+  Parameter cycle_search_spec : forall par,
     NoDup (cycle_search par) /\ forall x, In x (cycle_search par) -> In x (map fst par).
   (** Cycle search visits each move at its identifier width. *)
-  Parameter T0_cycle_search : forall par,
+  Parameter T_cycle_search_le : forall par,
     (T_cycle_search par <= k_cycle * N.of_nat (length par + 1) *
       N.of_nat (bits_of par + 1))%N.
   Definition relevant (par sq : moves) := map fst par ++ map snd par ++ map fst sq ++ map snd sq.
   (** One pass records the original source of every written variable. *)
-  Parameter F1_symbolic_all : forall sq x,
+  Parameter symbolic_all_spec : forall sq x,
     exec_seq sq (@Some positive) x =
       match trie_get x (symbolic_all sq) with Some y => Some y | None => Some x end.
   (** Symbolic execution records the original variable supplying each final value. *)
-  Parameter F1_symbolic : forall sq x, symbolic sq x = exec_seq sq (@Some positive) x.
+  Parameter symbolic_def : forall sq x, symbolic sq x = exec_seq sq (@Some positive) x.
   (** Acceptance compares symbolic values at every affected non-temporary variable. *)
-  Parameter F2_check_symbolic : forall par tmp sq, check_moves par tmp sq = true ->
+  Parameter check_moves_symbolic : forall par tmp sq, check_moves par tmp sq = true ->
     forall x, In x (relevant par sq) -> x <> tmp ->
       symbolic sq x = exec_par par (@Some positive) x.
   (** Variables outside the affected set keep their initial symbolic values. *)
-  Parameter F3_unaffected : forall par sq x, ~ In x (relevant par sq) ->
+  Parameter irrelevant_vars_unaffected : forall par sq x, ~ In x (relevant par sq) ->
     exec_seq sq (@Some positive) x = Some x /\ exec_par par (@Some positive) x = Some x.
   (** Symbolic agreement transports to every option-valued environment. *)
-  Parameter F4_symbolic_transport : forall par sq x,
+  Parameter symbolic_transport : forall par sq x,
     exec_seq sq (@Some positive) x = exec_par par (@Some positive) x ->
     forall A (env : positive -> option A), exec_seq sq env x = exec_par par env x.
   (** The table pass charges each move at the sequence width. *)
-  Parameter T1_symbolic_all : forall sq,
+  Parameter T_symbolic_all_le : forall sq,
     (T_symbolic_all sq <= k_symbolic * N.of_nat (length sq + 1) *
       N.of_nat (bits_of sq + 1))%N.
   (** Sequentialisation charges cycle discovery and indexed move emission. *)
-  Parameter T1_seq : forall par tmp,
+  Parameter T_seq_split : forall par tmp,
     (T_seq par tmp <= T_cycle_search par + k_cycle *
       N.of_nat (length par + 1) * N.of_nat (bits_of par + 1))%N.
   (** Checking builds two tables and compares them on the relevant variables. *)
-  Parameter T2_check : forall par tmp sq,
+  Parameter T_check_moves_split : forall par tmp sq,
     (T_check_moves par tmp sq <= T_symbolic_all sq + k_symbolic *
       N.of_nat (length par + length sq + 1) * N.of_nat (bits_of (par ++ sq) + 1))%N.
 End PARMOVE_PLAN.

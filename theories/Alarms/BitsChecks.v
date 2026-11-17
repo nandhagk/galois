@@ -879,7 +879,7 @@ Module BitsChecksT (V : VALUE_DOMAIN_T BitsLangT)
   Qed.
 
   (** A check is linear in its operand work. *)
-  Lemma may_fail_bigO : bigO (X := kd * list V.t) (fun _ => True)
+  Lemma may_fail_complexity : bigO (X := kd * list V.t) (fun _ => True)
     (fun kx => N.of_nat (work (fst kx) (snd kx))) (fun kx => T_may_fail (fst kx) (snd kx)).
   Proof.
     eapply bigO_intro with (c := c_checks). intros [k xs] _.
@@ -922,13 +922,13 @@ Module BitsChecksT (V : VALUE_DOMAIN_T BitsLangT)
     ((fold_right Nat.add 0%nat (map V.size xs) + length xs + 1) ^ 2)%nat.
   Proof. reflexivity. Qed.
   (** Excluding zero from a containing unsigned range excludes a zero operand. *)
-  Lemma F1_zero : forall a c, V.gamma a c -> range_zero (Q.range a) = false ->
+  Lemma range_zero_sound : forall a c, V.gamma a c -> range_zero (Q.range a) = false ->
     snd c <> 0%Z.
   Proof.
     exact zero_excluded.
   Qed.
   (** Ordered abstract endpoints imply safety of every represented index and length. *)
-  Lemma F2_bounds : forall a b i len, V.gamma a i -> V.gamma b len ->
+  Lemma bounds_sound : forall a b i len, V.gamma a i -> V.gamma b len ->
     range_nonnegative (Q.range a) = true ->
     bound_lt (snd (Q.range a)) (fst (Q.range b)) = true -> (0 <= snd i < snd len)%Z.
   Proof.
@@ -936,7 +936,7 @@ Module BitsChecksT (V : VALUE_DOMAIN_T BitsLangT)
   Qed.
 
   (** Testing whether an interval contains zero is linear in its endpoint bits. *)
-  Lemma T1_zero : forall r,
+  Lemma T_range_zero_le : forall r,
     (T_range_zero r <= k_bits_checks * N.of_nat (range_bits r + 1))%N.
   Proof.
     exact ChecksCost.zero_time.

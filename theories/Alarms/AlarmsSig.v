@@ -68,13 +68,13 @@ Module Type ALARMS_TIME (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
   Parameter T_alarms_le : forall inv ks, (T_alarms inv ks <=
     c_alarms * N.of_nat ((fold_right Nat.add 0 (map (check_work inv) ks) + 1)%nat))%N.
   (** Invariant lookup is linear in the site key. *)
-  Parameter inv_at_bigO : bigO (X := MN.t S.t * N.t) (fun _ => True)
+  Parameter inv_at_complexity : bigO (X := MN.t S.t * N.t) (fun _ => True)
     (fun x => N.of_nat (N.bits (snd x))) (fun x => T_inv_at (fst x) (snd x)).
   (** One alarm test is linear in its check work. *)
-  Parameter alarm_bigO : bigO (X := MN.t S.t * check N.t L.op X.t C.kd) (fun _ => True)
+  Parameter alarm_complexity : bigO (X := MN.t S.t * check N.t L.op X.t C.kd) (fun _ => True)
     (fun x => N.of_nat (check_work (fst x) (snd x))) (fun x => T_alarm (fst x) (snd x)).
   (** Reporting is linear in the sum of the check work. *)
-  Parameter alarms_bigO : bigO (X := MN.t S.t * list (check N.t L.op X.t C.kd)) (fun _ => True)
+  Parameter alarms_complexity : bigO (X := MN.t S.t * list (check N.t L.op X.t C.kd)) (fun _ => True)
     (fun x => N.of_nat (fold_right Nat.add 0 (map (check_work (fst x)) (snd x))))
     (fun x => T_alarms (fst x) (snd x)).
 End ALARMS_TIME.

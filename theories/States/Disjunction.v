@@ -1342,7 +1342,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Widening pays for the state sizes and the units times the parameter size. *)
-  Lemma widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+  Lemma widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
     (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
     (fun '(p, a, b) => T_widen p a b).
   Proof.
@@ -1352,7 +1352,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Narrowing is linear in both disjunction sizes for the fixed cap. *)
-  Lemma narrow_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma narrow_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_narrow (fst ab) (snd ab)).
   Proof.
@@ -1362,7 +1362,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assignment is linear in its alternative work measure. *)
-  Lemma assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+  Lemma assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
     (fun '(x, e, d) => N.of_nat (assign_work x e d)) (fun '(x, e, d) => T_assign x e d).
   Proof.
     exists c_state; intros [[x e] a] _.
@@ -1371,7 +1371,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Havoc is linear in its alternative work measure. *)
-  Lemma havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+  Lemma havoc_complexity : bigO (X := X.t * t) (fun _ => True)
     (fun '(x, d) => N.of_nat (havoc_work x d)) (fun '(x, d) => T_havoc x d).
   Proof.
     exists c_state; intros [x a] _.
@@ -1380,7 +1380,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assumption is linear in its alternative work measure. *)
-  Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+  Lemma assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
     (fun '(gd, es, d) => N.of_nat (assume_work gd es d)) (fun '(gd, es, d) => T_assume gd es d).
   Proof.
     exists c_state; intros [[g es] a] _.
@@ -1389,7 +1389,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Evaluation is linear in its alternative work measure. *)
-  Lemma eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+  Lemma eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
     (fun '(e, d) => N.of_nat (eval_work e d)) (fun '(e, d) => T_eval e d).
   Proof.
     exists c_state; intros [e a] _.
@@ -1398,7 +1398,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Collapsing at most the cap plus one alternatives is linear in their sizes. *)
-  Lemma collapse_bigO : bigO (fun xs : list S.t => length xs <= C.k + 1)
+  Lemma collapse_complexity : bigO (fun xs : list S.t => length xs <= C.k + 1)
     (fun xs => N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs)) T_collapse.
   Proof.
     exists c_disjunction; intros xs Hcap.
@@ -1410,7 +1410,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Lemma F2_widen : forall p a b, proj1_sig (widen p a b) =
+  Lemma widen_def : forall p a b, proj1_sig (widen p a b) =
     if leb b a then proj1_sig a else
     if is_bot a then proj1_sig b else
     if forallb S.is_bot (proj1_sig a) then [S.top] else
@@ -1420,28 +1420,28 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     exact widen_raw.
   Qed.
-  Lemma F3_rank : forall p d, wrank p d =
+  Lemma rank_def : forall p d, wrank p d =
     fold_right Nat.add 0%nat (map (S.wrank p) (proj1_sig d)) +
       if forallb S.is_bot (proj1_sig d) then 1 + S.wrank p S.top else 0.
   Proof.
     reflexivity.
   Qed.
-  Lemma F4_assign : forall x e d,
+  Lemma assign_def : forall x e d,
     proj1_sig (assign x e d) = map (S.assign x e) (proj1_sig d).
   Proof.
     intros x e [xs Hbound]; reflexivity.
   Qed.
-  Lemma F5_havoc : forall x d,
+  Lemma havoc_def : forall x d,
     proj1_sig (havoc x d) = map (S.havoc x) (proj1_sig d).
   Proof.
     intros x [xs Hbound]; reflexivity.
   Qed.
-  Lemma F6_assume : forall g es d,
+  Lemma assume_def : forall g es d,
     proj1_sig (assume g es d) = map (S.assume g es) (proj1_sig d).
   Proof.
     intros g es [xs Hbound]; reflexivity.
   Qed.
-  Lemma T1_widen : forall p a b,
+  Lemma T_widen_split : forall p a b,
     (T_widen p a b <= k_disjunction *
       (T_leb b a + T_is_bot a + P.T_clip [S.top] + N.of_nat (length (proj1_sig a) + 1) +
        fold_right N.add 0%N (map S.T_is_bot (proj1_sig a)) +
@@ -1455,20 +1455,20 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     exact widen_clock.
   Qed.
   (** Evaluation joins the values of the alternatives from bottom. *)
-  Lemma F7_eval : forall e d,
+  Lemma eval_def : forall e d,
     eval e d = fold_left (fun a s => V.join a (S.eval e s)) (proj1_sig d) V.bot.
   Proof.
     reflexivity.
   Qed.
   (** Evaluation charges each alternative's evaluation and the value joins. *)
-  Lemma T2_eval : forall e d, (T_eval e d <= k_disjunction *
+  Lemma T_eval_split : forall e d, (T_eval e d <= k_disjunction *
     (fold_right N.add 0%N (map (fun s => S.T_eval e s + 1) (proj1_sig d)) +
      eval_joins e (proj1_sig d) + 1))%N.
   Proof.
     intros e d; rewrite eval_clock; pose proof (proj2 coefficients_positive); nia.
   Qed.
   (** The value joins of a capped list charge the sizes of the evaluated values. *)
-  Lemma T3_eval_joins : forall e xs, length xs <= C.k ->
+  Lemma eval_joins_le : forall e xs, length xs <= C.k ->
     (eval_joins e xs <= k_disjunction * N.of_nat (fold_right Nat.add 0%nat
       (map (fun s => (V.size (S.eval e s) + 1)%nat) xs) + 1))%N.
   Proof.

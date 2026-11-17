@@ -1789,7 +1789,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Inclusion is linear in the combined environment sizes. *)
-  Lemma leb_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma leb_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_leb (fst ab) (snd ab)).
   Proof.
@@ -1800,7 +1800,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Join is linear in the combined environment sizes. *)
-  Lemma join_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma join_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_join (fst ab) (snd ab)).
   Proof.
@@ -1811,7 +1811,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Widening charges environment sizes and the parameter work of each binding. *)
-  Lemma widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+  Lemma widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
     (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
     (fun '(p, a, b) => T_widen p a b).
   Proof.
@@ -1823,7 +1823,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assignment is linear in its annotation and insertion work. *)
-  Lemma assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+  Lemma assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
     (fun '(x, e, s) => N.of_nat (assign_work x e s))
     (fun '(x, e, s) => T_assign x e s).
   Proof.
@@ -1834,7 +1834,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Havoc is linear in its environment and encoded-key work. *)
-  Lemma havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+  Lemma havoc_complexity : bigO (X := X.t * t) (fun _ => True)
     (fun '(x, s) => N.of_nat (havoc_work x s))
     (fun '(x, s) => T_havoc x s).
   Proof.
@@ -1845,7 +1845,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Evaluation is linear in the work of one annotation pass. *)
-  Lemma eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+  Lemma eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
     (fun '(e, s) => N.of_nat (eval_work e s))
     (fun '(e, s) => T_eval e s).
   Proof.
@@ -1856,7 +1856,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Bottom recognition is linear in the environment size. *)
-  Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Lemma is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
   Proof.
     eapply bigO_intro with (c := c_lat). intros a _.
     pose proof (T_is_bot_le a) as Hbound.
@@ -1864,7 +1864,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Narrowing is linear in the combined environment sizes. *)
-  Lemma narrow_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma narrow_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_narrow (fst ab) (snd ab)).
   Proof.
@@ -1874,23 +1874,23 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Hbound. nia.
   Qed.
 
-  Lemma F_wunits_unreached : wunits Unreached = 0.
+  Lemma wunits_unreached_def : wunits Unreached = 0.
   Proof.
     reflexivity.
   Qed.
-  Lemma F_wunits_reached : forall m, wunits (Reached m) = length (M.codes m).
+  Lemma wunits_reached_def : forall m, wunits (Reached m) = length (M.codes m).
   Proof.
     reflexivity.
   Qed.
-  Lemma F_bot : bot = Unreached.
+  Lemma bot_def : bot = Unreached.
   Proof.
     reflexivity.
   Qed.
-  Lemma F_top : top = Reached M.empty.
+  Lemma top_def : top = Reached M.empty.
   Proof.
     reflexivity.
   Qed.
-  Lemma F_join_map : forall a b, join_map a b =
+  Lemma join_map_def : forall a b, join_map a b =
     M.merge (fun x y => match x, y with
       | Some a, Some b => let v := V.join a b in if V.is_bot v then None else Some v
       | _, _ => None
@@ -1898,7 +1898,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Lemma F_join : forall a b, join a b =
+  Lemma join_def : forall a b, join a b =
     match a, b with
     | Unreached, s | s, Unreached => s
     | Reached a, Reached b => Reached (join_map a b)
@@ -1906,7 +1906,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Lemma F_widen : forall p a b, widen p a b =
+  Lemma widen_def : forall p a b, widen p a b =
     if leb b a then a else
     match a, b with
     | Unreached, s | s, Unreached => s
@@ -1918,7 +1918,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Lemma F_narrow : forall a b, narrow a b =
+  Lemma narrow_def : forall a b, narrow a b =
     if is_bot b then b else
     match a, b with
     | Unreached, _ => Unreached
@@ -1933,12 +1933,12 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Lemma F_eval : forall e s, eval e s =
+  Lemma eval_def : forall e s, eval e s =
     match s with Unreached => V.bot | Reached m => root (annotate m e) end.
   Proof.
     reflexivity.
   Qed.
-  Lemma F_assign : forall x e s, assign x e s =
+  Lemma assign_def : forall x e s, assign x e s =
     match s with
     | Unreached => Unreached
     | Reached m => Reached (M.set x (eval e s) m)
@@ -1946,7 +1946,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Lemma F_havoc : forall x s, havoc x s =
+  Lemma havoc_def : forall x s, havoc x s =
     match s with
     | Unreached => Unreached
     | Reached m => Reached (M.set x V.top m)
@@ -1954,12 +1954,12 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Lemma F_refine_leaf : forall q x a m, refine_checked q (ALeaf x a) m =
+  Lemma refine_leaf_def : forall q x a m, refine_checked q (ALeaf x a) m =
     let v := V.meet (read m x) q in (M.set x v m, V.is_bot v).
   Proof.
     reflexivity.
   Qed.
-  Lemma F_refine_node : forall q o a ns m, refine_checked q (ANode o a ns) m =
+  Lemma refine_node_def : forall q o a ns m, refine_checked q (ANode o a ns) m =
     let qs := V.backward o q (map root ns) in
     (fix children ns qs m bad :=
       match ns, qs with
@@ -1971,12 +1971,12 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Lemma F_refine : forall q n m,
+  Lemma refine_def : forall q n m,
     refine q n m = fst (refine_checked q n m).
   Proof.
     reflexivity.
   Qed.
-  Lemma F_assume : forall g es s, assume g es s =
+  Lemma assume_def : forall g es s, assume g es s =
     match s with
     | Unreached => Unreached
     | Reached m =>
@@ -1990,7 +1990,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Lemma F_rsize : forall s g es, rsize s g es = assume_size s g es.
+  Lemma rsize_def : forall s g es, rsize s g es = assume_size s g es.
   Proof.
     reflexivity.
   Qed.
@@ -2006,7 +2006,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     end.
   Definition k_env_refine : N := env_refine_factor.
   (** Annotation records the work of its term. *)
-  Lemma F_ann_work : forall m e, ann_work (annotate m e) = tcost m e.
+  Lemma ann_work_def : forall m e, ann_work (annotate m e) = tcost m e.
   Proof.
     fix IH 2. intros m [x|o es]; [reflexivity|].
     cbn [annotate ann_work tcost]. rewrite !map_map.
@@ -2016,7 +2016,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     now rewrite Hkids.
   Qed.
   (** Annotation keeps the shape of its term. *)
-  Lemma F_ann_size : forall m e, ann_size (annotate m e) = tsize e.
+  Lemma ann_size_def : forall m e, ann_size (annotate m e) = tsize e.
   Proof.
     fix IH 2. intros m [x|o es]; [reflexivity|].
     cbn [annotate ann_size tsize]. rewrite map_map.
@@ -2131,7 +2131,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Checked refinement charges cached transfers, leaf lookups and the requests it meets. *)
-  Lemma T2_refine_checked : forall q n m,
+  Lemma T_refine_checked_le : forall q n m,
     (T_refine_checked q n m <= k_env_refine *
       N.of_nat (ann_work n + ann_size n * (refine_size q n m + 1)))%N.
   Proof.
@@ -2220,12 +2220,12 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       (map (fun nq => ann_work (fst nq)) (combine (map (annotate m) es) qs)) <=
       fold_right Nat.add 0 (map (tcost m) es)).
     { eapply Nat.le_trans; [apply combine_charge|]. rewrite map_map.
-      apply rank_sum_mono. intros e _. rewrite F_ann_work. lia. }
+      apply rank_sum_mono. intros e _. rewrite ann_work_def. lia. }
     assert (Hsize : fold_right Nat.add 0
       (map (fun nq => ann_size (fst nq)) (combine (map (annotate m) es) qs)) <=
       fold_right Nat.add 0 (map tsize es)).
     { eapply Nat.le_trans; [apply combine_charge|]. rewrite map_map.
-      apply rank_sum_mono. intros e _. rewrite F_ann_size. lia. }
+      apply rank_sum_mono. intros e _. rewrite ann_size_def. lia. }
     autorewrite with env_time_nat in Hfold |- *.
     eapply N.le_trans; [exact Hfold|].
     apply N.add_le_mono_r. apply N.mul_le_mono_l.
@@ -2305,7 +2305,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Reached assumptions fit the environment constant after composing their traversals. *)
-  Lemma T1_assume : forall g es m,
+  Lemma T_assume_plan_le : forall g es m,
     (T_assume g es (Reached m) <= c_env * N.of_nat
       (fold_right Nat.add 0%nat (map (tcost m) es) +
         V.gwork g (roots (Reached m) es) +
@@ -2326,7 +2326,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     - change (T_assume g es Unreached) with 1%N.
       pose proof state_annotation_factor as Hfactor. unfold c_env.
       rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. nia.
-    - exact (T1_assume g es m).
+    - exact (T_assume_plan_le g es m).
   Qed.
 
   (** The state contract adds one unit to the stronger environment work bound. *)
@@ -2340,7 +2340,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assumption is linear in its annotation, guard and refinement work. *)
-  Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+  Lemma assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
     (fun '(gd, es, s) => N.of_nat (assume_work gd es s))
     (fun '(gd, es, s) => T_assume gd es s).
   Proof.
@@ -2444,11 +2444,11 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     intros p m Hwf. unfold wrank. now apply env_codes_sum.
   Qed.
-  Lemma F_is_bot_env : forall m, is_bot (Reached m) = M.existsb V.is_bot m.
+  Lemma is_bot_env_def : forall m, is_bot (Reached m) = M.existsb V.is_bot m.
   Proof.
     reflexivity.
   Qed.
-  Lemma F_leb_env : forall a b, leb a b = orb (is_bot a)
+  Lemma leb_env_def : forall a b, leb a b = orb (is_bot a)
     (andb (negb (is_bot b)) (match a, b with
       | Reached ma, Reached mb => M.forall2b (fun x y =>
           V.leb (match x with Some v => v | None => V.top end)
@@ -2486,17 +2486,17 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     reflexivity.
   Qed.
   (** Environment size agrees with its raw stored-value measure. *)
-  Lemma F_size : forall s, size s = esize s.
+  Lemma size_def : forall s, size s = esize s.
   Proof.
     reflexivity.
   Qed.
   (** Environment widening parameters use the value-domain parameter size. *)
-  Lemma F_wsize : forall p, wsize p = V.wsize p.
+  Lemma wsize_def : forall p, wsize p = V.wsize p.
   Proof.
     reflexivity.
   Qed.
   (** Assignment work charges annotation and the current environment. *)
-  Lemma F_assign_work : forall x e s, assign_work x e s =
+  Lemma assign_work_def : forall x e s, assign_work x e s =
     match s with
     | Unreached => tsize e + X.bits x + 1
     | Reached m => tcost m e + esize s + X.bits x + 1
@@ -2505,18 +2505,18 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     reflexivity.
   Qed.
   (** Havoc work charges the environment and the selected key. *)
-  Lemma F_havoc_work : forall x s, havoc_work x s = esize s + X.bits x + 1.
+  Lemma havoc_work_def : forall x s, havoc_work x s = esize s + X.bits x + 1.
   Proof.
     reflexivity.
   Qed.
   (** Evaluation work charges its cached forward pass. *)
-  Lemma F_eval_work : forall e s, eval_work e s =
+  Lemma eval_work_def : forall e s, eval_work e s =
     match s with Unreached => tsize e + 1 | Reached m => tcost m e + 1 end.
   Proof.
     reflexivity.
   Qed.
   (** Assumption work charges the forward pass, guard and checked refinement. *)
-  Lemma F_assume_work : forall g es s, assume_work g es s =
+  Lemma assume_work_def : forall g es s, assume_work g es s =
     fold_right Nat.add 0 (map (tcost_s s) es) + V.gwork g (roots s es) +
       fold_right Nat.add 0 (map tsize es) * (rsize s g es + 1) + 1.
   Proof.

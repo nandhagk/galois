@@ -4524,14 +4524,14 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   (** Insertion follows its named state walk. *)
-  Lemma F_insert_steps : forall r ix, inv ix ->
+  Lemma insert_def : forall r ix, inv ix ->
     insert r ix = insert_finish r ix (fold_left insert_step_st r (start ix)).
   Proof.
     intros r ix Hvalid. apply insert_agrees. exact (proj1 (proj2 (proj2 Hvalid))).
   Qed.
 
   (** Removal follows its named state walk. *)
-  Lemma F_remove_steps : forall r ix, inv ix ->
+  Lemma remove_def : forall r ix, inv ix ->
     remove r ix = remove_finish r ix (fold_left remove_step_st r (start ix)).
   Proof.
     intros r ix _. apply remove_agrees.
@@ -4588,7 +4588,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   (** Insertion is linear in the tuple length and the stored bit width. *)
-  Lemma insert_bigO : bigO
+  Lemma insert_complexity : bigO
     (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
     (fun x => N.of_nat ((length (snd (fst x)) + 1) *
       (width (snd x) (snd (fst x)) + 1)))
@@ -4601,7 +4601,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   (** Removal is linear in the tuple length and the stored bit width. *)
-  Lemma remove_bigO : bigO
+  Lemma remove_complexity : bigO
     (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
     (fun x => N.of_nat ((length (snd (fst x)) + 1) *
       (width (snd x) (snd (fst x)) + 1)))
@@ -4614,7 +4614,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   (** Child lookup is linear in the bit width of one edge. *)
-  Lemma child_bigO : bigO (fun _ => True)
+  Lemma child_complexity : bigO (fun _ => True)
     (fun x : t * positive * cell V.t =>
       N.of_nat (width (fst (fst x)) [snd x] + 1))
     (fun x => T_child (fst (fst x)) (snd (fst x)) (snd x)).
@@ -4625,7 +4625,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   (** Child enumeration is linear in the degree and the bit width of a node. *)
-  Lemma children_bigO : bigO
+  Lemma children_complexity : bigO
     (fun x : nat * t * positive => wf (fst (fst x)) (snd (fst x)))
     (fun x => N.of_nat ((N.to_nat (degree (snd (fst x)) (snd x)) + 1) *
       (width (snd (fst x)) [] + 1)))
@@ -4638,7 +4638,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   (** Degree lookup is linear in the bit width of a node. *)
-  Lemma degree_bigO : bigO (fun _ => True)
+  Lemma degree_complexity : bigO (fun _ => True)
     (fun x : t * positive => N.of_nat (width (fst x) [] + 1))
     (fun x => T_degree (fst x) (snd x)).
   Proof.

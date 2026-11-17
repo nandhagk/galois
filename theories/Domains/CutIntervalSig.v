@@ -145,7 +145,7 @@ Module Type CUT_INTERVAL_TIME (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   (** Each finite side contributes at most one plus the threshold count. *)
   Parameter rank_bound : forall q a, wrank q a <= 2 * (length (T.vals q) + 1).
   (** Forward transfer has the published operator-work class. *)
-  Parameter forward_bigO : (bigO (fun _ => True)
+  Parameter forward_complexity : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
 End CUT_INTERVAL_TIME.
@@ -200,44 +200,44 @@ Module Type CUT_INTERVAL_PLAN (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     (T : THRESHOLDS_T) (R : INTERVAL_ALL L T) (RL : CUT_RAW_LINK L T R)
     (Import D : CUT_INTERVAL_T C L T).
   (** Concrete membership uses the projected inclusive interval. *)
-  Parameter F_gamma : forall a z, gamma a z <-> in_cut a z.
+  Parameter gamma_def : forall a z, gamma a z <-> in_cut a z.
   (** Inclusion compares normalized bounded projections directly. *)
-  Parameter F_leb : forall a b, leb a b = R.leb (cut_raw a) (cut_raw b).
+  Parameter leb_def : forall a b, leb a b = R.leb (cut_raw a) (cut_raw b).
   (** Bottom has the normalized empty representation. *)
-  Parameter F_bot : cut_raw bot = IBot.
+  Parameter bot_def : cut_raw bot = IBot.
   (** Top has two infinite endpoints. *)
-  Parameter F_top : cut_raw top = I NegInf PosInf.
+  Parameter top_def : cut_raw top = I NegInf PosInf.
   (** Bottom recognition agrees with the raw domain. *)
-  Parameter F_is_bot : forall a, is_bot a = R.is_bot (cut_raw a).
+  Parameter is_bot_def : forall a, is_bot a = R.is_bot (cut_raw a).
   (** Joining cuts the raw join before it enters the bounded carrier. *)
-  Parameter F_join : forall a b,
+  Parameter join_def : forall a b,
     cut_raw (join a b) = cut_interval C.bits (R.join (cut_raw a) (cut_raw b)).
   (** Meeting cuts the normalized raw intersection. *)
-  Parameter F_meet : forall a b,
+  Parameter meet_def : forall a b,
     cut_raw (meet a b) = cut_interval C.bits (R.meet (cut_raw a) (cut_raw b)).
   (** Every threshold parameter is accepted and its result is cut outward. *)
-  Parameter F_widen : forall q a b,
+  Parameter widen_def : forall q a b,
     cut_raw (widen q a b) = cut_interval C.bits (R.widen q (cut_raw a) (cut_raw b)).
   (** Narrowing cuts the raw narrowed result. *)
-  Parameter F_narrow : forall a b,
+  Parameter narrow_def : forall a b,
     cut_raw (narrow a b) = cut_interval C.bits (R.narrow (cut_raw a) (cut_raw b)).
   (** Forward transfer cuts every raw result, including constants and shifts. *)
-  Parameter F_forward : forall o xs,
+  Parameter forward_def : forall o xs,
     cut_raw (forward o xs) = cut_interval C.bits (R.forward o (map cut_raw xs)).
   (** Backward transfer cuts each result in its original operand position. *)
-  Parameter F_backward : forall o r xs,
+  Parameter backward_def : forall o r xs,
     map cut_raw (backward o r xs) =
       map (fun yx => cut_within C.bits (snd yx) (fst yx))
         (combine (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs)).
   (** Guard refinement cuts each result within its original operand. *)
-  Parameter F_guard : forall g xs,
+  Parameter guard_def : forall g xs,
     map cut_raw (guard g xs) =
       map (fun yx => cut_within C.bits (snd yx) (fst yx))
         (combine (R.guard g (map cut_raw xs)) (map cut_raw xs)).
   (** Widening rank counts thresholds beyond the retained finite endpoints. *)
-  Parameter F_rank : forall q a, wrank q a = R.interval_wrank q (cut_raw a).
+  Parameter rank_def : forall q a, wrank q a = R.interval_wrank q (cut_raw a).
   (** Normalization and outward cutoff cannot increase the raw threshold rank. *)
-  Parameter F_cut_rank : forall q a,
+  Parameter cut_rank_le : forall q a,
     R.interval_wrank q (cut_interval C.bits a) <= R.interval_wrank q a.
   Parameter k_cut : N.
   (** The total raw helper clock includes all endpoint inspections. *)

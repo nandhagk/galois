@@ -1275,7 +1275,7 @@ Module BlockCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     unfold PosKeyT.bits, PosKeyT.encode, PosKeyCode.encode; PTrieT.trie_get_le; nia.
   Qed.
   (** Edge enumeration is linear in its output. *)
-  Lemma edges_bigO : bigO (fun _ : Q.t => True)
+  Lemma edges_complexity : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (edges p))) T_edges.
   Proof.
     apply bigO_intro with (c := c_cfg). intros p _.
@@ -1283,7 +1283,7 @@ Module BlockCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Entry enumeration is linear in its output. *)
-  Lemma entries_bigO : bigO (fun _ : Q.t => True)
+  Lemma entries_complexity : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (entries p))) T_entries.
   Proof.
     apply bigO_intro with (c := c_cfg). intros p _.
@@ -1291,7 +1291,7 @@ Module BlockCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Outgoing lookup is linear in the node key and returned edges. *)
-  Lemma out_bigO : bigO (X := Q.t * PosKeyT.t) (fun _ => True)
+  Lemma out_complexity : bigO (X := Q.t * PosKeyT.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (PosKeyT.bits n + length (out p n))) (fun '(p, n) => T_out p n).
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
@@ -1299,7 +1299,7 @@ Module BlockCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Incoming lookup is linear in the node key and returned edges. *)
-  Lemma inc_bigO : bigO (X := Q.t * PosKeyT.t) (fun _ => True)
+  Lemma inc_complexity : bigO (X := Q.t * PosKeyT.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (PosKeyT.bits n + length (inc p n))) (fun '(p, n) => T_inc p n).
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
@@ -1307,7 +1307,7 @@ Module BlockCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Node enumeration is linear in its output. *)
-  Lemma nodes_bigO : bigO (fun _ : Q.t => True)
+  Lemma nodes_complexity : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (nodes p))) T_nodes.
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros p _.
@@ -1440,7 +1440,7 @@ Module PointCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite !Nat2N.inj_add in *; nia.
   Qed.
   (** Edge enumeration is linear in its output. *)
-  Lemma edges_bigO : bigO (fun _ : Q.t => True)
+  Lemma edges_complexity : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (edges p))) T_edges.
   Proof.
     apply bigO_intro with (c := c_cfg). intros p _.
@@ -1448,7 +1448,7 @@ Module PointCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Entry enumeration is linear in its output. *)
-  Lemma entries_bigO : bigO (fun _ : Q.t => True)
+  Lemma entries_complexity : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (entries p))) T_entries.
   Proof.
     apply bigO_intro with (c := c_cfg). intros p _.
@@ -1456,7 +1456,7 @@ Module PointCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Outgoing lookup is linear in the node key and returned edges. *)
-  Lemma out_bigO : bigO (X := Q.t * PointKey.t) (fun _ => True)
+  Lemma out_complexity : bigO (X := Q.t * PointKey.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (PointKey.bits n + length (out p n))) (fun '(p, n) => T_out p n).
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
@@ -1464,7 +1464,7 @@ Module PointCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Incoming lookup is linear in the node key and returned edges. *)
-  Lemma inc_bigO : bigO (X := Q.t * PointKey.t) (fun _ => True)
+  Lemma inc_complexity : bigO (X := Q.t * PointKey.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (PointKey.bits n + length (inc p n))) (fun '(p, n) => T_inc p n).
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
@@ -1472,7 +1472,7 @@ Module PointCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Node enumeration is linear in its output. *)
-  Lemma nodes_bigO : bigO (fun _ : Q.t => True)
+  Lemma nodes_complexity : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (nodes p))) T_nodes.
   Proof.
     apply bigO_intro with (c := c_cfg_adj). intros p _.
@@ -4281,7 +4281,7 @@ Module PrepareT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     time_unfold T_prepare. lia.
   Qed.
   (** The concrete preparation clock has the published asymptotic bound. *)
-  Lemma prepare_bigO : bigO (fun _ : func positive O.K O.G => True)
+  Lemma prepare_complexity : bigO (fun _ : func positive O.K O.G => True)
     (fun p => N.of_nat ((function_size p + 1) * (function_width p + 1))) T_prepare.
   Proof.
     unfold bigO. exists c_prepare. intros p Hdomain.

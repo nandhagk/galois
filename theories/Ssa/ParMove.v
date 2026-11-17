@@ -272,7 +272,7 @@ Proof.
 Qed.
 
 (** Symbolic names carry all information needed for execution in an arbitrary environment. *)
-Lemma symbolic_transport par sq x :
+Lemma symbolic_transport_aux par sq x :
   exec_seq sq (@Some positive) x = exec_par par (@Some positive) x ->
   forall A (env : positive -> option A), exec_seq sq env x = exec_par par env x.
 Proof.
@@ -756,7 +756,7 @@ Module ParMove <: PARMOVE.
   Qed.
 
   (** Checking all written destinations suffices for global symbolic agreement. *)
-  Lemma check_moves_symbolic par tmp sq : check_moves par tmp sq = true ->
+  Lemma check_moves_symbolic_aux par tmp sq : check_moves par tmp sq = true ->
     forall x, x <> tmp -> exec_seq sq (@Some positive) x = exec_par par (@Some positive) x.
   Proof.
     unfold check_moves. rewrite Bool.andb_true_iff. intros [Hpar Hseq] x Htmp.
@@ -777,7 +777,7 @@ Module ParMove <: PARMOVE.
       x <> tmp -> exec_seq sq env x = exec_par par env x.
   Proof.
     intros par tmp sq _ _ Hcheck A env x Htmp.
-    apply symbolic_transport. exact (check_moves_symbolic par tmp sq Hcheck x Htmp).
+    apply symbolic_transport_aux. exact (check_moves_symbolic_aux par tmp sq Hcheck x Htmp).
   Qed.
   Lemma seq_length : forall par tmp, length (seq par tmp) <= 2 * length par.
   Proof.
@@ -813,32 +813,32 @@ Module ParMoveT <: PARMOVE_ALL.
   Definition k_symbolic : N := 128 * (PTrieT.c_trie + 1).
   Definition k_cycle : N := 4096 * (PTrieT.c_trie + 1).
 
-  Lemma F0_cycle_search : forall par,
+  Lemma cycle_search_spec : forall par,
     NoDup (cycle_search par) /\ forall x, In x (cycle_search par) -> In x (map fst par).
   Proof.
     intro par. pose proof (move_resolve_cycles_known par 1%positive) as Hcycles.
     exact (conj (proj1 Hcycles) (proj1 (proj2 Hcycles))).
   Qed.
   Definition relevant (par sq : moves) := map fst par ++ map snd par ++ map fst sq ++ map snd sq.
-  Lemma F1_symbolic_all : forall sq x,
+  Lemma symbolic_all_spec : forall sq x,
     exec_seq sq (@Some positive) x =
       match trie_get x (symbolic_all sq) with Some y => Some y | None => Some x end.
   Proof.
     intros sq x. rewrite symbolic_all_correct. unfold move_lookup.
     destruct (trie_get x (symbolic_all sq)); reflexivity.
   Qed.
-  Lemma F1_symbolic : forall sq x, symbolic sq x = exec_seq sq (@Some positive) x.
+  Lemma symbolic_def : forall sq x, symbolic sq x = exec_seq sq (@Some positive) x.
   Proof.
     intros sq x. symmetry. apply symbolic_all_correct.
   Qed.
-  Lemma F2_check_symbolic : forall par tmp sq, check_moves par tmp sq = true ->
+  Lemma check_moves_symbolic : forall par tmp sq, check_moves par tmp sq = true ->
     forall x, In x (relevant par sq) -> x <> tmp ->
       symbolic sq x = exec_par par (@Some positive) x.
   Proof.
-    intros par tmp sq Hcheck x _ Htmp. rewrite F1_symbolic.
-    exact (check_moves_symbolic par tmp sq Hcheck x Htmp).
+    intros par tmp sq Hcheck x _ Htmp. rewrite symbolic_def.
+    exact (check_moves_symbolic_aux par tmp sq Hcheck x Htmp).
   Qed.
-  Lemma F3_unaffected : forall par sq x, ~ In x (relevant par sq) ->
+  Lemma irrelevant_vars_unaffected : forall par sq x, ~ In x (relevant par sq) ->
     exec_seq sq (@Some positive) x = Some x /\ exec_par par (@Some positive) x = Some x.
   Proof.
     intros par sq x Houtside. split.
@@ -848,11 +848,11 @@ Module ParMoveT <: PARMOVE_ALL.
     - apply exec_par_unwritten. intro Hin. apply Houtside.
       unfold relevant. apply in_or_app. now left.
   Qed.
-  Lemma F4_symbolic_transport : forall par sq x,
+  Lemma symbolic_transport : forall par sq x,
     exec_seq sq (@Some positive) x = exec_par par (@Some positive) x ->
     forall A (env : positive -> option A), exec_seq sq env x = exec_par par env x.
   Proof.
-    exact symbolic_transport.
+    exact symbolic_transport_aux.
   Qed.
   Lemma symbolic_all_clock_bound w sq : moves_width w sq ->
     (T_symbolic_all sq <=
@@ -933,7 +933,7 @@ Module ParMoveT <: PARMOVE_ALL.
   Qed.
 
   (** Sequentialisation is linear in the moves times the identifier width. *)
-  Lemma seq_bigO : bigO (X := moves * positive) (fun _ => True)
+  Lemma seq_complexity : bigO (X := moves * positive) (fun _ => True)
     (fun '(par, _) => N.of_nat ((length par + 1) * (bits_of par + 1)))
     (fun '(par, tmp) => T_seq par tmp).
   Proof.
@@ -944,7 +944,7 @@ Module ParMoveT <: PARMOVE_ALL.
   Qed.
 
   (** Checking is linear in both sequences times the identifier width. *)
-  Lemma check_moves_bigO : bigO (X := moves * positive * moves) (fun _ => True)
+  Lemma check_moves_complexity : bigO (X := moves * positive * moves) (fun _ => True)
     (fun '(par, _, sq) => N.of_nat ((length par + length sq + 1) * (bits_of (par ++ sq) + 1)))
     (fun '(par, tmp, sq) => T_check_moves par tmp sq).
   Proof.
@@ -955,7 +955,7 @@ Module ParMoveT <: PARMOVE_ALL.
   Qed.
 
   (** Cycle discovery uses the same bounded indexed search as move emission. *)
-  Lemma T0_cycle_search : forall par,
+  Lemma T_cycle_search_le : forall par,
     (T_cycle_search par <= k_cycle * N.of_nat (length par + 1) *
       N.of_nat (bits_of par + 1))%N.
   Proof.
@@ -963,7 +963,7 @@ Module ParMoveT <: PARMOVE_ALL.
   Qed.
 
   (** The symbolic table pass pays once for each move at the sequence width. *)
-  Lemma T1_symbolic_all : forall sq,
+  Lemma T_symbolic_all_le : forall sq,
     (T_symbolic_all sq <= k_symbolic * N.of_nat (length sq + 1) *
       N.of_nat (bits_of sq + 1))%N.
   Proof.
@@ -972,7 +972,7 @@ Module ParMoveT <: PARMOVE_ALL.
   Qed.
 
   (** The direct producer bound also supplies the cycle-search decomposition. *)
-  Lemma T1_seq : forall par tmp,
+  Lemma T_seq_split : forall par tmp,
     (T_seq par tmp <= T_cycle_search par + k_cycle *
       N.of_nat (length par + 1) * N.of_nat (bits_of par + 1))%N.
   Proof.
@@ -980,7 +980,7 @@ Module ParMoveT <: PARMOVE_ALL.
   Qed.
 
   (** After symbolic execution, two destination passes and one parallel table suffice. *)
-  Lemma T2_check : forall par tmp sq,
+  Lemma T_check_moves_split : forall par tmp sq,
     (T_check_moves par tmp sq <= T_symbolic_all sq + k_symbolic *
       N.of_nat (length par + length sq + 1) * N.of_nat (bits_of (par ++ sq) + 1))%N.
   Proof.

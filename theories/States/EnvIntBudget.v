@@ -56,21 +56,21 @@ Module EnvIntBudget (X : KEY_T) (M : MAP_T X) (C : INTERVAL_CUTOFF)
   (** Bottom satisfies the scoped environment invariant. *)
   Lemma inv_bot : forall p, inv p E.bot.
   Proof.
-    intro p. rewrite E.F_bot. constructor.
+    intro p. rewrite E.bot_def. constructor.
   Qed.
 
   (** Joining scoped environments preserves the invariant. *)
   Lemma inv_join : forall p a b, inv p a -> inv p b -> inv p (E.join a b).
   Proof.
-    intros p a b Ha Hb. rewrite E.F_join.
+    intros p a b Ha Hb. rewrite E.join_def.
     destruct a as [|ma], b as [|mb]; try assumption.
-    rewrite E.F_join_map. apply inv_merge; [exact Ha|exact Hb|reflexivity].
+    rewrite E.join_map_def. apply inv_merge; [exact Ha|exact Hb|reflexivity].
   Qed.
 
   (** Narrowing scoped environments preserves the invariant. *)
   Lemma inv_narrow : forall p a b, inv p a -> inv p b -> inv p (E.narrow a b).
   Proof.
-    intros p a b Ha Hb. rewrite E.F_narrow. destruct (E.is_bot b); [exact Hb|].
+    intros p a b Ha Hb. rewrite E.narrow_def. destruct (E.is_bot b); [exact Hb|].
     destruct a as [|ma], b as [|mb]; try assumption.
     apply inv_merge; [exact Ha|exact Hb|reflexivity].
   Qed.
@@ -78,7 +78,7 @@ Module EnvIntBudget (X : KEY_T) (M : MAP_T X) (C : INTERVAL_CUTOFF)
   (** Widening scoped environments preserves the invariant. *)
   Lemma inv_widen : forall p w a b, inv p a -> inv p b -> inv p (E.widen w a b).
   Proof.
-    intros p w a b Ha Hb. rewrite E.F_widen. destruct (E.leb b a); [exact Ha|].
+    intros p w a b Ha Hb. rewrite E.widen_def. destruct (E.leb b a); [exact Ha|].
     destruct a as [|ma], b as [|mb]; try assumption.
     apply inv_merge; [exact Ha|exact Hb|reflexivity].
   Qed.
@@ -98,7 +98,7 @@ Module EnvIntBudget (X : KEY_T) (M : MAP_T X) (C : INTERVAL_CUTOFF)
   (** The empty reached map stores only declared variables. *)
   Lemma inv_top : forall p, inv p E.top.
   Proof.
-    intro p. rewrite E.F_top. apply inv_of_get; [apply M.wf_empty|].
+    intro p. rewrite E.top_def. apply inv_of_get; [apply M.wf_empty|].
     intros x a Hget. rewrite M.get_empty in Hget. discriminate.
   Qed.
 
@@ -117,10 +117,10 @@ Module EnvIntBudget (X : KEY_T) (M : MAP_T X) (C : INTERVAL_CUTOFF)
     inv p (Reached (fst (E.refine_checked q (E.annotate cached e) current))).
   Proof.
     intros p e. induction e as [x|o es IH]; intros cached current q Hscope Hcurrent.
-    - rewrite E.annotate_leaf, E.F_refine_leaf. cbn [fst].
+    - rewrite E.annotate_leaf, E.refine_leaf_def. cbn [fst].
       apply inv_set; [exact Hcurrent|exact Hscope].
     - pose proof (term_in_children p o es Hscope) as Hchildren.
-      rewrite E.annotate_node, E.F_refine_node, map_map.
+      rewrite E.annotate_node, E.refine_node_def, map_map.
       remember (V.backward o q (map (fun e => E.root (E.annotate cached e)) es))
         as requests.
       clear Heqrequests Hscope. revert IH current Hcurrent requests.
@@ -137,7 +137,7 @@ Module EnvIntBudget (X : KEY_T) (M : MAP_T X) (C : INTERVAL_CUTOFF)
   Lemma inv_assign : forall p x e s, inv p s -> In x (P.variables p) ->
     inv p (E.assign x e s).
   Proof.
-    intros p x e [|m] Hinv Hdeclared; rewrite E.F_assign; [constructor|].
+    intros p x e [|m] Hinv Hdeclared; rewrite E.assign_def; [constructor|].
     now apply inv_set.
   Qed.
 
@@ -145,7 +145,7 @@ Module EnvIntBudget (X : KEY_T) (M : MAP_T X) (C : INTERVAL_CUTOFF)
   Lemma inv_havoc : forall p x s, inv p s -> In x (P.variables p) ->
     inv p (E.havoc x s).
   Proof.
-    intros p x [|m] Hinv Hdeclared; rewrite E.F_havoc; [constructor|].
+    intros p x [|m] Hinv Hdeclared; rewrite E.havoc_def; [constructor|].
     now apply inv_set.
   Qed.
 
@@ -169,7 +169,7 @@ Module EnvIntBudget (X : KEY_T) (M : MAP_T X) (C : INTERVAL_CUTOFF)
   Lemma inv_assume : forall p g es s, inv p s ->
     Forall (term_in (P.variables p)) es -> inv p (E.assume g es s).
   Proof.
-    intros p g es [|m] Hinv Hscope; rewrite E.F_assume; [constructor|].
+    intros p g es [|m] Hinv Hscope; rewrite E.assume_def; [constructor|].
     cbn iota zeta.
     pose proof (refine_fold_inv p m es (V.guard g (map E.root (map (E.annotate m) es)))
       m false Hscope Hinv) as Hrefined.
@@ -353,8 +353,8 @@ Module EnvIntBudget (X : KEY_T) (M : MAP_T X) (C : INTERVAL_CUTOFF)
   Lemma wunits_le : forall p a, inv p a -> E.wunits a <= wunits p.
   Proof.
     intros p [|m] Hinv.
-    - rewrite E.F_wunits_unreached. lia.
-    - rewrite E.F_wunits_reached. unfold wunits. destruct Hinv as [Hwf Hsupport].
+    - rewrite E.wunits_unreached_def. lia.
+    - rewrite E.wunits_reached_def. unfold wunits. destruct Hinv as [Hwf Hsupport].
       pose proof (Permutation_length (budget_codes_elements m Hwf)) as Hlength.
       rewrite length_map in Hlength. rewrite Hlength.
       rewrite <- (length_map fst (M.elements m)). apply NoDup_incl_length.

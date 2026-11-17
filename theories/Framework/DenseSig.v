@@ -147,20 +147,20 @@ Module Type DENSE_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
       (List.map N.bits (C.entries p ++
         flat_map (fun e => C.src p e :: C.dst p e :: nil) (C.edges p))).
   (** Listing the rows is linear in their number. *)
-  Parameter rows_bigO : bigO (X := prog) (fun p => wf p)
+  Parameter rows_complexity : bigO (X := prog) (fun p => wf p)
     (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
   (** Starting a row is linear in the row budget at the empty value. *)
-  Parameter start_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter start_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
   (** Listing the dependencies of a row is linear in their number times the key width. *)
-  Parameter deps_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter deps_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_deps p r).
   (** The target of a listed row fits the row budget at the empty value. *)
-  Parameter target_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter target_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
   (** Listing the sides of a row is linear in their number times the key width. *)
-  Parameter sides_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter sides_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_sides p r).
 End DENSE_TIME.

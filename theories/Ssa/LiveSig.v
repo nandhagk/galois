@@ -86,7 +86,7 @@ Module Type LANG_PREPARE_TIME (O : OPS) (Q : TYPE) (Import R : LANG_PREPARE_OPS 
     (T_prepare p <= c_prepare * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
   (** Preparation has the published linear bit-cost bound. *)
-  Parameter prepare_bigO : bigO (fun _ : func positive O.K O.G => True)
+  Parameter prepare_complexity : bigO (fun _ : func positive O.K O.G => True)
     (fun p => N.of_nat ((function_size p + 1) * (function_width p + 1))) T_prepare.
 End LANG_PREPARE_TIME.
 
@@ -190,7 +190,7 @@ Module Type LIVE_TIME (O : OPS)
     (T_live_in p <= c_live * N.of_nat (function_size p + live_size p + 1) *
       N.of_nat (function_width p + 1))%N.
   (** The producer has the published output-sensitive bit-cost bound. *)
-  Parameter live_in_bigO : bigO (fun _ : P.t => True)
+  Parameter live_in_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
     T_live_in.
 End LIVE_TIME.
@@ -225,33 +225,33 @@ Module Type LIVE_PLAN (O : OPS)
   Definition searched p x :=
     explore (R.prepare p) (use_index (R.prepare p)) (kill_index (R.prepare p)) x.
   (** Indexed use points of a variable are distinct charged live pairs. *)
-  Parameter F0_use_index : forall p x,
+  Parameter use_index_spec : forall p x,
     NoDup (index_row (use_index (R.prepare p)) x) /\
     forall n, In n (index_row (use_index (R.prepare p)) x) -> In (n, x) (live_region p).
   (** The kill index answers, for a variable and a listed edge, whether the edge defines it. *)
-  Parameter F0b_kill_index : forall p x e, In e (C.edges (R.prepare p)) ->
+  Parameter kill_index_spec : forall p x e, In e (C.edges (R.prepare p)) ->
     ((exists m, trie_get x (kill_index (R.prepare p)) = Some m /\
       trie_get (E.encode e) m = Some tt) <-> In x (U.defs (R.prepare p) e)).
   (** Each per-variable search visits a point at most once. *)
-  Parameter F1_explore_nodup : forall p x, NoDup (searched p x).
+  Parameter searched_nodup : forall p x, NoDup (searched p x).
   (** Every visited search point belongs to its charged semantic region. *)
-  Parameter F2_explore_region : forall p x n,
+  Parameter searched_region : forall p x n,
     In n (searched p x) -> In (n, x) (live_region p).
   (** Deduplicated variables partition the total live-incidence budget. *)
-  Parameter F3_partition : forall p,
+  Parameter live_size_partition : forall p,
     fold_right (fun x n => variable_work p x + n) 0 (U.universe (R.prepare p)) =
       live_size p.
   (** Indexing reads each variable occurrence once at the syntax width. *)
-  Parameter T0_use_index : forall p,
+  Parameter T_use_index_le : forall p,
     (T_use_index (R.prepare p) <= k_index * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
   (** The kill index reads each definition occurrence once at the syntax width. *)
-  Parameter T0_kill_index : forall p,
+  Parameter T_kill_index_le : forall p,
     (T_kill_index (R.prepare p) <= k_index * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
   (** The driver prepares once, builds both indexes, searches each variable and groups
       rows. *)
-  Parameter T2_rows : forall p,
+  Parameter T_live_in_split : forall p,
     (T_live_in p <= R.T_prepare p +
       k_rows * N.of_nat (function_size p + live_size p + 1) *
         N.of_nat (function_width p + 1) + T_use_index (R.prepare p) +

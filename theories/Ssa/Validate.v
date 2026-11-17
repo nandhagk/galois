@@ -4966,7 +4966,7 @@ Module ValidateT (O : OPS)
     apply N.mul_le_mono_r; apply N.mul_le_mono_r; unfold c_val; apply N.le_add_l.
   Qed.
   (** Translation checking has the published certificate-sensitive bit-cost bound. *)
-  Lemma check_bigO : bigO (fun _ : P.t * P.t * cert => True)
+  Lemma check_complexity : bigO (fun _ : P.t * P.t * cert => True)
     (fun '(p, s, c) => N.of_nat ((function_size p + function_size s + cert_size c + 1) *
       (check_width p s c + 1) + op_bits p + 1)) (fun '(p, s, c) => T_check p s c).
   Proof.
@@ -4979,7 +4979,7 @@ Module ValidateT (O : OPS)
     apply N.le_add_r.
   Qed.
   (** SSA checking has the published syntax and dominator bit-cost bound. *)
-  Lemma check_ssa_bigO : bigO (fun _ : P.t => True)
+  Lemma check_ssa_complexity : bigO (fun _ : P.t => True)
     (fun s => ((N.of_nat (function_size s + 1) + dom_bound s) *
       N.of_nat (function_width s + 1))%N) T_check_ssa.
   Proof.
@@ -4997,13 +4997,13 @@ Module ValidateT (O : OPS)
     forall x, In x xs -> exists y, lookup x rho = Some y /\ lookup y ss = lookup x si.
   Definition code_defs (xs : list (positive * O.K * list positive)) :=
     map (fun i => fst (fst i)) xs.
-  Lemma F1_checks : forall p s c, check p s c = true ->
+  Lemma check_parts : forall p s c, check p s c = true ->
     check_entry p s c (tables p s c) = true /\ forall b body,
       In (b, body) (blocks _ _ _ p) -> check_block (tables p s c) b = true.
   Proof.
     exact check_checks.
   Qed.
-  Lemma F2_code_sim : forall ic sc rho rho' live ss si,
+  Lemma check_code_simulates : forall ic sc rho rho' live ss si,
     check_code ic sc rho live = Some rho' -> agrees rho live ss si ->
     match exec_code O.eval sc ss, exec_code O.eval ic si with
     | None, None => True
@@ -5014,7 +5014,7 @@ Module ValidateT (O : OPS)
     intros ic sc rho rho' live ss si Hcheck Hagree.
     exact (check_code_sim ic sc rho live rho' ss si Hcheck Hagree).
   Qed.
-  Lemma F3_edge_sim : forall p s c b target rho ss si sa ia sb ib sx ix choice,
+  Lemma check_edge_simulates : forall p s c b target rho ss si sa ia sb ib sx ix choice,
     check p s c = true -> check_edge (tables p s c) b target rho = true ->
     find_block b (blocks _ _ _ s) = Some sb ->
     find_block b (blocks _ _ _ p) = Some ib ->
@@ -5062,13 +5062,13 @@ Module ValidateT (O : OPS)
     - rewrite val_row_lookup in Hnext; unfold cert_env; rewrite <- Henv; exact Hnext.
     - rewrite Hvalues, Hmap; exact Heq.
   Qed.
-  Lemma F4_block_sim : forall p s c ss si,
+  Lemma block_simulates : forall p s c ss si,
     imp_form p -> check p s c = true -> state_ready p s c ss si ->
     outcome_ready p s c (step O.eval O.test s ss) (step O.eval O.test p si).
   Proof.
     intros p s c ss si _ Hcheck Hready; exact (step_ready p s c ss si Hcheck Hready).
   Qed.
-  Lemma F5_entry_sim : forall p s c ins ss si,
+  Lemma entry_simulates : forall p s c ins ss si,
     imp_form p -> check p s c = true ->
     bind_vars (inputs _ _ _ s) ins [] = Some ss ->
     bind_vars (inputs _ _ _ p) ins [] = Some si ->
@@ -5079,19 +5079,19 @@ Module ValidateT (O : OPS)
     rewrite Hss in Hentered; injection Hentered as Heq; subst entered.
     exact Hready.
   Qed.
-  Lemma F6_input_arity : forall p s c, check p s c = true ->
+  Lemma inputs_arity_eq : forall p s c, check p s c = true ->
     length (inputs _ _ _ s) = length (inputs _ _ _ p).
   Proof.
     exact check_input_arity.
   Qed.
-  Lemma F7_run_sim : forall p s c n ss si,
+  Lemma run_simulates : forall p s c n ss si,
     imp_form p -> check p s c = true -> state_ready p s c ss si ->
     outcome_ready p s c (loop_fuel (step O.eval O.test s) n ss)
       (loop_fuel (step O.eval O.test p) n si).
   Proof.
     intros p s c n ss si _ Hcheck Hready; exact (loop_ready p s c n ss si Hcheck Hready).
   Qed.
-  Lemma F8_dom_checked : forall s, check_ssa s = true ->
+  Lemma check_ssa_dom_checked : forall s, check_ssa s = true ->
     D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) = true.
   Proof.
     intros s Hcheck; rewrite check_ssa_agrees in Hcheck; unfold check_ssa_ref in Hcheck.
@@ -5099,12 +5099,12 @@ Module ValidateT (O : OPS)
     destruct (dom_cert s) as [m order]; cbn [fst snd].
     destruct (D.check (graph s) (entry _ _ _ s) m order); [reflexivity|discriminate].
   Qed.
-  Lemma F9_ssa_wf : forall s, check_ssa s = true -> ssa_wf s.
+  Lemma check_ssa_sound_plan : forall s, check_ssa s = true -> ssa_wf s.
   Proof.
     exact check_ssa_sound.
   Qed.
   (** Graph preparation and certificate work fit the syntax and dominator budget. *)
-  Lemma T1_dom : forall s,
+  Lemma T_dom_phases_le : forall s,
     (T_graph s + T_dom_cert s +
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) <=
       k_ssa * (N.of_nat (function_size s + 1) + dom_bound s) *
@@ -5126,7 +5126,7 @@ Module ValidateT (O : OPS)
   Qed.
   (** Entry checking, with its certificate row-size guard, charges both functions and the
       certificate. *)
-  Lemma T2b_entry : forall p s c,
+  Lemma T_check_entry_le : forall p s c,
     (T_check_entry p s c (tables p s c) <= k_entry *
       N.of_nat (function_size p + function_size s + cert_size c + 1) *
       N.of_nat (check_width p s c + 1))%N.
@@ -5134,7 +5134,7 @@ Module ValidateT (O : OPS)
     intros p s c; unfold k_entry; exact (entry_time p s c).
   Qed.
   (** Code checking indexes its initial renaming and reads both instruction streams once. *)
-  Lemma T2c_code : forall ic sc rho live,
+  Lemma T_check_code_le : forall ic sc rho live,
     (T_check_code ic sc rho live <= k_code *
       N.of_nat (length rho + length live + length ic + length sc +
         fold_right (fun i n => (length (snd i) + n)%nat) 0%nat (ic ++ sc) + 1) *
@@ -5150,7 +5150,7 @@ Module ValidateT (O : OPS)
     - apply N.mul_le_mono_r; unfold k_code, val_block_cost; lia.
   Qed.
   (** Translation checking indexes the certificate, checks the entry and every source block. *)
-  Lemma T2_checks : forall p s c,
+  Lemma T_check_split : forall p s c,
     (T_check p s c <= T_tables p s c +
       k_blocks * N.of_nat (function_size p + 1) * N.of_nat (check_width p s c + 1) +
       T_check_entry p s c (tables p s c) +
@@ -5161,7 +5161,7 @@ Module ValidateT (O : OPS)
   Qed.
   (** After an accepted entry check, the block checks together charge both functions, the
       certificate and the operators. *)
-  Lemma T2a_block : forall p s c,
+  Lemma T_check_blocks_le : forall p s c,
     check_entry p s c (tables p s c) = true ->
     (fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
       (first_blocks (blocks _ _ _ p))) <=
@@ -5178,7 +5178,7 @@ Module ValidateT (O : OPS)
   Qed.
   (** SSA checking adds the syntax scans, and the dominator tree of an accepted certificate,
       to the graph phase. *)
-  Lemma T3_ssa : forall s,
+  Lemma T_check_ssa_split : forall s,
     (T_check_ssa s <= T_graph s + T_dom_cert s +
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
       (if D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s))
@@ -5202,7 +5202,7 @@ Module ValidateT (O : OPS)
     - clearbody budget; unfold k_ssa, ssa_total_coefficient; nia.
   Qed.
   (** The tables retain the first body and certificate row for each identifier. *)
-  Lemma F0_tables : forall p s c b,
+  Lemma tables_spec : forall p s c b,
     trie_get b (source_bodies (tables p s c)) = find_block b (blocks _ _ _ p) /\
     trie_get b (target_bodies (tables p s c)) = find_block b (blocks _ _ _ s) /\
     trie_get b (cert_envs (tables p s c)) = lookup b (fst c) /\
@@ -5211,7 +5211,7 @@ Module ValidateT (O : OPS)
     exact tables_agree.
   Qed.
   (** Building lookup tables scans the functions and certificate once. *)
-  Lemma T0_tables : forall p s c,
+  Lemma T_tables_le : forall p s c,
     (T_tables p s c <= k_blocks *
       N.of_nat (function_size p + function_size s + cert_size c + 1) *
       N.of_nat (check_width p s c + 1))%N.

@@ -2413,7 +2413,7 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   Qed.
 
   (** Accepted inputs admit a satisfying valuation in every merge-closed model. *)
-  Lemma inputs_sat : forall (M : model (V := V.t)) ds rws ans es,
+  Lemma inputs_sat_aux : forall (M : model (V := V.t)) ds rws ans es,
     front_ok ds rws ans es ->
     (forall f m k a b, lookup_kind ds f = Some (OLat m) ->
       lat M f k a -> lat M f k b -> lat M f k (V.merge m a b)) ->
@@ -2752,7 +2752,7 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   Qed.
 
   (** Every returned input class represents its input after the complete ordered input fold. *)
-  Lemma inputs_represented : forall ds es db n e c t, D.wf db ->
+  Lemma inputs_represented_aux : forall ds es db n e c t, D.wf db ->
     view_sorted (lookup_sorts ds) (D.view db) -> Forall (expr_ok ds db) es ->
     nth_error es n = Some e -> nth_error (fst (add_inputs es db)) n = Some c ->
     unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->
@@ -2901,7 +2901,7 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
       exact (loaded_expr_ok p cp ds (E.load p cp) x Hdecls Hplan Hloaded_load Hx). }
     assert (Hclass' : nth_error (fst (add_inputs es (E.load p cp))) n = Some c).
     { now rewrite Hinputs. }
-    pose proof (inputs_represented ds es (E.load p cp) n e c expression Hwf_load
+    pose proof (inputs_represented_aux ds es (E.load p cp) n e c expression Hwf_load
       Hsorted_load Hexprs Hnth Hclass' Hunfold) as Hrep.
     rewrite Hinputs in Hrep. cbn [snd] in Hrep.
     pose proof (E.run_grows p cp lim initial Hplan Hwf Hloaded) as Hgrowth.
@@ -2918,7 +2918,7 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     intros M ds rws ans lim es st db cs [Hrewrites [Hanalyses Hmerge]] Hresult.
     destruct (saturate_execution ds rws ans lim es st db cs Hresult)
       as [initial [Hfront [Hplan [Hwf [Hloaded [Hinputs Hrun]]]]]].
-    destruct (inputs_sat M ds rws ans es Hfront Hmerge) as [nu Hsat].
+    destruct (inputs_sat_aux M ds rws ans es Hfront Hmerge) as [nu Hsat].
     rewrite Hinputs in Hsat. cbn [snd] in Hsat.
     pose proof (C.compile_valid M ds rws ans (proj1 Hfront) Hrewrites Hanalyses Hmerge)
       as Hvalid.
@@ -3015,7 +3015,7 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   Qed.
 
   (** Engine closure realizes every represented instance of a compiled rewrite. *)
-  Lemma closed_represents : forall ds rws ans db rw g tau c l r,
+  Lemma closed_represents_aux : forall ds rws ans db rw g tau c l r,
     D.wf db -> D.canonical db -> (forall f, kind (D.view db) f = lookup_kind ds f) ->
     view_sorted (lookup_sorts ds) (D.view db) ->
     closed V.prim V.merge (C.compile ds rws ans) (D.view db) ->
@@ -3054,7 +3054,7 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     destruct Hfront as [[Hrewrites Hanalyses] Hexprs].
     apply Forall_forall with (x := rw) in Hrewrites; [| exact Hin].
     destruct Hrewrites as [g Hrw].
-    exact (closed_represents ds rws ans db rw g tau c l r Hfinal Hcanonical Hkinds Hsorted
+    exact (closed_represents_aux ds rws ans db rw g tau c l r Hfinal Hcanonical Hkinds Hsorted
       Hclosed Hin Hrw Hleft Hright Hrep Hcond).
   Qed.
 
@@ -3309,7 +3309,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     - apply Nat.le_refl.
   Qed.
 
-  Lemma F1_add_expr_step : forall ds node cells db, D.wf db ->
+  Lemma add_expr_step : forall ds node cells db, D.wf db ->
     view_sorted (lookup_sorts ds) (D.view db) ->
     (forall f, kind (D.view db) f = lookup_kind ds f) ->
     (forall i, In (Id i) cells -> D.allocated db i) ->
@@ -3370,7 +3370,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     destruct (table_get (Id 1%positive) root_index t); exact Hunit.
   Qed.
 
-  Lemma F2_add_expr_wf : forall ds e db, D.wf db -> expr_ok ds db e ->
+  Lemma add_expr_wf : forall ds e db, D.wf db -> expr_ok ds db e ->
     view_sorted (lookup_sorts ds) (D.view db) ->
     D.wf (snd (add_expr e db)) /\
     view_sorted (lookup_sorts ds) (D.view (snd (add_expr e db))) /\
@@ -3388,7 +3388,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     exact (add_expr_unit ds e db Hwf Hexpr Hsorted).
   Qed.
 
-  Lemma F3_represents_den : forall (M : model (V := V.t)) nu db c e,
+  Lemma represents_den_spec : forall (M : model (V := V.t)) nu db c e,
     D.wf db -> sat V.merge M nu (D.view db) -> represents (D.view db) c e ->
     denote M e = den nu c.
   Proof.
@@ -3396,17 +3396,17 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     symmetry. exact (represents_den V.merge M nu (D.view db) c e Hsat Hrep).
   Qed.
 
-  Lemma F4_inputs_sat : forall (M : model (V := V.t)) ds rws ans es,
+  Lemma inputs_sat : forall (M : model (V := V.t)) ds rws ans es,
     front_ok ds rws ans es ->
     (forall f m k a b, lookup_kind ds f = Some (OLat m) ->
       lat M f k a -> lat M f k b -> lat M f k (V.merge m a b)) ->
     let p := C.compile ds rws ans in
     exists nu, sat V.merge M nu (D.view (snd (add_inputs es (E.load p (E.plan p))))).
   Proof.
-    exact inputs_sat.
+    exact inputs_sat_aux.
   Qed.
 
-  Lemma F5_saturate_run : forall ds rws ans lim es out,
+  Lemma saturate_run : forall ds rws ans lim es out,
     saturate ds rws ans lim es = inr out ->
     let p := C.compile ds rws ans in
     let cp := E.plan p in
@@ -3418,7 +3418,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     exact (saturate_execution ds rws ans lim es st db cs Hresult).
   Qed.
 
-  Lemma F6_closed_represents : forall ds rws ans db rw g tau c l r,
+  Lemma closed_represents : forall ds rws ans db rw g tau c l r,
     D.wf db -> D.canonical db -> (forall f, kind (D.view db) f = lookup_kind ds f) ->
     view_sorted (lookup_sorts ds) (D.view db) ->
     closed V.prim V.merge (C.compile ds rws ans) (D.view db) ->
@@ -3427,10 +3427,10 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     represents (D.view db) (Id c) l -> cond_in_db db tau (cond V.t rw) ->
     represents (D.view db) (Id c) r.
   Proof.
-    exact closed_represents.
+    exact closed_represents_aux.
   Qed.
 
-  Lemma F7_add_inputs : forall es db,
+  Lemma add_inputs_spec : forall es db,
     snd (add_inputs es db) = inputs_db es db /\
     length (fst (add_inputs es db)) = length es /\
     (T_add_inputs es db <= k_sat * T_inputs es db)%N.
@@ -3439,22 +3439,22 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     pose proof (T_add_inputs_overhead es db) as Hcost. unfold k_sat. nia.
   Qed.
 
-  Lemma F8_inputs_represented : forall ds es db n e c t, D.wf db ->
+  Lemma inputs_represented : forall ds es db n e c t, D.wf db ->
     view_sorted (lookup_sorts ds) (D.view db) -> Forall (expr_ok ds db) es ->
     nth_error es n = Some e -> nth_error (fst (add_inputs es db)) n = Some c ->
     unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->
     represents (D.view (snd (add_inputs es db))) (Id c) t.
   Proof.
-    exact inputs_represented.
+    exact inputs_represented_aux.
   Qed.
 
-  Lemma F9_canonical_view : forall db, D.wf db -> D.canonical db ->
+  Lemma view_canonical : forall db, D.wf db -> D.canonical db ->
     C.canonical_view (D.view db).
   Proof.
     exact canonical_view_db.
   Qed.
 
-  Lemma T1_saturate_split : forall ds rws ans lim es,
+  Lemma T_saturate_split : forall ds rws ans lim es,
     let p := C.compile ds rws ans in
     let cp := E.plan p in
     (T_saturate ds rws ans lim es <= T_check_front ds rws ans es + k_sat +
@@ -3470,7 +3470,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     unfold k_sat. nia.
   Qed.
 
-  Lemma T2_k_sat : (k_sat <= c_sat)%N.
+  Lemma k_sat_le_c_sat : (k_sat <= c_sat)%N.
   Proof.
     unfold k_sat, c_sat. nia.
   Qed.
@@ -3498,7 +3498,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     apply IH. now apply table_push_valid.
   Qed.
 
-  Lemma F10_add_expr_nodes : forall ds e db,
+  Lemma add_expr_nodes : forall ds e db,
     expr_sorted (lookup_sorts ds) (lookup_kind ds) e ->
     snd (add_expr e db) = snd (add_nodes (expr_nodes V.t e) [] db) /\
     nth_error (fst (add_nodes (expr_nodes V.t e) [] db)) (expr_root V.t e) =
@@ -3906,7 +3906,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
       rewrite N.mul_add_distr_l. lia.
   Qed.
   (** Adding an expression separates node insertion cost from child-index work. *)
-  Lemma T3_add_expr_split : forall e db,
+  Lemma T_add_expr_split : forall e db,
     (T_add_expr e db <= T_add_nodes (expr_nodes V.t e) [] db +
       k_sat * N.of_nat (expr_work e))%N.
   Proof.
@@ -3914,7 +3914,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     apply N.add_le_mono_l. apply N.mul_le_mono_r. unfold k_sat. nia.
   Qed.
   (** Adding a node pays its insertion cost and transfers the database potential. *)
-  Lemma T4_add_node_amort : forall B U node cells db, D.wf db ->
+  Lemma T_add_node_amort : forall B U node cells db, D.wf db ->
     (forall i, In (Id i) cells -> D.allocated db i) ->
     match node with
     | EApp f _ => kind (D.view db) f = Some OId /\ D.slots_fit db f (S (length cells))
@@ -4000,7 +4000,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     intros ds es. induction es as [| e rest IH]; intros db Hwf Hsorted Hexprs;
       cbn [inputs_db]; [apply Nat.le_refl |].
     apply Forall_cons_iff in Hexprs. destruct Hexprs as [Hexpr Hrest].
-    destruct (F2_add_expr_wf ds e db Hwf Hexpr Hsorted)
+    destruct (add_expr_wf ds e db Hwf Hexpr Hsorted)
       as [Hwf' [Hsorted' [Hkind [Hslots [Hallocated [Hids Hunit]]]]]].
     assert (Hrest' : Forall (expr_ok ds (snd (add_expr e db))) rest).
     { eapply Forall_impl; [| exact Hrest]. intros x Hx.
@@ -4030,7 +4030,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
         N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1))%N
         with (1024 * (D.c_db + 1) * q)%N by (unfold q; ring). nia.
     - apply Forall_cons_iff in Hexprs. destruct Hexprs as [Hexpr Hrest].
-      destruct (F2_add_expr_wf ds e db Hwf Hexpr Hsorted)
+      destruct (add_expr_wf ds e db Hwf Hexpr Hsorted)
         as [Hwf' [Hsorted' [Hkind [Hslots [Hallocated [Hids' Hunit']]]]]].
       set (next := snd (add_expr e db)) in *.
       assert (Hrest' : Forall (expr_ok ds next) rest).
@@ -4121,7 +4121,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
       E.run_cost B U p cp lim (inputs_db es db0))%N.
 
   (** Checking is linear in the front-end syntax. *)
-  Lemma check_front_bigO : bigO (fun _ => True)
+  Lemma check_front_complexity : bigO (fun _ => True)
     (fun x : list decl * list (rewrite V.t) * list (rule V.t) * list (fexpr V.t) =>
       let '(ds, rws, ans, es) := x in N.of_nat (front_size ds rws ans es + 1))
     (fun x => let '(ds, rws, ans, es) := x in T_check_front ds rws ans es).
@@ -4140,7 +4140,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
   Qed.
 
   (** Adding an input costs its nodes at the identifier width, and its scaled credit. *)
-  Lemma add_expr_bigO : bigO
+  Lemma add_expr_complexity : bigO
     (fun x : N * nat * list decl * fexpr V.t * D.t =>
       let '(B, U, ds, e, db) := x in
       D.wf db /\ expr_ok ds db e /\ (D.ids (snd (add_expr e db)) <= B)%N /\
@@ -4190,7 +4190,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
 
   (** Saturation of accepted input costs its check, planning, loading, its inputs and its
       run. *)
-  Lemma saturate_bigO : bigO
+  Lemma saturate_complexity : bigO
     (fun x : N * nat * list decl * list (rewrite V.t) * list (rule V.t) * limits *
         list (fexpr V.t) =>
       let '(B, U, ds, rws, ans, lim, es) := x in
@@ -4204,9 +4204,9 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     (fun x => let '(B, U, ds, rws, ans, lim, es) := x in saturate_cost B U ds rws ans lim es)
     (fun x => let '(_, _, ds, rws, ans, lim, es) := x in T_saturate ds rws ans lim es).
   Proof.
-    destruct E.plan_bigO as [c_plan Hplan_cost].
-    destruct E.load_bigO as [c_load Hload_cost].
-    destruct E.run_bigO as [c_run Hrun_cost].
+    destruct E.plan_complexity as [c_plan Hplan_cost].
+    destruct E.load_complexity as [c_load Hload_cost].
+    destruct E.run_complexity as [c_run Hrun_cost].
     apply bigO_intro with
       (c := (c_sat + C.c_compile + c_plan + c_load + c_sat * c_sat + c_run)%N).
     intros [[[[[[B U] ds] rws] ans] lim] es]

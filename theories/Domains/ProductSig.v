@@ -73,14 +73,14 @@ Module Type PRODUCT_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
       fold_right N.add 0%N (map T_normalize
         (combine (A.guard g (map fst xs)) (B.guard g (map snd xs)))) + 1))%N.
   (** Product forward transfer has the published work bound. *)
-  Parameter forward_bigO : (bigO (fun _ => True)
+  Parameter forward_complexity : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat)) (fun ox => T_forward (fst ox) (snd ox)))%N.
   (** Backward transfer has the published work-plus-request class. *)
-  Parameter backward_bigO : (bigO (fun _ => True)
+  Parameter backward_complexity : (bigO (fun _ => True)
     (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
     (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
   (** Guard transfer has the published guard-work class. *)
-  Parameter guard_bigO : (bigO (fun _ => True)
+  Parameter guard_complexity : (bigO (fun _ => True)
     (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
     (fun gx => T_guard (fst gx) (snd gx)))%N.
 End PRODUCT_TIME.
@@ -92,28 +92,28 @@ Module Type PRODUCT_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (Import P : PRODUCT_T L A B).
   Parameter k_product_lists : N.
   (** Product concretization is intersection. *)
-  Parameter F1_gamma : forall a b c, gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
+  Parameter gamma_def : forall a b c, gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
   (** Product inclusion treats recognized bottoms as least. *)
-  Parameter F2_leb : forall a b,
+  Parameter leb_def : forall a b,
     leb a b = orb (is_bot a) (andb (A.leb (fst a) (fst b)) (B.leb (snd a) (snd b))).
   (** Widening retains the previous pair when its candidate is bottom. *)
-  Parameter F3_widen : forall p a b, widen p a b =
+  Parameter widen_def : forall p a b, widen p a b =
     if is_bot b then a
     else (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
   (** Product ranks add the component ranks. *)
-  Parameter F4_wrank : forall p a b,
+  Parameter wrank_def : forall p a b,
     wrank p (a, b) = A.wrank (fst p) a + B.wrank (snd p) b.
   (** Product size adds the component sizes. *)
-  Parameter F5_size : forall a b, size (a, b) = A.size a + B.size b.
+  Parameter size_def : forall a b, size (a, b) = A.size a + B.size b.
   (** Product bottom testing recognizes either component bottom. *)
-  Parameter F6_is_bot : forall a b, is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
+  Parameter is_bot_def : forall a b, is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
   (** Narrowing retains a recognized bottom candidate. *)
-  Parameter F7_narrow : forall a b, narrow a b =
+  Parameter narrow_def : forall a b, narrow a b =
     if is_bot b then b else (A.narrow (fst a) (fst b), B.narrow (snd a) (snd b)).
   (** Product widening units add the component units. *)
-  Parameter F_wunits : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
+  Parameter wunits_def : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
   (** Inclusion charges bottom recognition before comparing the components. *)
-  Parameter T1_leb_components : forall a b, (T_leb a b <= k_product_lists *
+  Parameter T_leb_split : forall a b, (T_leb a b <= k_product_lists *
     (A.T_is_bot (fst a) + B.T_is_bot (snd a) +
       A.T_leb (fst a) (fst b) + B.T_leb (snd a) (snd b) + 1))%N.
 End PRODUCT_PLAN.
@@ -141,14 +141,14 @@ Module Type REDUCED_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (T_red (a, b) <= c_red * N.of_nat (K.rounds + 1) *
       N.of_nat ((A.size a + B.size b + 1)%nat))%N.
   (** Reduced transfer has the published work bound. *)
-  Parameter forward_bigO : (bigO (fun _ => True)
+  Parameter forward_complexity : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat)) (fun ox => T_forward (fst ox) (snd ox)))%N.
   (** Backward transfer has the published work-plus-request class. *)
-  Parameter backward_bigO : (bigO (fun _ => True)
+  Parameter backward_complexity : (bigO (fun _ => True)
     (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
     (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
   (** Guard transfer has the published guard-work class. *)
-  Parameter guard_bigO : (bigO (fun _ => True)
+  Parameter guard_complexity : (bigO (fun _ => True)
     (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
     (fun gx => T_guard (fst gx) (snd gx)))%N.
 End REDUCED_TIME.
@@ -161,30 +161,30 @@ Module Type REDUCED_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (R : VALUE_REDUCER_T L A B) (K : ROUNDS) (Import D : REDUCED_T L A B R K).
   Parameter k_red : N.
   (** Reduction normalizes the configured fixed iteration's recognized bottoms. *)
-  Parameter F1_red_eq : forall x, red x =
+  Parameter red_def : forall x, red x =
     let result := Nat.iter K.rounds R.reduce x in
     if orb (A.is_bot (fst result)) (B.is_bot (snd result))
     then (A.bot, B.bot) else result.
   (** Reduced bottom testing recognizes either component bottom. *)
-  Parameter F_is_bot : forall a b, is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
+  Parameter is_bot_def : forall a b, is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
   (** Reduced inclusion treats recognized bottoms as least. *)
-  Parameter F_leb : forall a b, leb a b =
+  Parameter leb_def : forall a b, leb a b =
     orb (is_bot a) (andb (A.leb (fst a) (fst b)) (B.leb (snd a) (snd b))).
   (** Reduced widening units add the component units. *)
-  Parameter F_wunits : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
+  Parameter wunits_def : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
   (** Product concretization is intersection. *)
-  Parameter F2_gamma : forall a b c, gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
+  Parameter gamma_def : forall a b c, gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
   (** Iterated reduction retains every represented concrete value. *)
-  Parameter F3_red_sound : forall x c, gamma x c -> gamma (red x) c.
+  Parameter red_sound : forall x c, gamma x c -> gamma (red x) c.
   (** Iterated reduction lowers both components. *)
-  Parameter F4_red_lower : forall a b,
+  Parameter red_lower : forall a b,
     A.leb (fst (red (a, b))) a = true /\ B.leb (snd (red (a, b))) b = true.
   (** Widening retains the previous pair when its candidate is bottom. *)
-  Parameter F5_widen : forall p a b, widen p a b =
+  Parameter widen_def : forall p a b, widen p a b =
     if is_bot b then a
     else (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
   (** Iteration time charges reduction at every intermediate value. *)
-  Parameter T1_red_steps : forall x, (T_red x <= k_red *
+  Parameter T_red_split : forall x, (T_red x <= k_red *
     (fold_right N.add 0
       (map (fun n => R.T_reduce (Nat.iter n R.reduce x) + 1) (seq 0 K.rounds)) +
       A.T_is_bot (fst (Nat.iter K.rounds R.reduce x)) +

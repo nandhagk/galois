@@ -1101,7 +1101,7 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
     - lia.
     - apply N.mul_le_mono_r. unfold c_product. pose proof (proj1 core_bounds). lia.
   Qed.
-  Lemma forward_bigO : (bigO (fun _ => True)
+  Lemma forward_complexity : (bigO (fun _ => True)
     (fun ox => N.of_nat (work (fst ox) (snd ox)))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
   Proof.
@@ -1110,7 +1110,7 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
     rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
   Qed.
   (** Backward transfer has the published work-plus-request class. *)
-  Lemma backward_bigO : (bigO (fun _ => True)
+  Lemma backward_complexity : (bigO (fun _ => True)
     (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
     (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
   Proof.
@@ -1119,7 +1119,7 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
     rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
   Qed.
   (** Guard transfer has the published guard-work class. *)
-  Lemma guard_bigO : (bigO (fun _ => True)
+  Lemma guard_complexity : (bigO (fun _ => True)
     (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
     (fun gx => T_guard (fst gx) (snd gx)))%N.
   Proof.
@@ -1129,47 +1129,47 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
   Qed.
 
   Definition k_product_lists : N := 16%N.
-  Lemma F1_gamma : forall a b c,
+  Lemma gamma_def : forall a b c,
     gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
   Proof.
     reflexivity.
   Qed.
-  Lemma F2_leb : forall a b,
+  Lemma leb_def : forall a b,
     leb a b = orb (is_bot a) (andb (A.leb (fst a) (fst b)) (B.leb (snd a) (snd b))).
   Proof.
     reflexivity.
   Qed.
-  Lemma F3_widen : forall p a b,
+  Lemma widen_def : forall p a b,
     widen p a b = if is_bot b then a
       else (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
   Proof.
     reflexivity.
   Qed.
-  Lemma F4_wrank : forall p a b,
+  Lemma wrank_def : forall p a b,
     wrank p (a, b) = A.wrank (fst p) a + B.wrank (snd p) b.
   Proof.
     reflexivity.
   Qed.
-  Lemma F5_size : forall a b, size (a, b) = A.size a + B.size b.
+  Lemma size_def : forall a b, size (a, b) = A.size a + B.size b.
   Proof.
     reflexivity.
   Qed.
-  Lemma F6_is_bot : forall a b,
+  Lemma is_bot_def : forall a b,
     is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
   Proof.
     reflexivity.
   Qed.
-  Lemma F7_narrow : forall a b,
+  Lemma narrow_def : forall a b,
     narrow a b = if is_bot b then b
       else (A.narrow (fst a) (fst b), B.narrow (snd a) (snd b)).
   Proof.
     reflexivity.
   Qed.
-  Lemma F_wunits : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
+  Lemma wunits_def : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
   Proof.
     reflexivity.
   Qed.
-  Lemma T1_leb_components : forall a b,
+  Lemma T_leb_split : forall a b,
     (T_leb a b <= k_product_lists *
       (A.T_is_bot (fst a) + B.T_is_bot (snd a) +
        A.T_leb (fst a) (fst b) + B.T_leb (snd a) (snd b) + 1))%N.

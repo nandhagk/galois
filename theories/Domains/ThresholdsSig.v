@@ -79,15 +79,15 @@ Module Type THRESHOLDS_TIME (Import T : THRESHOLDS).
   Parameter T_below_le : forall t z, (T_below t z <=
     c_thresholds * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + 1)%nat))%N.
   (** Construction has the published comparison-sort bound. *)
-  Parameter make_bigO : (bigO (fun _ => True)
+  Parameter make_complexity : (bigO (fun _ => True)
     (fun zs => N.of_nat
       (((length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1))%nat)) T_make)%N.
   (** Upper search has the published path-times-bits class. *)
-  Parameter above_bigO : bigO (X := ttree * Z) (fun _ => True)
+  Parameter above_complexity : bigO (X := ttree * Z) (fun _ => True)
     (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
     (fun x => T_above (fst x) (snd x)).
   (** Lower search has the published path-times-bits class. *)
-  Parameter below_bigO : bigO (X := ttree * Z) (fun _ => True)
+  Parameter below_complexity : bigO (X := ttree * Z) (fun _ => True)
     (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
     (fun x => T_below (fst x) (snd x)).
 End THRESHOLDS_TIME.
@@ -101,38 +101,38 @@ Module Type THRESHOLDS_PLAN (Import T : THRESHOLDS_T).
   Parameter T_build : nat -> list Z -> N.
   Parameter k_sort k_dedup k_build k_search : N.
   (** Sorting orders the input. *)
-  Parameter F1_msort_sorted : forall zs, Sorted Z.le (msort zs).
+  Parameter msort_sorted : forall zs, Sorted Z.le (msort zs).
   (** Sorting keeps the input multiset. *)
-  Parameter F2_msort_perm : forall zs, Permutation zs (msort zs).
+  Parameter msort_perm : forall zs, Permutation zs (msort zs).
   (** Deduplication keeps exactly the input values. *)
-  Parameter F3_dedup_vals : forall zs x, In x (dedup_sorted zs) <-> In x zs.
+  Parameter dedup_vals : forall zs x, In x (dedup_sorted zs) <-> In x zs.
   (** Deduplication turns sorted input into strict order. *)
-  Parameter F4_dedup_ordered : forall zs, Sorted Z.le zs ->
+  Parameter dedup_ordered : forall zs, Sorted Z.le zs ->
     StronglySorted Z.lt (dedup_sorted zs).
   (** Median construction keeps every input value when fuel suffices. *)
-  Parameter F5_build_vals : forall fuel zs, length zs <= fuel ->
+  Parameter build_vals : forall fuel zs, length zs <= fuel ->
     vals (build fuel zs) = zs.
   (** Median construction bounds depth when fuel suffices. *)
-  Parameter F6_build_depth : forall fuel zs, length zs <= fuel ->
+  Parameter build_depth : forall fuel zs, length zs <= fuel ->
     depth (build fuel zs) <= Nat.log2 (length zs) + 1.
   (** The public constructor uses sorting, deduplication and median construction. *)
-  Parameter F7_make_eq : forall zs,
+  Parameter make_def : forall zs,
     make zs = build (length zs) (dedup_sorted (msort zs)).
   (** Sorting charges logarithmically many comparison levels. *)
-  Parameter T1_msort : forall zs,
+  Parameter T_msort_le : forall zs,
     (T_msort zs <= k_sort * N.of_nat (length zs * (Nat.log2 (length zs) + 1) + 1) *
       N.of_nat (zb zs + 1))%N.
   (** Deduplication charges one pass of integer comparisons. *)
-  Parameter T2_dedup : forall zs, (T_dedup_sorted zs <=
+  Parameter T_dedup_sorted_le : forall zs, (T_dedup_sorted zs <=
     k_dedup * N.of_nat ((length zs + 1)%nat) * N.of_nat ((zb zs + 1)%nat))%N.
   (** Median construction charges one logarithmic splitting pass per level. *)
-  Parameter T3_build : forall fuel zs, length zs <= fuel -> (T_build fuel zs <=
+  Parameter T_build_le : forall fuel zs, length zs <= fuel -> (T_build fuel zs <=
     k_build * N.of_nat ((length zs * (Nat.log2 (length zs) + 1) + fuel + 1)%nat))%N.
   (** Upper search compares the threshold first at each visited level. *)
-  Parameter T4_above : forall t z, (T_above t z <=
+  Parameter T_above_plan_le : forall t z, (T_above t z <=
     k_search * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + 1)%nat))%N.
   (** Lower search compares the threshold first at each visited level. *)
-  Parameter T5_below : forall t z, (T_below t z <=
+  Parameter T_below_plan_le : forall t z, (T_below t z <=
     k_search * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + 1)%nat))%N.
 End THRESHOLDS_PLAN.
 

@@ -50,7 +50,7 @@ Module Type CHECKS_TIME (L : LANG_T) (V : VALUE_DOMAIN_T L) (Import C : CHECKS L
   Parameter T_may_fail_le : forall k xs, (T_may_fail k xs <= c_checks * N.of_nat ((work k xs +
     1)%nat))%N.
   (** A check is linear in its operand work. *)
-  Parameter may_fail_bigO : bigO (X := kd * list V.t) (fun _ => True)
+  Parameter may_fail_complexity : bigO (X := kd * list V.t) (fun _ => True)
     (fun kx => N.of_nat (work (fst kx) (snd kx))) (fun kx => T_may_fail (fst kx) (snd kx)).
 End CHECKS_TIME.
 

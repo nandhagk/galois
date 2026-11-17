@@ -492,7 +492,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** The value inventory is linear in its output. *)
-  Lemma values_bigO : bigO (fun _ : P.t => True)
+  Lemma values_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (values p))) T_values.
   Proof.
     apply bigO_intro with (c := c_ssa).
@@ -501,7 +501,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Definition lookup is linear in the value key and the returned operands. *)
-  Lemma def_bigO : bigO (X := P.t * V.t) (fun _ => True)
+  Lemma def_complexity : bigO (X := P.t * V.t) (fun _ => True)
     (fun '(p, x) => N.of_nat (V.bits x + length (operands p x))) (fun '(p, x) => T_def p x).
   Proof.
     apply bigO_intro with (c := c_ssa).
@@ -510,7 +510,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Parameter lookup is linear in the node key and the returned values. *)
-  Lemma params_bigO : bigO (X := P.t * N.t) (fun _ => True)
+  Lemma params_complexity : bigO (X := P.t * N.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (N.bits n + length (params p n))) (fun '(p, n) => T_params p n).
   Proof.
     apply bigO_intro with (c := c_ssa).
@@ -519,7 +519,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Incoming operands are linear in the edge key and the returned pairs. *)
-  Lemma args_bigO : bigO (X := P.t * E.t) (fun _ => True)
+  Lemma args_complexity : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(p, e) => N.of_nat (E.bits e + length (args p e))) (fun '(p, e) => T_args p e).
   Proof.
     apply bigO_intro with (c := c_ssa).
@@ -528,7 +528,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Entry-parameter enumeration is linear in its output. *)
-  Lemma entry_params_bigO : bigO (fun _ : P.t => True)
+  Lemma entry_params_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (entry_params p))) T_entry_params.
   Proof.
     apply bigO_intro with (c := c_ssa).
@@ -537,7 +537,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Operand-row enumeration is linear in its output. *)
-  Lemma arg_rows_bigO : bigO (fun _ : P.t => True)
+  Lemma arg_rows_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (arg_rows p))) T_arg_rows.
   Proof.
     apply bigO_intro with (c := c_ssa).
@@ -546,7 +546,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Home lookup is linear in the value key. *)
-  Lemma home_bigO : bigO (X := P.t * V.t) (fun _ => True)
+  Lemma home_complexity : bigO (X := P.t * V.t) (fun _ => True)
     (fun '(_, x) => N.of_nat (V.bits x)) (fun '(p, x) => T_home p x).
   Proof.
     apply bigO_intro with (c := c_ssa).
@@ -555,7 +555,7 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Guard lookup is linear in the edge key and the returned guards. *)
-  Lemma guards_bigO : bigO (X := P.t * E.t) (fun _ => True)
+  Lemma guards_complexity : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(p, e) => N.of_nat (E.bits e + length (guards p e))) (fun '(p, e) => T_guards p e).
   Proof.
     apply bigO_intro with (c := c_ssa).
@@ -853,7 +853,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Qed.
 
   (** Block point lists are linear in the block key and the returned points. *)
-  Lemma points_in_block_bigO : bigO (X := P.t * B.t) (fun _ => True)
+  Lemma points_in_block_complexity : bigO (X := P.t * B.t) (fun _ => True)
     (fun '(p, b) => N.of_nat (B.bits b + length (points_in_block p b)))
     (fun '(p, b) => T_points_in_block p b).
   Proof.
@@ -863,7 +863,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Qed.
 
   (** The owner lookup is linear in the point key. *)
-  Lemma block_of_point_bigO : bigO (X := P.t * N.t) (fun _ => True)
+  Lemma block_of_point_complexity : bigO (X := P.t * N.t) (fun _ => True)
     (fun '(_, n) => N.of_nat (N.bits n)) (fun '(p, n) => T_block_of_point p n).
   Proof.
     apply bigO_intro with (c := c_points).
@@ -872,7 +872,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Qed.
 
   (** Instruction edge lists are linear in the block key and the returned edges. *)
-  Lemma instruction_edges_bigO : bigO (X := P.t * B.t) (fun _ => True)
+  Lemma instruction_edges_complexity : bigO (X := P.t * B.t) (fun _ => True)
     (fun '(p, b) => N.of_nat (B.bits b + length (instruction_edges p b)))
     (fun '(p, b) => T_instruction_edges p b).
   Proof.
@@ -882,7 +882,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Qed.
 
   (** The parameter edge lookup is linear in the block key. *)
-  Lemma parameter_edge_bigO : bigO (X := P.t * B.t) (fun _ => True)
+  Lemma parameter_edge_complexity : bigO (X := P.t * B.t) (fun _ => True)
     (fun '(_, b) => N.of_nat (B.bits b)) (fun '(p, b) => T_parameter_edge p b).
   Proof.
     apply bigO_intro with (c := c_points).
@@ -891,7 +891,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Qed.
 
   (** The edge projection is linear in the edge key. *)
-  Lemma block_edge_of_bigO : bigO (X := P.t * E.t) (fun _ => True)
+  Lemma block_edge_of_complexity : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(_, e) => N.of_nat (E.bits e)) (fun '(p, e) => T_block_edge_of p e).
   Proof.
     apply bigO_intro with (c := c_points).
@@ -900,7 +900,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Qed.
 
   (** Block parameters are linear in the block key and the returned values. *)
-  Lemma block_params_bigO : bigO (X := P.t * B.t) (fun _ => True)
+  Lemma block_params_complexity : bigO (X := P.t * B.t) (fun _ => True)
     (fun '(p, b) => N.of_nat (B.bits b + length (block_params p b)))
     (fun '(p, b) => T_block_params p b).
   Proof.
@@ -910,7 +910,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Qed.
 
   (** Phi operands are linear in the block-edge key and the returned values. *)
-  Lemma block_edge_args_bigO : bigO (X := P.t * BE.t) (fun _ => True)
+  Lemma block_edge_args_complexity : bigO (X := P.t * BE.t) (fun _ => True)
     (fun '(p, be) => N.of_nat (BE.bits be + length (block_edge_args p be)))
     (fun '(p, be) => T_block_edge_args p be).
   Proof.
@@ -920,7 +920,7 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Qed.
 
   (** The definition point lookup is linear in the value key. *)
-  Lemma point_definition_bigO : bigO (X := P.t * V.t) (fun _ => True)
+  Lemma point_definition_complexity : bigO (X := P.t * V.t) (fun _ => True)
     (fun '(_, x) => N.of_nat (V.bits x)) (fun '(p, x) => T_point_definition p x).
   Proof.
     apply bigO_intro with (c := c_points).

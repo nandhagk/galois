@@ -167,19 +167,19 @@ Module Type DOM_TIME (Import D : DOM).
     (T_build g r <= c_dom * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (Nat.log2 (graph_n (base g)) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   (** Checking has the published linear bit-cost bound. *)
-  Parameter check_bigO : bigO (fun _ : prepared * positive * ptrie positive * list positive => True)
+  Parameter check_complexity : bigO (fun _ : prepared * positive * ptrie positive * list positive => True)
     (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1))) (fun '(g, r, m, o) => T_check g r m o).
   (** Numbering is linear in the listed vertices and the identifier width, with no edge term. *)
-  Parameter tree_bigO : bigO (fun '(g, r, m, o) => check g r m o = true)
+  Parameter tree_complexity : bigO (fun '(g, r, m, o) => check g r m o = true)
     (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))
     (fun '(g, r, m, o) => T_tree g r m o).
   (** Query costs depend on the supplied interval and key widths. *)
-  Parameter dominates_b_bigO : bigO (fun _ : domtree * positive * positive => True)
+  Parameter dominates_b_complexity : bigO (fun _ : domtree * positive * positive => True)
     (fun '(t, u, v) => N.of_nat (query_width t u v + 1))
     (fun '(t, u, v) => T_dominates_b t u v).
   (** Building keeps the graph-size times logarithmic bit-cost target. *)
-  Parameter build_bigO : bigO (fun '(g, _) => prepared_ok g)
+  Parameter build_complexity : bigO (fun '(g, _) => prepared_ok g)
     (fun '(g, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))
     (fun '(g, r) => T_build g r).
@@ -214,81 +214,81 @@ Module Type DOM_PLAN (Import D : DOM_T).
     k_build k_check : N.
 
 (** A path ends with an edge into its target, unless it is a single vertex. *)
-Parameter F0_path_last : forall g a vs b, path g a vs b ->
+Parameter path_last : forall g a vs b, path g a vs b ->
   (vs = [b] /\ a = b) \/
   exists vs' c, path g a vs' c /\ edge g c b /\ vs = vs' ++ [b].
 
 (** A dominator of a dominator dominates. *)
-Parameter F1_dominates_trans : forall g r x y v,
+Parameter dominates_trans : forall g r x y v,
   dominates g r x y -> dominates g r y v -> dominates g r x v.
 
 (** Acceptance establishes the certificate. *)
-Parameter F2_check_cert : forall g r m o, check g r m o = true -> dom_cert (base g) r m o.
+Parameter check_cert_sound : forall g r m o, check g r m o = true -> dom_cert (base g) r m o.
 
 (** An accepted order holds listed vertices only. *)
-Parameter F2b_check_listed : forall g r m o, check g r m o = true ->
+Parameter check_listed : forall g r m o, check g r m o = true ->
   forall v, In v o -> In v (verts (base g)).
 
 (** A successful read lists distinct listed vertices within the budget, headed by the root. *)
-Parameter F2c_read : forall g r o pos, read (scan g) r o = Some pos ->
+Parameter read_ok : forall g r o pos, read (scan g) r o = Some pos ->
   NoDup o /\ length o <= graph_n (base g) /\ hd_error o = Some r /\
   (forall v, In v o -> In v (nodes g)) /\
   (forall v, In v o -> exists i, trie_get v pos = Some i).
 
 (** A successful parent check keeps every parent of an ordered vertex in the order. *)
-Parameter F2d_map : forall g r m o, map_check (scan g) r m o = true ->
+Parameter map_check_closed : forall g r m o, map_check (scan g) r m o = true ->
   forall v p, In v o -> trie_get v m = Some p -> In p o.
 
 (** Ancestors precede their proper descendants. *)
-Parameter F3_anc_before : forall g r m o u v, dom_cert g r m o ->
+Parameter anc_before : forall g r m o u v, dom_cert g r m o ->
   tree_anc m u v -> u <> v -> order_before o u v.
 
 (** The root is an ancestor of every listed vertex. *)
-Parameter F4_root_anc : forall g r m o v, dom_cert g r m o -> In v o -> tree_anc m r v.
+Parameter root_anc : forall g r m o v, dom_cert g r m o -> In v o -> tree_anc m r v.
 
 (** Every reachable vertex is listed. *)
-Parameter F5_reach_listed : forall g r m o v, dom_cert g r m o ->
+Parameter reach_listed : forall g r m o v, dom_cert g r m o ->
   reach g [r] v -> In v o.
 
 (** Every listed vertex is reachable. *)
-Parameter F6_listed_reach : forall g r m o v, dom_cert g r m o ->
+Parameter listed_reach : forall g r m o v, dom_cert g r m o ->
   In v o -> reach g [r] v.
 
 (** Ancestors in the candidate tree dominate. *)
-Parameter F7_anc_dominates : forall g r m o u v, dom_cert g r m o ->
+Parameter anc_dominates : forall g r m o u v, dom_cert g r m o ->
   In v o -> tree_anc m u v -> dominates g r u v.
 
 (** Ancestry in the candidate tree is decidable. *)
-Parameter F8_anc_dec : forall g r m o u v, dom_cert g r m o -> In v o ->
+Parameter tree_anc_decidable : forall g r m o u v, dom_cert g r m o -> In v o ->
   tree_anc m u v \/ ~ tree_anc m u v.
 
 (** Every listed vertex has a path from the root through vertices that are not after it. *)
-Parameter F9a_low_path : forall g r m o v, dom_cert g r m o -> In v o ->
+Parameter path_through_lower : forall g r m o v, dom_cert g r m o -> In v o ->
   exists vs, path g r vs v /\ forall y, In y vs -> y = v \/ order_before o y v.
 
 (** Every child has a path from its parent through vertices that are not before it. *)
-Parameter F9b_high_path : forall g r m o v p, dom_cert g r m o -> trie_get v m = Some p ->
+Parameter path_through_higher : forall g r m o v p, dom_cert g r m o -> trie_get v m = Some p ->
   exists vs, path g p vs v /\
     forall y, In y vs -> y = p \/ y = v \/ order_before o v y.
 
 (** A vertex that is no ancestor is avoided by some path from the root. *)
-Parameter F9c_avoid : forall g r m o x v, dom_cert g r m o -> In v o ->
+Parameter path_avoiding_nonancestor : forall g r m o x v, dom_cert g r m o -> In v o ->
   ~ tree_anc m x v -> exists vs, path g r vs v /\ ~ In x vs.
 
 (** Every dominator of a listed vertex is a candidate ancestor. *)
-Parameter F9_dominates_anc : forall g r m o x v, dom_cert g r m o ->
+Parameter dominates_anc : forall g r m o x v, dom_cert g r m o ->
   In v o -> dominates g r x v -> tree_anc m x v.
 
 (** The certificate makes the parent map exact. *)
-Parameter F10_cert_exact : forall g r m o, dom_cert (base g) r m o -> dom_exact g r m.
+Parameter cert_exact : forall g r m o, dom_cert (base g) r m o -> dom_exact g r m.
 
 (** Positions and subtree sizes decide ancestry by intervals. *)
-Parameter F11_intervals : forall g r m o u v, dom_cert g r m o -> In u o -> In v o ->
+Parameter anc_iff_interval : forall g r m o u v, dom_cert g r m o -> In u o -> In v o ->
   (tree_anc m u v <->
    (pos_of o u <= pos_of o v /\ pos_of o v + size_of m o v <= pos_of o u + size_of m o u)%N).
 
 (** Numbering an accepted certificate gives an exact tree. *)
-Parameter F12_tree_exact : forall g r m o, check g r m o = true ->
+Parameter tree_exact_plan : forall g r m o, check g r m o = true ->
   domtree_exact g r (tree g r m o).
 
   Parameter lt_ops : prepared -> positive -> list lt_op.
@@ -298,64 +298,64 @@ Parameter F12_tree_exact : forall g r m o, check g r m o = true ->
   Parameter T_run_ops : list lt_op -> lt_forest -> N.
 
   (** Scanning reads listed rows and constructs the membership trie. *)
-  Parameter T1_scan : forall g,
+  Parameter T_scan_le : forall g,
     (T_scan g <= k_scan * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** Reading stops at the graph-sized certificate budget. *)
-  Parameter T2_read : forall g r o,
+  Parameter T_read_le : forall g r o,
     (T_read (scan g) r o <= k_read * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** Parent reconstruction rejects extra candidate bindings by structural comparison. *)
-  Parameter T3_map : forall g r m o,
+  Parameter T_map_check_le : forall g r m o,
     (T_map_check (scan g) r m o <= k_map * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** Subtree sizes and low-high tests charge each accepted order entry. *)
-  Parameter T4_sizes : forall g m o, NoDup o -> length o <= graph_n (base g) ->
+  Parameter T_sizes_le : forall g m o, NoDup o -> length o <= graph_n (base g) ->
     (forall v, In v o -> In v (nodes g)) ->
     (forall v p, In v o -> trie_get v m = Some p -> In p o) ->
     (T_sizes m o <= k_size * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** Parent containment tests charge each accepted order entry. *)
-  Parameter T4b_sizes_ok : forall g r m o pos,
+  Parameter T_sizes_ok_le : forall g r m o pos,
     read (scan g) r o = Some pos -> map_check (scan g) r m o = true ->
     (T_sizes_ok m pos (sizes m o) o <= k_size * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** Edge checks read only rows whose sources are listed. *)
-  Parameter T5_edges : forall g m o, length o <= graph_n (base g) ->
+  Parameter T_edges_le : forall g m o, length o <= graph_n (base g) ->
     (forall v, In v o -> In v (verts (base g))) ->
     (forall v p, In v o -> trie_get v m = Some p -> In p o) ->
     (T_edges g m o <= k_edge * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** Numbering and inverse-parent grouping make one pass over accepted entries. *)
-  Parameter T6_tree : forall g r m o, check g r m o = true ->
+  Parameter T_tree_plan_le : forall g r m o, check g r m o = true ->
     (T_tree g r m o <= k_tree * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** DFS numbers reached vertices using binary counters. *)
-  Parameter T7_dfs : forall g r, prepared_ok g ->
+  Parameter T_lt_dfs_le : forall g r, prepared_ok g ->
     (T_lt_dfs g r <= k_dfs * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** The actual link-and-evaluate sequence is bounded by reached incidences. *)
-  Parameter F13_ops_length : forall g r, prepared_ok g ->
+  Parameter ops_length_le : forall g r, prepared_ok g ->
     length (lt_ops g r) <= 2 * (graph_n (base g) + graph_e (base g)) + 1.
   (** Path compression has an aggregate logarithmic bound over the actual sequence. *)
-  Parameter T8_link_eval : forall g r, prepared_ok g ->
+  Parameter T_run_ops_le : forall g r, prepared_ok g ->
     (T_run_ops (lt_ops g r) (lt_init g r) <= k_le *
       N.of_nat ((length (lt_ops g r) + graph_n (base g) + 1) *
         (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
   (** Semidominators and bucket correction charge the aggregate forest work once. *)
-  Parameter T9_semi : forall g r, prepared_ok g ->
+  Parameter T_lt_semi_split : forall g r, prepared_ok g ->
     (T_lt_semi g r <= k_semi * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)) + T_run_ops (lt_ops g r) (lt_init g r))%N.
   (** Divergent trees, derived sources and offline insertion produce the low-high order. *)
-  Parameter T10_order : forall g r, prepared_ok g ->
+  Parameter T_lt_order_le : forall g r, prepared_ok g ->
     (T_lt_order g r <= k_order *
       N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
         (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
   (** Building runs the search, the semidominator phases and the order phase. *)
-  Parameter T11b_build : forall g r, prepared_ok g ->
+  Parameter T_build_split : forall g r, prepared_ok g ->
     (T_build g r <= T_lt_dfs g r + T_lt_semi g r + T_lt_order g r + k_build)%N.
   (** The checker runs its phases in order and stops at the first rejection. *)
-  Parameter T11_check : forall g r m o,
+  Parameter T_check_split : forall g r m o,
     (T_check g r m o <= k_check * (T_scan g + T_read (scan g) r o +
       T_map_check (scan g) r m o +
       match read (scan g) r o with

@@ -420,7 +420,7 @@ Module InterpT (P : TYPE) (N : KEY_T) (E : TYPE)
       unfold row_work, interp_work; lia.
   Qed.
   (** Listing the rows is linear in their number. *)
-  Lemma rows_bigO : bigO (X := prog) (fun p => wf p)
+  Lemma rows_complexity : bigO (X := prog) (fun p => wf p)
     (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
   Proof.
     eapply bigO_intro with (c := c_sys).
@@ -431,7 +431,7 @@ Module InterpT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Starting a listed row fits its work budget at the empty value. *)
-  Lemma start_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Lemma start_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
   Proof.
     eapply bigO_intro with (c := c_sys).
@@ -441,7 +441,7 @@ Module InterpT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Listing dependencies is linear in their number times the key width. *)
-  Lemma deps_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Lemma deps_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_deps p r).
   Proof.
@@ -454,7 +454,7 @@ Module InterpT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Finding a listed row's target fits its work budget at the empty value. *)
-  Lemma target_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Lemma target_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
   Proof.
     eapply bigO_intro with (c := c_sys).
@@ -464,7 +464,7 @@ Module InterpT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Listing side writes is linear in their number times the key width. *)
-  Lemma sides_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Lemma sides_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_sides p r).
   Proof.

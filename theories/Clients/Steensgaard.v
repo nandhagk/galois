@@ -859,7 +859,7 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** Seeding is linear in the input count at the final database's unit and identifier width. *)
-  Lemma seed_bigO : bigO (fun _ => True)
+  Lemma seed_complexity : bigO (fun _ => True)
     (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
       D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
     T_seed.
@@ -870,14 +870,14 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** The fixed pointer program has a constant compilation cost. *)
-  Lemma compile_bigO : bigO (fun _ => True) (fun _ => 0%N) T_compile.
+  Lemma compile_complexity : bigO (fun _ => True) (fun _ => 0%N) T_compile.
   Proof.
     apply (bigO_intro _ _ _ c_steensgaard).
     intros q _; rewrite N.mul_0_r, N.add_0_l; apply T_compile_le.
   Qed.
 
   (** A points-to query costs its two encoded cells and the database lookup unit. *)
-  Lemma points_bigO : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
+  Lemma points_complexity : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
     (fun z => let '(db, x, a) := z in
       N.of_nat (8 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
     (fun z => let '(db, x, a) := z in T_points db x a).
@@ -889,7 +889,7 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** Solving composes the seed and fixed-program plan with the engine's trace cost. *)
-  Lemma solve_bigO : bigO
+  Lemma solve_complexity : bigO
     (fun x : N * nat * pointer_input * limits =>
       let '(B, U, q, lim) := x in
       (D.ids (snd (solve q lim)) <= B)%N /\ D.unit (snd (solve q lim)) <= U)
@@ -901,9 +901,9 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
       R.run_cost B U (compile q) (R.plan (compile q)) lim (seed q))%N)
     (fun x => let '(_, _, q, lim) := x in T_solve q lim).
   Proof.
-    destruct seed_bigO as [cseed Hseed].
-    destruct R.plan_bigO as [cplan Hplan].
-    destruct R.run_bigO as [crun Hrun].
+    destruct seed_complexity as [cseed Hseed].
+    destruct R.plan_complexity as [cplan Hplan].
+    destruct R.run_complexity as [crun Hrun].
     apply (bigO_intro _ _ _ (2 * c_steensgaard + cseed + cplan + crun)%N).
     intros [[[B U] q] lim] [Hids Hunit].
     specialize (Hseed q I).
@@ -926,19 +926,19 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     nia.
   Qed.
 
-  Lemma F1_source_closed : forall q,
+  Lemma source_closed : forall q,
     pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
   Proof.
     exact pointer_congruence_closed.
   Qed.
 
-  Lemma F2_inclusion_unifies : forall q x a, may_points q x a ->
+  Lemma inclusion_unifies : forall q x a, may_points q x a ->
     pointer_congruence q (Deref (Cell x)) (Cell a).
   Proof.
     exact pointer_inclusion_unifies.
   Qed.
 
-  Lemma F3_saturated_equations : forall q lim db, solve q lim = (Saturated, db) ->
+  Lemma saturated_equations : forall q lim db, solve q lim = (Saturated, db) ->
     forall t u, pointer_congruence q t u ->
     forall i j, represents (D.view db) (Id i) (pointer_expression t) ->
       represents (D.view db) (Id j) (pointer_expression u) -> same (D.view db) i j.
@@ -952,7 +952,7 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     apply (proj2 (D.same_repr db i j Hwf)); congruence.
   Qed.
 
-  Lemma F4_endpoints_represented : forall q lim db x a,
+  Lemma endpoints_represented : forall q lim db x a,
     solve q lim = (Saturated, db) -> pointer_congruence q (Deref (Cell x)) (Cell a) ->
     (exists i, represents (D.view db) (Id i) (pointer_expression (Deref (Cell x)))) /\
     (exists j, represents (D.view db) (Id j) (pointer_expression (Cell a))).
@@ -964,7 +964,7 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     destruct Hrep as [i [j [Hi [Hj Hsame]]]]; split; [exists i | exists j]; assumption.
   Qed.
 
-  Lemma F6_step_covered : forall q instruction before after,
+  Lemma step_covered : forall q instruction before after,
     In instruction (constraints q) ->
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) before ->
     pointer_exec instruction before = Some after ->
@@ -978,7 +978,7 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     - exact Hexec.
   Qed.
 
-  Lemma T1_wrapper : forall q lim, let p := compile q in let cp := R.plan p in
+  Lemma T_solve_split : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
   Proof.
@@ -993,21 +993,21 @@ Module SteensgaardSound (V : VALUE with Definition t := positive)
     (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
     (A : STEENSGAARD V I J D R) (L : POINTER_LINK) <: STEENSGAARD_SOUND V I J D R A L.
   (** The source congruence contains every seed and is closed under its pointer rules. *)
-  Lemma F1_source_closed : forall q,
+  Lemma source_closed : forall q,
     pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
   Proof.
     exact pointer_congruence_closed.
   Qed.
 
   (** Every inclusion-derived pointer belongs to the source congruence. *)
-  Lemma F2_inclusion_unifies : forall q x a, may_points q x a ->
+  Lemma inclusion_unifies : forall q x a, may_points q x a ->
     pointer_congruence q (Deref (Cell x)) (Cell a).
   Proof.
     exact pointer_inclusion_unifies.
   Qed.
 
   (** Each concrete instruction preserves coverage by the source congruence. *)
-  Lemma F6_step_covered : forall q instruction before after,
+  Lemma step_covered : forall q instruction before after,
     In instruction (constraints q) ->
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) before ->
     pointer_exec instruction before = Some after ->
@@ -1015,7 +1015,7 @@ Module SteensgaardSound (V : VALUE with Definition t := positive)
   Proof.
     intros q instruction before after Hin Hcovered Hexec.
     eapply pointer_step_covered.
-    - apply F1_source_closed.
+    - apply source_closed.
     - exact Hin.
     - exact Hcovered.
     - exact Hexec.
@@ -1032,7 +1032,7 @@ Module SteensgaardSound (V : VALUE with Definition t := positive)
     { induction Hreach as [s Hinitial | s t Hreach IH Hstep].
       - intros y b Hy; apply Cong_initial; eapply L.initial_coverage; eassumption.
       - destruct (L.step_update q s t Hstep) as [instruction [Hin Hexec]].
-        eapply F6_step_covered; [exact Hin | exact IH | exact Hexec]. }
+        eapply step_covered; [exact Hin | exact IH | exact Hexec]. }
     intros x a Hget; apply (A.solve_covers q lim db Hsolve x a).
     apply Hcovered; exact Hget.
   Qed.

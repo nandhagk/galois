@@ -1391,7 +1391,7 @@ Module WordTime.
   Qed.
 
   (** Concrete word evaluation is quadratic in operator widths and raw operand sizes. *)
-  Theorem eval_op_bigO : bigO (X := Op.op * list (positive * Z)) (fun _ => True)
+  Theorem eval_op_complexity : bigO (X := Op.op * list (positive * Z)) (fun _ => True)
     (fun x => N.of_nat (((Op.op_widths (fst x) +
       fold_right Nat.add 0
         (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) (snd x)) + 1) ^ 2)%nat))
@@ -1530,7 +1530,7 @@ Module WordLanguageT <: WORD_LANGUAGE_T.
   Qed.
 
   (** Word-language evaluation retains its published quadratic work class. *)
-  Lemma eval_op_bigO : bigO (X := op * list (positive * Z)) (fun _ => True)
+  Lemma eval_op_complexity : bigO (X := op * list (positive * Z)) (fun _ => True)
     (fun x => N.of_nat (((Op.op_widths (fst x) +
       fold_right Nat.add 0
         (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) (snd x)) + 1) ^ 2)%nat))

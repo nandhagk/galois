@@ -207,45 +207,45 @@ Module Type PARTITION_TIME (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Parameter merge_size : forall k a,
     (N.of_nat (size (merge k a)) <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
   (** Inclusion is linear in both sizes for the fixed cap. *)
-  Parameter leb_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter leb_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_leb (fst ab) (snd ab)).
   (** Join is linear in both sizes for the fixed cap. *)
-  Parameter join_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter join_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_join (fst ab) (snd ab)).
   (** Widening is linear in the sizes and in the units times the parameter size. *)
-  Parameter widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+  Parameter widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
     (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
     (fun '(p, a, b) => T_widen p a b).
   (** Merging all parts under one token is linear in the token and the partition. *)
-  Parameter merge_bigO : bigO (X := Tk.t * t) (fun _ => True)
+  Parameter merge_complexity : bigO (X := Tk.t * t) (fun _ => True)
     (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
     (fun ka => T_merge (fst ka) (snd ka)).
   (** The bottom test is linear in the size for the fixed cap. *)
-  Parameter is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Parameter is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
   (** Narrowing is linear in both sizes for the fixed cap. *)
-  Parameter narrow_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter narrow_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_narrow (fst ab) (snd ab)).
   (** Assignment is linear in its work measure. *)
-  Parameter assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+  Parameter assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
     (fun '(x, e, a) => N.of_nat (assign_work x e a)) (fun '(x, e, a) => T_assign x e a).
   (** Havoc is linear in its work measure. *)
-  Parameter havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+  Parameter havoc_complexity : bigO (X := X.t * t) (fun _ => True)
     (fun '(x, a) => N.of_nat (havoc_work x a)) (fun '(x, a) => T_havoc x a).
   (** Assumption is linear in its work measure. *)
-  Parameter assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+  Parameter assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
     (fun '(gd, es, a) => N.of_nat (assume_work gd es a)) (fun '(gd, es, a) => T_assume gd es a).
   (** Evaluation is linear in its work measure. *)
-  Parameter eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+  Parameter eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
     (fun '(e, a) => N.of_nat (eval_work e a)) (fun '(e, a) => T_eval e a).
   (** Injection is linear in the token and the state. *)
-  Parameter inject_bigO : bigO (X := Tk.t * S.t) (fun _ => True)
+  Parameter inject_complexity : bigO (X := Tk.t * S.t) (fun _ => True)
     (fun ks => N.of_nat (Tk.bits (fst ks) + S.size (snd ks)))
     (fun ks => T_inject (fst ks) (snd ks)).
   (** Retagging is linear in the token and the partition. *)
-  Parameter retag_bigO : bigO (X := Tk.t * t) (fun _ => True)
+  Parameter retag_complexity : bigO (X := Tk.t * t) (fun _ => True)
     (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
     (fun ka => T_retag (fst ka) (snd ka)).
 End PARTITION_TIME.
@@ -272,20 +272,20 @@ Module Type PARTITION_PLAN (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
        V.join (snd acc) (S.eval e (snd q)))) ps (0%N, V.bot)).
 
   (** Assignment maps its transfer over the parts and keeps their labels. *)
-  Parameter F1_assign : forall x e a, proj1_sig (assign x e a) =
+  Parameter assign_def : forall x e a, proj1_sig (assign x e a) =
     map (fun q => (fst q, S.assign x e (snd q))) (proj1_sig a).
   (** Havoc maps its transfer over the parts and keeps their labels. *)
-  Parameter F2_havoc : forall x a, proj1_sig (havoc x a) =
+  Parameter havoc_def : forall x a, proj1_sig (havoc x a) =
     map (fun q => (fst q, S.havoc x (snd q))) (proj1_sig a).
   (** Assumption maps its transfer over the parts and keeps their labels. *)
-  Parameter F3_assume : forall g es a, proj1_sig (assume g es a) =
+  Parameter assume_def : forall g es a, proj1_sig (assume g es a) =
     map (fun q => (fst q, S.assume g es (snd q))) (proj1_sig a).
   (** Evaluation joins the values of the parts from bottom. *)
-  Parameter F4_eval : forall e a,
+  Parameter eval_def : forall e a,
     eval e a = fold_left (fun v q => V.join v (S.eval e (snd q))) (proj1_sig a) V.bot.
   (** An unstable widening from a nonbottom partition widens the parts that receive fresh
       parts, routed by label, and keeps the length of the previous partition. *)
-  Parameter F5_widen : forall p a b, proj1_sig (widen p a b) =
+  Parameter widen_def : forall p a b, proj1_sig (widen p a b) =
     if leb b a then proj1_sig a else
     if is_bot a then proj1_sig b else
     let old := proj1_sig a in
@@ -293,96 +293,96 @@ Module Type PARTITION_PLAN (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     absorb Tk.eqb S.leb S.bot S.join (S.widen p)
       (stray_parts Tk.eqb S.leb S.bot old fresh) fresh old.
   (** Narrowing keeps the previous partition. *)
-  Parameter F6_narrow : forall a b, narrow a b = a.
+  Parameter narrow_def : forall a b, narrow a b = a.
   (** A label merge has at most the parts of both lists. *)
-  Parameter F7_merge_parts_length : forall ps qs,
+  Parameter merge_parts_length : forall ps qs,
     length (merge_parts Tk.eqb S.join ps qs) <= length ps + length qs.
   (** A collapse of a bounded number of states fits their sizes. *)
-  Parameter F8_collapse_size : forall xs, length xs <= 2 * C.k + 1 ->
+  Parameter collapse_size_le : forall xs, length xs <= 2 * C.k + 1 ->
     (N.of_nat (S.size (collapse_with S.bot S.join xs)) <= k_partition *
       N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
   (** A collapse of a bounded number of states fits their widening units. *)
-  Parameter F9_collapse_units : forall xs, length xs <= 2 * C.k + 1 ->
+  Parameter collapse_units_le : forall xs, length xs <= 2 * C.k + 1 ->
     (N.of_nat (S.wunits (collapse_with S.bot S.join xs)) <= k_partition *
       N.of_nat (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
   (** A label merge of two capped lists fits their sizes. *)
-  Parameter F10_merge_parts_size : forall ps qs, length ps <= C.k -> length qs <= C.k ->
+  Parameter merge_parts_size_le : forall ps qs, length ps <= C.k -> length qs <= C.k ->
     (N.of_nat (parts_size Tk.bits S.size (merge_parts Tk.eqb S.join ps qs)) <=
       k_partition * N.of_nat (parts_size Tk.bits S.size ps +
         parts_size Tk.bits S.size qs + 1))%N.
   (** A label merge of two capped lists fits their widening units. *)
-  Parameter F11_merge_parts_units : forall ps qs, length ps <= C.k -> length qs <= C.k ->
+  Parameter merge_parts_units_le : forall ps qs, length ps <= C.k -> length qs <= C.k ->
     (N.of_nat (parts_units S.wunits (merge_parts Tk.eqb S.join ps qs)) <=
       k_partition * N.of_nat (parts_units S.wunits ps + parts_units S.wunits qs + 1))%N.
   (** Restoring the cap on at most twice the cap parts fits their size. *)
-  Parameter F12_fit_size : forall ps, length ps <= 2 * C.k ->
+  Parameter fit_parts_size_le : forall ps, length ps <= 2 * C.k ->
     (N.of_nat (parts_size Tk.bits S.size (fit_parts S.bot S.join C.k ps)) <=
       k_partition * N.of_nat (parts_size Tk.bits S.size ps + 1))%N.
   (** Restoring the cap on at most twice the cap parts fits their widening units. *)
-  Parameter F13_fit_units : forall (ps : list (option Tk.t * S.t)), length ps <= 2 * C.k ->
+  Parameter fit_parts_units_le : forall (ps : list (option Tk.t * S.t)), length ps <= 2 * C.k ->
     (N.of_nat (parts_units S.wunits (fit_parts S.bot S.join C.k ps)) <=
       k_partition * N.of_nat (parts_units S.wunits ps + 1))%N.
 
   (** Inclusion charges a bottom test and a scan of the other partition per part. *)
-  Parameter T1_leb : forall a b, (T_leb a b <= k_partition *
+  Parameter T_leb_split : forall a b, (T_leb a b <= k_partition *
     (fold_right N.add 0%N (map (fun q => S.T_leb (snd q) S.bot +
       fold_right N.add 0%N (map (fun r => S.T_leb (snd q) (snd r) + 1) (proj1_sig b)) + 1)
       (proj1_sig a)) + 1))%N.
   (** The bottom test charges one component comparison per part. *)
-  Parameter T2_is_bot : forall a, (T_is_bot a <= k_partition *
+  Parameter T_is_bot_split : forall a, (T_is_bot a <= k_partition *
     (fold_right N.add 0%N (map (fun q => S.T_leb (snd q) S.bot + 1) (proj1_sig a)) + 1))%N.
   (** Joining charges the label merge and the cap restoration. *)
-  Parameter T3_join : forall a b, (T_join a b <= k_partition *
+  Parameter T_join_split : forall a b, (T_join a b <= k_partition *
     (T_merge_parts Tk.eqb Tk.T_eqb S.join S.T_join (proj1_sig a) (proj1_sig b) +
      T_fit_parts S.bot S.join S.T_join C.k
        (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) + 1))%N.
   (** A label merge of two capped lists charges their sizes. *)
-  Parameter T4_merge_parts : forall ps qs, length ps <= C.k -> length qs <= C.k ->
+  Parameter T_merge_parts_le : forall ps qs, length ps <= C.k -> length qs <= C.k ->
     (T_merge_parts Tk.eqb Tk.T_eqb S.join S.T_join ps qs <= k_partition *
       N.of_nat (parts_size Tk.bits S.size ps + parts_size Tk.bits S.size qs + 1))%N.
   (** Restoring the cap on at most twice the cap parts charges their size. *)
-  Parameter T5_fit_parts : forall ps, length ps <= 2 * C.k ->
+  Parameter T_fit_parts_le : forall ps, length ps <= 2 * C.k ->
     (T_fit_parts S.bot S.join S.T_join C.k ps <= k_partition *
       N.of_nat (parts_size Tk.bits S.size ps + 1))%N.
   (** Widening charges the stability test, the bottom test and the routing. *)
-  Parameter T6_widen : forall p a b, (T_widen p a b <= k_partition *
+  Parameter T_widen_split : forall p a b, (T_widen p a b <= k_partition *
     (T_leb b a + T_is_bot a + route_time p (proj1_sig a) (proj1_sig b) + 1))%N.
   (** Routing within the cap charges the sizes, the units and the widening parameter. *)
-  Parameter T7_route : forall p old new, length old <= C.k -> length new <= C.k ->
+  Parameter route_time_le : forall p old new, length old <= C.k -> length new <= C.k ->
     (route_time p old new <= k_partition * N.of_nat
       ((parts_units S.wunits old + parts_units S.wunits new + 1) * S.wsize p +
        (parts_size Tk.bits S.size old + parts_size Tk.bits S.size new + S.wsize p + 1)))%N.
   (** A collapse of a bounded number of states charges their sizes. *)
-  Parameter T8_collapse : forall xs, length xs <= 2 * C.k + 1 ->
+  Parameter T_collapse_with_le : forall xs, length xs <= 2 * C.k + 1 ->
     (T_collapse_with S.bot S.join S.T_join xs <= k_partition *
       N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
   (** Merging charges the collapse of all states and one injection. *)
-  Parameter T9_merge : forall k a, (T_merge k a <= k_partition *
+  Parameter T_merge_split : forall k a, (T_merge k a <= k_partition *
     (T_collapse_with S.bot S.join S.T_join (map snd (proj1_sig a)) +
      T_inject k (collapse_with S.bot S.join (map snd (proj1_sig a))) + 1))%N.
   (** Retagging charges the merge it performs. *)
-  Parameter T10_retag : forall k a, (T_retag k a <= k_partition * (T_merge k a + 1))%N.
+  Parameter T_retag_split : forall k a, (T_retag k a <= k_partition * (T_merge k a + 1))%N.
   (** Injection takes constant time. *)
-  Parameter T11_inject : forall k s, (T_inject k s <= k_partition)%N.
+  Parameter T_inject_plan_le : forall k s, (T_inject k s <= k_partition)%N.
   (** Evaluation charges each part's evaluation and the value joins. *)
-  Parameter T12_eval : forall e a, (T_eval e a <= k_partition *
+  Parameter T_eval_split : forall e a, (T_eval e a <= k_partition *
     (fold_right N.add 0%N (map (fun q => S.T_eval e (snd q) + 1) (proj1_sig a)) +
      eval_joins e (proj1_sig a) + 1))%N.
   (** The value joins of a capped list charge the sizes of the evaluated values. *)
-  Parameter T13_eval_joins : forall e ps, length ps <= C.k ->
+  Parameter eval_joins_le : forall e ps, length ps <= C.k ->
     (eval_joins e ps <= k_partition * N.of_nat (fold_right Nat.add 0%nat
       (map (fun q => (V.size (S.eval e (snd q)) + 1)%nat) ps) + 1))%N.
   (** Assignment charges each part's transfer. *)
-  Parameter T14_assign : forall x e a, (T_assign x e a <= k_partition *
+  Parameter T_assign_split : forall x e a, (T_assign x e a <= k_partition *
     (fold_right N.add 0%N (map (fun q => S.T_assign x e (snd q) + 1) (proj1_sig a)) + 1))%N.
   (** Havoc charges each part's transfer. *)
-  Parameter T15_havoc : forall x a, (T_havoc x a <= k_partition *
+  Parameter T_havoc_split : forall x a, (T_havoc x a <= k_partition *
     (fold_right N.add 0%N (map (fun q => S.T_havoc x (snd q) + 1) (proj1_sig a)) + 1))%N.
   (** Assumption charges each part's transfer. *)
-  Parameter T16_assume : forall g es a, (T_assume g es a <= k_partition *
+  Parameter T_assume_split : forall g es a, (T_assume g es a <= k_partition *
     (fold_right N.add 0%N (map (fun q => S.T_assume g es (snd q) + 1) (proj1_sig a)) + 1))%N.
   (** Narrowing takes constant time. *)
-  Parameter T17_narrow : forall a b, (T_narrow a b <= k_partition)%N.
+  Parameter T_narrow_plan_le : forall a b, (T_narrow a b <= k_partition)%N.
 End PARTITION_PLAN.
 
 Module Type PARTITION_ALL (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)

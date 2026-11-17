@@ -221,19 +221,19 @@ Module Type INTERVAL_SCALAR_TIME (T : THRESHOLDS_T) (Import S : INTERVAL_SCALAR_
     interval_bits (interval_stable_widen ts a b) <=
       interval_bits a + interval_bits b + T.tree_bits ts.
   (** Scalar inclusion has the published endpoint-bit class. *)
-  Parameter interval_leb_bigO : bigO (X := itv * itv) (fun _ => True)
+  Parameter interval_leb_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
     (fun x => T_interval_leb (fst x) (snd x)).
   (** Scalar join has the published endpoint-bit class. *)
-  Parameter interval_join_bigO : bigO (X := itv * itv) (fun _ => True)
+  Parameter interval_join_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
     (fun x => T_interval_join (fst x) (snd x)).
   (** Scalar meet has the published endpoint-bit class. *)
-  Parameter interval_meet_bigO : bigO (X := itv * itv) (fun _ => True)
+  Parameter interval_meet_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
     (fun x => T_interval_meet (fst x) (snd x)).
   (** Scalar widening has the published bits-plus-search-path class. *)
-  Parameter interval_stable_widen_bigO : bigO (X := ttree * (itv * itv)) (fun _ => True)
+  Parameter interval_stable_widen_complexity : bigO (X := ttree * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst (snd x)) + interval_bits (snd (snd x)) +
       (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
     (fun x => T_interval_stable_widen (fst x) (fst (snd x)) (snd (snd x))).
@@ -376,71 +376,71 @@ Module Type INTERVAL_TIME (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
     c_interval * N.of_nat
       ((size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1)%nat))%N.
   (** Multiplication has the published quadratic endpoint bound. *)
-  Parameter mul_bigO : (bigO (fun _ => True)
+  Parameter mul_complexity : (bigO (fun _ => True)
     (fun ab => N.of_nat ((binary_work (fst ab) (snd ab))%nat))
     (fun ab => T_mul (fst ab) (snd ab)))%N.
   (** Addition has the published linear class. *)
-  Parameter add_bigO : bigO (X := itv * itv) (fun _ => True)
+  Parameter add_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
     (fun x => T_add (fst x) (snd x)).
   (** Subtraction has the published linear class. *)
-  Parameter sub_bigO : bigO (X := itv * itv) (fun _ => True)
+  Parameter sub_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
     (fun x => T_sub (fst x) (snd x)).
   (** Unsigned division has the published quadratic endpoint class. *)
-  Parameter udiv_bigO : bigO (X := itv * itv) (fun _ => True)
+  Parameter udiv_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_udiv (fst x) (snd x)).
   (** Unsigned remainder has the published quadratic endpoint class. *)
-  Parameter urem_bigO : bigO (X := itv * itv) (fun _ => True)
+  Parameter urem_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_urem (fst x) (snd x)).
   (** Shift has the published quadratic endpoint class. *)
-  Parameter shl_bigO : bigO (X := itv * itv) (fun _ => True)
+  Parameter shl_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_shl (fst x) (snd x)).
   (** Threshold widening has the published bits-plus-search-path class. *)
-  Parameter widen_bigO : bigO (X := ttree * (itv * itv)) (fun _ => True)
+  Parameter widen_complexity : bigO (X := ttree * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) +
       (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
     (fun x => T_widen (fst x) (fst (snd x)) (snd (snd x))).
   (** Backward addition is linear in the result and operand sizes. *)
-  Parameter add_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Parameter add_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_add_back (fst x) (fst (snd x)) (snd (snd x))).
   (** Backward subtraction is linear in the result and operand sizes. *)
-  Parameter sub_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Parameter sub_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_sub_back (fst x) (fst (snd x)) (snd (snd x))).
   (** Bitwise conjunction is linear, because the result is a minimum of upper endpoints. *)
-  Parameter bitand_bigO : bigO (X := itv * itv) (fun _ => True)
+  Parameter bitand_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitand (fst x) (snd x)).
   (** Bitwise disjunction is linear, because the result is a mask of one bit length. *)
-  Parameter bitor_bigO : bigO (X := itv * itv) (fun _ => True)
+  Parameter bitor_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitor (fst x) (snd x)).
   (** Comparison has the published linear class. *)
-  Parameter cmp_bigO : bigO (X := comparison * (itv * itv)) (fun _ => True)
+  Parameter cmp_complexity : bigO (X := comparison * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_cmp (fst x) (fst (snd x)) (snd (snd x))).
   (** Backward multiplication is linear, because a preimage only reads a point. *)
-  Parameter mul_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Parameter mul_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_mul_back (fst x) (fst (snd x)) (snd (snd x))).
   (** Backward division is linear, because it only meets with fixed bounds. *)
-  Parameter udiv_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Parameter udiv_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_udiv_back (fst x) (fst (snd x)) (snd (snd x))).
   (** Backward remainder is linear, because it only meets with fixed bounds. *)
-  Parameter urem_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Parameter urem_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_urem_back (fst x) (fst (snd x)) (snd (snd x))).
   (** Backward comparison is linear in the result and operand sizes. *)
-  Parameter ult_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Parameter ult_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_ult_back (fst x) (fst (snd x)) (snd (snd x))).
   (** Signed splitting is linear in the width and the endpoints. *)
-  Parameter signed_split_bigO : bigO (X := positive * itv) (fun _ => True)
+  Parameter signed_split_complexity : bigO (X := positive * itv) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + size (snd x) + 1))
     (fun x => T_signed_split (fst x) (snd x)).
   (** Forward transfer has the published operator-work class. *)
-  Parameter forward_bigO : (bigO (fun _ => True)
+  Parameter forward_complexity : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
 End INTERVAL_TIME.
@@ -452,23 +452,23 @@ Module Type INTERVAL_PLAN (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
     (Import D : INTERVAL_T L T).
   Parameter k_interval_arith k_interval_back k_interval_widen : N.
   (** Interval concretization is inclusive endpoint membership. *)
-  Parameter F1_gamma : forall a z, gamma a z <-> in_itv a z.
+  Parameter gamma_def : forall a z, gamma a z <-> in_itv a z.
   (** Widening uses the count of thresholds beyond each finite endpoint. *)
-  Parameter F2_wrank : forall ts a, wrank ts a = interval_wrank ts a.
+  Parameter wrank_def : forall ts a, wrank ts a = interval_wrank ts a.
   (** Each endpoint contributes at most one plus the threshold count. *)
-  Parameter F3_wrank_le : forall ts a, wrank ts a <= 2 * (length (T.vals ts) + 1).
+  Parameter wrank_le : forall ts a, wrank ts a <= 2 * (length (T.vals ts) + 1).
   (** Raising a finite upper endpoint to its next threshold removes one rank unit. *)
-  Parameter F4_count_gt : forall ts z u, In u (T.vals ts) ->
+  Parameter count_gt_decreasing : forall ts z u, In u (T.vals ts) ->
     (z < u)%Z -> count_gt ts u < count_gt ts z.
   (** Lowering a finite lower endpoint to its previous threshold removes one rank unit. *)
-  Parameter F5_count_lt : forall ts z u, In u (T.vals ts) ->
+  Parameter count_lt_decreasing : forall ts z u, In u (T.vals ts) ->
     (u < z)%Z -> count_lt ts u < count_lt ts z.
   (** Widening parameter size pays for a threshold search path. *)
-  Parameter F_wsize : forall ts, wsize ts = (T.depth ts + 1) * (T.tree_bits ts + 1).
+  Parameter wsize_def : forall ts, wsize ts = (T.depth ts + 1) * (T.tree_bits ts + 1).
   (** Shift transfer computes finite endpoints below the cutoff and a sound infinity above it. *)
-  Parameter F_shl_cutoff : forall a b, shl a b = shift_cutoff a b.
+  Parameter shl_cutoff_def : forall a b, shl a b = shift_cutoff a b.
   (** Viewed forward transfer dispatches to the proved interval primitives. *)
-  Parameter F_forward_view : forall o xs, forward o xs =
+  Parameter forward_view_def : forall o xs, forward o xs =
     match L.view o, xs with
     | ZConst z, nil => abst z
     | ZAdd, a :: b :: nil => add a b
@@ -483,77 +483,77 @@ Module Type INTERVAL_PLAN (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
     | _, _ => top
     end.
   (** Viewed strict guards dispatch to unsigned comparison refinement. *)
-  Parameter F_guard_lt : forall g a b, L.gview g = ZGuardUlt ->
+  Parameter guard_lt_def : forall g a b, L.gview g = ZGuardUlt ->
     guard g (a :: b :: nil) =
       let result := ult_back (I (Fin 1) (Fin 1)) a b in
       fst result :: snd result :: nil.
   (** Cutoff shifting keeps the published quadratic endpoint bound. *)
-  Parameter T3_shl : forall a b,
+  Parameter T_shl_plan_le : forall a b,
     (T_shl a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
   (** Addition retains every sum of represented operands. *)
-  Parameter F6_add_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Parameter add_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (add a b) (x + y).
   (** Subtraction retains every difference of represented operands. *)
-  Parameter F7_sub_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Parameter sub_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (sub a b) (x - y).
   (** Multiplication retains every product of represented operands. *)
-  Parameter F8_mul_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Parameter mul_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (mul a b) (x * y).
   (** Unsigned division retains each defined quotient of nonnegative operands. *)
-  Parameter F9_udiv_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Parameter udiv_sound : forall a b x y, in_itv a x -> in_itv b y ->
     (0 <= x)%Z -> (0 < y)%Z -> in_itv (udiv a b) (Z.div x y).
   (** Unsigned remainder retains each defined remainder of nonnegative operands. *)
-  Parameter F10_urem_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Parameter urem_sound : forall a b x y, in_itv a x -> in_itv b y ->
     (0 <= x)%Z -> (0 < y)%Z -> in_itv (urem a b) (Z.modulo x y).
   (** Bitwise conjunction retains every represented pair of operands. *)
-  Parameter F11_and_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Parameter and_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (bitand a b) (Z.land x y).
   (** Bitwise disjunction retains every represented pair of operands. *)
-  Parameter F12_or_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Parameter or_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (bitor a b) (Z.lor x y).
   (** Left shifting retains represented operands for every nonnegative shift. *)
-  Parameter F13_shl_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Parameter shl_sound : forall a b x y, in_itv a x -> in_itv b y ->
     (0 <= y)%Z -> in_itv (shl a b) (Z.shiftl x y).
   (** Unsigned comparison refinement descends in both operands. *)
-  Parameter F22_ult_back_lower : forall r a b,
+  Parameter ult_back_lower : forall r a b,
     leb (fst (ult_back r a b)) a = true /\ leb (snd (ult_back r a b)) b = true.
   (** Comparison contains the Boolean result as zero or one. *)
-  Parameter F14_cmp_sound : forall c a b x y, in_itv a x -> in_itv b y ->
+  Parameter cmp_sound : forall c a b x y, in_itv a x -> in_itv b y ->
     in_itv (cmp c a b) (match Z.compare x y, c with Eq, Eq | Lt, Lt | Gt, Gt => 1 | _, _ => 0 end).
   (** Signed splitting retains the signed view of every normalized word. *)
-  Parameter F15_signed_split_sound : forall w a x, in_itv a x ->
+  Parameter signed_split_sound : forall w a x, in_itv a x ->
     (0 <= x < 2 ^ Zpos w)%Z ->
     exists b, In b (signed_split w a) /\
       in_itv b (if (x <? 2 ^ (Zpos w - 1))%Z then x else x - 2 ^ Zpos w).
   (** Backward addition retains operands consistent with its result. *)
-  Parameter F16_add_back_sound : forall r a b x y,
+  Parameter add_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> in_itv r (x + y) ->
     in_itv (fst (add_back r a b)) x /\ in_itv (snd (add_back r a b)) y.
   (** Backward subtraction retains operands consistent with its result. *)
-  Parameter F17_sub_back_sound : forall r a b x y,
+  Parameter sub_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> in_itv r (x - y) ->
     in_itv (fst (sub_back r a b)) x /\ in_itv (snd (sub_back r a b)) y.
   (** Backward multiplication retains operands consistent with its result. *)
-  Parameter F18_mul_back_sound : forall r a b x y,
+  Parameter mul_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> in_itv r (x * y) ->
     in_itv (fst (mul_back r a b)) x /\ in_itv (snd (mul_back r a b)) y.
   (** Backward division retains operands consistent with a defined unsigned quotient. *)
-  Parameter F19_udiv_back_sound : forall r a b x y,
+  Parameter udiv_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> (0 <= x)%Z -> (0 < y)%Z -> in_itv r (Z.div x y) ->
     in_itv (fst (udiv_back r a b)) x /\ in_itv (snd (udiv_back r a b)) y.
   (** Backward remainder retains operands consistent with a defined unsigned remainder. *)
-  Parameter F20_urem_back_sound : forall r a b x y,
+  Parameter urem_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> (0 <= x)%Z -> (0 < y)%Z -> in_itv r (Z.modulo x y) ->
     in_itv (fst (urem_back r a b)) x /\ in_itv (snd (urem_back r a b)) y.
   (** Backward unsigned comparison retains operands with the specified Boolean result. *)
-  Parameter F21_ult_back_sound : forall r a b x y,
+  Parameter ult_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> (0 <= x)%Z -> (0 <= y)%Z ->
     in_itv r (if (x <? y)%Z then 1 else 0) ->
     in_itv (fst (ult_back r a b)) x /\ in_itv (snd (ult_back r a b)) y.
   (** Endpoint arithmetic bounds multiplication before dispatch overhead. *)
-  Parameter T1_mul : forall a b, (T_mul a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
+  Parameter T_mul_plan_le : forall a b, (T_mul a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
   (** Threshold searches bound widening before dispatch overhead. *)
-  Parameter T2_widen : forall ts a b,
+  Parameter T_widen_plan_le : forall ts a b,
     (T_widen ts a b <= k_interval_widen * N.of_nat
       (size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1))%N.
 End INTERVAL_PLAN.
@@ -593,38 +593,38 @@ Module Type INTERVAL_PAYLOAD_BASE (L : WORD_LANGUAGE) (T : THRESHOLDS)
 Module Type INTERVAL_PAYLOAD_PINS (L : WORD_LANGUAGE) (T : THRESHOLDS)
     (S : INTERVAL_SCALAR_OPS T) (Import P : INTERVAL_PAYLOAD_BASE L T S).
   (** Payload inclusion reads both operands through the word range. *)
-  Parameter F_pleb : forall w a b, pleb w a b = S.interval_leb
+  Parameter pleb_def : forall w a b, pleb w a b = S.interval_leb
     (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
   (** Payload bottom recognition reads the clipped interval. *)
-  Parameter F_pis_bot : forall w a, pis_bot w a =
+  Parameter pis_bot_def : forall w a, pis_bot w a =
     S.interval_is_bot (interval_payload_clip S.interval_meet w a).
   (** Payload join combines clipped operands. *)
-  Parameter F_pjoin : forall w a b, pjoin w a b = S.interval_join
+  Parameter pjoin_def : forall w a b, pjoin w a b = S.interval_join
     (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
   (** Payload meet combines clipped operands. *)
-  Parameter F_pmeet : forall w a b, pmeet w a b = S.interval_meet
+  Parameter pmeet_def : forall w a b, pmeet w a b = S.interval_meet
     (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
   (** Payload widening retains stable raw values and clips unstable results. *)
-  Parameter F_pwiden : forall q w a b, pwiden q w a b =
+  Parameter pwiden_def : forall q w a b, pwiden q w a b =
     if pleb w b a then a else interval_payload_clip S.interval_meet w
       (S.interval_stable_widen q (interval_payload_clip S.interval_meet w a)
         (interval_payload_clip S.interval_meet w b)).
   (** Payload narrowing combines clipped operands. *)
-  Parameter F_pnarrow : forall w a b, pnarrow w a b = S.interval_narrow
+  Parameter pnarrow_def : forall w a b, pnarrow w a b = S.interval_narrow
     (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
   (** Payload rank treats unsigned word boundaries as terminal endpoints. *)
-  Parameter F_pwrank : forall q w a, pwrank q w a = payload_wrank q w a.
+  Parameter pwrank_def : forall q w a, pwrank q w a = payload_wrank q w a.
   (** Payload bottom is the empty interval. *)
-  Parameter F_pbot : forall w, pbot w = IBot.
+  Parameter pbot_def : forall w, pbot w = IBot.
   (** Payload top is the inclusive unsigned word range. *)
-  Parameter F_ptop : forall w, ptop w = I (Fin 0) (Fin (Word.modulus w - 1)).
+  Parameter ptop_def : forall w, ptop w = I (Fin 0) (Fin (Word.modulus w - 1)).
   (** Payload constants are wrapped singleton intervals. *)
-  Parameter F_pconst : forall w z, pconst w z = I (Fin (L.wrap w z)) (Fin (L.wrap w z)).
+  Parameter pconst_def : forall w z, pconst w z = I (Fin (L.wrap w z)) (Fin (L.wrap w z)).
   (** Payload points are recognized after clipping. *)
-  Parameter F_ppoint : forall w a, ppoint w a =
+  Parameter ppoint_def : forall w a, ppoint w a =
     S.interval_singleton (interval_payload_clip S.interval_meet w a).
   (** Payload concretization intersects raw endpoints with normalized words. *)
-  Parameter F_pgamma : forall w a z, pgamma w a z <-> L.is_word w z /\
+  Parameter pgamma_def : forall w a z, pgamma w a z <-> L.is_word w z /\
     match a with IBot => False | I lo hi => in_bnd lo hi z end.
 End INTERVAL_PAYLOAD_PINS.
 
@@ -640,11 +640,11 @@ Module Type INTERVAL_PAYLOAD_PLAN (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     (S : INTERVAL_SCALAR_T T) (Import P : INTERVAL_PAYLOAD_PINNED_T L T S).
   Parameter k_payload_clip : N.
   (** Payload size charges its width and the raw endpoint bits. *)
-  Parameter F_psize : forall w a, psize w a = Pos.to_nat w + interval_bits a + 1.
+  Parameter psize_def : forall w a, psize w a = Pos.to_nat w + interval_bits a + 1.
   (** Widening parameter size charges a threshold search path. *)
-  Parameter F_pwsize : forall q, pwsize q = (T.depth q + 1) * (T.tree_bits q + 1).
+  Parameter pwsize_def : forall q, pwsize q = (T.depth q + 1) * (T.tree_bits q + 1).
   (** Payload rank never exceeds the scalar threshold envelope. *)
-  Parameter F_pwrank_le : forall q w a, pwrank q w a <= 2 * (length (T.vals q) + 1).
+  Parameter pwrank_le : forall q w a, pwrank q w a <= 2 * (length (T.vals q) + 1).
   (** Constructing the unsigned modulus charges the resulting word width. *)
   Parameter T_modulus_le : forall w,
     (Word.T_modulus w <= k_payload_clip * N.of_nat (Pos.to_nat w + 1))%N.

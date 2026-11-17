@@ -167,24 +167,24 @@ Module Type MAP_TIME (K : KEY_T) (Import M : MAP K).
         (f (fst bw) (fst ka) (snd ka), snd bw + T_f (fst bw) (fst ka) (snd ka)))
         (elements m) (b, 0))))%N.
   (** Lookup is linear in the encoded key length. *)
-  Parameter get_bigO : forall A, bigO (X := K.t * t A) (fun _ => True)
+  Parameter get_complexity : forall A, bigO (X := K.t * t A) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_get (fst x) (snd x)).
   (** Insertion is linear in the encoded key length. *)
-  Parameter set_bigO : forall A, bigO (X := K.t * A * t A) (fun _ => True)
+  Parameter set_complexity : forall A, bigO (X := K.t * A * t A) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst (fst x))))
     (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
   (** Removal is linear in the encoded key length. *)
-  Parameter remove_bigO : forall A, bigO (X := K.t * t A) (fun _ => True)
+  Parameter remove_complexity : forall A, bigO (X := K.t * t A) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_remove (fst x) (snd x)).
   (** Merging is linear in both skeletons for bounded callbacks. *)
-  Parameter merge_bigO : forall A B C,
+  Parameter merge_complexity : forall A B C,
     bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
       (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
       (fun '(f, T_f, _, m1, m2) => T_merge f T_f m1 m2).
   (** Relational checking is linear in both skeletons for bounded callbacks. *)
-  Parameter forall2b_bigO : forall A B,
+  Parameter forall2b_complexity : forall A B,
     bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)

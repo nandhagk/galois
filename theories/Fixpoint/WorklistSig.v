@@ -159,7 +159,7 @@ Module Type WORKLIST_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
   Parameter T_run_all_heads_le : forall p pol fuel, S.wf p -> prio_ok p pol -> all_heads p pol ->
     (T_run p pol fuel <= c_wl * (all_head_work p pol + N.of_nat (N.size_nat fuel) + 1))%N.
   (** Running at sufficient fuel has the published work bound. *)
-  Parameter run_bigO : bigO
+  Parameter run_complexity : bigO
     (fun x : S.prog * policy L.wparam => fits (fst x) (snd x))
     (fun x => work (fst x) (snd x))
     (fun x => T_run (fst x) (snd x) (fuel_for (fst x) (snd x))).
@@ -363,34 +363,34 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       outs (s, 0%N)).
 
   (** Binary enumeration retains the original observable identifiers and occurrence order. *)
-  Parameter F0_row_ids : forall p,
+  Parameter row_ids_def : forall p,
     row_ids p = List.map Pos.of_succ_nat (seq 0 (C p)).
   (** Projecting a prepared state retains every lookup in the original store. *)
-  Parameter F0_view_look : forall s x, reference_look (wl_view s) x = look s x.
+  Parameter wl_view_look : forall s x, reference_look (wl_view s) x = look s x.
   (** Projecting a prepared state retains every strict-update counter. *)
-  Parameter F0_view_counter : forall s c, reference_counter (wl_view s) c = counter s c.
+  Parameter wl_view_counter : forall s c, reference_counter (wl_view s) c = counter s c.
   (** Numbered lookup agrees with the corresponding original row occurrence. *)
-  Parameter F1_numbering : forall p n,
+  Parameter source_row_numbering : forall p n,
     source_row p (Pos.of_succ_nat n) = nth_error (S.rows p) n.
   (** Reader buckets retain every reading row occurrence once. *)
-  Parameter F2_readers : forall p c,
+  Parameter source_readers_spec : forall p c,
     source_readers p c = filter (fun id => match source_row p id with
       | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
       | None => false
       end) (row_ids p).
   (** Evaluation observes the current store through the system's public evaluator. *)
-  Parameter F3_eval : forall p r m,
+  Parameter eval_row_spec : forall p r m,
     eval_row p r m = S.eval p r (look_or S.key_code L.bot m).
   (** Preparation starts at bottom and zero counters and establishes queue and value invariants. *)
-  Parameter F4_prepare : forall p pol, S.wf p -> prio_ok p pol ->
+  Parameter prepare_invariant : forall p pol, S.wf p -> prio_ok p pol ->
     invariant p pol (prepare p pol) /\
     (forall x, look (prepare p pol) x = L.bot) /\
     (forall c, counter (prepare p pol) c = 0%N) /\
     (forall id, In id (row_ids p) -> exists pr, Q.prio (ws_queue (prepare p pol)) id = Some pr).
   (** Preparation starts every key at bottom for every policy. *)
-  Parameter F4_bottom : forall p pol x, look (prepare p pol) x = L.bot.
+  Parameter prepare_look_bot : forall p pol x, look (prepare p pol) x = L.bot.
   (** Enqueue changes the queue alone and guards every push by live absence. *)
-  Parameter F5_enqueue : forall p pol ids s,
+  Parameter reference_enqueue_spec : forall p pol ids s,
     wl_store (reference_enqueue p pol ids s) = wl_store s /\
     wl_counters (reference_enqueue p pol ids s) = wl_counters s /\
     wl_queue (reference_enqueue p pol ids s) = fold_left
@@ -399,7 +399,7 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
         | _, _ => q
         end) ids (wl_queue s).
   (** An update writes the policy result and enqueues its readers after a strict value change. *)
-  Parameter F6_update : forall p pol s x a,
+  Parameter reference_update_spec : forall p pol s x a,
     let c := S.key_code x in
     let ac := P.update pol c (reference_counter s c) (reference_look s x) a in
     let s1 := WlState (PTrieCode.set c (x, fst ac) (wl_store s))
@@ -407,7 +407,7 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     reference_update p pol s (x, a) =
       if L.leb a (reference_look s x) then s else reference_enqueue p pol (source_readers p c) s1.
   (** Each callback pops one row and processes its primary and side outputs in occurrence order. *)
-  Parameter F7_step : forall p pol s,
+  Parameter reference_step_spec : forall p pol s,
     reference_step p pol s = match Q.pop (wl_queue s) with
     | None => inr (Solved (wl_store s))
     | Some (_, id, q1) =>
@@ -422,14 +422,14 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       end
     end.
   (** Indexed lookup reads the prepared row table without traversing the source rows. *)
-  Parameter F1_row_at : forall s id, row_at s id = trie_get id (ws_rows s).
+  Parameter row_at_def : forall s id, row_at s id = trie_get id (ws_rows s).
   (** Reader lookup reads the prepared bucket and maps an absent bucket to the empty list. *)
-  Parameter F2_reader_at : forall s c,
+  Parameter readers_spec : forall s c,
     readers s c = match trie_get c (ws_readers s) with Some ids => ids | None => nil end.
   (** Preparation establishes all cache and live facts within the solver. *)
-  Parameter F4_metadata : forall p pol, prepared p pol (prepare p pol).
+  Parameter prepare_prepared : forall p pol, prepared p pol (prepare p pol).
   (** Enqueue preserves the immutable indexes and the original value components. *)
-  Parameter F5_fields : forall p pol ids s,
+  Parameter enqueue_tables_kept : forall p pol ids s,
     ws_store (enqueue p pol ids s) = ws_store s /\
     ws_counters (enqueue p pol ids s) = ws_counters s /\
     ws_rows (enqueue p pol ids s) = ws_rows s /\
@@ -437,7 +437,7 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     ws_armed (enqueue p pol ids s) = ws_armed s /\
     ws_ranks (enqueue p pol ids s) = ws_ranks s.
   (** Guarded pushes update the queue and live set together in occurrence order. *)
-  Parameter F5_indexed : forall p pol ids s,
+  Parameter enqueue_spec : forall p pol ids s,
     (ws_queue (enqueue p pol ids s), ws_live (enqueue p pol ids s)) =
     fold_left (fun ql id => match trie_get id (snd ql), row_at s id with
       | None, Some r =>
@@ -449,13 +449,13 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       | _, _ => ql
       end) ids (ws_queue s, ws_live s).
   (** Enqueue agrees with the original helper after projection from prepared states. *)
-  Parameter F5_agreement : forall p pol ids s, prepared p pol s ->
+  Parameter enqueue_reference_agrees : forall p pol ids s, prepared p pol s ->
     wl_view (enqueue p pol ids s) = reference_enqueue p pol ids (wl_view s).
   (** Enqueue maintains the metadata and live facts that justify projected agreement. *)
-  Parameter F5_prepared : forall p pol ids s, prepared p pol s ->
+  Parameter enqueue_prepared_preserved : forall p pol ids s, prepared p pol s ->
     prepared p pol (enqueue p pol ids s).
   (** Indexed updates retain metadata while writing the policy result and enqueueing readers. *)
-  Parameter F6_indexed : forall p pol s x a,
+  Parameter update_one_def : forall p pol s x a,
     let c := S.key_code x in
     let ac := P.update pol c (counter s c) (look s x) a in
     let s1 := WorklistState (PTrieCode.set c (x, fst ac) (ws_store s))
@@ -468,17 +468,17 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       | None => arm c (enqueue p pol (readers s c) s1)
       end.
   (** Indexed updates preserve both tables independently of the input cache validity. *)
-  Parameter F6_tables : forall p pol s xa,
+  Parameter update_one_tables_kept : forall p pol s xa,
     ws_rows (update_one p pol s xa) = ws_rows s /\
     ws_readers (update_one p pol s xa) = ws_readers s.
   (** Every update has the original projected behavior on prepared states. *)
-  Parameter F6_agreement : forall p pol s xa, prepared p pol s ->
+  Parameter update_one_reference_agrees : forall p pol s xa, prepared p pol s ->
     wl_view (update_one p pol s xa) = reference_update p pol (wl_view s) xa.
   (** Every intermediate update maintains prepared-state agreement without client duties. *)
-  Parameter F6_prepared : forall p pol s xa, prepared p pol s ->
+  Parameter update_one_prepared_preserved : forall p pol s xa, prepared p pol s ->
     prepared p pol (update_one p pol s xa).
   (** A pop removes its live identifier and clears every reader flag used by that row. *)
-  Parameter F7_indexed : forall p pol s,
+  Parameter step_def : forall p pol s,
     step p pol s = match Q.pop (ws_queue s) with
     | None => inr (Solved (ws_store s))
     | Some (_, id, q1) =>
@@ -493,76 +493,76 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       end
     end.
   (** Popping preserves cache agreement and restores live agreement for the residual queue. *)
-  Parameter F7_pop_prepared : forall p pol s pr id q1, prepared p pol s ->
+  Parameter pop_prepared_preserved : forall p pol s pr id q1, prepared p pol s ->
     Q.pop (ws_queue s) = Some (pr, id, q1) -> prepared p pol (after_pop p s id q1).
   (** The full callback retains every observable behavior of the original callback. *)
-  Parameter F7_agreement : forall p pol s, prepared p pol s ->
+  Parameter step_reference_agrees : forall p pol s, prepared p pol s ->
     view_result (step p pol s) = reference_step p pol (wl_view s).
   (** Continuing callbacks retain both tables and all prepared-state facts. *)
-  Parameter F7_prepared : forall p pol s s1, prepared p pol s -> step p pol s = inl s1 ->
+  Parameter step_prepared_preserved : forall p pol s s1, prepared p pol s -> step p pol s = inl s1 ->
     prepared p pol s1 /\ ws_rows s1 = ws_rows s /\ ws_readers s1 = ws_readers s.
   (** The public solver is the binary-fuel loop over these callbacks. *)
-  Parameter F8_run : forall p pol fuel,
+  Parameter run_def : forall p pol fuel,
     run p pol fuel = match loopN (step p pol) fuel (prepare p pol) with
     | inl s => OutOfFuel (ws_store s)
     | inr result => result
     end.
   (** The original three-field loop has the same public result for every fuel. *)
-  Parameter F8_reference_run : forall p pol fuel,
+  Parameter run_reference_agrees : forall p pol fuel,
     run p pol fuel =
     match loopN (reference_step p pol) fuel (wl_view (prepare p pol)) with
     | inl s => OutOfFuel (wl_store s)
     | inr result => result
     end.
   (** Every state reached by the public solver satisfies its internal preparation duties. *)
-  Parameter F9_reachable_prepared : forall p pol s, reachable p pol s -> prepared p pol s.
+  Parameter reachable_prepared : forall p pol s, reachable p pol s -> prepared p pol s.
   (** Every reachable store satisfies the client invariant with arbitrary priorities. *)
-  Parameter F9_reachable_inv : forall p pol s, S.wf p -> reachable p pol s ->
+  Parameter reachable_inv : forall p pol s, S.wf p -> reachable p pol s ->
     forall x, B.inv p (look s x).
   (** Prepared ranks equal each row's least non-head write priority. *)
-  Parameter F4_rank_cache : forall p pol id r, row_at (prepare p pol) id = Some r ->
+  Parameter prepare_rank_cache : forall p pol id r, row_at (prepare p pol) id = Some r ->
     trie_get id (ws_ranks (prepare p pol)) = Some (row_rank p pol r).
   (** Every continuing callback keeps the structural and client value invariants. *)
-  Parameter F9_step_inv : forall p pol s s1, S.wf p -> prio_ok p pol -> invariant p pol s ->
+  Parameter step_invariant_preserved : forall p pol s s1, S.wf p -> prio_ok p pol -> invariant p pol s ->
     step p pol s = inl s1 -> invariant p pol s1.
   (** Each intermediate primary or side update keeps the same invariant. *)
-  Parameter F9_update_inv : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
+  Parameter update_one_invariant_preserved : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
     B.inv p a -> In (S.key_code x) (key_support p) ->
     invariant p pol (update_one p pol s (x, a)).
 
   (** Reachable states satisfy every row outside their queue. *)
-  Parameter F9_accepted : forall p pol s, S.wf p -> reachable p pol s -> accepted p s.
+  Parameter reachable_accepted : forall p pol s, S.wf p -> reachable p pol s -> accepted p s.
 
   (** W1 charges indexing, numbering and initial guarded enqueue to preparation. *)
-  Parameter W1_prepare : forall p pol, S.wf p -> prio_ok p pol ->
+  Parameter T_prepare_le : forall p pol, S.wf p -> prio_ok p pol ->
     (T_prepare p pol <= k_prepare * (N.of_nat (prep p) + N.of_nat (C p) * unit p + 1))%N.
   (** Initial guarded pushes supply the potential consumed by later queue operations. *)
-  Parameter W1_queue_phi : forall p pol, S.wf p -> prio_ok p pol ->
+  Parameter prepare_queue_potential_le : forall p pol, S.wf p -> prio_ok p pol ->
     (queue_phi p (prepare p pol) <= k_prepare * N.of_nat (C p + D p) * unit p)%N.
   (** W2 charges every dependency-resume occurrence on invariant stores. *)
-  Parameter W2_eval : forall p pol r s, S.wf p -> In r (S.rows p) -> invariant p pol s ->
+  Parameter T_eval_row_le : forall p pol r s, S.wf p -> In r (S.rows p) -> invariant p pol s ->
     (T_eval_row p r (ws_store s) <=
       k_eval * N.of_nat (length (S.deps p r) + length (S.sides p r) + 1) * unit p)%N.
   (** Reading a numbered row pays for the bits of its identifier. *)
-  Parameter W2_row_at : forall p s id, In id (row_ids p) ->
+  Parameter T_row_at_le : forall p s id, In id (row_ids p) ->
     (T_row_at s id <= k_eval * unit p)%N.
   (** Reading a reader bucket pays for the bits of its declared key code. *)
-  Parameter W2_readers : forall p s c, S.wf p -> In c (key_support p) ->
+  Parameter T_readers_le : forall p s c, S.wf p -> In c (key_support p) ->
     (T_readers s c <= k_update * unit p)%N.
   (** Guarded enqueue pays each supplied reader occurrence even when it is already live. *)
-  Parameter W3_enqueue : forall p pol ids s, S.wf p -> prio_ok p pol -> invariant p pol s ->
+  Parameter T_enqueue_amort : forall p pol ids s, S.wf p -> prio_ok p pol -> invariant p pol s ->
     incl ids (row_ids p) ->
     (T_enqueue p pol ids s + queue_phi p (enqueue p pol ids s) <=
       k_update * N.of_nat (length ids + 1) * unit p + queue_phi p s)%N.
   (** W3 keeps the value invariant and charges reader pushes against queue potential. *)
-  Parameter W3_update : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
+  Parameter T_update_one_amort : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
     B.inv p a -> In (S.key_code x) (key_support p) ->
     B.inv p (look (update_one p pol s (x, a)) x) /\
     (T_update_one p pol s (x, a) + queue_phi p (update_one p pol s (x, a)) <=
       k_update * N.of_nat (1 + push_work p s x a) * unit p +
       k_update * strict_head_work pol s x a + queue_phi p s)%N.
   (** Callback accounting retains every emitted occurrence and every intermediate update cost. *)
-  Parameter W3_step : forall p pol s pr id q1 r a ss, S.wf p -> invariant p pol s ->
+  Parameter T_step_split : forall p pol s pr id q1 r a ss, S.wf p -> invariant p pol s ->
     Q.pop (ws_queue s) = Some (pr, id, q1) -> source_row p id = Some r ->
     eval_row p r (ws_store s) = Some (a, ss) ->
     (T_step p pol s <= k_loop * (Q.T_pop (ws_queue s) + T_row_at s id +
@@ -571,75 +571,75 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       output_cost p pol ((S.target p r, a) :: ss)
         (after_pop p s id q1) + N.of_nat (length ss) + 1))%N.
   (** W4 spends weighted rank credit for each callback in a widening-free run. *)
-  Parameter W4_credit : forall p pol rk h s s1, S.wf p -> prio_ok p pol -> widening_free pol ->
+  Parameter T_step_height_credit : forall p pol rk h s s1, S.wf p -> prio_ok p pol -> widening_free pol ->
     (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
       rk a < rk b /\ rk b <= h) ->
     reachable p pol s -> step p pol s = inl s1 ->
     (T_step p pol s + height_phi p rk h s1 + c_loopN <= height_phi p rk h s)%N.
   (** Weighted source credit fits the public weighted incidence budget. *)
-  Parameter W4_initial : forall p pol rk h, S.wf p -> prio_ok p pol -> widening_free pol ->
+  Parameter height_phi_initial_le : forall p pol rk h, S.wf p -> prio_ok p pol -> widening_free pol ->
     (height_phi p rk h (prepare p pol) <=
       k_credit * N.of_nat (D p + h * DW p) * unit p + queue_phi p (prepare p pol))%N.
   (** Cut edges make popped row ranks nondecreasing in a stable segment. *)
-  Parameter W5_priority : forall p pol s xs last i j a b,
+  Parameter stable_segment_priority_order : forall p pol s xs last i j a b,
     fits p pol -> reachable p pol s ->
     wl_path (step p pol) s xs last -> stable_segment p pol xs ->
     i < j -> nth_error (popped_ranks xs) i = Some a ->
     nth_error (popped_ranks xs) j = Some b -> (a <= b)%N.
   (** W5 uses cuts to bound each numbered row's visits between strict head updates. *)
-  Parameter W5_round : forall p pol s xs last,
+  Parameter stable_segment_round_cost : forall p pol s xs last,
     fits p pol -> reachable p pol s ->
     wl_path (step p pol) s xs last -> stable_segment p pol xs ->
     (forall id, count_occ Pos.eq_dec (popped_ids xs) id <= 1) /\
     (trace_cost p pol xs + queue_phi p last <=
       k_round * N.of_nat (C p + D p) * unit p + queue_phi p s)%N.
   (** A callback that ends a stable segment is charged to its strict head events. *)
-  Parameter W5_boundary : forall p pol s s1, fits p pol -> reachable p pol s ->
+  Parameter T_step_boundary_amort : forall p pol s s1, fits p pol -> reachable p pol s ->
     step p pol s = inl s1 -> 0 < head_events pol s s1 ->
     (T_step p pol s + c_loopN + queue_phi p s1 <=
       k_round * N.of_nat (head_events pol s s1) * N.of_nat (C p + D p) * unit p +
       k_round * N.of_nat (head_events pol s s1) * head_unit p pol +
       queue_phi p s)%N.
   (** W6 bounds every finite prefix's strict head events by the advertised round count. *)
-  Parameter W6_rounds : forall p pol xs last, S.wf p -> prio_ok p pol ->
+  Parameter head_events_le_rounds : forall p pol xs last, S.wf p -> prio_ok p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     head_events pol (prepare p pol) last + 1 <= rounds p pol /\
     (forall c, In c (key_support p) ->
       N.to_nat (counter last c) <= head_allowance p pol c).
   (** W7 charges arbitrary finite prefixes by partitioning at strict head events. *)
-  Parameter W7_trace : forall p pol xs last, fits p pol ->
+  Parameter trace_cost_le_work : forall p pol xs last, fits p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
       k_loop * work p pol +
       queue_phi p (prepare p pol))%N.
   (** The visit count supplies fuel without charging abstract value sizes to fuel construction. *)
-  Parameter W7_visits : forall p pol xs last, fits p pol ->
+  Parameter visits_lt_fuel : forall p pol xs last, fits p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     (N.of_nat (length xs) < k_fuel * N.of_nat ((C p + D p) * rounds p pol + 1))%N.
   (** Stopping callbacks must solve and must fit the final driver budget. *)
-  Parameter W7_stop : forall p pol s result, S.wf p -> prio_ok p pol -> reachable p pol s ->
+  Parameter T_step_stop_le : forall p pol s result, S.wf p -> prio_ok p pol -> reachable p pol s ->
     step p pol s = inr result ->
     (exists m, result = Solved m) /\
     (T_step p pol s <= k_loop * (N.of_nat (C p) * unit p + 1) + queue_phi p s)%N.
   (** Binary fuel charges the loop from finite-prefix accounting and the final callback. *)
-  Parameter W7_loop : forall p pol fuel, fits p pol ->
+  Parameter T_step_loop_le : forall p pol fuel, fits p pol ->
     (T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) <= k_loop *
       (work p pol + queue_phi p (prepare p pol) +
         N.of_nat (N.size_nat fuel) + 1))%N.
   (** Fuel is chosen from the row-visit budget and includes the final empty pop. *)
-  Parameter W7_fuel : forall p pol,
+  Parameter fuel_for_def : forall p pol,
     (fuel_for p pol = k_fuel * N.of_nat ((C p + D p) * rounds p pol + 1))%N.
   (** W7 connects the derived solver time to preparation and the derived binary-loop time. *)
-  Parameter W7_run : forall p pol fuel,
+  Parameter T_run_split : forall p pol fuel,
     (T_run p pol fuel <= k_loop * (T_prepare p pol +
       T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) + 1))%N.
 
   (** All-head credit decreases per callback without the stable-segment lemma. *)
-  Parameter W7_all_heads_credit : forall p pol s s1, S.wf p -> prio_ok p pol -> all_heads p pol ->
+  Parameter T_step_all_heads_credit : forall p pol s s1, S.wf p -> prio_ok p pol -> all_heads p pol ->
     reachable p pol s -> step p pol s = inl s1 ->
     (T_step p pol s + all_head_phi p pol s1 + c_loopN <= all_head_phi p pol s)%N.
   (** The independent widening fallback needs weighted degree absorbed by its public budget. *)
-  Parameter W7_all_heads_initial : forall p pol, S.wf p -> prio_ok p pol -> all_heads p pol ->
+  Parameter all_head_phi_initial_le : forall p pol, S.wf p -> prio_ok p pol -> all_heads p pol ->
     (all_head_phi p pol (prepare p pol) <=
       2 * k_credit * all_head_work p pol + queue_phi p (prepare p pol))%N.
 End WORKLIST_PLAN.
@@ -654,7 +654,7 @@ Module Type WORKLIST_LEAST_PLAN (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
     (Sched : SCHEDULE_T L S G W) (B : BUDGET L S)
     (Import V : WORKLIST_ALL L S P Q G W Sched B).
   (** Widening-free reachable stores lie below every post-solution of a monotone system. *)
-  Parameter F10_least : forall p pol s s', S.wf p -> S.monotone p -> widening_free pol ->
+  Parameter reachable_least : forall p pol s s', S.wf p -> S.monotone p -> widening_free pol ->
     reachable p pol s -> S.post_solution p s' ->
     forall x, L.leb (look s x) (s' x) = true.
 End WORKLIST_LEAST_PLAN.

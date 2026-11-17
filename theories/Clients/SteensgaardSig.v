@@ -151,19 +151,19 @@ Module Type STEENSGAARD_TIME (V : VALUE_T with Definition t := positive)
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + c_steensgaard)%N.
   (** Seeding is linear in the constraints and initial pointers at the database unit. *)
-  Parameter seed_bigO : bigO (fun _ => True)
+  Parameter seed_complexity : bigO (fun _ => True)
     (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
       D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
     T_seed.
   (** Compilation emits a fixed program, so its cost is a constant. *)
-  Parameter compile_bigO : bigO (fun _ => True) (fun _ => 0%N) T_compile.
+  Parameter compile_complexity : bigO (fun _ => True) (fun _ => 0%N) T_compile.
   (** A points-to query is linear in the database unit and the bits of its two cells. *)
-  Parameter points_bigO : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
+  Parameter points_complexity : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
     (fun z => let '(db, x, a) := z in
       N.of_nat (8 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
     (fun z => let '(db, x, a) := z in T_points db x a).
   (** A solve costs its seed, the cube of the fixed program for planning, and the run. *)
-  Parameter solve_bigO : bigO
+  Parameter solve_complexity : bigO
     (fun x : N * nat * pointer_input * limits =>
       let '(B, U, q, lim) := x in
       (D.ids (snd (solve q lim)) <= B)%N /\ D.unit (snd (solve q lim)) <= U)
@@ -187,29 +187,29 @@ Module Type STEENSGAARD_PLAN (V : VALUE_T with Definition t := positive)
     (Import A : STEENSGAARD_T V I J D R).
   Parameter k_rules k_seed k_wrap : N.
   (** Dereference equality covers every source-closed pointer rule. *)
-  Parameter F1_source_closed : forall q,
+  Parameter source_closed : forall q,
     pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
   (** Every inclusion-derived pointer belongs to the unification approximation. *)
-  Parameter F2_inclusion_unifies : forall q x a, may_points q x a ->
+  Parameter inclusion_unifies : forall q x a, may_points q x a ->
     pointer_congruence q (Deref (Cell x)) (Cell a).
   (** Saturation makes each source equation's two ground terms equal in the database. *)
-  Parameter F3_saturated_equations : forall q lim db, solve q lim = (Saturated, db) ->
+  Parameter saturated_equations : forall q lim db, solve q lim = (Saturated, db) ->
     forall t u, pointer_congruence q t u ->
     forall i j, represents (D.view db) (Id i) (pointer_expression t) ->
       represents (D.view db) (Id j) (pointer_expression u) -> same (D.view db) i j.
   (** Congruence consequences queried as pointers have represented endpoint terms. *)
-  Parameter F4_endpoints_represented : forall q lim db x a,
+  Parameter endpoints_represented : forall q lim db x a,
     solve q lim = (Saturated, db) -> pointer_congruence q (Deref (Cell x)) (Cell a) ->
     (exists i, represents (D.view db) (Id i) (pointer_expression (Deref (Cell x)))) /\
     (exists j, represents (D.view db) (Id j) (pointer_expression (Cell a))).
   (** Concrete instruction updates retain coverage by the source congruence. *)
-  Parameter F6_step_covered : forall q instruction before after,
+  Parameter step_covered : forall q instruction before after,
     In instruction (constraints q) ->
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) before ->
     pointer_exec instruction before = Some after ->
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) after.
   (** Wrapper composition includes every actual engine and database primitive. *)
-  Parameter T1_wrapper : forall q lim, let p := compile q in let cp := R.plan p in
+  Parameter T_solve_split : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
 End STEENSGAARD_PLAN.

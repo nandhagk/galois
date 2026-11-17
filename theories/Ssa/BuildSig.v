@@ -131,10 +131,10 @@ Module Type BUILD_TIME (O : OPS)
   Parameter T_build_le : forall p,
     (T_build p <= c_build * N.of_nat (build_work p) * N.of_nat (function_width p + 1) +
       c_build * N.of_nat (Va.op_bits p + 1))%N.
-  Parameter build_bigO : bigO (fun _ : P.t => True)
+  Parameter build_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (build_work p * (function_width p + 1) + Va.op_bits p + 1)) T_build.
   (** Producing a candidate is linear in the construction work times the width. *)
-  Parameter produce_bigO : bigO (fun _ : P.t => True)
+  Parameter produce_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (build_work p * (function_width p + 1))) T_produce.
 End BUILD_TIME.
 
@@ -191,25 +191,25 @@ Module Type BUILD_PLAN (O : OPS)
     place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x.
 
   (** The graph of every prepared function is well formed. *)
-  Parameter F1_graph_wf : forall p, wf_graph (base (graph p)).
+  Parameter graph_wf : forall p, wf_graph (base (graph p)).
   (** The definition index lists each variable's definition blocks. *)
-  Parameter F2a_def_index : forall p x,
+  Parameter def_index_spec : forall p x,
     frontier_row (def_index p) x = definition_blocks p x.
   (** The live sets answer certificate membership. *)
-  Parameter F2b_live_sets : forall rows b x,
+  Parameter live_sets_spec : forall rows b x,
     (exists m, trie_get b (live_sets rows) = Some m /\ trie_get x m = Some tt) <->
       In x (cert_live ([], rows) b).
   (** Every variable enters a placement worklist at most once per block. *)
-  Parameter F2_place_unique : forall p x, NoDup (placed p x).
+  Parameter placed_nodup : forall p x, NoDup (placed p x).
   (** Pruned placement uses iterated-frontier blocks with a certified live entry. *)
-  Parameter F3_place_region : forall p x b, In b (placed p x) ->
+  Parameter placed_region : forall p x b, In b (placed p x) ->
     In b (phi_sites p x) /\ In x (cert_live ([], L.live_in p) b).
   (** The placement table lists exactly the placed variables of each block. *)
-  Parameter F3a_placement : forall p b x,
+  Parameter placement_spec : forall p b x,
     In x (frontier_row (placement p) b) <->
       In x (U.universe (R.prepare p)) /\ In b (placed p x).
   (** Renaming uses a bounded explicit stack with two visits per listed block. *)
-  Parameter F4_rename_loop : forall p t rows live,
+  Parameter rename_spec : forall p t rows live,
     rename p t rows live =
       match loop_fuel (rename_step p t rows live) (2 * length (blocks _ _ _ p) + 1)
         (rename_init p) with
@@ -217,16 +217,16 @@ Module Type BUILD_PLAN (O : OPS)
       | inr answer => answer
       end.
   (** The producer checks dominators before using their numbered tree. *)
-  Parameter F5_produce_checked : forall p s c, produce p = Some (s, c) ->
+  Parameter produce_checked : forall p s c, produce p = Some (s, c) ->
     D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true /\
     rename p (dom_tree p) (placement p) (L.live_in p) = Some (s, c).
   (** The two indexes charge syntax and emitted live rows once. *)
-  Parameter T0_indexes : forall p,
+  Parameter T_indexes_le : forall p,
     (T_def_index p + T_live_sets (L.live_in p) <= k_place *
       N.of_nat (function_size p + L.live_size p + 1) * N.of_nat (function_width p + 1))%N.
   (** One placement search for a variable of the universe charges its seeds, their frontier
       rows and the discovered frontier rows. *)
-  Parameter T1_place_var : forall p x, In x (U.universe (R.prepare p)) ->
+  Parameter T_place_var_le : forall p x, In x (U.universe (R.prepare p)) ->
     D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
     (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x <= k_place *
       N.of_nat (length (definition_blocks p x) +
@@ -235,27 +235,27 @@ Module Type BUILD_PLAN (O : OPS)
         fold_right (fun b n => (1 + length (frontier_row (frontiers p) b) + n)%nat)
           0%nat (phi_sites p x) + 1) * N.of_nat (function_width p + 1))%N.
   (** Initialization charges the source inventory at its syntax width. *)
-  Parameter T2a_rename_init : forall p,
+  Parameter T_rename_init_le : forall p,
     (T_rename_init p <= k_rename * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
   (** Renaming distinct blocks along a checked dominator tree charges the source, the live
       rows and the placement work. *)
-  Parameter T2_rename : forall p, NoDup (map fst (blocks _ _ _ p)) ->
+  Parameter T_rename_le : forall p, NoDup (map fst (blocks _ _ _ p)) ->
     D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
     (T_rename p (dom_tree p) (placement p) (L.live_in p) <=
       k_rename * N.of_nat (function_size p + L.live_size p + placement_work p + 1) *
         N.of_nat (function_width p + 1))%N.
   (** A candidate keeps the source blocks and stays within the published work and width. *)
-  Parameter F6_produce_size : forall p s c, produce p = Some (s, c) ->
+  Parameter produce_size_le : forall p s c, produce p = Some (s, c) ->
     map fst (blocks _ _ _ s) = map fst (blocks _ _ _ p) /\
     (N.of_nat (function_size s + cert_size c) <= k_size * N.of_nat (build_work p))%N /\
     (N.of_nat (function_width s + vertex_width (cert_ids c)) <=
       k_size * N.of_nat (function_width p + 1))%N.
   (** The producer stays within the published construction work at the source width. *)
-  Parameter T3_produce : forall p,
+  Parameter T_produce_le : forall p,
     (T_produce p <= k_graph * N.of_nat (build_work p) * N.of_nat (function_width p + 1))%N.
   (** The wrapper charges the actual certificate and candidate validators. *)
-  Parameter T4_wrapper : forall p,
+  Parameter T_build_split : forall p,
     (T_build p <= T_produce p +
       match produce p with
       | None => k_wrap

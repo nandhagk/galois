@@ -410,7 +410,7 @@ Proof.
 Qed.
 
 (** Modulus construction is linear in the width. *)
-Theorem modulus_bigO : bigO (X := width) (fun _ => True)
+Theorem modulus_complexity : bigO (X := width) (fun _ => True)
   (fun w => N.of_nat (Pos.to_nat w)) (fun w => T_modulus w).
 Proof.
   apply bigO_intro with (c := 8%N). intros w _.
@@ -419,7 +419,7 @@ Proof.
 Qed.
 
 (** Wrapping has the linear class in the width and the raw integer size. *)
-Theorem wrap_bigO : bigO (X := width * Z) (fun _ => True)
+Theorem wrap_complexity : bigO (X := width * Z) (fun _ => True)
   (fun x => N.of_nat (Pos.to_nat (fst x) + Z.size_nat (snd x)))
   (fun x => T_wrap (fst x) (snd x)).
 Proof.

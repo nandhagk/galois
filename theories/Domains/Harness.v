@@ -84,7 +84,7 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
   Definition is_bot_below := B.is_bot_below.
 
   (** Collected singletons agree with every represented operand. *)
-  Lemma points_sound : forall xs cs vs,
+  Lemma points_sound_aux : forall xs cs vs,
     Forall2 gamma xs cs -> points xs = Some vs -> vs = cs.
   Proof.
     intros xs cs vs Hxs. revert vs.
@@ -133,7 +133,7 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
   Qed.
 
   (** Positional meets retain values represented by both input lists. *)
-  Lemma meet_all_sound : forall xs ys cs, length ys = length xs ->
+  Lemma meet_all_sound_aux : forall xs ys cs, length ys = length xs ->
     Forall2 gamma xs cs -> Forall2 gamma ys cs ->
     Forall2 gamma (meet_all xs ys) cs.
   Proof.
@@ -147,7 +147,7 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
   Qed.
 
   (** Positional meets descend even when the candidate list has another length. *)
-  Lemma meet_all_refines : forall xs ys,
+  Lemma meet_all_refines_aux : forall xs ys,
     Forall2 (fun y x => B.leb y x = true) (meet_all xs ys) xs.
   Proof.
     induction xs as [|x xs IH]; intros ys; destruct ys as [|y ys];
@@ -172,7 +172,7 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
     intros o xs cs c Hxs Heval. unfold forward.
     rewrite (no_bot xs cs Hxs).
     destruct (points xs) as [vs|] eqn:Hpoints.
-    - pose proof (points_sound xs cs vs Hxs Hpoints) as ->.
+    - pose proof (points_sound_aux xs cs vs Hxs Hpoints) as ->.
       rewrite Heval. apply B.abst_sound.
     - destruct (T.fwd o xs) as [r|] eqn:Hfwd.
       + eapply T.fwd_sound; eauto.
@@ -188,7 +188,7 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
     destruct (T.bwd o r xs) as [ys|] eqn:Hbwd; [|exact Hxs].
     destruct (Nat.eqb (length ys) (length xs)) eqn:Hlength; [|exact Hxs].
     apply Nat.eqb_eq in Hlength.
-    eapply meet_all_sound; [exact Hlength|exact Hxs|].
+    eapply meet_all_sound_aux; [exact Hlength|exact Hxs|].
     eapply T.bwd_sound; eauto.
   Qed.
 
@@ -199,7 +199,7 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
     intros o r xs. unfold backward, leb.
     destruct (T.bwd o r xs) as [ys|]; [|apply self_refines].
     destruct (Nat.eqb (length ys) (length xs));
-      [apply meet_all_refines|apply self_refines].
+      [apply meet_all_refines_aux|apply self_refines].
   Qed.
 
   (** Guard dispatch retains every operand satisfying the guard. *)
@@ -210,7 +210,7 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
     destruct (T.grd g xs) as [ys|] eqn:Hgrd; [|exact Hxs].
     destruct (Nat.eqb (length ys) (length xs)) eqn:Hlength; [|exact Hxs].
     apply Nat.eqb_eq in Hlength.
-    eapply meet_all_sound; [exact Hlength|exact Hxs|].
+    eapply meet_all_sound_aux; [exact Hlength|exact Hxs|].
     eapply T.grd_sound; eauto.
   Qed.
 
@@ -221,7 +221,7 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
     intros g xs. unfold guard, leb.
     destruct (T.grd g xs) as [ys|]; [|apply self_refines].
     destruct (Nat.eqb (length ys) (length xs));
-      [apply meet_all_refines|apply self_refines].
+      [apply meet_all_refines_aux|apply self_refines].
   Qed.
 End Harness.
 
@@ -643,7 +643,7 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
     exact meet_all_time_bound.
   Qed.
   (** Forward transfer has the published operator-work class. *)
-  Lemma forward_bigO : (bigO (fun _ => True)
+  Lemma forward_complexity : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
   Proof.
@@ -653,7 +653,7 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Qed.
 
   (** Backward transfer also charges the size of its requested result. *)
-  Lemma backward_bigO : (bigO (fun _ => True)
+  Lemma backward_complexity : (bigO (fun _ => True)
     (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
     (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
   Proof.
@@ -663,7 +663,7 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Qed.
 
   (** Guard transfer has the published guard-work class. *)
-  Lemma guard_bigO : (bigO (fun _ => True)
+  Lemma guard_complexity : (bigO (fun _ => True)
     (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
     (fun gx => T_guard (fst gx) (snd gx)))%N.
   Proof.
@@ -677,59 +677,59 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Definition k_forward : N := c_val.
   Definition k_backward : N := 4%N.
   Definition k_guard : N := 4%N.
-  Lemma F0_gamma : forall a c, gamma a c <-> B.gamma a c.
+  Lemma gamma_def : forall a c, gamma a c <-> B.gamma a c.
   Proof.
     reflexivity.
   Qed.
-  Lemma F0_leb : forall a b, leb a b = B.leb a b.
+  Lemma leb_def : forall a b, leb a b = B.leb a b.
   Proof.
     reflexivity.
   Qed.
-  Lemma F0_join : forall a b, join a b = B.join a b.
+  Lemma join_def : forall a b, join a b = B.join a b.
   Proof.
     reflexivity.
   Qed.
-  Lemma F0_meet : forall a b, meet a b = B.meet a b.
+  Lemma meet_def : forall a b, meet a b = B.meet a b.
   Proof.
     reflexivity.
   Qed.
-  Lemma F0_size : forall a, size a = B.bsize a.
+  Lemma size_def : forall a, size a = B.bsize a.
   Proof.
     reflexivity.
   Qed.
-  Lemma F0_work : forall o xs, work o xs =
+  Lemma work_def : forall o xs, work o xs =
     fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
     L.work o (opt_vals xs) + T.twork o xs.
   Proof.
     reflexivity.
   Qed.
-  Lemma F0_gwork : forall g xs, gwork g xs =
+  Lemma gwork_def : forall g xs, gwork g xs =
     fold_right Nat.add 0%nat (map B.bsize xs) + length xs + T.tgwork g xs.
   Proof.
     reflexivity.
   Qed.
-  Lemma F1_points_sound : forall xs cs vs,
+  Lemma points_sound : forall xs cs vs,
     Forall2 B.gamma xs cs -> points xs = Some vs -> vs = cs.
   Proof.
-    exact points_sound.
+    exact points_sound_aux.
   Qed.
-  Lemma F2_no_bot : forall xs cs,
+  Lemma gamma_no_bot : forall xs cs,
     Forall2 B.gamma xs cs -> existsb B.is_bot xs = false.
   Proof.
     exact no_bot.
   Qed.
-  Lemma F3_meet_all_sound : forall xs ys cs, length ys = length xs ->
+  Lemma meet_all_sound : forall xs ys cs, length ys = length xs ->
     Forall2 B.gamma xs cs -> Forall2 B.gamma ys cs ->
     Forall2 B.gamma (meet_all xs ys) cs.
   Proof.
-    exact meet_all_sound.
+    exact meet_all_sound_aux.
   Qed.
-  Lemma F4_meet_all_refines : forall xs ys,
+  Lemma meet_all_refines : forall xs ys,
     Forall2 (fun y x => B.leb y x = true) (meet_all xs ys) xs.
   Proof.
-    exact meet_all_refines.
+    exact meet_all_refines_aux.
   Qed.
-  Lemma T1_points : forall xs, (T_points xs <=
+  Lemma T_points_split : forall xs, (T_points xs <=
     k_points * (fold_right N.add 0 (map (fun x => B.T_point x + 1) xs) + 1))%N.
   Proof.
     unfold k_points.
@@ -738,14 +738,14 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
     - time_unfold T_points. time_cbn.
       destruct (B.point x); nia.
   Qed.
-  Lemma T2_forward : forall o xs,
+  Lemma T_forward_plan_le : forall o xs,
     (T_forward o xs <= k_forward *
       N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
         L.work o (opt_vals xs) + T.twork o xs + 1)%nat))%N.
   Proof.
     exact T_forward_le.
   Qed.
-  Lemma T3_backward : forall o r xs, (T_backward o r xs <= k_backward *
+  Lemma T_backward_split : forall o r xs, (T_backward o r xs <= k_backward *
     (T.T_bwd o r xs + N.of_nat ((length xs)%nat) +
      match T.bwd o r xs with
      | Some ys => N.of_nat ((length ys)%nat) + T_meet_all xs ys
@@ -759,7 +759,7 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
     pose proof (Nat.T_eqb_le (length ys) (length xs)) as Heq.
     destruct (Nat.eqb (length ys) (length xs)); nia.
   Qed.
-  Lemma T4_guard : forall g xs, (T_guard g xs <= k_guard *
+  Lemma T_guard_split : forall g xs, (T_guard g xs <= k_guard *
     (T.T_grd g xs + N.of_nat ((length xs)%nat) +
      match T.grd g xs with
      | Some ys => N.of_nat ((length ys)%nat) + T_meet_all xs ys

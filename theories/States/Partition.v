@@ -2019,27 +2019,27 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     induction ps as [|q ps IH]; cbn [map fold_right]; lia.
   Qed.
 
-  Lemma F1_assign : forall x e a, proj1_sig (assign x e a) =
+  Lemma assign_def : forall x e a, proj1_sig (assign x e a) =
     map (fun q => (fst q, S.assign x e (snd q))) (proj1_sig a).
   Proof.
     intros x e [ps Hbound]; reflexivity.
   Qed.
-  Lemma F2_havoc : forall x a, proj1_sig (havoc x a) =
+  Lemma havoc_def : forall x a, proj1_sig (havoc x a) =
     map (fun q => (fst q, S.havoc x (snd q))) (proj1_sig a).
   Proof.
     intros x [ps Hbound]; reflexivity.
   Qed.
-  Lemma F3_assume : forall g es a, proj1_sig (assume g es a) =
+  Lemma assume_def : forall g es a, proj1_sig (assume g es a) =
     map (fun q => (fst q, S.assume g es (snd q))) (proj1_sig a).
   Proof.
     intros g es [ps Hbound]; reflexivity.
   Qed.
-  Lemma F4_eval : forall e a,
+  Lemma eval_def : forall e a,
     eval e a = fold_left (fun v q => V.join v (S.eval e (snd q))) (proj1_sig a) V.bot.
   Proof.
     reflexivity.
   Qed.
-  Lemma F5_widen : forall p a b, proj1_sig (widen p a b) =
+  Lemma widen_def : forall p a b, proj1_sig (widen p a b) =
     if leb b a then proj1_sig a else
     if is_bot a then proj1_sig b else
     let old := proj1_sig a in
@@ -2049,11 +2049,11 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     apply widen_raw.
   Qed.
-  Lemma F6_narrow : forall a b, narrow a b = a.
+  Lemma narrow_def : forall a b, narrow a b = a.
   Proof.
     reflexivity.
   Qed.
-  Lemma F7_merge_parts_length : forall ps qs,
+  Lemma merge_parts_length : forall ps qs,
     length (merge_parts Tk.eqb S.join ps qs) <= length ps + length qs.
   Proof.
     intros ps qs; unfold merge_parts; revert ps.
@@ -2061,7 +2061,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     specialize (IH (insert_part Tk.eqb S.join q ps)).
     pose proof (insert_part_length Tk.eqb S.join q ps); lia.
   Qed.
-  Lemma F8_collapse_size : forall xs, length xs <= 2 * C.k + 1 ->
+  Lemma collapse_size_le : forall xs, length xs <= 2 * C.k + 1 ->
     (N.of_nat (S.size (collapse_with S.bot S.join xs)) <= k_partition * N.of_nat
       (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
   Proof.
@@ -2070,14 +2070,14 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     assert (Hscale : (scale <= k_partition)%N) by (unfold k_partition; nia).
     eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hscale]; lia.
   Qed.
-  Lemma F9_collapse_units : forall xs, length xs <= 2 * C.k + 1 ->
+  Lemma collapse_units_le : forall xs, length xs <= 2 * C.k + 1 ->
     (N.of_nat (S.wunits (collapse_with S.bot S.join xs)) <= k_partition * N.of_nat
       (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
   Proof.
     intros xs Hlength; eapply N.le_trans; [now apply collapse_units_budget|].
     apply N.mul_le_mono_r; unfold k_partition; nia.
   Qed.
-  Lemma F10_merge_parts_size : forall ps qs,
+  Lemma merge_parts_size_le : forall ps qs,
     length ps <= C.k -> length qs <= C.k ->
     (N.of_nat (parts_size Tk.bits S.size
       (merge_parts Tk.eqb S.join ps qs)) <= k_partition * N.of_nat
@@ -2087,7 +2087,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     assert (Hconstant : (scale <= k_partition)%N) by (unfold k_partition; nia).
     eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hconstant]; lia.
   Qed.
-  Lemma F11_merge_parts_units : forall ps qs,
+  Lemma merge_parts_units_le : forall ps qs,
     length ps <= C.k -> length qs <= C.k ->
     (N.of_nat (parts_units S.wunits
       (merge_parts Tk.eqb S.join ps qs)) <= k_partition * N.of_nat
@@ -2101,7 +2101,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     unfold merge_parts; eapply N.le_trans;
       [|apply N.mul_le_mono_r; exact Hcoefficient]; lia.
   Qed.
-  Lemma F12_fit_size : forall ps, length ps <= 2 * C.k ->
+  Lemma fit_parts_size_le : forall ps, length ps <= 2 * C.k ->
     (N.of_nat (parts_size Tk.bits S.size
       (fit_parts S.bot S.join C.k ps)) <= k_partition * N.of_nat
         (parts_size Tk.bits S.size ps + 1))%N.
@@ -2110,7 +2110,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     assert (Hconstant : (scale + 16 <= k_partition)%N) by (unfold k_partition; nia).
     eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hconstant]; lia.
   Qed.
-  Lemma F13_fit_units : forall (ps : list (option Tk.t * S.t)), length ps <= 2 * C.k ->
+  Lemma fit_parts_units_le : forall (ps : list (option Tk.t * S.t)), length ps <= 2 * C.k ->
     (N.of_nat (parts_units S.wunits
       (fit_parts S.bot S.join C.k ps)) <= k_partition * N.of_nat
         (parts_units S.wunits ps + 1))%N.
@@ -2123,7 +2123,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
         assert (Hconstant : (scale <= k_partition)%N) by (unfold k_partition; nia).
         eapply N.le_trans; [exact Hbound | now apply N.mul_le_mono_r].
   Qed.
-  Lemma T1_leb : forall a b,
+  Lemma T_leb_split : forall a b,
     (T_leb a b <= k_partition *
       (fold_right N.add 0%N (map (fun q => S.T_leb (snd q) S.bot +
         fold_right N.add 0%N (map (fun r => S.T_leb (snd q) (snd r) + 1) (proj1_sig b)) + 1)
@@ -2132,7 +2132,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     intros a b; pose proof (leb_clock_work a b); pose proof k_partition_min.
     unfold comparison_work in *; nia.
   Qed.
-  Lemma T2_is_bot : forall a,
+  Lemma T_is_bot_split : forall a,
     (T_is_bot a <= k_partition *
       (fold_right N.add 0%N (map (fun q => S.T_leb (snd q) S.bot + 1) (proj1_sig a)) + 1))%N.
   Proof.
@@ -2143,7 +2143,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     { apply map_ext; intro q; now rewrite N.add_0_r. }
     rewrite Heq in H; nia.
   Qed.
-  Lemma T3_join : forall a b,
+  Lemma T_join_split : forall a b,
     (T_join a b <= k_partition *
       (T_merge_parts Tk.eqb Tk.T_eqb S.join S.T_join (proj1_sig a) (proj1_sig b) +
        T_fit_parts S.bot S.join S.T_join C.k
@@ -2155,7 +2155,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     change (fun x y => S.T_join x y) with S.T_join.
     nia.
   Qed.
-  Lemma T4_merge_parts : forall ps qs, length ps <= C.k -> length qs <= C.k ->
+  Lemma T_merge_parts_le : forall ps qs, length ps <= C.k -> length qs <= C.k ->
     (T_merge_parts Tk.eqb Tk.T_eqb S.join S.T_join ps qs <= k_partition *
       N.of_nat (parts_size Tk.bits S.size ps + parts_size Tk.bits S.size qs + 1))%N.
   Proof.
@@ -2163,7 +2163,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     assert (Hconstant : (scale <= k_partition)%N) by (unfold k_partition; nia).
     eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hconstant]; lia.
   Qed.
-  Lemma T5_fit_parts : forall ps, length ps <= 2 * C.k ->
+  Lemma T_fit_parts_le : forall ps, length ps <= 2 * C.k ->
     (T_fit_parts S.bot S.join S.T_join C.k ps <= k_partition *
       N.of_nat (parts_size Tk.bits S.size ps + 1))%N.
   Proof.
@@ -2171,7 +2171,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     assert (Hconstant : (scale + 16 <= k_partition)%N) by (unfold k_partition; nia).
     eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hconstant]; lia.
   Qed.
-  Lemma T6_widen : forall p a b,
+  Lemma T_widen_split : forall p a b,
     (T_widen p a b <= k_partition *
       (T_leb b a + T_is_bot a + route_time p (proj1_sig a) (proj1_sig b) + 1))%N.
   Proof.
@@ -2184,7 +2184,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     destruct (leb (exist _ new Hnew) (exist _ old Hbound)); [nia|].
     destruct (is_bot (exist _ old Hbound)); nia.
   Qed.
-  Lemma T7_route : forall p old new,
+  Lemma route_time_le : forall p old new,
     length old <= C.k -> length new <= C.k ->
     (route_time p old new <= k_partition * N.of_nat
       ((parts_units S.wunits old + parts_units S.wunits new + 1) * S.wsize p +
@@ -2209,7 +2209,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     clear -Hfresh_clock Hstray_clock Habsorb Hpositive.
     nia.
   Qed.
-  Lemma T8_collapse : forall xs, length xs <= 2 * C.k + 1 ->
+  Lemma T_collapse_with_le : forall xs, length xs <= 2 * C.k + 1 ->
     (T_collapse_with S.bot S.join S.T_join xs <= k_partition * N.of_nat
       (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
   Proof.
@@ -2218,7 +2218,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     assert (Hscale : (scale <= k_partition)%N) by (unfold k_partition; nia).
     eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hscale]; lia.
   Qed.
-  Lemma T9_merge : forall k a,
+  Lemma T_merge_split : forall k a,
     (T_merge k a <= k_partition *
       (T_collapse_with S.bot S.join S.T_join (map snd (proj1_sig a)) +
        T_inject k (collapse_with S.bot S.join (map snd (proj1_sig a))) + 1))%N.
@@ -2231,12 +2231,12 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     revert Hmap; time_simpl; intro Hmap.
     nia.
   Qed.
-  Lemma T10_retag : forall k a,
+  Lemma T_retag_split : forall k a,
     (T_retag k a <= k_partition * (T_merge k a + 1))%N.
   Proof.
     intros k a; pose proof k_partition_min; time_unfold @T_retag; nia.
   Qed.
-  Lemma T11_inject : forall k s, (T_inject k s <= k_partition)%N.
+  Lemma T_inject_plan_le : forall k s, (T_inject k s <= k_partition)%N.
   Proof.
     intros k s; pose proof k_partition_min.
     time_unfold @T_inject; time_unfold @T_fit; time_unfold @T_fit_parts.
@@ -2245,7 +2245,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     - time_unfold @Datatypes.T_length; time_unfold @Datatypes.T_length.
       time_unfold @Nat.T_leb; time_unfold @Nat.T_leb; time_simpl; time_cbn; lia.
   Qed.
-  Lemma T12_eval : forall e a,
+  Lemma T_eval_split : forall e a,
     (T_eval e a <= k_partition *
       (fold_right N.add 0%N (map (fun q => S.T_eval e (snd q) + 1) (proj1_sig a)) +
        eval_joins e (proj1_sig a) + 1))%N.
@@ -2255,7 +2255,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     cbv beta in Hsum.
     rewrite eval_clock; pose proof k_partition_min; nia.
   Qed.
-  Lemma T13_eval_joins : forall e ps, length ps <= C.k ->
+  Lemma eval_joins_le : forall e ps, length ps <= C.k ->
     (eval_joins e ps <= k_partition * N.of_nat (fold_right Nat.add 0%nat
       (map (fun q => (V.size (S.eval e (snd q)) + 1)%nat) ps) + 1))%N.
   Proof.
@@ -2263,7 +2263,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     eapply N.le_trans; [apply ValueJoins.joins_capped; exact Hlength|].
     apply N.mul_le_mono_r; exact value_coefficient.
   Qed.
-  Lemma T14_assign : forall x e a,
+  Lemma T_assign_split : forall x e a,
     (T_assign x e a <= k_partition *
       (fold_right N.add 0%N
         (map (fun q => S.T_assign x e (snd q) + 1) (proj1_sig a)) + 1))%N.
@@ -2271,14 +2271,14 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     intros x e a; pose proof (map_bounded_clock (S.assign x e) (fun s => S.T_assign x e s) a).
     pose proof k_partition_min; time_unfold @T_assign; nia.
   Qed.
-  Lemma T15_havoc : forall x a,
+  Lemma T_havoc_split : forall x a,
     (T_havoc x a <= k_partition *
       (fold_right N.add 0%N (map (fun q => S.T_havoc x (snd q) + 1) (proj1_sig a)) + 1))%N.
   Proof.
     intros x a; pose proof (map_bounded_clock (S.havoc x) (fun s => S.T_havoc x s) a).
     pose proof k_partition_min; time_unfold @T_havoc; nia.
   Qed.
-  Lemma T16_assume : forall g es a,
+  Lemma T_assume_split : forall g es a,
     (T_assume g es a <= k_partition *
       (fold_right N.add 0%N
         (map (fun q => S.T_assume g es (snd q) + 1) (proj1_sig a)) + 1))%N.
@@ -2286,7 +2286,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     intros g es a; pose proof (map_bounded_clock (S.assume g es) (fun s => S.T_assume g es s) a).
     pose proof k_partition_min; time_unfold @T_assume; nia.
   Qed.
-  Lemma T17_narrow : forall a b, (T_narrow a b <= k_partition)%N.
+  Lemma T_narrow_plan_le : forall a b, (T_narrow a b <= k_partition)%N.
   Proof.
     intros a b; pose proof k_partition_min; time_step.
   Qed.
@@ -2300,8 +2300,8 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     pose proof (proj1 (Nat.leb_le _ _) (proj2_sig a)) as Ha.
     pose proof (proj1 (Nat.leb_le _ _) (proj2_sig b)) as Hb.
-    pose proof (F7_merge_parts_length (proj1_sig a) (proj1_sig b)) as Hlength.
-    pose proof (F10_merge_parts_size (proj1_sig a) (proj1_sig b) Ha Hb) as Hsize.
+    pose proof (merge_parts_length (proj1_sig a) (proj1_sig b)) as Hlength.
+    pose proof (merge_parts_size_le (proj1_sig a) (proj1_sig b) Ha Hb) as Hsize.
     split; [lia|]; unfold size; repeat rewrite Nat2N.inj_add in *; nia.
   Qed.
 
@@ -2324,8 +2324,8 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (T_merge k a + 1 <= (k_partition + 1) * (k_partition + 1) *
       N.of_nat (Tk.bits k + size a + 1))%N.
   Proof.
-    pose proof (T9_merge k a) as Hclock.
-    pose proof (T11_inject k
+    pose proof (T_merge_split k a) as Hclock.
+    pose proof (T_inject_plan_le k
       (collapse_with S.bot S.join (map snd (proj1_sig a)))) as Hinject.
     pose proof (collapse_parts_budget a) as Hcollapse.
     set (mass := N.of_nat (Tk.bits k + size a + 1)) in *.
@@ -2358,9 +2358,9 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     intros a b; destruct (join_input_budget a b) as [Hlength Hinput].
     pose proof (proj1 (Nat.leb_le _ _) (proj2_sig a)) as Ha.
     pose proof (proj1 (Nat.leb_le _ _) (proj2_sig b)) as Hb.
-    pose proof (T3_join a b) as Hclock.
-    pose proof (T4_merge_parts (proj1_sig a) (proj1_sig b) Ha Hb) as Hmerge.
-    pose proof (T5_fit_parts
+    pose proof (T_join_split a b) as Hclock.
+    pose proof (T_merge_parts_le (proj1_sig a) (proj1_sig b) Ha Hb) as Hmerge.
+    pose proof (T_fit_parts_le
       (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) Hlength) as Hfit.
     fold (size a) (size b) in Hmerge.
     set (mass := N.of_nat (size a + size b + 1)) in *.
@@ -2387,9 +2387,9 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (T_widen p a b <= c_lat * N.of_nat
       ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
   Proof.
-    intros p a b; pose proof (T6_widen p a b) as Hclock.
+    intros p a b; pose proof (T_widen_split p a b) as Hclock.
     pose proof (leb_budget b a) as Hcompare; pose proof (is_bot_budget a) as Hbottom.
-    pose proof (T7_route p (proj1_sig a) (proj1_sig b)
+    pose proof (route_time_le p (proj1_sig a) (proj1_sig b)
       (proj1 (Nat.leb_le _ _) (proj2_sig a))
       (proj1 (Nat.leb_le _ _) (proj2_sig b))) as Hroute.
     set (mass := N.of_nat ((wunits a + wunits b) * wsize p +
@@ -2423,7 +2423,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof.
-    intros a b; pose proof (T17_narrow a b); unfold c_lat.
+    intros a b; pose proof (T_narrow_plan_le a b); unfold c_lat.
     repeat rewrite Nat2N.inj_add; nia.
   Qed.
   Lemma T_assign_le : forall x e a,
@@ -2460,7 +2460,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     { intros q Hq; pose proof (S.T_eval_le e (snd q)).
       repeat rewrite Nat2N.inj_add in *; nia. }
     specialize (Hsum Hcalls); cbv beta in Hsum.
-    pose proof (T13_eval_joins e ps Hcap) as Hjoins.
+    pose proof (eval_joins_le e ps Hcap) as Hjoins.
     pose proof (evaluation_sizes e ps) as Hvalues; apply time_of_nat_le in Hvalues.
     rewrite eval_clock; unfold eval_work; cbn [proj1_sig].
     set (work := fold_right Nat.add 0%nat
@@ -2511,7 +2511,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma T_inject_le : forall k s,
     (T_inject k s <= c_partition * N.of_nat (Tk.bits k + S.size s + 1))%N.
   Proof.
-    intros k s; pose proof (T11_inject k s); unfold c_partition.
+    intros k s; pose proof (T_inject_plan_le k s); unfold c_partition.
     repeat rewrite Nat2N.inj_add; nia.
   Qed.
   Lemma T_merge_le : forall k a,
@@ -2535,7 +2535,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (N.of_nat (size (join a b)) <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof.
     intros a b; destruct (join_input_budget a b) as [Hlength Hinput].
-    pose proof (F12_fit_size
+    pose proof (fit_parts_size_le
       (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) Hlength) as Hfit.
     unfold size at 1; rewrite join_parts.
     eapply N.le_trans; [exact Hfit|].
@@ -2548,8 +2548,8 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     intros a b; destruct (join_input_budget a b) as [Hlength _].
     pose proof (proj1 (Nat.leb_le _ _) (proj2_sig a)) as Ha.
     pose proof (proj1 (Nat.leb_le _ _) (proj2_sig b)) as Hb.
-    pose proof (F11_merge_parts_units (proj1_sig a) (proj1_sig b) Ha Hb) as Hunits.
-    pose proof (F13_fit_units
+    pose proof (merge_parts_units_le (proj1_sig a) (proj1_sig b) Ha Hb) as Hunits.
+    pose proof (fit_parts_units_le
       (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) Hlength) as Hfit.
     fold (wunits a) (wunits b) in Hunits.
     assert (Hinput : (N.of_nat (parts_units S.wunits
@@ -2574,7 +2574,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Inclusion is linear in both partition sizes for the fixed cap. *)
-  Lemma leb_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma leb_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_leb (fst ab) (snd ab)).
   Proof.
@@ -2584,7 +2584,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Joining is linear in both partition sizes for the fixed cap. *)
-  Lemma join_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma join_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_join (fst ab) (snd ab)).
   Proof.
@@ -2594,7 +2594,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Widening pays for the state sizes and the units times the parameter size. *)
-  Lemma widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+  Lemma widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
     (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
     (fun '(p, a, b) => T_widen p a b).
   Proof.
@@ -2604,7 +2604,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Merging is linear in the token width and the partition size. *)
-  Lemma merge_bigO : bigO (X := Tk.t * t) (fun _ => True)
+  Lemma merge_complexity : bigO (X := Tk.t * t) (fun _ => True)
     (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
     (fun ka => T_merge (fst ka) (snd ka)).
   Proof.
@@ -2614,7 +2614,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** The bottom test is linear in the partition size for the fixed cap. *)
-  Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Lemma is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
   Proof.
     exists c_lat; intros a _.
     pose proof (T_is_bot_le a) as Hbound.
@@ -2622,7 +2622,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Narrowing is linear in both partition sizes for the fixed cap. *)
-  Lemma narrow_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma narrow_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_narrow (fst ab) (snd ab)).
   Proof.
@@ -2632,7 +2632,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assignment is linear in its component work measure. *)
-  Lemma assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+  Lemma assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
     (fun '(x, e, a) => N.of_nat (assign_work x e a)) (fun '(x, e, a) => T_assign x e a).
   Proof.
     exists c_state; intros [[x e] a] _.
@@ -2641,7 +2641,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Havoc is linear in its component work measure. *)
-  Lemma havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+  Lemma havoc_complexity : bigO (X := X.t * t) (fun _ => True)
     (fun '(x, a) => N.of_nat (havoc_work x a)) (fun '(x, a) => T_havoc x a).
   Proof.
     exists c_state; intros [x a] _.
@@ -2650,7 +2650,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assumption is linear in its component work measure. *)
-  Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+  Lemma assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
     (fun '(gd, es, a) => N.of_nat (assume_work gd es a)) (fun '(gd, es, a) => T_assume gd es a).
   Proof.
     exists c_state; intros [[g es] a] _.
@@ -2659,7 +2659,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Evaluation is linear in its component work measure. *)
-  Lemma eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+  Lemma eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
     (fun '(e, a) => N.of_nat (eval_work e a)) (fun '(e, a) => T_eval e a).
   Proof.
     exists c_state; intros [e a] _.
@@ -2668,7 +2668,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Injection is linear in the token width and the component state size. *)
-  Lemma inject_bigO : bigO (X := Tk.t * S.t) (fun _ => True)
+  Lemma inject_complexity : bigO (X := Tk.t * S.t) (fun _ => True)
     (fun ks => N.of_nat (Tk.bits (fst ks) + S.size (snd ks)))
     (fun ks => T_inject (fst ks) (snd ks)).
   Proof.
@@ -2678,7 +2678,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Retagging is linear in the token width and the partition size. *)
-  Lemma retag_bigO : bigO (X := Tk.t * t) (fun _ => True)
+  Lemma retag_complexity : bigO (X := Tk.t * t) (fun _ => True)
     (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
     (fun ka => T_retag (fst ka) (snd ka)).
   Proof.

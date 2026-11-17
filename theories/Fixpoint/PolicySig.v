@@ -116,7 +116,7 @@ Module Type POLICY_TIME (L : WLATTICE_T) (Import P : POLICY L).
           | None => 0
           end) + 1))%N.
   (** An update is linear in the key, both values, the counter and the widening cost. *)
-  Parameter update_bigO : bigO (X := policy L.wparam * positive * N * L.t * L.t)
+  Parameter update_complexity : bigO (X := policy L.wparam * positive * N * L.t * L.t)
     (fun _ => True)
     (fun '(pol, x, cnt, a, b) => N.of_nat (Pos.size_nat x + L.size a + L.size b +
         N.size_nat cnt + (L.wunits a + L.wunits b + 1) * L.wsize (wp pol)))

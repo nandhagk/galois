@@ -387,7 +387,7 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Qed.
 
   (** Collecting singleton operands identifies their represented values. *)
-  Lemma points_sound : forall xs cs vs,
+  Lemma points_sound_aux : forall xs cs vs,
     Forall2 gamma xs cs -> points xs = Some vs -> vs = cs.
   Proof.
     intros xs cs vs Hxs. revert vs.
@@ -404,7 +404,7 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Proof.
     intros o xs cs c Hxs Heval. unfold forward.
     rewrite (no_bot xs cs Hxs). destruct (points xs) as [vs|] eqn:Hpoints.
-    - pose proof (points_sound xs cs vs Hxs Hpoints) as ->.
+    - pose proof (points_sound_aux xs cs vs Hxs Hpoints) as ->.
       rewrite Heval. reflexivity.
     - exact I.
   Qed.
@@ -614,7 +614,7 @@ Module ConstT (L : LANG_T) (E : VAL_EQ_T L) <: CONST_ALL L E.
   Proof.
     intro c. time_unfold T_abst. unfold c_const. lia.
   Qed.
-  Lemma forward_bigO : (bigO (fun _ => True)
+  Lemma forward_complexity : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
   Proof.
@@ -625,41 +625,41 @@ Module ConstT (L : LANG_T) (E : VAL_EQ_T L) <: CONST_ALL L E.
 
   Definition k_const_points : N := 1%N.
   Definition k_const_forward : N := 8%N.
-  Lemma F1_gamma : forall a c, gamma a c <-> flat_gamma a c.
+  Lemma gamma_def : forall a c, gamma a c <-> flat_gamma a c.
   Proof.
     reflexivity.
   Qed.
-  Lemma F2_widen : forall p a b, widen p a b = join a b.
+  Lemma widen_def : forall p a b, widen p a b = join a b.
   Proof.
     reflexivity.
   Qed.
-  Lemma F3_wrank : forall p a, wrank p a = 2 - level a.
+  Lemma wrank_def : forall p a, wrank p a = 2 - level a.
   Proof.
     reflexivity.
   Qed.
-  Lemma F4_rank_le : forall a, level a <= 2.
+  Lemma level_le : forall a, level a <= 2.
   Proof.
     intros [|a|]; cbn [level]; lia.
   Qed.
-  Lemma F5_points_sound : forall xs cs vs,
+  Lemma points_sound : forall xs cs vs,
     Forall2 gamma xs cs -> points xs = Some vs -> vs = cs.
   Proof.
-    apply points_sound.
+    apply points_sound_aux.
   Qed.
-  Lemma F6_point : forall a, point a = match a with FVal c => Some c | _ => None end.
+  Lemma point_def : forall a, point a = match a with FVal c => Some c | _ => None end.
   Proof.
     reflexivity.
   Qed.
-  Lemma F7_abst : forall c, abst c = FVal c.
+  Lemma abst_def : forall c, abst c = FVal c.
   Proof.
     reflexivity.
   Qed.
-  Lemma T1_points : forall xs,
+  Lemma T_points_le : forall xs,
     (T_points xs <= k_const_points * N.of_nat (length xs + 1))%N.
   Proof.
     intro xs. unfold k_const_points. rewrite N.mul_1_l. apply points_time_bound.
   Qed.
-  Lemma T2_forward_points : forall o xs cs, points xs = Some cs ->
+  Lemma T_forward_split : forall o xs cs, points xs = Some cs ->
     (T_forward o xs <= k_const_forward *
       (N.of_nat (length xs) + L.T_eval o cs +
        match L.eval o cs with Some c => T_abst c | None => 0 end + 1))%N.
@@ -832,7 +832,7 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
     inversion Hpoint; subst. exact Hgamma.
   Qed.
   (** A constant payload denotes its stored integer. *)
-  Lemma F_pgamma_const : forall w a z, pgamma w a z <->
+  Lemma pgamma_const_def : forall w a z, pgamma w a z <->
     match a with FBot => False | FVal x => z = x | FTop => True end.
   Proof.
     reflexivity.
@@ -857,7 +857,7 @@ Module ConstWordT (L : WORD_LANGUAGE_T) <: CONST_WORD_PAYLOAD_T L.
   Definition pwsize (_ : pwparam) : nat := 0.
   Definition c_payload : N := 256%N.
   (** Constant payload size includes the width and raw integer bits. *)
-  Lemma F_psize_const : forall w a, psize w a =
+  Lemma psize_const_def : forall w a, psize w a =
     Pos.to_nat w + match a with FVal z => Z.size_nat z | _ => 0 end + 1.
   Proof.
     reflexivity.
@@ -985,7 +985,7 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
   Local Lemma pgamma_width : forall w v a z,
     W.pgamma w a z <-> W.pgamma v a z.
   Proof.
-    intros w v a z. rewrite !W.F_pgamma_const. reflexivity.
+    intros w v a z. rewrite !W.pgamma_const_def. reflexivity.
   Qed.
 
   (** A payload representing a word is already normalized at that word's width. *)
@@ -993,7 +993,7 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
     L.is_word w z -> W.pgamma w a z -> normalise w a = a.
   Proof.
     intros w [|a|] z Hz Ha; try reflexivity.
-    apply W.F_pgamma_const in Ha. cbn in Ha. subst z.
+    apply W.pgamma_const_def in Ha. cbn in Ha. subst z.
     cbn [normalise]. unfold wrap_fast.
     rewrite ConstWordFast.wrap_fast_agrees, wrap_id by exact Hz. reflexivity.
   Qed.
@@ -1014,7 +1014,7 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
   Local Lemma const_is_sound : forall w a z c,
     W.pgamma w a z -> const_is a c = true -> z = c.
   Proof.
-    intros w [|a|] z c Ha His; apply W.F_pgamma_const in Ha;
+    intros w [|a|] z c Ha His; apply W.pgamma_const_def in Ha;
       cbn [const_is] in His; cbn in Ha; try contradiction; try discriminate.
     apply Z.eqb_eq in His. congruence.
   Qed.
@@ -1074,7 +1074,7 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
   Qed.
 
   (** A successful shortcut identifies the result on its represented operands. *)
-  Lemma shortcut_sound : forall o a b k cs rw z,
+  Lemma shortcut_sound_aux : forall o a b k cs rw z,
     shortcut o a b = Some k ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) [a; b] cs ->
@@ -1100,8 +1100,8 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
   Local Lemma inverse_sound : forall w f a x y,
     W.pgamma w a y -> x = f y -> W.pgamma w (inverse f a) x.
   Proof.
-    intros w f [|a|] x y Ha Hxy; apply W.F_pgamma_const in Ha;
-      apply W.F_pgamma_const; cbn [inverse] in *;
+    intros w f [|a|] x y Ha Hxy; apply W.pgamma_const_def in Ha;
+      apply W.pgamma_const_def; cbn [inverse] in *;
       try contradiction; try exact I. now subst y.
   Qed.
 
@@ -1127,16 +1127,16 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
     inversion Hxs as [|? [v x] ? ? Hhead Hnil]; subst. inversion Hnil; subst.
     destruct Hhead as [Hw [Hx Ha]]. cbn in Hw, Hx, Ha. subst v.
     change (eval_op o [(w, x)] = Some (rw, z)) in Heval.
-    apply W.F_pgamma_const in Hq. destruct q as [|r|]; [contradiction| |].
+    apply W.pgamma_const_def in Hq. destruct q as [|r|]; [contradiction| |].
     - cbn in Hq. subst r. destruct Ho as [-> | ->].
       + rewrite (eval_op_fun1 bvnot w x UNot eq_refl) in Heval.
         inversion Heval; subst rw z. cbn [backward_one_values map combine fst snd].
         constructor; [|constructor]. apply W.pgamma_meet; [exact Ha|].
-        apply W.F_pgamma_const. cbn. symmetry. now apply wnot_involutive.
+        apply W.pgamma_const_def. cbn. symmetry. now apply wnot_involutive.
       + rewrite (eval_op_fun1 bvneg w x UNeg eq_refl) in Heval.
         inversion Heval; subst rw z. cbn [backward_one_values map combine fst snd].
         constructor; [|constructor]. apply W.pgamma_meet; [exact Ha|].
-        apply W.F_pgamma_const. cbn. symmetry. now apply const_neg_inverse.
+        apply W.pgamma_const_def. cbn. symmetry. now apply const_neg_inverse.
     - cbn [backward_one_values map combine fst snd]. constructor; [exact Ha|constructor].
   Qed.
 
@@ -1232,7 +1232,7 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
             eapply (eval_op_cmp_width op _ w v x y (rw, z));
               [reflexivity|exact Heval]]
         end. }
-    subst v. apply W.F_pgamma_const in Hq. destruct q as [|r|]; [contradiction| |].
+    subst v. apply W.pgamma_const_def in Hq. destruct q as [|r|]; [contradiction| |].
     - cbn in Hq. subst r.
       assert (Hcases : (o = bveq \/ o = bvne) \/
         (o = bvadd \/ o = bvsub \/ o = bvxor)) by tauto.
@@ -1244,7 +1244,7 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
   Qed.
 
   (** The checked unary wrapper retains every represented operand. *)
-  Lemma backward_one_sound : forall o rw q xs ys cs z,
+  Lemma backward_one_sound_aux : forall o rw q xs ys cs z,
     backward_one o rw q xs = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
@@ -1266,7 +1266,7 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
   Qed.
 
   (** The checked binary wrapper retains every represented operand. *)
-  Lemma backward_two_sound : forall o rw q xs ys cs z,
+  Lemma backward_two_sound_aux : forall o rw q xs ys cs z,
     backward_two o rw q xs = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
@@ -1297,8 +1297,8 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
     all: match type of Hentry with
       | context [shortcut ?op ?a ?b] =>
         destruct (shortcut op a b) as [k|] eqn:Hshortcut
-      end; injection Hentry as <-; apply W.F_pgamma_const; try exact I.
-    all: eapply shortcut_sound; eassumption.
+      end; injection Hentry as <-; apply W.pgamma_const_def; try exact I.
+    all: eapply shortcut_sound_aux; eassumption.
   Qed.
   (** A backward word entry retains each concrete operand in its original position. *)
   Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
@@ -1310,8 +1310,8 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
   Proof.
     intros o rw q wps ys cs z Hentry Hxs Heval Hq. unfold wbwd in Hentry.
     destruct o; destruct wps as [|a [|b [|c rest]]]; try discriminate.
-    all: first [eapply backward_one_sound; eassumption |
-      eapply backward_two_sound; eassumption].
+    all: first [eapply backward_one_sound_aux; eassumption |
+      eapply backward_two_sound_aux; eassumption].
   Qed.
 End ConstWordTable.
 
@@ -1335,7 +1335,7 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
   (** Normalizing one payload reads its raw representation linearly. *)
   Local Lemma normalise_time w a : (T_normalise w a <= 64 * N.of_nat (W.psize w a))%N.
   Proof.
-    rewrite W.F_psize_const. destruct a as [|z|]; time_unfold T_normalise;
+    rewrite W.psize_const_def. destruct a as [|z|]; time_unfold T_normalise;
       time_cbn; rewrite ?Nat2N.inj_add; time_cbn; try nia.
     pose proof (ConstWordFast.wrap_fast_time w z) as Htime.
     time_unfold T_wrap_fast. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
@@ -1344,7 +1344,7 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
   Local Lemma normalise_size w a :
     (W.psize w (normalise w a) <= 2 * Pos.to_nat w + 1)%nat.
   Proof.
-    rewrite W.F_psize_const. destruct a as [|z|]; cbn [normalise]; try lia.
+    rewrite W.psize_const_def. destruct a as [|z|]; cbn [normalise]; try lia.
     unfold wrap_fast. rewrite ConstWordFast.wrap_fast_agrees.
     pose proof (WordTime.word_wrap_size_bound w z). lia.
   Qed.
@@ -1453,7 +1453,7 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
       fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs) + 1)%nat.
   Proof.
     intros Hentry. apply wfwd_result_shape in Hentry.
-    destruct Hentry as [->|[a [b [z [-> [Hshortcut ->]]]]]]; rewrite W.F_psize_const.
+    destruct Hentry as [->|[a [b [z [-> [Hshortcut ->]]]]]]; rewrite W.psize_const_def.
     - cbn. lia.
     - pose proof (shortcut_result_size o a b z Hshortcut).
       cbn [map fold_right]. lia.
@@ -1471,7 +1471,7 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
   (** The declared payload size separates its width and raw integer bits. *)
   Local Lemma psize_bits w a : W.psize w a = Pos.to_nat w + payload_bits a + 1.
   Proof.
-    apply W.F_psize_const.
+    apply W.psize_const_def.
   Qed.
   (** Normalization bounds the stored bits by the operand width. *)
   Local Lemma normalise_bits w a : (payload_bits (normalise w a) <= Pos.to_nat w)%nat.
@@ -1958,7 +1958,7 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
   Qed.
   Definition k_const_word : N := (131072 * (W.c_payload + 1))%N.
   (** Normalised inverse arithmetic reads bounded word payloads. *)
-  Lemma T2b_inverse_words : forall o rw q xs,
+  Lemma T_backward_values_le : forall o rw q xs,
     (T_backward_one_values o rw (normalise rw q) (normalise_operands xs) +
      T_backward_two_values o rw (normalise rw q) (normalise_operands xs) <=
       k_const_word * N.of_nat
@@ -1970,7 +1970,7 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
   Qed.
 
   (** Normalisation reads the width mask and raw literal once. *)
-  Lemma T2a_normalise : forall w z,
+  Lemma T_wrap_fast_le : forall w z,
     (T_wrap_fast w z <= k_const_word *
       N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
   Proof.
@@ -1980,20 +1980,20 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
   Qed.
 
   (** Fast wrapping preserves the specified modular reduction. *)
-  Lemma F_wrap_fast : forall w z, wrap_fast w z = L.wrap w z.
+  Lemma wrap_fast_def : forall w z, wrap_fast w z = L.wrap w z.
   Proof.
     apply ConstWordFast.wrap_fast_agrees.
   Qed.
 
-  Lemma F1_shortcut_sound : forall o a b z cs rw v,
+  Lemma shortcut_sound : forall o a b z cs rw v,
     shortcut o a b = Some z ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) (a :: b :: nil) cs ->
     L.eval_op o cs = Some (rw, v) -> v = z.
   Proof.
-    apply shortcut_sound.
+    apply shortcut_sound_aux.
   Qed.
-  Lemma F2_backward_one_sound : forall o rw q xs ys cs z,
+  Lemma backward_one_sound : forall o rw q xs ys cs z,
     backward_one o rw q xs = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
@@ -2001,9 +2001,9 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst xs) ys) cs.
   Proof.
-    apply backward_one_sound.
+    apply backward_one_sound_aux.
   Qed.
-  Lemma F3_backward_two_sound : forall o rw q xs ys cs z,
+  Lemma backward_two_sound : forall o rw q xs ys cs z,
     backward_two o rw q xs = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
@@ -2011,9 +2011,9 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst xs) ys) cs.
   Proof.
-    apply backward_two_sound.
+    apply backward_two_sound_aux.
   Qed.
-  Lemma T1_shortcut : forall o a b, (T_shortcut o a b <=
+  Lemma T_shortcut_le : forall o a b, (T_shortcut o a b <=
     k_const_word * N.of_nat
       (((Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2 +
         W.psize (fst a) (snd a) + W.psize (fst b) (snd b))%nat))%N.
@@ -2021,7 +2021,7 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     intros o a b. eapply N.le_trans; [apply shortcut_quadratic_time|].
     apply N.mul_le_mono_r. unfold k_const_word. nia.
   Qed.
-  Lemma T2_backward_one : forall o rw q xs,
+  Lemma T_backward_one_le : forall o rw q xs,
     (T_backward_one o rw q xs <= k_const_word * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
@@ -2031,7 +2031,7 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     intros o rw q xs. pose proof (backward_pair_time_bound o rw q xs) as Hcombined.
     unfold k_const_word, operand_widths, operand_payloads in *. lia.
   Qed.
-  Lemma T3_backward_two : forall o rw q xs,
+  Lemma T_backward_two_le : forall o rw q xs,
     (T_backward_two o rw q xs <= k_const_word * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
@@ -2068,7 +2068,7 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
   Local Lemma wbsize_raw_equation w a :
     W.psize w a = Pos.to_nat w + wbsize_raw a + 1.
   Proof.
-    apply W.F_psize_const.
+    apply W.psize_const_def.
   Qed.
 
   (** Normalization bounds raw bits by the original operand width. *)

@@ -50,7 +50,7 @@ Module Type WORD_LANGUAGE_TIME (Import L : WORD_LANGUAGE).
         (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) cs) + 1) ^
     2)%nat))%N.
   (** Concrete word evaluation has the published quadratic class. *)
-  Parameter eval_op_bigO : bigO (X := op * list (positive * Z)) (fun _ => True)
+  Parameter eval_op_complexity : bigO (X := op * list (positive * Z)) (fun _ => True)
     (fun x => N.of_nat (((Op.op_widths (fst x) +
       fold_right Nat.add 0
         (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) (snd x)) + 1) ^ 2)%nat))
@@ -284,18 +284,18 @@ Module Type WORD_PLAN (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     | TVal w p => fst c = w /\ L.is_word w (snd c) /\ W.pgamma w p (snd c)
     end.
   (** Untagging retains widths and payload interpretations. *)
-  Parameter F1_untag_sound : forall xs cs wps,
+  Parameter untag_sound : forall xs cs wps,
     Forall2 tagged_gamma xs cs -> untag xs = Some wps ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs.
   (** Retagging restores the original operand widths. *)
-  Parameter F2_retag_sound : forall ws ps cs,
+  Parameter retag_sound : forall ws ps cs,
     Forall2 (fun w c => fst c = w /\ L.is_word w (snd c)) ws cs ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c)) (combine ws ps) cs ->
     (length ws <= length ps)%nat -> Forall2 tagged_gamma (retag ws ps) cs.
   (** Untagging charges one constant step per tag. *)
-  Parameter T1_untag : forall xs, (T_untag xs <= k_untag * N.of_nat ((length xs + 1)%nat))%N.
+  Parameter T_untag_le : forall xs, (T_untag xs <= k_untag * N.of_nat ((length xs + 1)%nat))%N.
   (** Retagging charges one constant step per operand. *)
-  Parameter T2_retag : forall ws ps,
+  Parameter T_retag_le : forall ws ps,
     (T_retag ws ps <= k_retag * N.of_nat ((length ws + length ps + 1)%nat))%N.
 End WORD_PLAN.

@@ -225,11 +225,11 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
           length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
       N.of_nat (width p st + width p' st + kwidth st + 1))%N.
   (** Reading a value is linear in the key bits. *)
-  Parameter value_bigO : bigO (X := state * S.key) (fun _ => True)
+  Parameter value_complexity : bigO (X := state * S.key) (fun _ => True)
     (fun x => N.of_nat (S.key_bits (snd x))) (fun x => T_value (fst x) (snd x)).
   (** Demand is linear in the region occurrences times the width, the root bits, the fuel
       bits and the restricted solve. *)
-  Parameter demand_bigO : bigO (X := S.prog * policy L.wparam * list S.key * N * state)
+  Parameter demand_complexity : bigO (X := S.prog * policy L.wparam * list S.key * N * state)
     (fun '(p, _, _, _, st) => S.wf p /\ inv p st)
     (fun '(p, pol, roots, fuel, st) =>
       (N.of_nat ((fold_right Nat.add 0%nat
@@ -239,7 +239,7 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
        N.of_nat (N.size_nat fuel) + demand_solver_work p pol roots fuel st)%N)
     (fun '(p, pol, roots, fuel, st) => T_demand p pol roots fuel st).
   (** An edit is linear in the influence mass, the changed rows and the widths. *)
-  Parameter edit_bigO : bigO (X := S.prog * S.prog * list S.row * state)
+  Parameter edit_complexity : bigO (X := S.prog * S.prog * list S.row * state)
     (fun '(p, p', ch, st) => S.wf p /\ S.wf p' /\ state_ok st /\
        forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p'))
     (fun '(p, p', ch, st) => (N.of_nat ((infl_mass st +
@@ -302,14 +302,14 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     (T_snapshot_record owner writes st <=
       c_inc * N.of_nat (S.key_bits owner + length writes + 1))%N.
   (** Trie lookup reads precisely the recorded snapshot inventory. *)
-  Parameter snapshot_get_pin : forall st id ss,
+  Parameter snapshot_get_spec : forall st id ss,
     snapshot_get id st = Some ss <-> In (id, ss) (snapshots st).
   (** Trie update changes precisely one shared snapshot. *)
-  Parameter snapshot_set_pin : forall st id ss q,
+  Parameter snapshot_set_spec : forall st id ss q,
     snapshot_get q (snapshot_set id ss st) =
       if Pos.eqb q id then Some ss else snapshot_get q st.
   (** Recording copies the new row's writes once before the previous live group. *)
-  Parameter snapshot_record_pin : forall st owner writes,
+  Parameter snapshot_record_spec : forall st owner writes,
     snapshot_get (S.key_code owner) (snapshot_record owner writes st) =
       Some {| snapshot_owner := owner;
         snapshot_writes := writes ++
@@ -319,33 +319,33 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
           end;
         snapshot_live := true |}.
   (** Snapshot mass counts each unvisited write occurrence once. *)
-  Parameter snapshot_mass_pin : forall st, snapshot_mass st =
+  Parameter snapshot_mass_spec : forall st, snapshot_mass st =
     fold_right (fun ss n =>
       if snapshot_live (snd ss) then length (snapshot_writes (snd ss)) + n else n)
       0 (snapshots st).
   (** The recorded key inventory includes visited snapshots for identifier width accounting. *)
-  Parameter snapshot_keys_pin : forall st, snapshot_keys st =
+  Parameter snapshot_keys_spec : forall st, snapshot_keys st =
     flat_map (fun ss => snapshot_writes (snd ss)) (snapshots st).
   (** Every snapshot identifier is the code of an owner among its writes. *)
-  Parameter snapshot_owner_pin : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
+  Parameter snapshot_owner_spec : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
     id = S.key_code (snapshot_owner ss) /\ In (snapshot_owner ss) (snapshot_writes ss).
   (** Snapshot identifiers occur once in the inventory. *)
   Parameter snapshots_nodup : forall st, NoDup (map fst (snapshots st)).
   (** Read entries resolve to a retained shared snapshot, including stale entries. *)
-  Parameter infl_snapshot_pin : forall st x id, state_ok st -> In id (infl_at st x) ->
+  Parameter infl_snapshot_spec : forall st x id, state_ok st -> In id (infl_at st x) ->
     exists ss, In (id, ss) (snapshots st).
   (** Unvisited snapshots contain stored keys. *)
-  Parameter snapshot_stored_pin : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
+  Parameter snapshot_stored_spec : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
     snapshot_live ss = true -> forall x, In x (snapshot_writes ss) -> dom st x.
   (** Co-write memberships are precisely the unvisited snapshot key occurrences. *)
-  Parameter cowrite_count_pin : forall st x id, state_ok st ->
+  Parameter cowrite_count_spec : forall st x id, state_ok st ->
     length (filter (Pos.eqb id) (cowrite_at st x)) =
     fold_right (fun iss n =>
       if (Pos.eqb id (fst iss) && snapshot_live (snd iss))%bool then
         length (filter (S.key_eqb x) (snapshot_writes (snd iss))) + n else n)
       0 (snapshots st).
   (** Shared snapshot mass pays the co-write memberships without a second inventory charge. *)
-  Parameter cowrite_mass_pin : forall st, state_ok st -> snapshot_mass st =
+  Parameter cowrite_mass_spec : forall st, state_ok st -> snapshot_mass st =
     fold_right Nat.add 0 (map (fun x => length (cowrite_at st x)) (stored st)).
   (** Every retained snapshot identifier fits the stored key width. *)
   Parameter snapshot_id_width : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
@@ -385,7 +385,7 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter kwidth_spec : forall st, kwidth st =
     fold_right Nat.max 0 (map S.key_bits (stored st ++ snapshot_keys st)).
   (** The public invalidation list is the plan's closure. *)
-  Parameter invalidated_pin : forall p p' ch st,
+  Parameter invalidated_def : forall p p' ch st,
     invalidated p p' ch st = invalidate p p' ch st.
   (** The closure lists stored keys only, each once. *)
   Parameter invalidate_dom : forall p p' ch st x,
@@ -416,7 +416,7 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     discovery p roots fuel st = Some (ks, rs, fz) ->
     ks = discover p roots st /\ rs = region p roots st /\ fz = frozen p roots st.
   (** Fuel above the number of discovered keys finishes the pass. *)
-  Parameter discovery_enough : forall p roots fuel st, S.wf p ->
+  Parameter discovery_fuel_enough : forall p roots fuel st, S.wf p ->
     (N.of_nat (length (discover p roots st)) < fuel)%N ->
     discovery p roots fuel st <> None.
   (** The pass pays for the rows and keys that it reaches, the root codes and the fuel bits. *)
@@ -461,7 +461,7 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     In r (region p roots st) -> In x (S.writes p r ++ S.deps p r) ->
     dom st x \/ In x (discover p roots st).
   (** Old rows keep their post-solution property when the old domain agrees. *)
-  Parameter frame_post : forall p st s, S.wf p -> inv p st ->
+  Parameter frame_row_ok : forall p st s, S.wf p -> inv p st ->
     (forall x, dom st x -> s x = look st x) ->
     forall r y, In r (S.rows p) -> In y (S.writes p r) -> dom st y ->
       row_ok L.leb s (S.target p r) (S.eval p r s) = true.
@@ -490,7 +490,7 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter edit_frame : forall p p' ch st, S.wf p' -> edit_covers p p' ch -> inv p st ->
     tracks p st -> post_on p' (edit p p' ch st).
   (** Restricted least solving and frozen least seeds give regional least values. *)
-  Parameter region_least_restricted : forall p pol roots fuel st m,
+  Parameter restricted_run_least : forall p pol roots fuel st m,
     S.wf p -> S.monotone p -> Least.widening_free pol -> inv p st -> least_on p st ->
     Sol.run (R.mk p (frozen p roots st) (region p roots st)) pol fuel = Solved m ->
     forall s, S.post_solution p s -> forall x,

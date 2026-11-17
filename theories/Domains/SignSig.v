@@ -91,23 +91,23 @@ Module Type SIGN_BASE (L : WORD_LANGUAGE) :=
 
 Module Type SIGN_LAWS (L : WORD_LANGUAGE) (Import S : SIGN_BASE L).
   (** Payload concretization reads the sign flags. *)
-  Parameter F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
+  Parameter gamma_def : forall w a z, pgamma w a z <-> sign_gamma w a z.
   (** Bitwise negation retains every normalized concrete result. *)
-  Parameter F3_sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
+  Parameter sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
     pgamma w (sign_not a) (L.wrap w (Z.lnot x)).
   (** Arithmetic negation retains every normalized concrete result. *)
-  Parameter F4_sign_neg_sound : forall w a x, L.is_word w x -> pgamma w a x ->
+  Parameter sign_neg_sound : forall w a x, L.is_word w x -> pgamma w a x ->
     pgamma w (sign_neg a) (L.wrap w (- x)).
   (** Bitwise conjunction retains every normalized concrete result. *)
-  Parameter F5_sign_and_sound : forall w a b x y,
+  Parameter sign_and_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_and a b) (L.wrap w (Z.land x y)).
   (** Bitwise disjunction retains every normalized concrete result. *)
-  Parameter F6_sign_or_sound : forall w a b x y,
+  Parameter sign_or_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_or a b) (L.wrap w (Z.lor x y)).
   (** Bitwise exclusive disjunction retains every normalized concrete result. *)
-  Parameter F7_sign_xor_sound : forall w a b x y,
+  Parameter sign_xor_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
 End SIGN_LAWS.
@@ -143,9 +143,9 @@ Module Type SIGN_T (L : WORD_LANGUAGE_T) := SIGN L <+ SIGN_TIME L.
 
 Module Type SIGN_PLAN (L : WORD_LANGUAGE_T) (Import S : SIGN_T L).
   (** Sign height is at most three. *)
-  Parameter F2_level : forall a, sign_level a <= 3.
+  Parameter sign_level_le : forall a, sign_level a <= 3.
   (** Sign widening rank counts the flags that can still be enabled. *)
-  Parameter F_pwrank : forall q w a, pwrank q w a = 3 - sign_level a.
+  Parameter pwrank_def : forall q w a, pwrank q w a = 3 - sign_level a.
 End SIGN_PLAN.
 
 Module Type SIGN_ALL (L : WORD_LANGUAGE_T) := SIGN_T L <+ SIGN_PLAN L.
@@ -158,7 +158,7 @@ Module Type SIGN_TABLE_TIME (L : WORD_LANGUAGE_T) (S : SIGN_T L)
   (** Sign table dispatch has the published constant entry bound. *)
   Parameter T_sign_entry_le : forall o rw xs, (T_wfwd o rw xs <= c_sign_table)%N.
   (** Sign table dispatch takes constant time. *)
-  Parameter sign_entry_bigO : bigO
+  Parameter sign_entry_complexity : bigO
     (X := L.op * (positive * list (positive * S.p))) (fun _ => True)
     (fun _ => 0%N) (fun x => T_wfwd (fst x) (fst (snd x)) (snd (snd x))).
 End SIGN_TABLE_TIME.
@@ -170,7 +170,7 @@ Module Type SIGN_TABLE_PLAN (L : WORD_LANGUAGE_T) (S : SIGN_T L)
   Definition sign_cmp := sign_numeric_cmp.
   Parameter sign_cmp_sym : L.op -> positive -> sgn -> sgn -> sgn.
   (** The bounded flag comparison keeps every numeric comparator result. *)
-  Parameter F_sign_cmp_sym : forall c w a b, sign_cmp_sym c w a b = sign_cmp c w a b.
+  Parameter sign_cmp_sym_def : forall c w a b, sign_cmp_sym c w a b = sign_cmp c w a b.
 End SIGN_TABLE_PLAN.
 
 Module Type SIGN_TABLE_ALL (L : WORD_LANGUAGE_T) (S : SIGN_T L) :=

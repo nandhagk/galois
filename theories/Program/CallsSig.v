@@ -111,24 +111,24 @@ Module Type CALLS_TIME (P : TYPE) (F S : KEY_T) (Import C : CALLS P F S).
   Parameter T_resolve_le : forall p site,
     (T_resolve p site <= c_calls * N.of_nat (S.bits site + length (resolve p site) + 1))%N.
   (** Call enumeration is linear in its output. *)
-  Parameter calls_bigO : bigO (fun _ : P.t => True)
+  Parameter calls_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (calls p))) T_calls.
   (** Site lookup is linear in the function key and the returned sites. *)
-  Parameter sites_of_bigO : bigO (X := P.t * F.t) (fun _ => True)
+  Parameter sites_of_complexity : bigO (X := P.t * F.t) (fun _ => True)
     (fun '(p, f) => N.of_nat (F.bits f + length (sites_of p f)))
     (fun '(p, f) => T_sites_of p f).
   (** Caller lookup is linear in the site key. *)
-  Parameter caller_of_bigO : bigO (X := P.t * S.t) (fun _ => True)
+  Parameter caller_of_complexity : bigO (X := P.t * S.t) (fun _ => True)
     (fun '(_, site) => N.of_nat (S.bits site)) (fun '(p, site) => T_caller_of p site).
   (** Resolution is linear in the site key and the returned targets. *)
-  Parameter resolve_bigO : bigO (X := P.t * S.t) (fun _ => True)
+  Parameter resolve_complexity : bigO (X := P.t * S.t) (fun _ => True)
     (fun '(p, site) => N.of_nat (S.bits site + length (resolve p site)))
     (fun '(p, site) => T_resolve p site).
   (** The function inventory is linear in its output. *)
-  Parameter functions_bigO : bigO (fun _ : P.t => True)
+  Parameter functions_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (functions p))) T_functions.
   (** The root inventory is linear in its output. *)
-  Parameter roots_bigO : bigO (fun _ : P.t => True)
+  Parameter roots_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (roots p))) T_roots.
   Definition call_graph_work p :=
     (T_functions p +
@@ -141,27 +141,27 @@ Module Type CALLS_TIME (P : TYPE) (F S : KEY_T) (Import C : CALLS P F S).
   Parameter T_call_graph_le : forall p,
     (T_call_graph p <= c_calls * call_graph_work p)%N.
   (** Call graphs have the aggregate inventory and bit-width bound. *)
-  Parameter call_graph_bigO : bigO (fun _ : P.t => True) call_graph_work T_call_graph.
+  Parameter call_graph_complexity : bigO (fun _ : P.t => True) call_graph_work T_call_graph.
 End CALLS_TIME.
 
 Module Type CALLS_T (P : TYPE) (F S : KEY_T) := CALLS P F S <+ CALLS_TIME P F S.
 
 Module Type CALLS_PLAN (P : TYPE) (F S : KEY_T) (Import C : CALLS_T P F S).
   (** A site contributes exactly its tagged resolver targets to the outgoing list. *)
-  Parameter F1_call_edge : forall p f site target,
+  Parameter out_edges_call_edge : forall p f site target,
     In site (sites_of p f) -> In target (resolve p site) ->
     In (CallEdge site target) (out_edges p f).
   Parameter T_out_edges : P.t -> F.t -> N.
   Parameter k_edges k_adj : N.
   (** One function's successor list pays its sites, resolutions and target encodings. *)
-  Parameter T1_out_edges : forall p f,
+  Parameter T_out_edges_split : forall p f,
     (T_out_edges p f <= k_edges * (T_sites_of p f +
       fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
       fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
       N.of_nat (length (flat_map (resolve p) (sites_of p f)) + 1)))%N.
   (** The adjacency fold pays each row, its target encodings and one insertion path per
       listed function. *)
-  Parameter T2_adjacency : forall p,
+  Parameter T_call_graph_split : forall p,
     (T_call_graph p <= k_adj * (T_functions p +
       fold_right N.add 0%N (map (fun f => T_out_edges p f + F.T_encode f +
         fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))))%N

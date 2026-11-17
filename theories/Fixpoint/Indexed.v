@@ -802,7 +802,7 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
   Qed.
 
   (** Preparation is linear in rows and occurrences times the key width. *)
-  Lemma prepare_bigO : bigO (X := S.prog) (fun p => S.wf p)
+  Lemma prepare_complexity : bigO (X := S.prog) (fun p => S.wf p)
     (fun p => (N.of_nat ((length (S.rows p) +
         fold_right Nat.add 0 (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
           (S.rows p)) + 1)%nat) *

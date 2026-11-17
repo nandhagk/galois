@@ -106,37 +106,37 @@ Module Type ENV_TIME (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
   Parameter T_join_env_le : forall a b, env_wf a -> env_wf b ->
     (T_join a b <= c_env * N.of_nat ((esize a + esize b + 1)%nat))%N.
   (** Inclusion is linear in both environment sizes. *)
-  Parameter leb_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter leb_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_leb (fst ab) (snd ab)).
   (** Join is linear in both environment sizes. *)
-  Parameter join_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter join_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_join (fst ab) (snd ab)).
   (** Widening is linear in the sizes and in the widening units times the parameter size. *)
-  Parameter widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+  Parameter widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
     (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
     (fun '(p, a, b) => T_widen p a b).
   (** Assignment is linear in its work measure. *)
-  Parameter assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+  Parameter assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
     (fun '(x, e, s) => N.of_nat (assign_work x e s))
     (fun '(x, e, s) => T_assign x e s).
   (** Havoc is linear in its work measure. *)
-  Parameter havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+  Parameter havoc_complexity : bigO (X := X.t * t) (fun _ => True)
     (fun '(x, s) => N.of_nat (havoc_work x s))
     (fun '(x, s) => T_havoc x s).
   (** Assumption is linear in its work measure. *)
-  Parameter assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+  Parameter assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
     (fun '(gd, es, s) => N.of_nat (assume_work gd es s))
     (fun '(gd, es, s) => T_assume gd es s).
   (** Evaluation is linear in its work measure. *)
-  Parameter eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+  Parameter eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
     (fun '(e, s) => N.of_nat (eval_work e s))
     (fun '(e, s) => T_eval e s).
   (** The bottom test is linear in the environment size. *)
-  Parameter is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Parameter is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
   (** Narrowing is linear in both environment sizes. *)
-  Parameter narrow_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter narrow_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_narrow (fst ab) (snd ab)).
 End ENV_TIME.
@@ -147,27 +147,27 @@ Module Type ENV_T (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L) 
 Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (Import E : ENV_T X M L V).
   (** Unreachable environments widen no stored component. *)
-  Parameter F_wunits_unreached : wunits Unreached = 0.
+  Parameter wunits_unreached_def : wunits Unreached = 0.
   (** Reached environments visit every stored binding during widening. *)
-  Parameter F_wunits_reached : forall m, wunits (Reached m) = length (M.codes m).
+  Parameter wunits_reached_def : forall m, wunits (Reached m) = length (M.codes m).
   (** Environment bottom is unreachable. *)
-  Parameter F_bot : bot = Unreached.
+  Parameter bot_def : bot = Unreached.
   (** Environment top is an empty reached map. *)
-  Parameter F_top : top = Reached M.empty.
+  Parameter top_def : top = Reached M.empty.
   (** Map join merges common bindings and omits recognized bottom results. *)
-  Parameter F_join_map : forall a b, join_map a b =
+  Parameter join_map_def : forall a b, join_map a b =
     M.merge (fun x y => match x, y with
       | Some a, Some b => let v := V.join a b in if V.is_bot v then None else Some v
       | _, _ => None
       end) a b.
   (** Environment join handles unreachable states before merging maps. *)
-  Parameter F_join : forall a b, join a b =
+  Parameter join_def : forall a b, join a b =
     match a, b with
     | Unreached, s | s, Unreached => s
     | Reached a, Reached b => Reached (join_map a b)
     end.
   (** Widening keeps stable states and otherwise merges common bindings. *)
-  Parameter F_widen : forall p a b, widen p a b =
+  Parameter widen_def : forall p a b, widen p a b =
     if leb b a then a else
     match a, b with
     | Unreached, s | s, Unreached => s
@@ -177,7 +177,7 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
         end) a b)
     end.
   (** Narrowing retains one-sided bindings and narrows common bindings. *)
-  Parameter F_narrow : forall a b, narrow a b =
+  Parameter narrow_def : forall a b, narrow a b =
     if is_bot b then b else
     match a, b with
     | Unreached, _ => Unreached
@@ -190,25 +190,25 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
         end) a b)
     end.
   (** Evaluation reads the root of the cached forward annotation. *)
-  Parameter F_eval : forall e s, eval e s =
+  Parameter eval_def : forall e s, eval e s =
     match s with Unreached => V.bot | Reached m => root (annotate m e) end.
   (** Assignment writes the abstract expression result at its declared variable. *)
-  Parameter F_assign : forall x e s, assign x e s =
+  Parameter assign_def : forall x e s, assign x e s =
     match s with
     | Unreached => Unreached
     | Reached m => Reached (M.set x (eval e s) m)
     end.
   (** Havoc writes top at its declared variable. *)
-  Parameter F_havoc : forall x s, havoc x s =
+  Parameter havoc_def : forall x s, havoc x s =
     match s with
     | Unreached => Unreached
     | Reached m => Reached (M.set x V.top m)
     end.
   (** Leaf refinement checks the bottom status of the value it writes. *)
-  Parameter F_refine_leaf : forall q x a m, refine_checked q (ALeaf x a) m =
+  Parameter refine_leaf_def : forall q x a m, refine_checked q (ALeaf x a) m =
     let v := V.meet (read m x) q in (M.set x v m, V.is_bot v).
   (** Node refinement uses cached child roots and carries bottom flags through siblings. *)
-  Parameter F_refine_node : forall q o a ns m, refine_checked q (ANode o a ns) m =
+  Parameter refine_node_def : forall q o a ns m, refine_checked q (ANode o a ns) m =
     let qs := V.backward o q (map root ns) in
     (fix children ns qs m bad :=
       match ns, qs with
@@ -218,9 +218,9 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
       | _, _ => (m, bad)
       end) ns qs m false.
   (** Ordinary refinement projects the map of checked refinement. *)
-  Parameter F_refine : forall q n m, refine q n m = fst (refine_checked q n m).
+  Parameter refine_def : forall q n m, refine q n m = fst (refine_checked q n m).
   (** Assumption performs one cached annotation pass and one checked refinement pass. *)
-  Parameter F_assume : forall g es s, assume g es s =
+  Parameter assume_def : forall g es s, assume g es s =
     match s with
     | Unreached => Unreached
     | Reached m =>
@@ -255,7 +255,7 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
           refine (snd nq) (fst nq) (snd acc))) (combine ns qs) (0, m))
     end.
   (** Request size records the largest request or stored value met by refinement. *)
-  Parameter F_rsize : forall s g es, rsize s g es = assume_size s g es.
+  Parameter rsize_def : forall s g es, rsize s g es = assume_size s g es.
   Fixpoint ann_work (n : ann L.op X.t V.t) : nat :=
     match n with
     | ALeaf x _ => X.bits x + 1
@@ -268,15 +268,15 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
     end.
   Parameter k_env_refine : N.
   (** Annotation records the work of its term. *)
-  Parameter F_ann_work : forall m e, ann_work (annotate m e) = tcost m e.
+  Parameter ann_work_def : forall m e, ann_work (annotate m e) = tcost m e.
   (** Annotation keeps the shape of its term. *)
-  Parameter F_ann_size : forall m e, ann_size (annotate m e) = tsize e.
+  Parameter ann_size_def : forall m e, ann_size (annotate m e) = tsize e.
   (** Checked refinement charges cached transfers, leaf lookups and the requests it meets. *)
-  Parameter T2_refine_checked : forall q n m,
+  Parameter T_refine_checked_le : forall q n m,
     (T_refine_checked q n m <= k_env_refine *
       N.of_nat (ann_work n + ann_size n * (refine_size q n m + 1)))%N.
   (** Assumption checks bottoms at written leaves and charges cached two-pass refinement. *)
-  Parameter T1_assume : forall g es m,
+  Parameter T_assume_plan_le : forall g es m,
     (T_assume g es (Reached m) <= c_env * N.of_nat
       (fold_right Nat.add 0%nat (map (tcost m) es) +
         V.gwork g (roots (Reached m) es) +
@@ -313,9 +313,9 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
   Parameter wrank_env : forall p m, M.wf m -> wrank p (Reached m) =
     fold_right Nat.add 0 (map (fun kv => V.wrank p (snd kv)) (M.elements m)).
   (** Reached bottom detection scans stored values. *)
-  Parameter F_is_bot_env : forall m, is_bot (Reached m) = M.existsb V.is_bot m.
+  Parameter is_bot_env_def : forall m, is_bot (Reached m) = M.existsb V.is_bot m.
   (** Inclusion treats every recognized bottom as least. *)
-  Parameter F_leb_env : forall a b, leb a b = orb (is_bot a)
+  Parameter leb_env_def : forall a b, leb a b = orb (is_bot a)
     (andb (negb (is_bot b)) (match a, b with
       | Reached ma, Reached mb => M.forall2b (fun x y =>
           V.leb (match x with Some v => v | None => V.top end)
@@ -328,22 +328,22 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
     fold_right Nat.add 0 (map (tcost m) es) +
     V.work o (map (fun e => root (annotate m e)) es) + 1.
   (** Environment size agrees with its raw stored-value measure. *)
-  Parameter F_size : forall s, size s = esize s.
+  Parameter size_def : forall s, size s = esize s.
   (** Environment widening parameters use the value-domain parameter size. *)
-  Parameter F_wsize : forall p, wsize p = V.wsize p.
+  Parameter wsize_def : forall p, wsize p = V.wsize p.
   (** Assignment work charges annotation and the current environment. *)
-  Parameter F_assign_work : forall x e s, assign_work x e s =
+  Parameter assign_work_def : forall x e s, assign_work x e s =
     match s with
     | Unreached => tsize e + X.bits x + 1
     | Reached m => tcost m e + esize s + X.bits x + 1
     end.
   (** Havoc work charges the environment and the selected key. *)
-  Parameter F_havoc_work : forall x s, havoc_work x s = esize s + X.bits x + 1.
+  Parameter havoc_work_def : forall x s, havoc_work x s = esize s + X.bits x + 1.
   (** Evaluation work charges its cached forward pass. *)
-  Parameter F_eval_work : forall e s, eval_work e s =
+  Parameter eval_work_def : forall e s, eval_work e s =
     match s with Unreached => tsize e + 1 | Reached m => tcost m e + 1 end.
   (** Assumption work charges the forward pass, guard and checked refinement. *)
-  Parameter F_assume_work : forall g es s, assume_work g es s =
+  Parameter assume_work_def : forall g es s, assume_work g es s =
     fold_right Nat.add 0 (map (tcost_s s) es) + V.gwork g (roots s es) +
       fold_right Nat.add 0 (map tsize es) * (rsize s g es + 1) + 1.
 End ENV_PLAN.

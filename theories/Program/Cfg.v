@@ -536,7 +536,7 @@ Module CfgT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_BASE_T P N E).
   Qed.
 
   (** Preparation is linear in the entries and edges times the widest endpoint key. *)
-  Lemma prepare_bigO : bigO (X := P.t) (fun _ => True)
+  Lemma prepare_complexity : bigO (X := P.t) (fun _ => True)
     (fun p => N.of_nat ((length (C.entries p) + length (C.edges p) + 1) *
       (fold_right Nat.max 0%nat (List.map N.bits (C.entries p ++
         flat_map (fun e => C.src p e :: C.dst p e :: nil) (C.edges p))) + 1)))

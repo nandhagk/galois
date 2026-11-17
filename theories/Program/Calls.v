@@ -438,7 +438,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** A site contributes exactly its resolver targets to its outgoing list. *)
-  Lemma F1_call_edge : forall p f site target,
+  Lemma out_edges_call_edge : forall p f site target,
     In site (sites_of p f) -> In target (resolve p site) ->
     In (CallEdge site target) (out_edges p f).
   Proof.
@@ -514,7 +514,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** The call inventory is linear in its output. *)
-  Lemma calls_bigO : bigO (fun _ : P.t => True)
+  Lemma calls_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (calls p))) T_calls.
   Proof.
     apply bigO_intro with (c := c_calls).
@@ -523,7 +523,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** Site enumeration is linear in the function key and the returned sites. *)
-  Lemma sites_of_bigO : bigO (X := P.t * F.t) (fun _ => True)
+  Lemma sites_of_complexity : bigO (X := P.t * F.t) (fun _ => True)
     (fun '(p, f) => N.of_nat (F.bits f + length (sites_of p f)))
     (fun '(p, f) => T_sites_of p f).
   Proof.
@@ -533,7 +533,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** Caller lookup is linear in the site key. *)
-  Lemma caller_of_bigO : bigO (X := P.t * S.t) (fun _ => True)
+  Lemma caller_of_complexity : bigO (X := P.t * S.t) (fun _ => True)
     (fun '(_, site) => N.of_nat (S.bits site)) (fun '(p, site) => T_caller_of p site).
   Proof.
     apply bigO_intro with (c := c_calls).
@@ -542,7 +542,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** Resolution is linear in the site key and the returned functions. *)
-  Lemma resolve_bigO : bigO (X := P.t * S.t) (fun _ => True)
+  Lemma resolve_complexity : bigO (X := P.t * S.t) (fun _ => True)
     (fun '(p, site) => N.of_nat (S.bits site + length (resolve p site)))
     (fun '(p, site) => T_resolve p site).
   Proof.
@@ -552,7 +552,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** The function inventory is linear in its output. *)
-  Lemma functions_bigO : bigO (fun _ : P.t => True)
+  Lemma functions_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (functions p))) T_functions.
   Proof.
     apply bigO_intro with (c := c_calls).
@@ -561,7 +561,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** The root inventory is linear in its output. *)
-  Lemma roots_bigO : bigO (fun _ : P.t => True)
+  Lemma roots_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (roots p))) T_roots.
   Proof.
     apply bigO_intro with (c := c_calls).
@@ -647,7 +647,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
     rewrite call_edges_length in *; lia.
   Qed.
 
-  Lemma T1_out_edges : forall p f,
+  Lemma T_out_edges_split : forall p f,
     (T_out_edges p f <= k_edges * (T_sites_of p f +
       fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
       fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
@@ -658,7 +658,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
     unfold k_edges; time_unfold T_out_edges; time_cbn_all; lia.
   Qed.
 
-  Lemma T2_adjacency : forall p,
+  Lemma T_call_graph_split : forall p,
     (T_call_graph p <= k_adj * (T_functions p +
       fold_right N.add 0%N (map (fun f => T_out_edges p f + F.T_encode f +
         fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))))%N
@@ -727,7 +727,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
         fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
         fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
         N.of_nat (length (flat_map (resolve p) (sites_of p f)) + 1)))%N
-      (functions p) (fun f _ => T1_out_edges p f)) as Hsum.
+      (functions p) (fun f _ => T_out_edges_split p f)) as Hsum.
     rewrite (sum_scale (fun f => T_sites_of p f +
       fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
       fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
@@ -755,7 +755,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Lemma T_call_graph_le : forall p,
     (T_call_graph p <= c_calls * call_graph_work p)%N.
   Proof.
-    intro p; pose proof (T2_adjacency p) as Hadjacency.
+    intro p; pose proof (T_call_graph_split p) as Hadjacency.
     pose proof (out_edges_sum p) as Hrows.
     eapply N.le_trans with (m := (136 * (1024 + 1) * call_graph_work p)%N).
     - unfold call_graph_work, k_adj, k_edges in *.
@@ -772,7 +772,7 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Qed.
 
   (** Call graph construction has the aggregate reader and bit-width bound. *)
-  Lemma call_graph_bigO : bigO (fun _ : P.t => True) call_graph_work T_call_graph.
+  Lemma call_graph_complexity : bigO (fun _ : P.t => True) call_graph_work T_call_graph.
   Proof.
     exists c_calls; intros p Htrue; pose proof (T_call_graph_le p); nia.
   Qed.

@@ -54,10 +54,10 @@ Module Type CHECK_TIME (L : LATTICE_T) (S : SYSTEM_T L) (Import C : CHECK L S).
         (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)) + 1)%nat) *
       (S.row_work p B + N.of_nat (S.kw p) + L.c_lat * N.of_nat (B + 1) + 1))%N.
   (** A lookup is linear in the key bits. *)
-  Parameter look_bigO : bigO (X := kmap S.key L.t * S.key) (fun _ => True)
+  Parameter look_complexity : bigO (X := kmap S.key L.t * S.key) (fun _ => True)
     (fun mx => N.of_nat (S.key_bits (snd mx))) (fun mx => T_look (fst mx) (snd mx)).
   (** Row checking is linear in the declared occurrences times the row budget. *)
-  Parameter check_rows_bigO : bigO (X := S.prog * list S.row * kmap S.key L.t * nat)
+  Parameter check_rows_complexity : bigO (X := S.prog * list S.row * kmap S.key L.t * nat)
     (fun '(p, rs, m, B) => S.wf p /\ (forall r, In r rs -> In r (S.rows p)) /\
        forall x, L.size (look m x) <= B)
     (fun '(p, rs, _, B) => (N.of_nat ((fold_right Nat.add 0
@@ -65,7 +65,7 @@ Module Type CHECK_TIME (L : LATTICE_T) (S : SYSTEM_T L) (Import C : CHECK L S).
       (S.row_work p B + N.of_nat (S.kw p + B) + 1))%N)
     (fun '(p, rs, m, _) => T_check_rows p rs m).
   (** Whole-program checking is linear in the declared occurrences times the row budget. *)
-  Parameter check_bigO : bigO (X := S.prog * kmap S.key L.t * nat)
+  Parameter check_complexity : bigO (X := S.prog * kmap S.key L.t * nat)
     (fun '(p, m, B) => S.wf p /\ forall x, L.size (look m x) <= B)
     (fun '(p, _, B) => (N.of_nat ((fold_right Nat.add 0
         (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)) + 1)%nat) *

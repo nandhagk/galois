@@ -2396,7 +2396,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     | _, _ => False
     end.
   Definition k_octagon : N := (16384 * (M.c_map + 1) * (M.c_map + 1))%N.
-  Lemma F_join_entry : forall ma mb i j,
+  Lemma join_entry_spec : forall ma mb i j,
     match join (Reached ma) (Reached mb) with
     | Reached mj => entry mj i j =
         match entry ma i j, entry mb i j with
@@ -3108,12 +3108,12 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Qed.
 
   (** Widening units cover the squared support size. *)
-  Lemma F_wunits : forall s, wunits s = (ns s + 1) ^ 2.
+  Lemma wunits_def : forall s, wunits s = (ns s + 1) ^ 2.
   Proof.
     reflexivity.
   Qed.
   (** Assumption work charges incremental closure for every emitted atom. *)
-  Lemma F_assume_work : forall g es s,
+  Lemma assume_work_def : forall g es s,
     (N.of_nat (assume_work g es s) =
       N.of_nat (length (F.atoms_of g es) *
         (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
@@ -3124,7 +3124,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     intros g es s. unfold assume_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
   (** Assignment work pays for linearization and quadratic matrix updates. *)
-  Lemma F_assign_work : forall x e s,
+  Lemma assign_work_def : forall x e s,
     (N.of_nat (assign_work x e s) =
       N.of_nat ((ns s + 1)^2 *
         (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) + skels s + labs s +
@@ -3133,29 +3133,29 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof.
     intros x e s. unfold assign_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
-  Lemma F_havoc_work : forall x s,
+  Lemma havoc_work_def : forall x s,
     havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1) + skels s.
   Proof.
     reflexivity.
   Qed.
-  Lemma coh_top : coh top.
+  Lemma coherent_top : coh top.
   Proof.
     intros i j. unfold entry. now rewrite !M.get_empty.
   Qed.
-  Lemma coh_join : forall a b, coh a -> coh b -> coh (join a b).
+  Lemma coherent_join : forall a b, coh a -> coh b -> coh (join a b).
   Proof.
     intros [|ma] [|mb] Ha Hb; cbn [coh join] in *; try assumption; try exact I.
     intros i j. rewrite <- !raw_entry_get, !raw_entry_join, !raw_entry_get.
     now rewrite (Ha i j), (Hb i j).
   Qed.
-  Lemma coh_widen : forall p a b, coh a -> coh b -> coh (widen p a b).
+  Lemma coherent_widen : forall p a b, coh a -> coh b -> coh (widen p a b).
   Proof.
     intros p a b Ha Hb. unfold widen. destruct (leb b a); [exact Ha|].
     destruct a as [|ma], b as [|mb]; cbn [coh] in *; try assumption; try exact I.
     intros i j. rewrite <- !raw_entry_get, !raw_entry_widen, !raw_entry_get.
     now rewrite (Ha i j), (Hb i j).
   Qed.
-  Lemma coh_havoc : forall x s, coh s -> coh (havoc x s).
+  Lemma coherent_havoc : forall x s, coh s -> coh (havoc x s).
   Proof.
     intros x [|m] Hcoh; [exact I|]. intros i j.
     rewrite !entry_havoc. cbn [bar fst snd].
@@ -3497,7 +3497,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       exists d, entry m i j = Some d /\ (2 * d <= a + z)%Z).
   Definition tightly_closed (m : dbm) : Prop := strongly_closed m /\
     (forall i d, entry m i (bar i) = Some d -> (d mod 2 = 0)%Z).
-  Lemma fw_implied : forall m v, models m v -> models (fw m) v.
+  Lemma fw_models_preserved : forall m v, models m v -> models (fw m) v.
   Proof.
     exact fw_models.
   Qed.
@@ -3536,18 +3536,18 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     exact incr_close_models.
   Qed.
   (** State size charges all stored numeric data. *)
-  Lemma F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
+  Lemma size_def : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
   Proof.
     reflexivity.
   Qed.
   (** Range work charges the numeric query and its linearization. *)
-  Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
+  Lemma range_work_def : forall e s, (N.of_nat (range_work e s) =
     N.of_nat ((tsize e + 1) *
       (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) + F.T_lin_of e)%N.
   Proof.
     intros e s. unfold range_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
-  Lemma F_range_bits : forall e s,
+  Lemma range_bits_def : forall e s,
     range_bits e s = ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
   Proof.
     reflexivity.
@@ -3581,7 +3581,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
 
 
   (** Each consistent pivot label names a code in the matrix support. *)
-  Lemma keys_support : forall m k, dbm_wf m -> In k (keys m) ->
+  Lemma keys_in_support : forall m k, dbm_wf m -> In k (keys m) ->
     In (K.encode k) (support m).
   Proof.
     intros m k [Houter Hrows] Hkey. unfold keys in Hkey.
@@ -3856,7 +3856,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - rewrite M.find_empty in Hraw. discriminate.
   Qed.
 
-  Lemma bits_fw_trace_le : forall ks m k a, dbm_wf m ->
+  Lemma fw_trace_bits_le : forall ks m k a, dbm_wf m ->
     In (k, a) (fw_trace ks m) ->
     ell a <= ell m + Nat.log2 (supp m) + 1.
   Proof.
@@ -3867,19 +3867,19 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     destruct (wf_raw_entry_keys a p q d Hawf Hraw) as [i [j [Hi [Hj Hentry]]]].
     exact (path_invariant_entry_bits m (entry a) ps Hpath i j d Hentry).
   Qed.
-  Lemma supp_fw_round : forall k m,
+  Lemma fw_round_support_kept : forall k m,
     supp (fw_round k m) = supp m /\ b (fw_round k m) = b m.
   Proof.
     intros k m. apply support_sizes, support_round.
   Qed.
   (** A consistent matrix has no more pivot keys than codes in its support. *)
-  Lemma keys_le : forall m, dbm_wf m -> length (keys m) <= supp m.
+  Lemma keys_length_le : forall m, dbm_wf m -> length (keys m) <= supp m.
   Proof.
     intros m Hwf. unfold supp.
     rewrite <- (length_map K.encode (keys m)). apply NoDup_incl_length.
     - apply encoded_keys_nodup, keys_nodup.
     - intros p Hin. apply in_map_iff in Hin. destruct Hin as [k [Hcode Hkey]].
-      subst p. now apply keys_support.
+      subst p. now apply keys_in_support.
   Qed.
 
   (** The Boolean list scan recognizes key membership through the key equality law. *)
@@ -3952,7 +3952,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       rewrite Htest. apply IH.
   Qed.
   (** Floyd-Warshall runs the traced rounds over the pivot keys. *)
-  Lemma F_fw : forall m, fw m =
+  Lemma fw_def : forall m, fw m =
     fold_left (fun a km => fw_round (fst km) a) (fw_trace (keys m) m) m.
   Proof.
     intro m. unfold fw. rewrite pivot_keys_eq_keys. apply fw_pivots_trace.
@@ -4294,7 +4294,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Qed.
 
   (** Incremental closure grows support only at signed endpoints and bounds each new path. *)
-  Lemma grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
+  Lemma incr_close_growth : forall i j d m m', incr_close i j d m = Reached m' ->
     supp m' <= supp m + 4 /\
     b m' <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j) + 1) /\
     ell m' <= Nat.max (ell m) (Z.size_nat d) + 4 /\
@@ -4637,7 +4637,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Qed.
 
   (** Constraint insertion writes both signed twins of a coherent matrix. *)
-  Lemma F_add_cons_twins : forall i j d m, coherent m ->
+  Lemma add_cons_twins_spec : forall i j d m, coherent m ->
     entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
   Proof.
     intros i j d m Hcoh. exact (coherent_add_cons i j d m Hcoh i j).
@@ -5611,10 +5611,10 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       apply (incremental_candidate_zero_support m i j d Hwf Htight Hscan).
       change (In (K.encode k) (support seed)).
       apply (proj1 (direct_seed_support m i j d (K.encode k))).
-      unfold direct in Hkey. now apply keys_support. }
+      unfold direct in Hkey. now apply keys_in_support. }
     intros a b. unfold fw. rewrite pivot_keys_eq_keys.
     apply fw_pivots_above_closed.
-    - intros k Hkey. now apply keys_support.
+    - intros k Hkey. now apply keys_in_support.
     - exact Hzero.
     - exact Hclosed.
     - exact Hbelow.
@@ -5636,7 +5636,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     apply forallb_forall. intros k Hkey.
     assert (Hsupport : In (K.encode k) (support seed)).
     { apply (proj1 (direct_seed_support m i j d (K.encode k))).
-      unfold direct in Hkey. now apply keys_support. }
+      unfold direct in Hkey. now apply keys_in_support. }
     pose proof (incremental_candidate_zero_support m i j d Hwf Htight
       Hscan k Hsupport) as Hzero.
     change (entry next k k = Some 0%Z) in Hzero.
@@ -5679,7 +5679,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     reflexivity.
   Qed.
 
-  Lemma coh_incr_close : forall i j d m, coherent m -> coh (incr_close i j d m).
+  Lemma coherent_incr_close : forall i j d m, coherent m -> coh (incr_close i j d m).
   Proof.
     intros i j d m Hcoh. unfold incr_close.
     set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
@@ -5697,7 +5697,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma coh_refine : forall i j d s, coh s -> coh (refine i j d s).
   Proof.
     intros i j d [|m] Hcoh; [exact I|].
-    cbn [refine coh] in *. now apply coh_incr_close.
+    cbn [refine coh] in *. now apply coherent_incr_close.
   Qed.
 
   Lemma variable_offset_flip : forall x d i,
@@ -5721,7 +5721,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     intros x source d [|m] Hcoh; [exact I|]. cbn [assign_copy].
     destruct (K.eqb source (x, true)).
     - cbn [coh]. now apply coherent_shift.
-    - apply coh_refine, coh_refine, coh_havoc, Hcoh.
+    - apply coh_refine, coh_refine, coherent_havoc, Hcoh.
   Qed.
 
   Lemma coh_add_range : forall x bounds s, coh s -> coh (add_range x bounds s).
@@ -5852,17 +5852,17 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     destruct (lo <=? hi)%Z; [now apply coherent_range_matrix|exact I].
   Qed.
 
-  Lemma coh_assign : forall x e s, coh s -> coh (assign x e s).
+  Lemma coherent_assign : forall x e s, coh s -> coh (assign x e s).
   Proof.
     intros x e [|m] Hcoh; [exact I|]. cbn [assign].
-    destruct (F.lin_of e) as [[f r]|]; [|now apply coh_havoc].
+    destruct (F.lin_of e) as [[f r]|]; [|now apply coherent_havoc].
     destruct (copy_source f) as [source|].
     - destruct (copy_allowed x source) eqn:Hallowed; cbn beta iota zeta.
       + destruct (rel_wrap_exact r (form_bounds m f)).
         * now apply coh_assign_copy_fast.
-        * apply coh_add_range_fast, coh_havoc, Hcoh.
-      + apply coh_add_range_fast, coh_havoc, Hcoh.
-    - apply coh_add_range_fast, coh_havoc, Hcoh.
+        * apply coh_add_range_fast, coherent_havoc, Hcoh.
+      + apply coh_add_range_fast, coherent_havoc, Hcoh.
+    - apply coh_add_range_fast, coherent_havoc, Hcoh.
   Qed.
 
   Lemma coh_assume_cmp : forall c shape d s, coh s -> coh (assume_cmp c shape d s).
@@ -5890,7 +5890,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - apply IH, coh_assume_atom, Hcoh.
   Qed.
 
-  Lemma coh_assume : forall g es s, coh s -> coh (assume g es s).
+  Lemma coherent_assume : forall g es s, coh s -> coh (assume g es s).
   Proof.
     intros g es [|m] Hcoh; [exact I|]. cbn [assume]. now apply coh_assume_atoms.
   Qed.
@@ -7196,7 +7196,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       cbn beta iota zeta. lia.
   Qed.
 
-  Lemma T0_fw_round : forall k m, dbm_wf m ->
+  Lemma T_fw_round_le : forall k m, dbm_wf m ->
     (T_fw_round k m <= k_octagon * N.of_nat
       ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
   Proof.
@@ -7250,7 +7250,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
         by now rewrite app_nil_r.
       apply fw_pivots_success_path_invariant.
       - apply RelationalPathBounds.invariant_initial.
-      - intros k Hkey. now apply keys_support.
+      - intros k Hkey. now apply keys_in_support.
       - intros k Hkey. rewrite forallb_forall in Hscan.
         unfold fw in Hscan. rewrite pivot_keys_eq_keys in Hscan.
         now apply Hscan. }
@@ -7276,7 +7276,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma keys_support_iff : forall m k, dbm_wf m ->
     (In k (keys m) <-> In (K.encode k) (support m)).
   Proof.
-    intros m k Hwf. split; [now apply keys_support|now apply keys_cover].
+    intros m k Hwf. split; [now apply keys_in_support|now apply keys_cover].
   Qed.
 
   (** Every performed pivot round preserves the same support. *)
@@ -7313,7 +7313,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     replace (rev (keys m)) with (rev (keys m) ++ nil) by now rewrite app_nil_r.
     apply fw_pivots_success_path_invariant.
     - apply RelationalPathBounds.invariant_initial.
-    - intros k Hkey. now apply keys_support.
+    - intros k Hkey. now apply keys_in_support.
     - intros k Hkey. rewrite forallb_forall in Hscan.
       now apply Hscan.
   Qed.
@@ -8059,7 +8059,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - eapply tclose_unary_even; eauto.
   Qed.
 
-  Lemma coh_tclose : forall m, dbm_wf m -> coherent m -> bar_closed m -> coh (tclose m).
+  Lemma coherent_tclose : forall m, dbm_wf m -> coherent m -> bar_closed m -> coh (tclose m).
   Proof.
     intros m Hwf Hcoh Hbar.
     destruct (tclose m) as [|m'] eqn:Hresult; [exact I|].
@@ -8206,7 +8206,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     destruct (fw_pivots_last (keys m) m) as [Hsame|[k [a [Hin Hlast]]]].
     - rewrite Hsame. lia.
     - rewrite Hlast. pose proof (bits_fw_round_step k a) as Hround.
-      pose proof (bits_fw_trace_le (keys m) m k a Hwf Hin) as Htrace. lia.
+      pose proof (fw_trace_bits_le (keys m) m k a Hwf Hin) as Htrace. lia.
   Qed.
 
   (** Tight closure pays two bounded diagonal scans beyond its numeric stages. *)
@@ -8499,7 +8499,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     clear - Hfold_actual Hmerge_actual Hpositive Htotal. lia.
   Qed.
 
-  Lemma T2_tighten : forall m, dbm_wf m ->
+  Lemma T_tighten_le : forall m, dbm_wf m ->
     (T_tighten m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
   Proof.
     intros m Hwf. pose proof (T_tighten_small m) as Hclock.
@@ -8550,7 +8550,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       ((1 + T_nonnegative k next)%N <= 16 * c * units + 1)%N) (keys m)).
     { apply Forall_forall. intros k Hkey.
       assert (Hbits : K.bits k <= b m).
-      { unfold K.bits. apply support_bits. now apply keys_support. }
+      { unfold K.bits. apply support_bits. now apply keys_in_support. }
       pose proof (T_nonnegative_small k next) as Hclock.
       assert (Hcast : (N.of_nat (K.bits k + 1) <= units)%N).
       { unfold units. apply time_of_nat_le. lia. }
@@ -8576,7 +8576,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     assert (Hwork : (length (keys m) + 1) * (b m + 1) <=
       (supp m + 1)^2 * (b m + ell m + 1)).
     { apply Nat.mul_le_mono.
-      - pose proof (keys_le m Hwf). cbn [Nat.pow]. nia.
+      - pose proof (keys_length_le m Hwf). cbn [Nat.pow]. nia.
       - lia. }
     eapply N.le_trans; [exact Hscan|]. eapply N.le_trans; [exact Hlinear|].
     unfold c. apply N.mul_le_mono_l. now apply time_of_nat_le.
@@ -8589,7 +8589,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Qed.
 
   (** Tight closure adds only bounded scans around its three numeric stages. *)
-  Lemma T4_tclose : forall m, dbm_wf m ->
+  Lemma T_tclose_split : forall m, dbm_wf m ->
     (T_tclose m <= T_fw m + k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
       if diag_ok (fw m) then T_tighten (fw m) + T_strengthen (tighten (fw m)) else 0)%N.
   Proof.
@@ -8914,9 +8914,9 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
   Proof.
     intros m Hwf. eapply N.le_trans; [apply (scan_budget_bound (keys m) (b m))|].
-    - intros k Hin. unfold K.bits. apply support_bits. now apply keys_support.
+    - intros k Hin. unfold K.bits. apply support_bits. now apply keys_in_support.
     - apply N.mul_le_mono_l, time_of_nat_le.
-      pose proof (keys_le m Hwf) as Hlength. cbn [Nat.pow]. nia.
+      pose proof (keys_length_le m Hwf) as Hlength. cbn [Nat.pow]. nia.
   Qed.
   (** Collecting and deduplicating pivot labels fits the initial quadratic key budget. *)
   Lemma T_pivot_keys_le : forall m, dbm_wf m ->
@@ -9048,7 +9048,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Qed.
 
   (** Floyd-Warshall pays for pivot collection and the rounds recorded in its trace. *)
-  Lemma T0_fw : forall m, dbm_wf m ->
+  Lemma T_fw_split : forall m, dbm_wf m ->
     (T_fw m <= k_octagon * (N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
       fold_right N.add 0%N (map (fun km => T_fw_round (fst km) (snd km))
         (fw_trace (keys m) m))))%N.
@@ -9374,7 +9374,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     clear - Hfold_actual Hmerge_actual Hfst Hsnd Hpositive Hbudget. lia.
   Qed.
 
-  Lemma T3_strengthen : forall m, dbm_wf m ->
+  Lemma T_strengthen_le : forall m, dbm_wf m ->
     (T_strengthen m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
   Proof.
     intros m Hwf. pose proof (T_strengthen_small m) as Hclock.
@@ -9418,7 +9418,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       + injection Heq as Hkey Hstate. subst k a. split; [now left|]. now split.
       + destruct (nonnegative p (fw_round p m)); [|contradiction].
         destruct (IH (fw_round p m) k a Hin) as [Hkey [Hsupport Hbits]].
-        destruct (supp_fw_round p m) as [Hround_support Hround_bits].
+        destruct (fw_round_support_kept p m) as [Hround_support Hround_bits].
         split; [now right|]. split; congruence.
   Qed.
 
@@ -9443,8 +9443,8 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     intros m k a Hwf Hin.
     destruct (fw_trace_resources (keys m) m k a Hin) as [Hkey [Hsupport Hbits]].
     assert (Hkey_bits : K.bits k <= b m).
-    { unfold K.bits. apply support_bits. now apply keys_support. }
-    pose proof (bits_fw_trace_le (keys m) m k a Hwf Hin) as Hell.
+    { unfold K.bits. apply support_bits. now apply keys_in_support. }
+    pose proof (fw_trace_bits_le (keys m) m k a Hwf Hin) as Hell.
     eapply N.le_trans; [apply T_fw_round_raw|].
     replace (2 * fw_round_factor * N.of_nat
       ((supp m + 1)^2 * (b m + ell m + Nat.log2 (supp m) + 1)))%N with
@@ -9488,7 +9488,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
         rewrite N.mul_1_r. now apply Hpoint. }
       specialize (Hbound Hcallback). now rewrite sum_weight_one in Hbound. }
     assert (Hlength : length xs <= supp m).
-    { unfold xs. eapply Nat.le_trans; [apply fw_trace_length|]. now apply keys_le. }
+    { unfold xs. eapply Nat.le_trans; [apply fw_trace_length|]. now apply keys_length_le. }
     assert (Hunits : units * length xs <=
       (supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)).
     { unfold units. apply quadratic_cubic_budget. lia. }
@@ -9509,7 +9509,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Qed.
 
   (** Floyd-Warshall has cubic support work with logarithmic entry-bit growth. *)
-  Lemma T1_fw : forall m, dbm_wf m ->
+  Lemma T_fw_le : forall m, dbm_wf m ->
     (T_fw m <= k_octagon * N.of_nat
       ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))%N.
   Proof.
@@ -9602,23 +9602,23 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     rewrite (Nat2N.inj_mul 4 units) in Hrounded.
     change (N.of_nat ((supp (tighten (fw m)) + 1)^2 *
       (b (tighten (fw m)) + ell (tighten (fw m)) + 1)) <= 4 * work)%N in Hrounded.
-    pose proof (T1_fw m Hwf) as Hfw.
+    pose proof (T_fw_le m Hwf) as Hfw.
     change (T_fw m <= k_octagon * work)%N in Hfw.
     assert (Hframe : (k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) <=
       k_octagon * work)%N) by (now apply N.mul_le_mono_l).
     assert (Htighten : (T_tighten (fw m) <= 3 * (k_octagon * work))%N).
-    { eapply N.le_trans; [apply T2_tighten, wf_fw; exact Hwf|].
+    { eapply N.le_trans; [apply T_tighten_le, wf_fw; exact Hwf|].
       replace (3 * (k_octagon * work))%N with (k_octagon * (3 * work))%N by ring.
       now apply N.mul_le_mono_l. }
     assert (Hstrengthen : (T_strengthen (tighten (fw m)) <= 4 * (k_octagon * work))%N).
-    { eapply N.le_trans; [apply T3_strengthen, wf_tighten, wf_fw; exact Hwf|].
+    { eapply N.le_trans; [apply T_strengthen_le, wf_tighten, wf_fw; exact Hwf|].
       replace (4 * (k_octagon * work))%N with (k_octagon * (4 * work))%N by ring.
       now apply N.mul_le_mono_l. }
     assert (Hcoefficient : (9 * k_octagon <= c_octagon)%N)
       by (unfold k_octagon, c_octagon; nia).
     pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
     replace (9 * k_octagon * work)%N with (9 * (k_octagon * work))%N in Hbudget by ring.
-    pose proof (T4_tclose m Hwf) as Hclock.
+    pose proof (T_tclose_split m Hwf) as Hclock.
     set (charge := (k_octagon * work)%N) in *.
     assert (Hstages : ((if diag_ok (fw m)
       then T_tighten (fw m) + T_strengthen (tighten (fw m)) else 0) <= 7 * charge)%N).
@@ -10580,7 +10580,7 @@ Lemma tightening_work_le_strengthening : forall m,
     - set (work := (N.of_nat ((tsize e + 1)%nat) * range_unit e m)%N).
       assert (Hwork : N.of_nat (range_work e (Reached m) + 1) =
         (work + F.T_lin_of e + 1)%N).
-      { rewrite Nat2N.inj_add, F_range_work. cbn [bs ells].
+      { rewrite Nat2N.inj_add, range_work_def. cbn [bs ells].
         unfold work, range_unit, range_payload. rewrite Nat2N.inj_mul.
         reflexivity. }
       assert (Hunit_work : (range_unit e m <= work)%N).
@@ -11903,7 +11903,7 @@ Definition shift_column_work (target : K.t) (d : Z) (row : M.t Z) : nat :=
     intros i j d [|m]; [cbn [refine ns bs ells labs]; repeat split; lia|].
     unfold refine. destruct (incr_close i j d m) as [|next] eqn:Hnext.
     - cbn [ns bs ells labs]. repeat split; lia.
-    - cbn [ns bs ells labs]. exact (grow_incr_close i j d m next Hnext).
+    - cbn [ns bs ells labs]. exact (incr_close_growth i j d m next Hnext).
   Qed.
 
   (** Refinement adds state dispatch to the signed incremental matrix and label clock. *)
@@ -13091,7 +13091,7 @@ Definition shift_column_work (target : K.t) (d : Z) (row : M.t Z) : nat :=
       time_unfold (@T_assign). time_simpl. cbn beta iota zeta. lia.
     - assert (Hwork : N.of_nat (assign_work x e (Reached m) + 1) =
         (assign_unit x e m + F.T_lin_of e + 1)%N).
-      { rewrite Nat2N.inj_add, F_assign_work. cbn [ns bs ells skels labs].
+      { rewrite Nat2N.inj_add, assign_work_def. cbn [ns bs ells skels labs].
         unfold assign_unit, range_payload. reflexivity. }
       rewrite Hwork. eapply N.le_trans; [apply T_assign_fast_bound|].
       apply N.mul_le_mono_l. pose proof (fast_assign_unit_le x e m). lia.
@@ -13954,7 +13954,7 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Assignment is linear in the numeric work charged by its contract. *)
-  Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+  Lemma assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -13964,7 +13964,7 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Havoc is linear in the numeric work charged by its contract. *)
-  Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
+  Lemma havoc_complexity : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x)))
     (fun x => T_havoc (fst x) (snd x)).
   Proof.
@@ -13974,7 +13974,7 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Assumption is linear in the numeric work charged by its contract. *)
-  Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+  Lemma assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -13984,7 +13984,7 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** A range query is linear in the numeric work charged by its contract. *)
-  Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
+  Lemma range_complexity : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
     (fun x => T_range (fst x) (snd x)).
   Proof.
@@ -13994,7 +13994,7 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Tight closure is cubic in the support with a linear bit-width factor. *)
-  Lemma tclose_bigO : bigO (fun m : dbm => dbm_wf m)
+  Lemma tclose_complexity : bigO (fun m : dbm => dbm_wf m)
     (fun m => N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
     (fun m => T_tclose m).
   Proof.
@@ -14003,7 +14003,7 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Incremental closure is quadratic in the support and also scans the outer labels. *)
-  Lemma incr_close_bigO : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
+  Lemma incr_close_complexity : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
     (fun x => N.of_nat ((supp (snd x) + 1)^2 *
       (b (snd x) + K.bits (fst (fst (fst x))) + K.bits (snd (fst (fst x))) +
         ell (snd x) + Z.size_nat (snd (fst x)) + 1) + M.weight (snd x)))
@@ -14015,7 +14015,7 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Inclusion is linear in sparse structure and stored entries times their bit width. *)
-  Lemma leb_bigO : bigO (fun _ : t * t => True)
+  Lemma leb_complexity : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
         labs (fst x) + labs (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
@@ -14027,7 +14027,7 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Join is linear in sparse structure and stored entries times their bit width. *)
-  Lemma join_bigO : bigO (fun _ : t * t => True)
+  Lemma join_complexity : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
         labs (fst x) + labs (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
@@ -14039,7 +14039,7 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Widening is linear in sparse structure and stored entries times their bit width. *)
-  Lemma widen_bigO : bigO (fun _ : wparam * t * t => True)
+  Lemma widen_complexity : bigO (fun _ : wparam * t * t => True)
     (fun x => N.of_nat ((skels (snd (fst x)) + skels (snd x) +
         entries (snd (fst x)) + entries (snd x) + labs (snd (fst x)) + labs (snd x) + 1) *
       (bs (snd (fst x)) + bs (snd x) + ells (snd (fst x)) + ells (snd x) + 1)))
@@ -14051,7 +14051,7 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
   Qed.
 
   (** Fast assignment is linear in matrix support plus source interval arithmetic. *)
-  Lemma assign_fast_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+  Lemma assign_fast_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => (N.of_nat (skels (snd x) +
       (ns (snd x) + 1) * (bs (snd x) + ells (snd x) + X.bits (fst (fst x)) +
         F.bits_e (snd (fst x)) + lin_bits (snd (fst x)) + 1) +

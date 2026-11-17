@@ -54,7 +54,7 @@ Module Type CERTIFIED_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
     (T_analyze p pol fuel <= c_cert *
       (V.T_run p pol fuel + candidate_work p pol fuel + 1))%N.
   (** Certification is linear in the solver clock and the work of a solved candidate. *)
-  Parameter analyze_bigO : bigO (X := S.prog * policy L.wparam * N) (fun _ => True)
+  Parameter analyze_complexity : bigO (X := S.prog * policy L.wparam * N) (fun _ => True)
     (fun '(p, pol, fuel) => (V.T_run p pol fuel + candidate_work p pol fuel)%N)
     (fun '(p, pol, fuel) => T_analyze p pol fuel).
 End CERTIFIED_TIME.

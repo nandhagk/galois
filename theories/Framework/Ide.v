@@ -754,7 +754,7 @@ Module IdeT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     apply Hlook.
   Qed.
   (** Listing the rows is linear in their number. *)
-  Lemma rows_bigO : bigO (X := prog) (fun p => wf p)
+  Lemma rows_complexity : bigO (X := prog) (fun p => wf p)
     (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
   Proof.
     apply bigO_intro with (c := c_sys); intros p Hwf.
@@ -762,7 +762,7 @@ Module IdeT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     rewrite Nat2N.inj_add in Htime; nia.
   Qed.
   (** Starting a listed row fits the empty-value row budget. *)
-  Lemma start_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Lemma start_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
   Proof.
     apply bigO_intro with (c := c_sys); intros [p r] [Hwf Hin].
@@ -770,7 +770,7 @@ Module IdeT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     change (T_start p r <= c_sys * row_work p 0 + c_sys)%N; nia.
   Qed.
   (** Dependencies cost their number times the key width. *)
-  Lemma deps_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Lemma deps_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_deps p r).
   Proof.
@@ -781,7 +781,7 @@ Module IdeT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     rewrite Nat2N.inj_mul; nia.
   Qed.
   (** Finding the target fits the empty-value row budget. *)
-  Lemma target_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Lemma target_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
   Proof.
     apply bigO_intro with (c := c_sys); intros [p r] [Hwf Hin].
@@ -789,7 +789,7 @@ Module IdeT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     change (T_target p r <= c_sys * row_work p 0 + c_sys)%N; nia.
   Qed.
   (** Side keys cost their number times the key width. *)
-  Lemma sides_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Lemma sides_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_sides p r).
   Proof.

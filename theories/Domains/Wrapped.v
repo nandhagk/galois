@@ -3967,7 +3967,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
   Qed.
   (** Circular multiplication has the published quadratic work bound. *)
-  Lemma mul_bigO : bigO (fun _ => True)
+  Lemma mul_complexity : bigO (fun _ => True)
     (fun x : positive * (wrapped * wrapped) => N.of_nat
       ((Pos.to_nat (fst x) + 1) ^ 2 + wrapped_bits (fst (snd x)) +
         wrapped_bits (snd (snd x))))
@@ -3983,7 +3983,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Normalization is linear in the width and raw endpoint bits. *)
-  Lemma norm_bigO : bigO (X := positive * wrapped) (fun _ => True)
+  Lemma norm_complexity : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_norm (fst x) (snd x)).
   Proof.
@@ -3994,7 +3994,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Arithmetic negation is linear in the width and raw endpoint bits. *)
-  Lemma neg_bigO : bigO (X := positive * wrapped) (fun _ => True)
+  Lemma neg_complexity : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_neg (fst x) (snd x)).
   Proof.
@@ -4005,7 +4005,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Circular expansion is linear in the width and raw endpoint bits. *)
-  Lemma double_bigO : bigO (X := positive * wrapped) (fun _ => True)
+  Lemma double_complexity : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_double (fst x) (snd x)).
   Proof.
@@ -4016,7 +4016,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Bitwise negation is linear in the width and raw endpoint bits. *)
-  Lemma not_bigO : bigO (X := positive * wrapped) (fun _ => True)
+  Lemma not_complexity : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_not (fst x) (snd x)).
   Proof.
@@ -4027,7 +4027,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Pole splitting is linear in the width and raw endpoint bits. *)
-  Lemma split_bigO : bigO (X := positive * wrapped) (fun _ => True)
+  Lemma split_complexity : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_split (fst x) (snd x)).
   Proof.
@@ -4038,7 +4038,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Addition is linear in the width and both raw endpoint sets. *)
-  Lemma add_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+  Lemma add_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
       wrapped_bits (snd (snd x)) + 1))
     (fun x => T_wrapped_add (fst x) (fst (snd x)) (snd (snd x))).
@@ -4050,7 +4050,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Subtraction is linear in the width and both raw endpoint sets. *)
-  Lemma sub_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+  Lemma sub_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
       wrapped_bits (snd (snd x)) + 1))
     (fun x => T_wrapped_sub (fst x) (fst (snd x)) (snd (snd x))).
@@ -4062,7 +4062,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Unsigned division has the published quadratic class. *)
-  Lemma udiv_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+  Lemma udiv_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
       wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_udiv (fst x) (fst (snd x)) (snd (snd x))).
@@ -4073,7 +4073,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
 
   (** Unsigned remainder has the published quadratic class. *)
-  Lemma urem_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+  Lemma urem_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
       wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_urem (fst x) (fst (snd x)) (snd (snd x))).
@@ -4093,21 +4093,21 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
 
   (* Gamma and multiplication laws now live in WRAPPED_LAWS. *)
   (** Arc cardinality lies between zero and the modulus. *)
-  Lemma F2_card : forall w a, (0 <= card w a <= Word.modulus w)%Z.
+  Lemma card_in_range : forall w a, (0 <= card w a <= Word.modulus w)%Z.
   Proof.
     intros w a. rewrite card_wrapped_size. apply wrapped_size_bounds.
   Qed.
   (** Pole splitting returns at most four pieces. *)
-  Lemma F3_split_len : forall w a, (length (wrapped_split w a) <= 4)%nat.
+  Lemma split_len : forall w a, (length (wrapped_split w a) <= 4)%nat.
   Proof. apply wrapped_split_length. Qed.
   (** Every represented word belongs to a returned split interval. *)
-  Lemma F4_split_covers : forall w a z, pgamma w a z ->
+  Lemma split_covers : forall w a z, pgamma w a z ->
     exists lo hi, In (lo, hi) (wrapped_split w a) /\ (lo <= z <= hi)%Z.
   Proof.
     intros w a z Ha. apply wrapped_split_cover. exact (proj1 (pgamma_wrapped w a z) Ha).
   Qed.
   (** A multiplication piece contains every product from its intervals. *)
-  Lemma F5_mul_piece : forall w lo hi lo' hi' x y,
+  Lemma mul_piece_sound : forall w lo hi lo' hi' x y,
     (lo <= x <= hi)%Z -> (lo' <= y <= hi')%Z ->
     pgamma w (mul_piece w (lo, hi) (lo', hi')) (L.wrap w (x * y)).
   Proof.
@@ -4115,37 +4115,37 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     apply wrapped_mul_piece_sound; assumption.
   Qed.
   (** Widening retains a contained candidate and otherwise expands first. *)
-  Lemma F7_widen : forall q w a b,
+  Lemma widen_def : forall q w a b,
     pwiden q w a b = if pleb w b a then a else pjoin w (wrapped_double w a) b.
   Proof.
     intros q w a b. rewrite pwiden_agrees, pleb_agrees, pjoin_agrees. reflexivity.
   Qed.
   (** Expansion triples cardinality until it reaches the modulus. *)
-  Lemma F8_double_card : forall w a,
+  Lemma double_card : forall w a,
     card w (wrapped_double w a) = Z.min (Word.modulus w) (3 * card w a)%Z.
   Proof.
     intros w a. rewrite !card_wrapped_size. apply wrapped_double_size.
   Qed.
   (** Expansion contains the old arc. *)
-  Lemma F8a_double_contains : forall w a, pleb w a (wrapped_double w a) = true.
+  Lemma double_contains : forall w a, pleb w a (wrapped_double w a) = true.
   Proof.
     intros w a. rewrite pleb_agrees.
     apply wrapped_double_upper.
   Qed.
   (** Cardinality is monotone in the payload order. *)
-  Lemma F8b_card_mono : forall w a b,
+  Lemma card_mono : forall w a b,
     pleb w a b = true -> (card w a <= card w b)%Z.
   Proof.
     intros w a b Hle. rewrite pleb_agrees in Hle.
     rewrite !card_wrapped_size. now apply wrapped_size_monotone.
   Qed.
   (** Widening rank is determined by arc cardinality. *)
-  Lemma F9_rank : forall q w a, pwrank q w a = size_rank w (card w a).
+  Lemma rank_def : forall q w a, pwrank q w a = size_rank w (card w a).
   Proof.
     intros q w a. reflexivity.
   Qed.
   (** Arc widening credit is at most width plus two. *)
-  Lemma F10_rank_bound : forall q w a, (pwrank q w a <= Pos.to_nat w + 2)%nat.
+  Lemma pwrank_le_width_plus_2 : forall q w a, (pwrank q w a <= Pos.to_nat w + 2)%nat.
   Proof.
     intros q w a. rewrite pwrank_wrapped.
     pose proof (wrapped_size_rank_bounds w (wrapped_size w a) (wrapped_size_bounds w a))
@@ -4178,7 +4178,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     (Z.size_nat lo + Z.size_nat hi <= 2 * Pos.to_nat w)%nat.
   Proof. apply wrapped_split_bits_bound. Qed.
   (** Multiplication pieces charge width and all endpoint bit lengths. *)
-  Lemma T1_mul_piece : forall w lo hi lo' hi',
+  Lemma T_mul_piece_le : forall w lo hi lo' hi',
     (T_mul_piece w (lo, hi) (lo', hi') <= k_mul_piece * N.of_nat
       ((Pos.to_nat w + Z.size_nat lo + Z.size_nat hi + Z.size_nat lo' + Z.size_nat hi' + 1)
         ^ 2))%N.

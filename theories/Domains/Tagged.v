@@ -750,7 +750,7 @@ Module TaggedWordPlan (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     | TAny => True
     | TVal w p => fst c = w /\ L.is_word w (snd c) /\ W.pgamma w p (snd c)
     end.
-  Lemma F1_untag_sound : forall xs cs wps,
+  Lemma untag_sound : forall xs cs wps,
     Forall2 tagged_gamma xs cs -> untag xs = Some wps ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs.
@@ -766,7 +766,7 @@ Module TaggedWordPlan (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
         split; [reflexivity|]. split; assumption.
       + apply IH. reflexivity.
   Qed.
-  Lemma F2_retag_sound : forall ws ps cs,
+  Lemma retag_sound : forall ws ps cs,
     Forall2 (fun w c => fst c = w /\ L.is_word w (snd c)) ws cs ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c)) (combine ws ps) cs ->
     (length ws <= length ps)%nat -> Forall2 tagged_gamma (retag ws ps) cs.
@@ -782,7 +782,7 @@ Module TaggedWordPlan (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
       + apply IH; [exact Hps|lia].
   Qed.
   (** Untagging charges at most one call per operand and one final call. *)
-  Lemma T1_untag : forall xs,
+  Lemma T_untag_le : forall xs,
     (T_untag xs <= k_untag * N.of_nat ((length xs + 1)%nat))%N.
   Proof.
     unfold k_untag. induction xs as [|x xs IH].
@@ -792,7 +792,7 @@ Module TaggedWordPlan (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   Qed.
 
   (** Retagging charges one call per paired position and one final call. *)
-  Lemma T2_retag : forall ws ps,
+  Lemma T_retag_le : forall ws ps,
     (T_retag ws ps <= k_retag * N.of_nat ((length ws + length ps + 1)%nat))%N.
   Proof.
     unfold k_retag. induction ws as [|w ws IH]; intros [|p ps];

@@ -53,32 +53,32 @@ Module Type CONGRUENCE_BASE (L : WORD_LANGUAGE) :=
 
 Module Type CONGRUENCE_LAWS (L : WORD_LANGUAGE) (Import D : CONGRUENCE_BASE L).
   (** Payload concretization agrees with residue-class membership. *)
-  Parameter F1_gamma : forall w a z, pgamma w a z <-> congr_gamma w a z.
+  Parameter gamma_def : forall w a z, pgamma w a z <-> congr_gamma w a z.
   (** Normalization keeps precisely the same represented integers. *)
-  Parameter F2_norm_gamma : forall w a z,
+  Parameter norm_gamma : forall w a z,
     pgamma w (congr_norm w a) z <-> pgamma w a z.
   (** Negation retains wrapped concrete negation. *)
-  Parameter F6_congr_neg_sound : forall w a x,
+  Parameter congr_neg_sound : forall w a x,
     pgamma w a x -> pgamma w (congr_neg w a) (L.wrap w (- x)).
   (** Addition retains wrapped concrete addition. *)
-  Parameter F7_congr_add_sound : forall w a b x y,
+  Parameter congr_add_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_add w a b) (L.wrap w (x + y)).
   (** Subtraction retains wrapped concrete subtraction. *)
-  Parameter F8_congr_sub_sound : forall w a b x y,
+  Parameter congr_sub_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_sub w a b) (L.wrap w (x - y)).
   (** Multiplication retains wrapped concrete multiplication. *)
-  Parameter F9_congr_mul_sound : forall w a b x y,
+  Parameter congr_mul_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_mul w a b) (L.wrap w (x * y)).
   (** Projection retains truncations to smaller widths. *)
-  Parameter F10_congr_project_sound : forall source target a x,
+  Parameter congr_project_sound : forall source target a x,
     (target <= source)%positive -> pgamma source a x ->
     pgamma target (congr_project source target a) (L.wrap target x).
   (** Shift transfer retains the wrapped concrete shift. *)
-  Parameter F11_congr_shl_sound : forall w a b x y,
+  Parameter congr_shl_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y ->
     pgamma w (congr_shl w a b) (L.wrap w (Z.shiftl x y)).
   (** Remainder transfer retains unsigned remainder, including a zero divisor. *)
-  Parameter F12_congr_urem_sound : forall w a b x y,
+  Parameter congr_urem_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y ->
     pgamma w (congr_urem w a b) (L.wrap w (Z.modulo x y)).
 End CONGRUENCE_LAWS.
@@ -143,45 +143,45 @@ Module Type CONGRUENCE_TIME (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE L).
     c_congruence * N.of_nat
       (((Pos.to_nat source + Pos.to_nat target + congr_bits a + 1) ^ 2)%nat))%N.
   (** Congruence multiplication has the published quadratic width bound. *)
-  Parameter mul_bigO : (bigO (fun _ => True)
+  Parameter mul_complexity : (bigO (fun _ => True)
     (fun x : positive * (congr * congr) => N.of_nat
       (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
     (fun x => T_congr_mul (fst x) (fst (snd x)) (snd (snd x))))%N.
   (** Remainder has the published quadratic class, because it takes a gcd. *)
-  Parameter congr_urem_bigO : bigO (X := positive * (congr * congr)) (fun _ => True)
+  Parameter congr_urem_complexity : bigO (X := positive * (congr * congr)) (fun _ => True)
     (fun x => N.of_nat
       (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
     (fun x => T_congr_urem (fst x) (fst (snd x)) (snd (snd x))).
   (** Canonical payloads normalize in linear time. *)
-  Parameter congr_norm_lin_bigO : bigO (X := positive * congr)
+  Parameter congr_norm_lin_complexity : bigO (X := positive * congr)
     (fun x => canonical (fst x) (snd x))
     (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
     (fun x => T_congr_norm (fst x) (snd x)).
   (** Negation of a canonical payload is linear. *)
-  Parameter congr_neg_lin_bigO : bigO (X := positive * congr)
+  Parameter congr_neg_lin_complexity : bigO (X := positive * congr)
     (fun x => canonical (fst x) (snd x))
     (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
     (fun x => T_congr_neg (fst x) (snd x)).
   (** Addition of canonical payloads is linear. *)
-  Parameter congr_add_lin_bigO : bigO (X := positive * (congr * congr))
+  Parameter congr_add_lin_complexity : bigO (X := positive * (congr * congr))
     (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
     (fun x => N.of_nat
       (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
     (fun x => T_congr_add (fst x) (fst (snd x)) (snd (snd x))).
   (** Subtraction of canonical payloads is linear. *)
-  Parameter congr_sub_lin_bigO : bigO (X := positive * (congr * congr))
+  Parameter congr_sub_lin_complexity : bigO (X := positive * (congr * congr))
     (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
     (fun x => N.of_nat
       (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
     (fun x => T_congr_sub (fst x) (fst (snd x)) (snd (snd x))).
   (** Shifting a canonical payload by a canonical amount is linear. *)
-  Parameter congr_shl_lin_bigO : bigO (X := positive * (congr * congr))
+  Parameter congr_shl_lin_complexity : bigO (X := positive * (congr * congr))
     (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
     (fun x => N.of_nat
       (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
     (fun x => T_congr_shl (fst x) (fst (snd x)) (snd (snd x))).
   (** Projection of a canonical payload is linear in both widths. *)
-  Parameter congr_project_lin_bigO : bigO (X := positive * (positive * congr))
+  Parameter congr_project_lin_complexity : bigO (X := positive * (positive * congr))
     (fun x => (fst (snd x) <= fst x)%positive /\ canonical (fst x) (snd (snd x)))
     (fun x => N.of_nat
       (Pos.to_nat (fst x) + Pos.to_nat (fst (snd x)) + congr_bits (snd (snd x)) + 1))
@@ -197,7 +197,7 @@ Module Type CONGRUENCE_PLAN (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE_T L).
   Parameter T_div_aligned T_extgcd : Z -> Z -> N.
   Parameter k_div k_gcd : N.
   (** Aligned division preserves the standard quotient and remainder. *)
-  Parameter F_div_aligned : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
+  Parameter div_aligned_def : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
     div_aligned a b = Z.div_eucl a b.
   (** The coefficient chain preserves the standard ordered result. *)
   Parameter extgcd_agrees : forall a b, extgcd a b = Z.extgcd a b.
@@ -211,23 +211,23 @@ Module Type CONGRUENCE_PLAN (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE_T L).
       N.of_nat ((Z.size_nat a + Z.size_nat b + 1) ^ 2))%N.
   Parameter k_congr_gcd k_congr_crt k_congr_transfer : N.
   (** Normalization produces a canonical representation. *)
-  Parameter F3_norm_canonical : forall w a, canonical w (congr_norm w a).
+  Parameter norm_canonical : forall w a, canonical w (congr_norm w a).
   (** Normalization is idempotent. *)
-  Parameter F4_norm_idempotent : forall w a,
+  Parameter norm_idempotent : forall w a,
     congr_norm w (congr_norm w a) = congr_norm w a.
   (** Chinese remainder meet retains each shared integer. *)
-  Parameter F5_crt_meet_sound : forall w a b z,
+  Parameter crt_meet_sound : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
   (** The requested congruence rank is bounded by width plus two. *)
-  Parameter F13_wrank_le : forall w a, congr_wrank w a <= Pos.to_nat w + 2.
+  Parameter congr_wrank_le : forall w a, congr_wrank w a <= Pos.to_nat w + 2.
   (** Payload widening uses the normalized congruence rank. *)
-  Parameter F14_pwrank : forall q w a, pwrank q w a = congr_wrank w a.
+  Parameter pwrank_def : forall q w a, pwrank q w a = congr_wrank w a.
   (** Gcd-based joining has the published quadratic arithmetic bound. *)
-  Parameter T1_join : forall w a b,
+  Parameter T_pjoin_plan_le : forall w a b,
     (T_pjoin w a b <= k_congr_gcd *
       N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
   (** Chinese remainder meet has the published quadratic arithmetic bound. *)
-  Parameter T2_meet : forall w a b,
+  Parameter T_pmeet_plan_le : forall w a b,
     (T_pmeet w a b <= k_congr_crt *
       N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
 End CONGRUENCE_PLAN.

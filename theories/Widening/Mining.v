@@ -190,7 +190,7 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
   Qed.
 
   (** Literal collection is linear in the term size. *)
-  Lemma lits_bigO : bigO (X := term L.op X.t) (fun _ => True)
+  Lemma lits_complexity : bigO (X := term L.op X.t) (fun _ => True)
     (fun e => N.of_nat (tsize e)) (fun e => T_lits e).
   Proof.
     eapply bigO_intro with (c := c_mining). intros e _.
@@ -198,7 +198,7 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
   Qed.
 
   (** Mining is linear in the terms and seeds plus the cost of building the thresholds. *)
-  Lemma mine_bigO : bigO (X := list (term L.op X.t) * list Z) (fun _ => True)
+  Lemma mine_complexity : bigO (X := list (term L.op X.t) * list Z) (fun _ => True)
     (fun '(es, extra) => N.of_nat (fold_right Nat.add 0 (map tsize es) +
         fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)) +
         ((length (expanded es extra) * (Nat.log2 (length (expanded es extra)) + 1) + 1) *
@@ -216,26 +216,26 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
   Definition k_mining : N := (L.c_lang + 4)%N.
 
   (** Accumulator collection preserves the public literal order. *)
-  Lemma F3_lits_acc : forall e acc, lits_acc e acc = lits e ++ acc.
+  Lemma lits_acc_def : forall e acc, lits_acc e acc = lits e ++ acc.
   Proof.
     apply lits_acc_spec.
   Qed.
 
   (** Accumulator collection charges only the syntax nodes it visits. *)
-  Lemma T1_lits_acc : forall e acc,
+  Lemma T_lits_acc_le : forall e acc,
     (T_lits_acc e acc <= k_mining * N.of_nat (tsize e))%N.
   Proof.
     intros e acc. unfold k_mining. pose proof (lits_acc_time e acc). nia.
   Qed.
 
   (** The accumulator implementation constructs exactly the specified expansion. *)
-  Lemma F1_mine : forall es extra, mine es extra = T.make (expanded es extra).
+  Lemma mine_def : forall es extra, mine es extra = T.make (expanded es extra).
   Proof.
     intros es extra. unfold mine, expanded, seeds. rewrite lits_fold_spec. reflexivity.
   Qed.
 
   (** Expansion contributes three list entries even when seeds repeat. *)
-  Lemma F2_expanded_length : forall es extra,
+  Lemma expanded_length : forall es extra,
     length (expanded es extra) = 3 * length (seeds es extra).
   Proof.
     intros es extra. unfold expanded. generalize (seeds es extra). intro zs.

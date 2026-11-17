@@ -52,17 +52,17 @@ Module Type DISJUNCTION_TIME (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
   Parameter join_size : forall a b,
     (N.of_nat (size (join a b)) <= c_lat * N.of_nat (size a + size b + 1))%N.
   (** Inclusion is linear in both sizes. The constant depends on the cap. *)
-  Parameter leb_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter leb_complexity : bigO (X := t * t) (fun _ => True)
     (fun xy => N.of_nat (size (fst xy) + size (snd xy)))
     (fun xy => T_leb (fst xy) (snd xy)).
   (** Joining is linear in both sizes. The constant depends on the cap. *)
-  Parameter join_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter join_complexity : bigO (X := t * t) (fun _ => True)
     (fun xy => N.of_nat (size (fst xy) + size (snd xy)))
     (fun xy => T_join (fst xy) (snd xy)).
   (** The bottom test is linear in the size. *)
-  Parameter is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Parameter is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
   (** Clipping at most twice the cap is linear in the raw length and component sizes. *)
-  Parameter clip_bigO : bigO (fun xs : list L.t => length xs <= 2 * C.k)
+  Parameter clip_complexity : bigO (fun xs : list L.t => length xs <= 2 * C.k)
     (fun xs => N.of_nat (length xs + fold_right (fun a n => L.size a + n) 0 xs)) T_clip.
 End DISJUNCTION_TIME.
 

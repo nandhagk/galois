@@ -2862,7 +2862,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     ((k_step * N.of_nat (w + 1) + 1) * potential g roots st)%N.
   Definition stop_budget g roots := (k_trace * N.of_nat (length (trace g roots) + 1))%N.
 
-  Lemma F1_budget : forall g roots,
+  Lemma search_budget_def : forall g roots,
     search_budget g roots = (4 * (nv g + ne g + N.of_nat (length roots) + 1))%N.
   Proof.
     intros g roots.
@@ -2873,7 +2873,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
 
   Local Transparent prepared_search_trace.
 
-  Lemma F2_trace : forall g roots,
+  Lemma trace_def : forall g roots,
     trace g roots = search_trace g roots /\
     search_trace g roots =
       match loopN (search_step (base g)) (search_budget g roots) (initial roots) with
@@ -2891,7 +2891,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
 
   Local Opaque prepared_search_trace.
 
-  Lemma F3_initial : forall g roots,
+  Lemma initial_inv : forall g roots,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots (initial roots) /\
@@ -2949,7 +2949,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     - destruct (prepared_search_complete_closed g roots Hcounts
         (search_wf_closed g Hgraph) Hroots) as [es Hrun].
       assert (Htrace : trace g roots = es).
-      { destruct (F2_trace g roots) as [Htrace Hmachine].
+      { destruct (trace_def g roots) as [Htrace Hmachine].
         change (loopN (search_step (base g)) (search_budget g roots)
           (initial roots) = inr es) in Hrun.
         rewrite Htrace, Hmachine, Hrun. reflexivity. }
@@ -2960,7 +2960,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
       eapply search_completed_prefix. rewrite <- search_loopN_fuel. exact Hrun.
   Qed.
 
-  Lemma F4_step : forall g roots st next,
+  Lemma step_inv : forall g roots st next,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inl next ->
@@ -2992,7 +2992,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Qed.
 
 
-  Lemma F5_stop : forall g roots st es,
+  Lemma stop_spec : forall g roots st es,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inr es ->
@@ -3003,7 +3003,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     destruct (prepared_search_complete_closed g roots Hcounts
       (search_wf_closed g Hgraph) Hroots) as [result Hrun].
     assert (Htrace : trace g roots = result).
-    { destruct (F2_trace g roots) as [Htrace Hmachine].
+    { destruct (trace_def g roots) as [Htrace Hmachine].
       change (loopN (search_step (base g)) (search_budget g roots)
         (initial roots) = inr result) in Hrun.
       rewrite Htrace, Hmachine, Hrun. reflexivity. }
@@ -3034,7 +3034,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
       apply Nat.le_max_r.
   Qed.
 
-  Lemma F6_width : forall g roots st,
+  Lemma width_spec : forall g roots st,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> Forall (event_width (run_width g roots)) (search_events st).
@@ -3063,7 +3063,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Qed.
 
 
-  Lemma F7_events : forall g roots,
+  Lemma trace_length : forall g roots,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     length (trace g roots) = 2 * n_reach g roots + e_reach g roots.
@@ -3074,7 +3074,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     rewrite search_event_supply_entered in Hevents. exact Hevents.
   Qed.
 
-  Lemma F8_fuel : forall g roots,
+  Lemma budget_enough : forall g roots,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     exists es, loopN (search_step (base g)) (search_budget g roots)
@@ -3085,7 +3085,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     exact (proj2 Hgraph).
   Qed.
 
-  Lemma T1_step : forall g roots st next w,
+  Lemma T_search_step_le : forall g roots st next w,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> Forall (event_width w) (trace g roots) ->
@@ -3111,7 +3111,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     unfold k_step. time_unfold @T_search_step. lia.
   Qed.
 
-  Lemma T2_stop : forall g roots st es,
+  Lemma T_search_step_stop_le : forall g roots st es,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inr es ->
@@ -3119,7 +3119,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Proof.
     intros g roots st es Hcounts Hgraph Hroots Hinv Hstop.
     pose proof (search_stop_clock (base g) st es Hstop) as Hclock.
-    destruct (F5_stop g roots st es Hcounts Hgraph Hroots Hinv Hstop) as [_ Hevents].
+    destruct (stop_spec g roots st es Hcounts Hgraph Hroots Hinv Hstop) as [_ Hevents].
     rewrite Hevents in Hclock.
     assert (Hfactor : (5 <= k_trace)%N) by (unfold k_trace; nia).
     assert (Hlength : (1 <= N.of_nat (length (trace g roots) + 1))%N) by lia.
@@ -3127,7 +3127,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     clear - Hclock Hfactor Hlength. nia.
   Qed.
 
-  Lemma T3_loop : forall g roots w,
+  Lemma T_search_loop_le : forall g roots w,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     Forall (event_width w) (trace g roots) -> vertex_width roots <= w ->
@@ -3139,16 +3139,16 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     intros g roots w Hcounts Hgraph Hroots Hwidth Hrootwidth.
     eapply T_loopN_le with (Inv := invariant g roots).
     - intros st next Hinv Hstep.
-      destruct (F4_step g roots st next Hcounts Hgraph Hroots Hinv Hstep)
+      destruct (step_inv g roots st next Hcounts Hgraph Hroots Hinv Hstep)
         as [Hnext Hdecrease]. split; [exact Hnext|].
-      pose proof (T1_step g roots st next w Hcounts Hgraph Hroots Hinv
+      pose proof (T_search_step_le g roots st next w Hcounts Hgraph Hroots Hinv
         Hwidth Hrootwidth Hstep) as Hclock.
       unfold driver_credit. clear - Hclock Hdecrease. nia.
-    - intros st es Hinv Hstop. eapply T2_stop; eassumption.
-    - exact (proj1 (F3_initial g roots Hcounts Hgraph Hroots)).
+    - intros st es Hinv Hstop. eapply T_search_step_stop_le; eassumption.
+    - exact (proj1 (initial_inv g roots Hcounts Hgraph Hroots)).
   Qed.
 
-  Lemma T4_trace : forall g roots w,
+  Lemma T_search_trace_split : forall g roots w,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     Forall (event_width w) (trace g roots) -> vertex_width roots <= w ->
@@ -3177,7 +3177,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Qed.
 
   (** A continuing step taken within the fuel costs one key width of the run. *)
-  Lemma T1_raw_step : forall g roots n st next,
+  Lemma T_search_step_raw_le : forall g roots n st next,
     (N.of_nat n < search_budget g roots)%N ->
     Nat.iter n (advance (base g)) (initial roots) = st ->
     search_step (base g) st = inl next ->
@@ -3195,7 +3195,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
 
 
   (** Steps taken within the fuel emit an event, retire a root or finish a row. *)
-  Lemma F9_raw_count : forall g roots n,
+  Lemma raw_count_le : forall g roots n,
     (N.of_nat n <= search_budget g roots)%N ->
     (forall i, i < n -> exists next,
       search_step (base g) (Nat.iter i (advance (base g)) (initial roots)) = inl next) ->
@@ -3212,7 +3212,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
 
 
   (** The truncated loop pays its steps, one stop and the binary fuel width. *)
-  Lemma T3_raw_loop : forall g roots,
+  Lemma T_search_loop_raw_le : forall g roots,
     (T_loopN (search_step (base g)) (T_search_step (base g))
       (search_budget g roots) (initial roots) <=
     c_loopN * (k_step * N.of_nat (run_width g roots + 1) *
@@ -3232,7 +3232,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
 
 
   (** Every step emits an event or retires a root or row task, at the width of the run. *)
-  Lemma T4_raw : forall g roots,
+  Lemma T_search_trace_raw_le : forall g roots,
     (T_search_trace g roots <= k_trace *
       (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
         N.of_nat (run_width g roots + 1) +
@@ -3283,7 +3283,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
       rewrite ?Nat2N.inj_add, ?time_of_nat_succ in *; nia.
   Qed.
 
-  Lemma T5_fold : forall g roots s B,
+  Lemma T_fold_events_le : forall g roots s B,
     work_bounded g roots s B ->
     (T_fold_events V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge
       (trace g roots) s <=
@@ -3294,7 +3294,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     apply fold_events_time_bound; exact Hwork.
   Qed.
 
-  Lemma T6_dfs : forall g roots s,
+  Lemma T_dfs_split : forall g roots s,
     (T_dfs g roots s <= k_trace * (T_search_trace g roots +
       T_fold_events V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge
         (trace g roots) s + 1))%N.
@@ -3310,7 +3310,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Qed.
 
   (** Each entered vertex contributes at most two events and its row on every input. *)
-  Lemma F7b_events_raw : forall g roots,
+  Lemma trace_length_raw_le : forall g roots,
       length (trace g roots) <= 2 * n_reach g roots + e_reach g roots.
   Proof.
     intros g roots. pose proof (prepared_search_event_bound g roots) as Hevents.
@@ -3349,16 +3349,16 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Qed.
 
   (** The phase bounds retain the reachable-size, callback and cache-width charges. *)
-  Lemma T7_public : forall g roots s B, work_bounded g roots s B ->
+  Lemma T_dfs_plan_le : forall g roots s B, work_bounded g roots s B ->
     (T_dfs g roots s <= c_dfs * (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
       (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
         N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
   Proof.
     intros g roots s B Hwork.
-    pose proof (T4_raw g roots) as Htrace.
-    pose proof (T5_fold g roots s B Hwork) as Hfold.
-    pose proof (T6_dfs g roots s) as Hwrapper.
-    pose proof (F7b_events_raw g roots) as Hevents.
+    pose proof (T_search_trace_raw_le g roots) as Htrace.
+    pose proof (T_fold_events_le g roots s B Hwork) as Hfold.
+    pose proof (T_dfs_split g roots s) as Hwrapper.
+    pose proof (trace_length_raw_le g roots) as Hevents.
     pose proof (run_overhead_bound g roots) as Hoverhead.
     set (count := N.of_nat (n_reach g roots + e_reach g roots + length roots + 1)) in *.
     set (width := N.of_nat (run_width g roots)) in *.
@@ -3398,11 +3398,11 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
       (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
         N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
   Proof.
-    exact T7_public.
+    exact T_dfs_plan_le.
   Qed.
 
   (** The public pointwise search bound gives the reachable-size family bound. *)
-  Lemma dfs_bigO : bigO
+  Lemma dfs_complexity : bigO
     (fun '(g, roots, s, B) => work_bounded g roots s B)
     (fun '(g, roots, _, B) =>
       (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *

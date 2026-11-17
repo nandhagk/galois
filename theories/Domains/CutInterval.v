@@ -1016,62 +1016,62 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Qed.
 
   (** Concrete membership uses the projected inclusive interval. *)
-  Lemma F_gamma : forall a z, gamma a z <-> in_cut a z.
+  Lemma gamma_def : forall a z, gamma a z <-> in_cut a z.
   Proof.
     intros a z. reflexivity.
   Qed.
   (** Inclusion compares normalized bounded projections directly. *)
-  Lemma F_leb : forall a b, leb a b = R.leb (cut_raw a) (cut_raw b).
+  Lemma leb_def : forall a b, leb a b = R.leb (cut_raw a) (cut_raw b).
   Proof.
     intros a b. reflexivity.
   Qed.
   (** Bottom has the normalized empty representation. *)
-  Lemma F_bot : cut_raw bot = IBot.
+  Lemma bot_def : cut_raw bot = IBot.
   Proof.
     reflexivity.
   Qed.
   (** Top has two infinite endpoints. *)
-  Lemma F_top : cut_raw top = I NegInf PosInf.
+  Lemma top_def : cut_raw top = I NegInf PosInf.
   Proof.
     reflexivity.
   Qed.
   (** Bottom recognition agrees with the raw domain. *)
-  Lemma F_is_bot : forall a, is_bot a = R.is_bot (cut_raw a).
+  Lemma is_bot_def : forall a, is_bot a = R.is_bot (cut_raw a).
   Proof.
     intro a. reflexivity.
   Qed.
   (** Joining cuts the raw join before it enters the bounded carrier. *)
-  Lemma F_join : forall a b,
+  Lemma join_def : forall a b,
     cut_raw (join a b) = cut_interval C.bits (R.join (cut_raw a) (cut_raw b)).
   Proof.
     intros a b. apply cut_agrees.
   Qed.
   (** Meeting cuts the normalized raw intersection. *)
-  Lemma F_meet : forall a b,
+  Lemma meet_def : forall a b,
     cut_raw (meet a b) = cut_interval C.bits (R.meet (cut_raw a) (cut_raw b)).
   Proof.
     intros a b. apply cut_agrees.
   Qed.
   (** Every threshold parameter is accepted and its result is cut outward. *)
-  Lemma F_widen : forall q a b,
+  Lemma widen_def : forall q a b,
     cut_raw (widen q a b) = cut_interval C.bits (R.widen q (cut_raw a) (cut_raw b)).
   Proof.
     intros q a b. apply cut_agrees.
   Qed.
   (** Narrowing cuts the raw narrowed result. *)
-  Lemma F_narrow : forall a b,
+  Lemma narrow_def : forall a b,
     cut_raw (narrow a b) = cut_interval C.bits (R.narrow (cut_raw a) (cut_raw b)).
   Proof.
     intros a b. apply cut_agrees.
   Qed.
   (** Forward transfer cuts every raw result, including constants and shifts. *)
-  Lemma F_forward : forall o xs,
+  Lemma forward_def : forall o xs,
     cut_raw (forward o xs) = cut_interval C.bits (R.forward o (map cut_raw xs)).
   Proof.
     intros o xs. apply cut_agrees.
   Qed.
   (** Backward transfer cuts each result in its original operand position. *)
-  Lemma F_backward : forall o r xs,
+  Lemma backward_def : forall o r xs,
     map cut_raw (backward o r xs) =
       map (fun yx => cut_within C.bits (snd yx) (fst yx))
         (combine (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs)).
@@ -1080,7 +1080,7 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     apply refinement_projections, R.backward_refines.
   Qed.
   (** Guard refinement cuts each returned operand. *)
-  Lemma F_guard : forall g xs,
+  Lemma guard_def : forall g xs,
     map cut_raw (guard g xs) =
       map (fun yx => cut_within C.bits (snd yx) (fst yx))
         (combine (R.guard g (map cut_raw xs)) (map cut_raw xs)).
@@ -1089,12 +1089,12 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     apply refinement_projections, R.guard_refines.
   Qed.
   (** Widening rank counts thresholds beyond the retained finite endpoints. *)
-  Lemma F_rank : forall q a, wrank q a = R.interval_wrank q (cut_raw a).
+  Lemma rank_def : forall q a, wrank q a = R.interval_wrank q (cut_raw a).
   Proof.
     intros q a. reflexivity.
   Qed.
   (** Normalization and outward cutoff cannot increase the raw threshold rank. *)
-  Lemma F_cut_rank : forall q a,
+  Lemma cut_rank_le : forall q a,
     R.interval_wrank q (cut_interval C.bits a) <= R.interval_wrank q a.
   Proof.
     apply cut_rank_nonincreasing.
@@ -1364,7 +1364,7 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Lemma raw_wsize_agrees : forall q, R.wsize q + C.bits = wsize q.
   Proof.
     intro q.
-    rewrite R.F_wsize.
+    rewrite R.wsize_def.
     reflexivity.
   Qed.
 
@@ -1430,7 +1430,7 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     intros q a.
     unfold wrank.
     rewrite <- RL.raw_wrank.
-    apply R.F3_wrank_le.
+    apply R.wrank_le.
   Qed.
 
   (** Operator work accounts for every operand size. *)
@@ -1797,7 +1797,7 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Qed.
 
   (** Forward transfer has the published operator-work class. *)
-  Lemma forward_bigO : (bigO (fun _ => True)
+  Lemma forward_complexity : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
   Proof.

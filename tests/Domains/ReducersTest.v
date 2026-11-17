@@ -204,18 +204,18 @@ Module ReducerIntervalView (L : WORD_LANGUAGE) (T : THRESHOLDS)
   Definition count_gt := P.count_gt.
   Definition count_lt := P.count_lt.
   Definition payload_wrank := P.payload_wrank.
-  Definition F_pleb := P.F_pleb.
-  Definition F_pis_bot := P.F_pis_bot.
-  Definition F_pjoin := P.F_pjoin.
-  Definition F_pmeet := P.F_pmeet.
-  Definition F_pwiden := P.F_pwiden.
-  Definition F_pnarrow := P.F_pnarrow.
-  Definition F_pwrank := P.F_pwrank.
-  Definition F_pbot := P.F_pbot.
-  Definition F_ptop := P.F_ptop.
-  Definition F_pconst := P.F_pconst.
-  Definition F_ppoint := P.F_ppoint.
-  Definition F_pgamma := P.F_pgamma.
+  Definition pleb_def := P.pleb_def.
+  Definition pis_bot_def := P.pis_bot_def.
+  Definition pjoin_def := P.pjoin_def.
+  Definition pmeet_def := P.pmeet_def.
+  Definition pwiden_def := P.pwiden_def.
+  Definition pnarrow_def := P.pnarrow_def.
+  Definition pwrank_def := P.pwrank_def.
+  Definition pbot_def := P.pbot_def.
+  Definition ptop_def := P.ptop_def.
+  Definition pconst_def := P.pconst_def.
+  Definition ppoint_def := P.ppoint_def.
+  Definition pgamma_def := P.pgamma_def.
 End ReducerIntervalView.
 
 Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
@@ -276,7 +276,7 @@ Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     reducer_simple_interval w b = true -> reducer_simple_interval w (pjoin w a b) = true.
   Proof.
     intros w a b Ha Hb; apply reducer_simple_interval_cases in Ha, Hb.
-    destruct Ha as [-> | [-> | ->]], Hb as [-> | [-> | ->]]; rewrite F_pjoin;
+    destruct Ha as [-> | [-> | ->]], Hb as [-> | [-> | ->]]; rewrite pjoin_def;
       rewrite ?clip_bottom, ?clip_raw_top, ?clip_word_top;
       unfold S.interval_join, S.bound_min, S.bound_max, S.bound_leb;
       cbn; rewrite ?Z.leb_refl; cbn; try reflexivity; apply reducer_simple_word_top.
@@ -287,7 +287,7 @@ Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     reducer_simple_interval w b = true -> reducer_simple_interval w (pmeet w a b) = true.
   Proof.
     intros w a b Ha Hb; apply reducer_simple_interval_cases in Ha, Hb.
-    destruct Ha as [-> | [-> | ->]], Hb as [-> | [-> | ->]]; rewrite F_pmeet;
+    destruct Ha as [-> | [-> | ->]], Hb as [-> | [-> | ->]]; rewrite pmeet_def;
       rewrite ?clip_bottom, ?clip_raw_top, ?clip_word_top;
       unfold S.interval_meet, S.bound_min, S.bound_max, S.bounds_nonempty, S.bound_leb;
       cbn; rewrite ?Z.leb_refl, ?word_top_nonempty; cbn; try reflexivity;
@@ -299,7 +299,7 @@ Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     reducer_simple_interval w b = true -> reducer_simple_interval w (pnarrow w a b) = true.
   Proof.
     intros w a b Ha Hb; apply reducer_simple_interval_cases in Ha, Hb.
-    destruct Ha as [-> | [-> | ->]], Hb as [-> | [-> | ->]]; rewrite F_pnarrow;
+    destruct Ha as [-> | [-> | ->]], Hb as [-> | [-> | ->]]; rewrite pnarrow_def;
       rewrite ?clip_bottom, ?clip_raw_top, ?clip_word_top;
       unfold S.interval_narrow, S.narrow_bound; cbn;
       try reflexivity; apply reducer_simple_word_top.
@@ -310,7 +310,7 @@ Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     reducer_simple_interval w b = true -> reducer_simple_interval w (pwiden q w a b) = true.
   Proof.
     intros q w a b Ha Hb; apply reducer_simple_interval_cases in Ha, Hb.
-    destruct Ha as [-> | [-> | ->]], Hb as [-> | [-> | ->]]; rewrite F_pwiden, F_pleb;
+    destruct Ha as [-> | [-> | ->]], Hb as [-> | [-> | ->]]; rewrite pwiden_def, pleb_def;
       rewrite ?clip_bottom, ?clip_raw_top, ?clip_word_top;
       unfold S.interval_leb, S.interval_stable_widen, S.interval_widen, S.bound_leb;
       cbn;
@@ -350,8 +350,8 @@ Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intro w; pose proof (P.ptop_size w) as Hsize.
     unfold psize, reducer_interval_premium, c_payload.
-    rewrite F_ptop, reducer_simple_word_top; cbn [Nat.add];
-      rewrite <- (F_ptop w); nia.
+    rewrite ptop_def, reducer_simple_word_top; cbn [Nat.add];
+      rewrite <- (ptop_def w); nia.
   Qed.
   (** Bottom incurs no premium. *)
   Lemma pbot_size : forall w,
@@ -359,7 +359,7 @@ Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intro w; pose proof (P.pbot_size w) as Hsize.
     unfold psize, reducer_interval_premium, c_payload.
-    rewrite F_pbot; cbn [reducer_simple_interval Nat.add]; rewrite <- (F_pbot w); nia.
+    rewrite pbot_def; cbn [reducer_simple_interval Nat.add]; rewrite <- (pbot_def w); nia.
   Qed.
   (** A constant's existing quadratic budget also pays for its premium. *)
   Lemma pconst_size : forall w z,
@@ -596,7 +596,7 @@ Module ReducerIntervalSizeCounterexample (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     Large.pmeet w (I NegInf PosInf) (bits_interval w (Tnum 0 1)) =
       I (Fin 1) (Fin (Word.modulus w - 1)).
   Proof.
-    intro w; rewrite one_bit_hull, Large.F_pmeet, Large.clip_raw_top, clip_one_bit_hull.
+    intro w; rewrite one_bit_hull, Large.pmeet_def, Large.clip_raw_top, clip_one_bit_hull.
     unfold S.interval_meet, S.bound_max, S.bound_min, S.bounds_nonempty, S.bound_leb.
     rewrite !Z.leb_refl; cbn.
     change ((if (1 <=? Word.modulus w - 1) then
@@ -615,7 +615,7 @@ Module ReducerIntervalSizeCounterexample (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     intro w; change (Pos.to_nat w + Large.psize w (I NegInf PosInf) + 1 +
       (Pos.to_nat w + K.psize w (Tnum 0 1) + 1) + 1 = 4 * Pos.to_nat w + 6)%nat.
     unfold Large.psize, reducer_interval_premium.
-    rewrite P.F_psize, K.psize_bits.
+    rewrite P.psize_def, K.psize_bits.
     change (Pos.to_nat w + (Pos.to_nat w + 0 + 1 + 0) + 1 +
       (Pos.to_nat w + (Pos.to_nat w + 1 + 1) + 1) + 1 = 4 * Pos.to_nat w + 6)%nat.
     lia.

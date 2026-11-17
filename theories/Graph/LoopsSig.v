@@ -177,19 +177,19 @@ Module Type LOOPS_TIME (Import L : LOOPS).
     (T_reducible_b g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (loop_depth g (forest g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   (** Forest construction has the published nesting-sensitive bit-cost bound. *)
-  Parameter forest_bigO : bigO (fun '(g, t, r) =>
+  Parameter forest_complexity : bigO (fun '(g, t, r) =>
       wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
     (fun '(g, t, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
     (fun '(g, t, _) => T_forest g t).
   (** Reducibility checking has the published nesting-sensitive bit-cost bound. *)
-  Parameter reducible_b_bigO : bigO (fun '(g, t, r) =>
+  Parameter reducible_b_complexity : bigO (fun '(g, t, r) =>
       wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
     (fun '(g, t, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
     (fun '(g, t, _) => T_reducible_b g t).
   (** Reducibility checking classifies once and scans one search, with no nesting factor. *)
-  Parameter reducible_b_linear_bigO : bigO (fun '(g, t, r) =>
+  Parameter reducible_b_linear_complexity : bigO (fun '(g, t, r) =>
       wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
     (fun '(g, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))
@@ -326,23 +326,23 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
     fold_left install (firstn n (forest_rows g t)) (Loops Empty Empty Empty).
 
   (** Every tree root task starts outside an active ancestor chain. *)
-  Parameter F1_tree_initial : forall g t r,
+  Parameter tree_initial_inv : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r (tree_initial g).
 
   (** Tree cursors spend white or pending work while maintaining active ancestry. *)
-  Parameter F2_tree_step : forall g t r st next,
+  Parameter tree_step_inv : forall g t r st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r st -> tree_step g t st = inl next ->
     tree_invariant g t r next /\ (tree_potential g t next < tree_potential g t st)%N.
 
   (** Binary graph fuel covers the listed-root scan, tree cursors and successor occurrences. *)
-  Parameter F3_tree_driver : forall g t r,
+  Parameter tree_driver_spec : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     loopN (tree_step g t) (tree_fuel g) (tree_initial g) = inr (classify g t).
 
   (** Classification orders every reachable vertex with each proper dominator first. *)
-  Parameter F4_tree_order : forall g t r,
+  Parameter tree_order : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     NoDup (loop_order (classify g t)) /\ hd_error (loop_order (classify g t)) = Some r /\
     (forall v, In v (loop_order (classify g t)) <-> reach (base g) [r] v) /\
@@ -350,54 +350,54 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
       order_before (loop_order (classify g t)) u v.
 
   (** Active ancestor membership recognizes exactly the dominance back edges. *)
-  Parameter F5_back_edges : forall g t r u v,
+  Parameter back_edges_spec : forall g t r u v,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (back_member (classify g t) u v <->
       reach (base g) [r] u /\ edge (base g) u v /\ dominates (base g) r v u) /\
     (In u (latches (classify g t) v) <-> back_member (classify g t) u v).
 
   (** Latch lists retain occurrences within the graph's edge budget. *)
-  Parameter F6_latch_count : forall g t r,
+  Parameter latch_count : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     NoDup (headers g t) /\ incl (headers g t) (nodes g) /\
     fold_right (fun h n => length (latches (classify g t) h) + n) 0 (headers g t) <=
       graph_e (base g).
 
   (** Premarking a natural header starts a supported reverse traversal. *)
-  Parameter F7_body_initial : forall g t r h,
+  Parameter body_initial_inv : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h (body_initial h (latches (classify g t) h)).
 
   (** Fresh reverse vertices transfer their predecessor occurrences into pending tasks. *)
-  Parameter F8_body_step : forall g t r h st next,
+  Parameter body_step_inv : forall g t r h st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h st -> body_step g t h st = inl next ->
     body_invariant g t r h next /\ (body_potential g t h next < body_potential g t h st)%N.
 
   (** Reverse traversal finishes within the cached graph and latch occurrence budget. *)
-  Parameter F9_body_driver : forall g t r h,
+  Parameter body_driver_spec : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     loopN (body_step g t h) (body_fuel g (latches (classify g t) h))
       (body_initial h (latches (classify g t) h)) = inr (collected g t h).
 
   (** Collected bodies are distinct reachable vertices of exactly the semantic natural loop. *)
-  Parameter F10_body_exact : forall g t r h,
+  Parameter body_exact : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     NoDup (collected g t h) /\ incl (collected g t h) (nodes g) /\
       forall v, In v (collected g t h) <-> natural_loop (base g) r h v.
 
   (** Distinct natural loops that meet are strictly nested. *)
-  Parameter F11_laminar : forall g r h outer v,
+  Parameter loops_laminar : forall g r h outer v,
     natural_loop g r h v -> natural_loop g r outer v -> h <> outer ->
     loop_inside g r h outer \/ loop_inside g r outer h.
 
   (** Outer headers precede inner headers in the dominator preorder. *)
-  Parameter F12_header_order : forall g t r inner outer,
+  Parameter header_order : forall g t r inner outer,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     loop_inside (base g) r inner outer -> order_before (headers g t) outer inner.
 
   (** Installation reads the header's previous owner before assigning the new body owner. *)
-  Parameter F13_install : forall l h vs,
+  Parameter install_spec : forall l h vs,
     body (install l (h, vs)) = PTrieCode.set h vs (body l) /\
     parent (install l (h, vs)) =
       match trie_get h (header l) with
@@ -408,7 +408,7 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
       fold_left (fun owners v => PTrieCode.set v h owners) vs (header l).
 
   (** Header order makes the last owner innermost and its previous owner immediately outer. *)
-  Parameter F14_assembly : forall g t r,
+  Parameter assembly_immediate_outer : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (forall n, forest_supported g (assembly_prefix g t n)) /\
     (forall v h, trie_get v (header (assembly_prefix g t (length (headers g t)))) = Some h <->
@@ -418,73 +418,73 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
       immediate_outer (base g) r h outer.
 
   (** Construction shares one classification and installs the ordered natural-loop bodies. *)
-  Parameter F15_forest_equation : forall g t,
+  Parameter forest_def : forall g t,
     forest g t = fold_left install (forest_rows g t) (Loops Empty Empty Empty).
 
   (** The assembly helper is the single ordered fold used by construction. *)
-  Parameter F15a_assemble : forall rows,
+  Parameter assemble_def : forall rows,
     assemble rows = fold_left install rows (Loops Empty Empty Empty).
 
   (** A vertex and each predecessor occurrence are charged at most once per containing loop. *)
-  Parameter F16_nesting_charge : forall g t r,
+  Parameter nesting_charge : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     fold_right (fun h n => body_work g (collected g t h) + n) 0 (headers g t) <=
       (graph_n (base g) + graph_e (base g)) * loop_depth g (forest g t).
 
   (** The DFS trace is generated from the classified root without consulting interval values. *)
-  Parameter F17_retreat_trace : forall g t r,
+  Parameter retreat_trace_spec : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     exists final, dfs_roots (base g) []
       (firstn 1 (loop_order (classify g t)))
       (retreat_trace g (firstn 1 (loop_order (classify g t)))) final.
 
   (** Back-event checking tests only membership in the classified dominance-edge rows. *)
-  Parameter F18_test_back : forall scan es,
+  Parameter test_back_spec : forall scan es,
     test_back (loop_back_rows scan) es = true <->
       forall u v, In (Edge Back u v) es -> back_member scan u v.
 
   (** Any complete DFS gives the same retreating-edge dominance criterion. *)
-  Parameter F19_retreat_reflect : forall g r es final,
+  Parameter retreat_reflect : forall g r es final,
     dfs_roots g [] [r] es final ->
     ((forall u v, In (Edge Back u v) es -> dominates g r v u) <-> reducible g r).
 
   (** Reducibility shares classification between root discovery and back-event tests. *)
-  Parameter F20_reducible_equation : forall g t,
+  Parameter reducible_b_def : forall g t,
     reducible_b g t = test_back (loop_back_rows (classify g t))
       (retreat_trace g (firstn 1 (loop_order (classify g t)))).
 
   (** Local tree cursor steps have constant trie work at graph key width. *)
-  Parameter T1_tree_step : forall g t r st next,
+  Parameter T_tree_step_credit : forall g t r st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r st -> tree_step g t st = inl next ->
     (T_tree_step g t st + tree_credit g t next + c_loopN <= tree_credit g t st)%N.
 
   (** The final tree step reverses the reachable preorder once. *)
-  Parameter T2_tree_stop : forall g t r st scan,
+  Parameter T_tree_step_stop_le : forall g t r st scan,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r st -> tree_step g t st = inr scan ->
     (T_tree_step g t st <= k_tree_stop * N.of_nat (graph_n (base g) + 1))%N.
 
   (** The tree loop potential and binary fuel width fit the linear classification budget. *)
-  Parameter T3_classify : forall g t r,
+  Parameter T_classify_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_classify g t <= k_classify * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
 
   (** Reverse steps pay predecessor scheduling from white credit at graph key width. *)
-  Parameter T4_body_step : forall g t r h st next,
+  Parameter T_body_step_credit : forall g t r h st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h st -> body_step g t h st = inl next ->
     (T_body_step g t h st + body_credit g t h next + c_loopN <= body_credit g t h st)%N.
 
   (** The last reverse step pays one body reversal. *)
-  Parameter T5_body_stop : forall g t r h st result,
+  Parameter T_body_step_stop_le : forall g t r h st result,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h st -> body_step g t h st = inr result ->
     (T_body_step g t h st <= k_body_stop * N.of_nat (length (collected g t h) + 1))%N.
 
   (** Each reverse loop pays its body work, latch tasks and additive binary fuel width. *)
-  Parameter T6_collect : forall g t r h,
+  Parameter T_collect_le : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     (T_collect g t h (latches (classify g t) h) <= k_collect *
       (N.of_nat (body_work g (collected g t h) + length (latches (classify g t) h) + 1) *
@@ -492,13 +492,13 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
         N.of_nat (N.size_nat (body_fuel g (latches (classify g t) h)))))%N.
 
   (** Body installation touches each listed vertex once and stores listed header values. *)
-  Parameter T7_install : forall g l h vs,
+  Parameter T_install_le : forall g l h vs,
     forest_supported g l -> In h (nodes g) -> incl vs (nodes g) ->
     (T_install l (h, vs) <= k_install * N.of_nat (length vs + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
 
   (** Summing installation charges every stored body member and one parent lookup per header. *)
-  Parameter T7a_assemble : forall g t r,
+  Parameter T_assemble_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_assemble (forest_rows g t) <= k_install *
       N.of_nat (fold_right (fun h n => (length (collected g t h) + 1 + n)%nat)
@@ -506,7 +506,7 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
         N.of_nat (graph_width (base g) + 1))%N.
 
   (** Aggregate fuel widths fit graph occurrences and identifier width without a depth scan. *)
-  Parameter T7b_fuel_widths : forall g t r,
+  Parameter fuel_widths_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (fold_right (fun h cost =>
       N.of_nat (N.size_nat (body_fuel g (latches (classify g t) h))) + cost)%N
@@ -515,20 +515,20 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
         N.of_nat (graph_width (base g) + 1))%N.
 
   (** The wrapper shares classification and pays header filtering, collectors and assembly. *)
-  Parameter T7c_forest_wrapper : forall g t,
+  Parameter T_forest_split : forall g t,
     (T_forest g t <= k_forest * (T_classify g t +
       fold_right (fun h cost => T_collect g t h (latches (classify g t) h) + cost)%N
         0%N (headers g t) + T_assemble (forest_rows g t) +
       N.of_nat (graph_n (base g) + 1) * N.of_nat (graph_width (base g) + 1) + 1))%N.
 
   (** Nested bodies and occurrence budgets absorb all collector fuel widths and installation. *)
-  Parameter T8_forest : forall g t r,
+  Parameter T_forest_plan_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_forest g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (loop_depth g (forest g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.
 
   (** One graph DFS and membership tests have a linear graph bit-cost bound. *)
-  Parameter T9_retreat_test : forall g t r,
+  Parameter T_retreat_test_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_retreat_trace g (firstn 1 (loop_order (classify g t))) +
       T_test_back (loop_back_rows (classify g t))
@@ -537,14 +537,14 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
         N.of_nat (graph_width (base g) + 1))%N.
 
   (** The public Boolean wrapper pays classification and the single retreating-edge scan. *)
-  Parameter T10_reducible_wrapper : forall g t,
+  Parameter T_reducible_b_split : forall g t,
     (T_reducible_b g t <= k_reducible * (T_classify g t +
       T_retreat_trace g (firstn 1 (loop_order (classify g t))) +
       T_test_back (loop_back_rows (classify g t))
         (retreat_trace g (firstn 1 (loop_order (classify g t)))) + 1))%N.
 
   (** Linear classification and testing imply the published nesting-sensitive Boolean bound. *)
-  Parameter T11_reducible_public : forall g t r,
+  Parameter T_reducible_b_plan_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_reducible_b g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (loop_depth g (forest g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.

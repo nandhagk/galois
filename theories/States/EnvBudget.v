@@ -31,7 +31,7 @@ Module SignEnvelope (L : WORD_LANGUAGE_T) (S : SIGN_ALL L)
   Lemma canonical_rank : forall q w p,
     canonical w p -> S.pwrank q w p <= payload_rank_bound q w.
   Proof.
-    intros q w p _. unfold payload_rank_bound. rewrite S.F_pwrank. lia.
+    intros q w p _. unfold payload_rank_bound. rewrite S.pwrank_def. lia.
   Qed.
 
   (** The concrete bottom payload is canonical. *)
@@ -102,8 +102,8 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
   Lemma canonical_rank : forall q w p,
     canonical w p -> W.pwrank q w p <= payload_rank_bound q w.
   Proof.
-    intros q w p _. unfold payload_rank_bound. rewrite W.F14_pwrank.
-    apply W.F13_wrank_le.
+    intros q w p _. unfold payload_rank_bound. rewrite W.pwrank_def.
+    apply W.congr_wrank_le.
   Qed.
 
   (** The concrete bottom payload is canonical. *)
@@ -142,7 +142,7 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
     intros w a b Ha Hb. rewrite R.join_code. unfold CongruenceBudgetCode.pjoin.
     unfold canonical in Ha, Hb. rewrite Ha, Hb.
     destruct a as [|m r], b as [|n s]; try assumption; try reflexivity.
-    unfold canonical. rewrite <- R.norm_code. apply W.F4_norm_idempotent.
+    unfold canonical. rewrite <- R.norm_code. apply W.norm_idempotent.
   Qed.
 
   (** Concrete meet keeps canonical payloads canonical. *)
@@ -153,7 +153,7 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
     unfold canonical in Ha, Hb. rewrite Ha, Hb.
     destruct a as [|m r], b as [|n s]; try reflexivity.
     destruct (Z.eqb (r mod Z.gcd m n) (s mod Z.gcd m n)); [|reflexivity].
-    unfold canonical. rewrite <- R.norm_code. apply W.F4_norm_idempotent.
+    unfold canonical. rewrite <- R.norm_code. apply W.norm_idempotent.
   Qed.
 
   (** Concrete widening keeps canonical payloads canonical. *)
@@ -290,7 +290,7 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
   (** Empty reached maps satisfy every program's representation invariant. *)
   Lemma inv_top : forall p, inv p E.top.
   Proof.
-    intro p. rewrite E.F_top. apply inv_of_get; [apply M.wf_empty|].
+    intro p. rewrite E.top_def. apply inv_of_get; [apply M.wf_empty|].
     intro x. rewrite M.get_empty. constructor.
   Qed.
 
@@ -510,15 +510,15 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
   (** Unreachable environments satisfy the representation invariant. *)
   Lemma inv_bot : forall p, inv p E.bot.
   Proof.
-    intro p. rewrite E.F_bot. constructor.
+    intro p. rewrite E.bot_def. constructor.
   Qed.
 
   (** Pointwise join keeps declared widths and canonical payloads. *)
   Lemma inv_join : forall p a b, inv p a -> inv p b -> inv p (E.join a b).
   Proof.
-    intros p a b Ha Hb. rewrite E.F_join.
+    intros p a b Ha Hb. rewrite E.join_def.
     destruct a as [|ma], b as [|mb]; try assumption.
-    rewrite E.F_join_map. apply inv_merge; try assumption; [reflexivity|].
+    rewrite E.join_map_def. apply inv_merge; try assumption; [reflexivity|].
     intros x [va|] [vb|] Hx Hy; try exact Logic.I.
     destruct Hx as [Hdeclared Hva], Hy as [_ Hvb].
     cbn [binding_inv].
@@ -529,7 +529,7 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
   (** Pointwise narrowing keeps declared widths and canonical payloads. *)
   Lemma inv_narrow : forall p a b, inv p a -> inv p b -> inv p (E.narrow a b).
   Proof.
-    intros p a b Ha Hb. rewrite E.F_narrow. destruct (E.is_bot b); [exact Hb|].
+    intros p a b Ha Hb. rewrite E.narrow_def. destruct (E.is_bot b); [exact Hb|].
     destruct a as [|ma], b as [|mb]; try assumption.
     apply inv_merge; try assumption; [reflexivity|].
     intros x [va|] [vb|] Hx Hy; try exact Hx; try exact Hy; try exact Logic.I.
@@ -541,7 +541,7 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
   Lemma inv_widen : forall p w a b,
     inv p a -> inv p b -> inv p (E.widen w a b).
   Proof.
-    intros p q a b Ha Hb. rewrite E.F_widen. destruct (E.leb b a); [exact Ha|].
+    intros p q a b Ha Hb. rewrite E.widen_def. destruct (E.leb b a); [exact Ha|].
     destruct a as [|ma], b as [|mb]; try assumption.
     apply inv_merge; try assumption; [reflexivity|].
     intros x [va|] [vb|] Hx Hy; try exact Logic.I.
@@ -560,15 +560,15 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
     intros p e. induction e as [x|o es IH];
       intros w cached current q Htyped Hcached Hcurrent Hq.
     - inversion Htyped as [x' Hdeclared| |]; subst.
-      rewrite E.annotate_leaf, E.F_refine_leaf. cbn [fst].
+      rewrite E.annotate_leaf, E.refine_leaf_def. cbn [fst].
       apply inv_set; [exact Hcurrent|exact Hdeclared|].
       apply D.meet_width; [now apply read_width|exact Hq].
     - inversion Htyped as [|w' z|op es' ws w' Hchildren Hresult]; subst.
-      + rewrite E.annotate_node, E.F_refine_node. cbn [map fst]. exact Hcurrent.
+      + rewrite E.annotate_node, E.refine_node_def. cbn [map fst]. exact Hcurrent.
       + pose proof (D.backward_width (BOp op) q
           (map (fun e => E.root (E.annotate cached e)) es) ws w Hresult Hq
           (annotations_width p cached es ws Hcached Hchildren)) as Hrequests.
-        rewrite E.annotate_node, E.F_refine_node, map_map.
+        rewrite E.annotate_node, E.refine_node_def, map_map.
         remember (V.backward (BOp op) q
           (map (fun e => E.root (E.annotate cached e)) es)) as requests.
         clear Heqrequests Htyped Hresult Hq.
@@ -598,16 +598,16 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
     word_term_typed (P.variables p) (P.width_of p) e (P.width_of p x) ->
     inv p (E.assign x e s).
   Proof.
-    intros p x e [|m] Hinv Hdeclared Htyped; rewrite E.F_assign; [constructor|].
+    intros p x e [|m] Hinv Hdeclared Htyped; rewrite E.assign_def; [constructor|].
     apply inv_set; [exact Hinv|exact Hdeclared|].
-    rewrite E.F_eval. eapply annotate_width; eassumption.
+    rewrite E.eval_def. eapply annotate_width; eassumption.
   Qed.
 
   (** Havoc writes top only at a declared variable. *)
   Lemma inv_havoc : forall p x s,
     inv p s -> In x (P.variables p) -> inv p (E.havoc x s).
   Proof.
-    intros p x [|m] Hinv Hdeclared; rewrite E.F_havoc; [constructor|].
+    intros p x [|m] Hinv Hdeclared; rewrite E.havoc_def; [constructor|].
     apply inv_set; [exact Hinv|exact Hdeclared|apply value_inv_top].
   Qed.
 
@@ -636,7 +636,7 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
     Forall (fun e => exists w, word_term_typed (P.variables p) (P.width_of p) e w) es ->
     inv p (E.assume g es s).
   Proof.
-    intros p g es [|m] Hinv Htyped; rewrite E.F_assume; [constructor|].
+    intros p g es [|m] Hinv Htyped; rewrite E.assume_def; [constructor|].
     cbn iota zeta. rewrite map_map.
     destruct (typed_terms_widths p es Htyped) as [ws Hwidths].
     pose proof (D.guard_width g (map (fun e => E.root (E.annotate m e)) es) ws
@@ -710,8 +710,8 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
   Lemma wunits_le : forall p a, inv p a -> E.wunits a <= wunits p.
   Proof.
     intros p [|m] Hinv.
-    - rewrite E.F_wunits_unreached. lia.
-    - rewrite E.F_wunits_reached. unfold wunits.
+    - rewrite E.wunits_unreached_def. lia.
+    - rewrite E.wunits_reached_def. unfold wunits.
       destruct Hinv as [Hwf Hvalues].
       pose proof (Permutation_length (budget_codes_elements m Hwf)) as Hlength.
       rewrite length_map in Hlength. rewrite Hlength.

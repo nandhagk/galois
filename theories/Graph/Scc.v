@@ -5105,7 +5105,7 @@ Module SccT <: SCC_ALL.
     s = prefix_state prefix /\ inventory prefix s /\
     width_domain (graph_width (base g)) s /\ emitted_closed (base g) s.
 
-  Lemma F1_trace : forall g, wf_graph (base g) ->
+  Lemma trace_spec : forall g, wf_graph (base g) ->
     NoDup (entered (tarjan_trace g)) /\
     (forall v, In v (entered (tarjan_trace g)) <-> In v (nodes g)) /\
     trace_stack [] (tarjan_trace g) [] /\
@@ -5117,7 +5117,7 @@ Module SccT <: SCC_ALL.
   Qed.
 
   (** The filtered traversal is nested, duplicate-free and graph-sized on every input. *)
-  Lemma F1b_trace_size : forall g,
+  Lemma trace_size_le : forall g,
     NoDup (entered (tarjan_trace g)) /\
     (forall v, In v (entered (tarjan_trace g)) -> In v (nodes g)) /\
     trace_stack [] (tarjan_trace g) [] /\
@@ -5128,7 +5128,7 @@ Module SccT <: SCC_ALL.
     - split; [apply scc_trace_nested|apply scc_trace_size].
   Qed.
 
-  Lemma F2_run : forall g,
+  Lemma run_def : forall g,
     run g = let result := prefix_state (tarjan_trace g) in
       Scc (tarjan_owners result) (rev (tarjan_emitted result)).
   Proof.
@@ -5136,7 +5136,7 @@ Module SccT <: SCC_ALL.
     rewrite rev_append_rev, app_nil_r. reflexivity.
   Qed.
 
-  Lemma F3_initial : forall g,
+  Lemma initial_inv : forall g,
     invariant g [] tarjan_initial /\
     potential (graph_width (base g)) tarjan_initial = 0%N.
   Proof.
@@ -5164,7 +5164,7 @@ Module SccT <: SCC_ALL.
   Qed.
 
   (** Actual prefixes keep the inventory and widths that the cost proof reads. *)
-  Lemma F4b_prefix_cost : forall g prefix suffix,
+  Lemma prefix_inventory : forall g prefix suffix,
     tarjan_trace g = prefix ++ suffix ->
     inventory prefix (prefix_state prefix) /\
     width_domain (graph_width (base g)) (prefix_state prefix).
@@ -5193,13 +5193,13 @@ Module SccT <: SCC_ALL.
       rewrite Forall_forall in Hwidth. exact (Hwidth (Enter v) Hin).
   Qed.
 
-  Lemma F4_prefix : forall g prefix suffix,
+  Lemma prefix_inv : forall g prefix suffix,
     wf_graph (base g) -> tarjan_trace g = prefix ++ suffix ->
     invariant g prefix (prefix_state prefix).
   Proof.
     intros g prefix suffix Hwf Htrace.
     unfold invariant. split; [reflexivity|].
-    destruct (F4b_prefix_cost g prefix suffix Htrace) as [Hinventory Hwidth].
+    destruct (prefix_inventory g prefix suffix Htrace) as [Hinventory Hwidth].
     split; [exact Hinventory|]. split; [exact Hwidth|].
     unfold emitted_closed, prefix_state, tarjan_enter, tarjan_leave,
       tarjan_edge, tarjan_initial.
@@ -5207,7 +5207,7 @@ Module SccT <: SCC_ALL.
     exact (tarjan_prefix_rank g prefix suffix Hwf Htrace).
   Qed.
 
-  Lemma F5_pop : forall root index pending low active owners members tail low' active' owners',
+  Lemma pop_spec : forall root index pending low active owners members tail low' active' owners',
     tarjan_pop root index pending low active owners =
       (members, tail, low', active', owners') ->
     pending = members ++ tail /\
@@ -5223,7 +5223,7 @@ Module SccT <: SCC_ALL.
     now rewrite Hmember in Hlookup.
   Qed.
 
-  Lemma F6_final : forall g, wf_graph (base g) ->
+  Lemma final_spec : forall g, wf_graph (base g) ->
     let result := prefix_state (tarjan_trace g) in
     tarjan_pending result = [] /\ tarjan_frames result = [] /\
     forall v i, trie_get v (tarjan_owners result) = Some i <->
@@ -5239,12 +5239,12 @@ Module SccT <: SCC_ALL.
     apply tarjan_owners_indexed_fold, scc_trace_unique.
   Qed.
 
-  Lemma F7_components : forall g, wf_graph (base g) -> forall u v,
+  Lemma comp_spec_plan : forall g, wf_graph (base g) -> forall u v,
     (exists i, trie_get u (comp (run g)) = Some i /\ trie_get v (comp (run g)) = Some i) <->
     In u (nodes g) /\ In v (nodes g) /\ mutually_reachable (base g) u v.
   Proof. exact comp_spec. Qed.
 
-  Lemma T1_pop : forall w root index pending low active owners members tail low' active' owners',
+  Lemma T_tarjan_pop_amort : forall w root index pending low active owners members tail low' active' owners',
     Forall (fun v => Pos.size_nat v <= w) pending ->
     Pos.size_nat root <= w -> Pos.size_nat index <= w + 1 ->
     tarjan_pop root index pending low active owners = (members, tail, low', active', owners') ->
@@ -5392,7 +5392,7 @@ Module SccT <: SCC_ALL.
   Qed.
 
 
-  Lemma T2_callback : forall g prefix e suffix,
+  Lemma callback_cost_amort : forall g prefix e suffix,
     tarjan_trace g = prefix ++ e :: suffix ->
     let w := graph_width (base g) in
     let s := prefix_state prefix in
@@ -5495,7 +5495,7 @@ Module SccT <: SCC_ALL.
   Qed.
 
 
-  Lemma T3_fold : forall g,
+  Lemma T_fold_events_amort : forall g,
     (T_fold_events tarjan_enter T_tarjan_enter tarjan_leave T_tarjan_leave
       tarjan_edge T_tarjan_edge (tarjan_trace g) tarjan_initial +
       potential (graph_width (base g)) (prefix_state (tarjan_trace g)) <=
@@ -5507,7 +5507,7 @@ Module SccT <: SCC_ALL.
     - apply scc_trace_event_width.
   Qed.
 
-  Lemma T4_trace : forall g,
+  Lemma T_tarjan_trace_le : forall g,
     (T_tarjan_trace g <= k_search * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
   Proof.
@@ -5552,7 +5552,7 @@ Module SccT <: SCC_ALL.
     pose proof (fold_events_alias_time es tarjan_initial) as Halias. lia.
   Qed.
 
-  Lemma T5_wrapper : forall g,
+  Lemma T_run_split : forall g,
     (T_run g <= k_result * (T_tarjan_trace g +
       T_fold_events tarjan_enter T_tarjan_enter tarjan_leave T_tarjan_leave
         tarjan_edge T_tarjan_edge (tarjan_trace g) tarjan_initial +
@@ -5569,12 +5569,12 @@ Module SccT <: SCC_ALL.
     set (events := scc_trace g) in *. clearbody events. nia.
   Qed.
 
-  Lemma T6_public : forall g,
+  Lemma T_run_plan_le : forall g,
     (T_run g <= c_scc * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
   Proof.
-    intros g. pose proof (T5_wrapper g) as Hwrapper.
-    pose proof (T3_fold g) as Hfold. pose proof (T4_trace g) as Htrace.
+    intros g. pose proof (T_run_split g) as Hwrapper.
+    pose proof (T_fold_events_amort g) as Hfold. pose proof (T_tarjan_trace_le g) as Htrace.
     pose proof (scc_trace_size g) as Hsize.
     change (length (tarjan_trace g) <= 2 * graph_n (base g) + graph_e (base g)) in Hsize.
     assert (Hresult : (N.of_nat (length (tarjan_emitted (prefix_state (tarjan_trace g)))) <=
@@ -5594,9 +5594,9 @@ Module SccT <: SCC_ALL.
   Lemma T_run_le : forall g,
     (T_run g <= c_scc * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. exact T6_public. Qed.
+  Proof. exact T_run_plan_le. Qed.
 
-  Lemma run_bigO : bigO (fun _ => True)
+  Lemma run_complexity : bigO (fun _ => True)
     (fun g => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1))) T_run.
   Proof.

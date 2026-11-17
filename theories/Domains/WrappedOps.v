@@ -331,7 +331,7 @@ Proof.
   - unfold wrapped_interval_payload_sound in Hhead. cbn [fst snd] in Hhead.
     destruct Hhead as [Hwidth Ha]. subst v. constructor; [|exact IH].
     split; [reflexivity|]. split; [exact (proj1 Ha)|].
-    apply WrappedIntervalCheckedPayload.F_pgamma. exact Ha.
+    apply WrappedIntervalCheckedPayload.pgamma_def. exact Ha.
 Qed.
 
 (** Successful evaluation belongs to the interval entry or its top fallback. *)
@@ -345,7 +345,7 @@ Local Lemma wrapped_interval_forward_sound o xs cs rw z :
 Proof.
   intros Hinputs Heval.
   destruct (WrappedIntervalTable.wfwd o rw xs) as [result|] eqn:Hentry.
-  - apply (proj1 (WrappedIntervalCheckedPayload.F_pgamma rw result z)).
+  - apply (proj1 (WrappedIntervalCheckedPayload.pgamma_def rw result z)).
     eapply WrappedIntervalCheckedTable.wfwd_sound;
       [exact Hentry|exact (wrapped_interval_inputs xs cs Hinputs)|exact Heval].
   - apply WrappedIntervalSound.interval_pgamma_spec.

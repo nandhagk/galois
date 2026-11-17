@@ -855,34 +855,34 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   Qed.
 
   (** Payload inclusion reads both operands through the word range. *)
-  Lemma F_pleb : forall w a b, pleb w a b = Scalar.interval_leb
+  Lemma pleb_def : forall w a b, pleb w a b = Scalar.interval_leb
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
   Proof.
     reflexivity.
   Qed.
   (** Payload bottom recognition reads the clipped interval. *)
-  Lemma F_pis_bot : forall w a, pis_bot w a =
+  Lemma pis_bot_def : forall w a, pis_bot w a =
     Scalar.interval_is_bot (interval_payload_clip Scalar.interval_meet w a).
   Proof.
     reflexivity.
   Qed.
   (** Payload join combines clipped operands. *)
-  Lemma F_pjoin : forall w a b, pjoin w a b = Scalar.interval_join
+  Lemma pjoin_def : forall w a b, pjoin w a b = Scalar.interval_join
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
   Proof.
     reflexivity.
   Qed.
   (** Payload meet combines clipped operands. *)
-  Lemma F_pmeet : forall w a b, pmeet w a b = Scalar.interval_meet
+  Lemma pmeet_def : forall w a b, pmeet w a b = Scalar.interval_meet
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
   Proof.
     reflexivity.
   Qed.
   (** Payload widening retains stable raw values and clips unstable results. *)
-  Lemma F_pwiden : forall q w a b, pwiden q w a b =
+  Lemma pwiden_def : forall q w a b, pwiden q w a b =
     if pleb w b a then a else interval_payload_clip Scalar.interval_meet w
       (Scalar.interval_stable_widen q (interval_payload_clip Scalar.interval_meet w a)
         (interval_payload_clip Scalar.interval_meet w b)).
@@ -890,29 +890,29 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
     reflexivity.
   Qed.
   (** Payload narrowing combines clipped operands. *)
-  Lemma F_pnarrow : forall w a b, pnarrow w a b = Scalar.interval_narrow
+  Lemma pnarrow_def : forall w a b, pnarrow w a b = Scalar.interval_narrow
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
   Proof.
     reflexivity.
   Qed.
   (** Payload rank treats unsigned word boundaries as terminal endpoints. *)
-  Lemma F_pwrank : forall q w a, pwrank q w a = payload_wrank q w a.
+  Lemma pwrank_def : forall q w a, pwrank q w a = payload_wrank q w a.
   Proof.
     reflexivity.
   Qed.
   (** Payload bottom is the empty interval. *)
-  Lemma F_pbot : forall w, pbot w = IBot.
+  Lemma pbot_def : forall w, pbot w = IBot.
   Proof.
     reflexivity.
   Qed.
   (** Payload top is the inclusive unsigned word range. *)
-  Lemma F_ptop : forall w, ptop w = I (Fin 0) (Fin (Word.modulus w - 1)).
+  Lemma ptop_def : forall w, ptop w = I (Fin 0) (Fin (Word.modulus w - 1)).
   Proof.
     reflexivity.
   Qed.
   (** Payload constants are wrapped singleton intervals. *)
-  Lemma F_pconst : forall w z, pconst w z = I (Fin (L.wrap w z)) (Fin (L.wrap w z)).
+  Lemma pconst_def : forall w z, pconst w z = I (Fin (L.wrap w z)) (Fin (L.wrap w z)).
   Proof.
     reflexivity.
   Qed.
@@ -922,13 +922,13 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
     reflexivity.
   Qed.
   (** Payload points are recognized after clipping. *)
-  Lemma F_ppoint : forall w a, ppoint w a =
+  Lemma ppoint_def : forall w a, ppoint w a =
     Scalar.interval_singleton (interval_payload_clip Scalar.interval_meet w a).
   Proof.
     reflexivity.
   Qed.
   (** Payload concretization intersects raw endpoints with normalized words. *)
-  Lemma F_pgamma : forall w a z, pgamma w a z <-> L.is_word w z /\
+  Lemma pgamma_def : forall w a z, pgamma w a z <-> L.is_word w z /\
     match a with IBot => False | I lo hi => in_bnd lo hi z end.
   Proof.
     reflexivity.
@@ -1265,17 +1265,17 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
   (** Payload size charges its width and the raw endpoint bits. *)
-  Lemma F_psize : forall w a, psize w a = Pos.to_nat w + interval_bits a + 1.
+  Lemma psize_def : forall w a, psize w a = Pos.to_nat w + interval_bits a + 1.
   Proof.
     reflexivity.
   Qed.
   (** Widening parameter size charges a threshold search path. *)
-  Lemma F_pwsize : forall q, pwsize q = (T.depth q + 1) * (T.tree_bits q + 1).
+  Lemma pwsize_def : forall q, pwsize q = (T.depth q + 1) * (T.tree_bits q + 1).
   Proof.
     reflexivity.
   Qed.
   (** Payload rank never exceeds the scalar threshold envelope. *)
-  Lemma F_pwrank_le : forall q w a, pwrank q w a <= 2 * (length (T.vals q) + 1).
+  Lemma pwrank_le : forall q w a, pwrank q w a <= 2 * (length (T.vals q) + 1).
   Proof.
     intros q w a. unfold pwrank, payload_wrank.
     destruct (interval_payload_clip Scalar.interval_meet w a) as [|lo hi]; [lia|].
@@ -1363,7 +1363,7 @@ Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL
   Local Lemma interval_payload_spec w a z :
     W.pgamma w a z <-> interval_pgamma w a z.
   Proof.
-    rewrite W.F_pgamma, Sound.interval_pgamma_spec. reflexivity.
+    rewrite W.pgamma_def, Sound.interval_pgamma_spec. reflexivity.
   Qed.
 
   (** Each checked operand provides its width and its raw interval membership. *)
@@ -2362,7 +2362,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Local Lemma table_raw_size : forall w a, interval_bits a <= W.psize w a.
   Proof.
     intros w a.
-    rewrite W.F_psize.
+    rewrite W.psize_def.
     lia.
   Qed.
 
@@ -3675,7 +3675,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         W.psize wb
         (snd (interval_assume_pair o wa (interval_clip wa a) (interval_clip wb b) q)) <=
         10 * budget)%nat).
-    { unfold budget. rewrite !W.F_psize. lia. }
+    { unfold budget. rewrite !W.psize_def. lia. }
     assert (HsizeN :
       (N.of_nat (2 + W.psize wa
         (fst (interval_assume_pair o wa (interval_clip wa a) (interval_clip wb b) q)) +
@@ -3700,7 +3700,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     pose proof (table_clip_bits wa a) as Ha.
     pose proof (table_clip_bits wb b) as Hb.
     pose proof (Pos2Nat.is_pos rw) as Hr.
-    rewrite W.F_psize.
+    rewrite W.psize_def.
     rewrite Nat.pow_2_r.
     nia.
   Qed.
@@ -3710,7 +3710,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros rw r Hbits.
     pose proof (Pos2Nat.is_pos rw) as Hwidth.
-    rewrite W.F_psize, Nat.pow_2_r.
+    rewrite W.psize_def, Nat.pow_2_r.
     nia.
   Qed.
 
@@ -3748,7 +3748,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     assert (Hsize_nat :
       (1 + W.psize w (interval_assume_rewrap rw (interval_clip w a) q) <=
         4 * budget_nat)%nat).
-    { rewrite W.F_psize. unfold budget_nat. lia. }
+    { rewrite W.psize_def. unfold budget_nat. lia. }
     pose proof (table_nat_to_N_le _ _ Hsize_nat) as Hsize_N.
     rewrite Nat2N.inj_mul in Hsize_N.
     assert (Hcoeff : (4 <= 1000000 * (W.k_payload_clip + Scalar.c_scalar + 1))%N)
@@ -7409,7 +7409,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     { unfold budget. assert (Hs : (1 <= s)%nat) by (unfold s; lia).
       rewrite Nat.pow_2_r. nia. }
     assert (Hnat : (W.psize rw r <= 129 * budget)%nat).
-    { rewrite W.F_psize. unfold s in Hbits. lia. }
+    { rewrite W.psize_def. unfold s in Hbits. lia. }
     assert (HN : (N.of_nat (W.psize rw r) <= 129 * N.of_nat budget)%N).
     { replace (129 * N.of_nat budget)%N with (N.of_nat (129 * budget)).
       - lia.

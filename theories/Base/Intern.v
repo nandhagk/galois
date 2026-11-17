@@ -239,7 +239,7 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
   Qed.
 
   (** Interning is linear in the key width and allocation frontier width. *)
-  Lemma intern_bigO : bigO (X := K.t * t) (fun xs => wf (snd xs))
+  Lemma intern_complexity : bigO (X := K.t * t) (fun xs => wf (snd xs))
     (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
     (fun xs => T_intern (fst xs) (snd xs)).
   Proof.
@@ -249,7 +249,7 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
   Qed.
 
   (** Forward lookup fits the key and allocation frontier width budget. *)
-  Lemma find_bigO : bigO (X := K.t * t) (fun _ => True)
+  Lemma find_complexity : bigO (X := K.t * t) (fun _ => True)
     (fun xs => N.of_nat (K.bits (fst xs) + N.size_nat (size (snd xs))))
     (fun xs => T_find (fst xs) (snd xs)).
   Proof.
@@ -259,7 +259,7 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
   Qed.
 
   (** Inverse lookup fits the identifier and allocation frontier width budget. *)
-  Lemma name_bigO : bigO (X := positive * t) (fun _ => True)
+  Lemma name_complexity : bigO (X := positive * t) (fun _ => True)
     (fun xs => N.of_nat (Pos.size_nat (fst xs) + N.size_nat (size (snd xs))))
     (fun xs => T_name (fst xs) (snd xs)).
   Proof.

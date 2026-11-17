@@ -7626,7 +7626,7 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
     - pose proof (pwrank_widen q w a b Ha Hstable). lia.
   Qed.
 
-  Lemma F_pwiden : forall q w a b,
+  Lemma pwiden_def : forall q w a b,
     pwiden q w a b = if pleb w b a then a else pjoin w a b.
   Proof. reflexivity. Qed.
 
@@ -8009,7 +8009,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
     clearbody budget. lia.
   Qed.
-  Lemma mul_bigO : bigO (fun _ => True)
+  Lemma mul_complexity : bigO (fun _ => True)
     (fun x : positive * (tnum * tnum) => N.of_nat
       ((Pos.to_nat (fst x) + 1) ^ 2 + tnum_bits (fst (snd x)) +
         tnum_bits (snd (snd x))))
@@ -8019,28 +8019,28 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     eapply N.le_trans; [exact (T_tnum_mul_le w a b)|].
     apply N.mul_le_mono_l. lia.
   Qed.
-  Lemma normalise_bigO : bigO (X := positive * tnum) (fun _ => True)
+  Lemma normalise_complexity : bigO (X := positive * tnum) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
     (fun x => T_tnum_normalise (fst x) (snd x)).
   Proof.
     exists c_tnum. intros [w a] _. cbn [fst snd].
     pose proof (T_tnum_normalise_le w a) as Htime. nia.
   Qed.
-  Lemma not_bigO : bigO (X := positive * tnum) (fun _ => True)
+  Lemma not_complexity : bigO (X := positive * tnum) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
     (fun x => T_tnum_not (fst x) (snd x)).
   Proof.
     exists c_tnum. intros [w a] _. cbn [fst snd].
     pose proof (T_tnum_not_le w a) as Htime. nia.
   Qed.
-  Lemma neg_bigO : bigO (X := positive * tnum) (fun _ => True)
+  Lemma neg_complexity : bigO (X := positive * tnum) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
     (fun x => T_tnum_neg (fst x) (snd x)).
   Proof.
     exists c_tnum. intros [w a] _. cbn [fst snd].
     pose proof (T_tnum_neg_le w a) as Htime. nia.
   Qed.
-  Lemma add_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+  Lemma add_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_add (fst x) (fst (snd x)) (snd (snd x))).
@@ -8048,7 +8048,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     exists c_tnum. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_tnum_add_le w a b) as Htime. nia.
   Qed.
-  Lemma sub_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+  Lemma sub_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_sub (fst x) (fst (snd x)) (snd (snd x))).
@@ -8056,7 +8056,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     exists c_tnum. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_tnum_sub_le w a b) as Htime. nia.
   Qed.
-  Lemma and_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+  Lemma and_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_and (fst x) (fst (snd x)) (snd (snd x))).
@@ -8064,7 +8064,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     exists c_tnum. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_tnum_and_le w a b) as Htime. nia.
   Qed.
-  Lemma or_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+  Lemma or_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_or (fst x) (fst (snd x)) (snd (snd x))).
@@ -8072,7 +8072,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     exists c_tnum. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_tnum_or_le w a b) as Htime. nia.
   Qed.
-  Lemma xor_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+  Lemma xor_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_xor (fst x) (fst (snd x)) (snd (snd x))).
@@ -8080,7 +8080,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     exists c_tnum. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_tnum_xor_le w a b) as Htime. nia.
   Qed.
-  Lemma variable_bigO : bigO (X := Op.op * (positive * (tnum * tnum))) (fun _ => True)
+  Lemma variable_complexity : bigO (X := Op.op * (positive * (tnum * tnum))) (fun _ => True)
     (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + 1) ^ 2 +
       tnum_bits (fst (snd (snd x))) + tnum_bits (snd (snd (snd x)))))
     (fun x => T_tnum_variable (fst x) (fst (snd x)) (fst (snd (snd x))) (snd (snd (snd x)))).
@@ -8088,7 +8088,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     exists c_tnum. intros [o [w [a b]]] _. cbn [fst snd].
     pose proof (T_tnum_variable_le o w a b) as Htime. nia.
   Qed.
-  Lemma variable_shift_bigO : bigO (X := Op.op * (positive * (tnum * tnum)))
+  Lemma variable_shift_complexity : bigO (X := Op.op * (positive * (tnum * tnum)))
     (fun x => fst x = Op.bvshl \/ fst x = Op.bvlshr \/ fst x = Op.bvashr)
     (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + tnum_bits (fst (snd (snd x))) +
       tnum_bits (snd (snd (snd x))) + 1) * (Nat.log2 (Pos.to_nat (fst (snd x))) + 2)))
@@ -8108,10 +8108,10 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Definition acc_step := tnum_mul_acc_step.
   TimeFun acc_step.
   Definition k_mul_step : N := 64 * 4096.
-  Lemma F3_rank : forall q w a, pis_bot w a = false ->
+  Lemma rank_def : forall q w a, pis_bot w a = false ->
     (pwrank q w a = known_count w a)%nat.
   Proof. reflexivity. Qed.
-  Lemma F4_rank_bound : forall q w a, pis_bot w a = false ->
+  Lemma pwrank_le_width : forall q w a, pis_bot w a = false ->
     (pwrank q w a <= Pos.to_nat w)%nat.
   Proof.
     intros q w a _. unfold pwrank, known_count.
@@ -8165,10 +8165,10 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     - unfold tnum_variable. rewrite tnum_variable_fast_agrees. apply tnum_variable_bits.
   Qed.
   (** The bit mask agrees with modular word reduction. *)
-  Lemma F0_tnum_wrap : forall w z, tnum_wrap w z = L.wrap w z.
+  Lemma tnum_wrap_def : forall w z, tnum_wrap w z = L.wrap w z.
   Proof. exact tnum_wrap_agrees. Qed.
   (** Masked scalar shifts agree with the word operations for a nonnegative amount. *)
-  Lemma F0_scalar_value : forall o w k x, (0 <= k)%Z ->
+  Lemma tnum_scalar_value_def : forall o w k x, (0 <= k)%Z ->
     tnum_scalar_value o w k x =
       match o with
       | Op.bvshl => wshl w x (Z.min k (Zpos w))
@@ -8182,14 +8182,14 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     exact tnum_scalar_value_agrees.
   Qed.
   (** One masked scalar shift reads the width, the amount and the raw value once. *)
-  Lemma T0_scalar_value : forall o w k x,
+  Lemma T_tnum_scalar_value_le : forall o w k x,
     (T_tnum_scalar_value o w k x <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat x +
       (Z.size_nat k + 1) * (Pos.size_nat w + 1)))%N.
   Proof.
     intros o w k x. pose proof (tnum_scalar_value_time o w k x) as Htime.
     unfold T_tnum_scalar_value, k_mul_step. lia.
   Qed.
-  Lemma F7_mul_step : forall w a b x y i r,
+  Lemma mul_step_sound : forall w a b x y i r,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     (0 <= i < Zpos w)%Z -> pgamma w r (L.wrap w (x * (y mod 2 ^ i))) ->
     match mul_step w a b (i, r) with
@@ -8204,7 +8204,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     - contradiction.
   Qed.
   (** A staged step keeps its output masks within the width. *)
-  Lemma F8_mul_step_bits : forall w a b i r j s,
+  Lemma mul_step_bits : forall w a b i r j s,
     (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
     mul_step w a b (i, r) = inl (j, s) ->
     (tnum_bits s <= 2 * Pos.to_nat w)%nat.
@@ -8215,7 +8215,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     now rewrite Hstep in Hbound.
   Qed.
   (** An accumulating step keeps its output masks within the width. *)
-  Lemma F9_acc_step_bits : forall w a b i r j s,
+  Lemma acc_step_bits : forall w a b i r j s,
     (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
     acc_step w a b (i, r) = inl (j, s) ->
     (tnum_bits s <= 2 * Pos.to_nat w)%nat.
@@ -8226,7 +8226,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     now rewrite Hstep in Hbound.
   Qed.
   (** Masking work is linear in the width and raw integer size. *)
-  Lemma T0_tnum_wrap : forall w z,
+  Lemma T_tnum_wrap_le : forall w z,
     (T_tnum_wrap w z <= k_mul_step *
       N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
   Proof.
@@ -8236,7 +8236,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   (* Gamma, widening and multiplication laws now live in KNOWN_BITS_LAWS. *)
   (** One staged product step at an index within the width charges its index, accumulator
       and raw masks. *)
-  Lemma T1_mul_step : forall w a b i r, (0 <= i <= Zpos w)%Z ->
+  Lemma T_mul_step_le : forall w a b i r, (0 <= i <= Zpos w)%Z ->
     (T_mul_step w a b (i, r) <= k_mul_step *
       N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b +
         tnum_bits r + 1))%N.
@@ -8247,7 +8247,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Qed.
   (** One accumulating step at an index within the width charges the width, its index and
       its accumulator. *)
-  Lemma T2_acc_step : forall w a b i r, (0 <= i <= Zpos w)%Z ->
+  Lemma T_acc_step_le : forall w a b i r, (0 <= i <= Zpos w)%Z ->
     (T_acc_step w a b (i, r) <= k_mul_step *
       N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b +
         tnum_bits r + 1))%N.

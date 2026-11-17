@@ -61,7 +61,7 @@ Module Type KNOWN_BITS_CORE (L : WORD_LANGUAGE) (C : TNUM_CONFIG) :=
 Module Type KNOWN_BITS_LAWS (L : WORD_LANGUAGE) (C : TNUM_CONFIG)
     (Import K : KNOWN_BITS_CORE L C).
   (** Widening keeps an already contained raw mask and otherwise joins. *)
-  Parameter F_pwiden : forall q w a b,
+  Parameter pwiden_def : forall q w a b,
     pwiden q w a b = if pleb w b a then a else pjoin w a b.
   (** Multiplication uses the fixed configuration of the extracted program. *)
   Parameter multiplier_selected : forall w a b,
@@ -159,54 +159,54 @@ Module Type KNOWN_BITS_TIME (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   Parameter T_tnum_variable_le : forall o w a b, (T_tnum_variable o w a b <=
     c_tnum * N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
   (** Configured multiplication has quadratic asymptotic width work. *)
-  Parameter mul_bigO : bigO (fun _ => True)
+  Parameter mul_complexity : bigO (fun _ => True)
     (fun x : positive * (tnum * tnum) => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
       tnum_bits (fst (snd x)) + tnum_bits (snd (snd x))))
     (fun x => T_tnum_mul (fst x) (fst (snd x)) (snd (snd x))).
   (** Normalization is linear in the width and the raw masks. *)
-  Parameter normalise_bigO : bigO (X := positive * tnum) (fun _ => True)
+  Parameter normalise_complexity : bigO (X := positive * tnum) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
     (fun x => T_tnum_normalise (fst x) (snd x)).
   (** Bitwise negation is linear. *)
-  Parameter not_bigO : bigO (X := positive * tnum) (fun _ => True)
+  Parameter not_complexity : bigO (X := positive * tnum) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
     (fun x => T_tnum_not (fst x) (snd x)).
   (** Arithmetic negation is linear. *)
-  Parameter neg_bigO : bigO (X := positive * tnum) (fun _ => True)
+  Parameter neg_complexity : bigO (X := positive * tnum) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
     (fun x => T_tnum_neg (fst x) (snd x)).
   (** Addition is linear. *)
-  Parameter add_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+  Parameter add_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_add (fst x) (fst (snd x)) (snd (snd x))).
   (** Subtraction is linear. *)
-  Parameter sub_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+  Parameter sub_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_sub (fst x) (fst (snd x)) (snd (snd x))).
   (** Conjunction is linear. *)
-  Parameter and_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+  Parameter and_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_and (fst x) (fst (snd x)) (snd (snd x))).
   (** Disjunction is linear. *)
-  Parameter or_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+  Parameter or_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_or (fst x) (fst (snd x)) (snd (snd x))).
   (** Exclusive disjunction is linear. *)
-  Parameter xor_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
+  Parameter xor_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_xor (fst x) (fst (snd x)) (snd (snd x))).
   (** Unknown shifts and rotations have the published quadratic class. *)
-  Parameter variable_bigO : bigO (X := Op.op * (positive * (tnum * tnum))) (fun _ => True)
+  Parameter variable_complexity : bigO (X := Op.op * (positive * (tnum * tnum))) (fun _ => True)
     (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + 1) ^ 2 +
       tnum_bits (fst (snd (snd x))) + tnum_bits (snd (snd (snd x)))))
     (fun x => T_tnum_variable (fst x) (fst (snd x)) (fst (snd (snd x))) (snd (snd (snd x)))).
   (** Unknown shifts take logarithmically many expansion steps of linear cost. *)
-  Parameter variable_shift_bigO : bigO (X := Op.op * (positive * (tnum * tnum)))
+  Parameter variable_shift_complexity : bigO (X := Op.op * (positive * (tnum * tnum)))
     (fun x => fst x = Op.bvshl \/ fst x = Op.bvlshr \/ fst x = Op.bvashr)
     (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + tnum_bits (fst (snd (snd x))) +
       tnum_bits (snd (snd (snd x))) + 1) * (Nat.log2 (Pos.to_nat (fst (snd x))) + 2)))
@@ -245,9 +245,9 @@ Module Type KNOWN_BITS_PLAN (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   Parameter T_acc_step : positive -> tnum -> tnum -> Z * tnum -> N.
   Parameter k_mul_step : N.
   (** The mask agrees with the modular word reduction. *)
-  Parameter F0_tnum_wrap : forall w z, tnum_wrap w z = L.wrap w z.
+  Parameter tnum_wrap_def : forall w z, tnum_wrap w z = L.wrap w z.
   (** Masked scalar shifts agree with the word operations for a nonnegative amount. *)
-  Parameter F0_scalar_value : forall o w k x, (0 <= k)%Z ->
+  Parameter tnum_scalar_value_def : forall o w k x, (0 <= k)%Z ->
     tnum_scalar_value o w k x =
       match o with
       | Op.bvshl => wshl w x (Z.min k (Zpos w))
@@ -258,11 +258,11 @@ Module Type KNOWN_BITS_PLAN (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
       | _ => L.wrap w x
       end.
   (** Remaining widening credit counts known positions at nonbottoms. *)
-  Parameter F3_rank : forall q w a, pis_bot w a = false -> pwrank q w a = known_count w a.
+  Parameter rank_def : forall q w a, pis_bot w a = false -> pwrank q w a = known_count w a.
   (** At most one fact per position contributes nonbottom widening credit. *)
-  Parameter F4_rank_bound : forall q w a, pis_bot w a = false -> pwrank q w a <= Pos.to_nat w.
+  Parameter pwrank_le_width : forall q w a, pis_bot w a = false -> pwrank q w a <= Pos.to_nat w.
   (** The stage invariant relates an accumulated prefix to its remaining product. *)
-  Parameter F7_mul_step : forall w a b x y i r,
+  Parameter mul_step_sound : forall w a b x y i r,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     (0 <= i < Zpos w)%Z -> pgamma w r (L.wrap w (x * (y mod 2 ^ i))) ->
     match mul_step w a b (i, r) with
@@ -270,28 +270,28 @@ Module Type KNOWN_BITS_PLAN (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     | inr s => pgamma w s (L.wrap w (x * y))
     end.
   (** A stage step keeps a bounded accumulator within the width. *)
-  Parameter F8_mul_step_bits : forall w a b i r j s,
+  Parameter mul_step_bits : forall w a b i r j s,
     tnum_bits r <= 2 * Pos.to_nat w ->
     mul_step w a b (i, r) = inl (j, s) -> tnum_bits s <= 2 * Pos.to_nat w.
   (** An accumulating step keeps a bounded accumulator within the width. *)
-  Parameter F9_acc_step_bits : forall w a b i r j s,
+  Parameter acc_step_bits : forall w a b i r j s,
     tnum_bits r <= 2 * Pos.to_nat w ->
     acc_step w a b (i, r) = inl (j, s) -> tnum_bits s <= 2 * Pos.to_nat w.
   (** One masked scalar shift reads the width, the amount and the raw value once. *)
-  Parameter T0_scalar_value : forall o w k x,
+  Parameter T_tnum_scalar_value_le : forall o w k x,
     (T_tnum_scalar_value o w k x <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat x +
       (Z.size_nat k + 1) * (Pos.size_nat w + 1)))%N.
   (** The mask reads the width once and the raw integer once. *)
-  Parameter T0_tnum_wrap : forall w z,
+  Parameter T_tnum_wrap_le : forall w z,
     (T_tnum_wrap w z <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
   (** One staged product step at an index within the width charges its index, accumulator
       and raw masks. *)
-  Parameter T1_mul_step : forall w a b i r, (0 <= i <= Zpos w)%Z ->
+  Parameter T_mul_step_le : forall w a b i r, (0 <= i <= Zpos w)%Z ->
     (T_mul_step w a b (i, r) <= k_mul_step *
       N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b + tnum_bits r + 1))%N.
   (** One accumulating step at an index within the width charges the width, its index and
       its accumulator. *)
-  Parameter T2_acc_step : forall w a b i r, (0 <= i <= Zpos w)%Z ->
+  Parameter T_acc_step_le : forall w a b i r, (0 <= i <= Zpos w)%Z ->
     (T_acc_step w a b (i, r) <= k_mul_step *
       N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b + tnum_bits r + 1))%N.
 End KNOWN_BITS_PLAN.

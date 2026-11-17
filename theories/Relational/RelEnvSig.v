@@ -96,17 +96,17 @@ Module Type REL_ENV_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DO
   (** The shared lattice measures a pair by its two components. *)
   Parameter size_pair : forall a, P.size a = R.size (fst a) + E.size (snd a).
   (** Evaluation is linear in the work of both components. *)
-  Parameter eval_bigO : bigO (fun _ : term L.op X.t * t => True)
+  Parameter eval_complexity : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (eval_work (fst x) (snd x))) (fun x => T_eval (fst x) (snd x)).
   (** Assignment is linear in the work of both components. *)
-  Parameter assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+  Parameter assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
   (** Havoc is linear in the work of both components. *)
-  Parameter havoc_bigO : bigO (fun _ : X.t * t => True)
+  Parameter havoc_complexity : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x))) (fun x => T_havoc (fst x) (snd x)).
   (** Assumption is linear in the work of both components. *)
-  Parameter assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+  Parameter assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
 End REL_ENV_TIME.
@@ -125,29 +125,29 @@ Module Type REL_ENV_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DO
     (PL : REL_PAIR_LINK X L N V F R E P)
     (Import D : REL_ENV_T X L N V F R E RR P PL).
   (** Composition denotes the intersection of numeric and value-state meanings. *)
-  Parameter F1_gamma : forall r s st,
+  Parameter gamma_def : forall r s st,
     gamma (r, s) st <-> R.ngamma r (fun x => N.num (st x)) /\ E.gamma s st.
   (** Evaluation refines the value result by the numeric range of the same expression. *)
-  Parameter F2_eval : forall e r s, eval e (r, s) =
+  Parameter eval_def : forall e r s, eval e (r, s) =
     RR.refine_range (fst (R.range e r)) (snd (R.range e r)) (E.eval e s).
   (** Assignment updates both components. *)
-  Parameter F3_assign : forall x e r s, assign x e (r, s) = (R.assign x e r, E.assign x e s).
+  Parameter assign_def : forall x e r s, assign x e (r, s) = (R.assign x e r, E.assign x e s).
   (** Havoc updates both components. *)
-  Parameter F4_havoc : forall x r s, havoc x (r, s) = (R.havoc x r, E.havoc x s).
+  Parameter havoc_def : forall x r s, havoc x (r, s) = (R.havoc x r, E.havoc x s).
   (** Assumption updates both components. *)
-  Parameter F5_assume : forall g es r s, assume g es (r, s) = (R.assume g es r, E.assume g es s).
+  Parameter assume_def : forall g es r s, assume g es (r, s) = (R.assume g es r, E.assume g es s).
   (** Product widening applies the corresponding parameter to each component. *)
-  Parameter F6_widen : forall p r s r' s', widen p (r, s) (r', s') =
+  Parameter widen_def : forall p r s r' s', widen p (r, s) (r', s') =
     if is_bot (r', s') then (r, s)
     else (R.widen (fst p) r r', E.widen (snd p) s s').
   (** Narrowing returns a bottom candidate and otherwise narrows each component. *)
-  Parameter F6a_narrow : forall a b, narrow a b =
+  Parameter narrow_def : forall a b, narrow a b =
     if is_bot b then b else (R.narrow (fst a) (fst b), E.narrow (snd a) (snd b)).
   (** Product rank adds the ranks of the actual two components. *)
-  Parameter F7_rank : forall p r s,
+  Parameter wrank_def : forall p r s,
     wrank p (r, s) = R.wrank (fst p) r + E.wrank (snd p) s.
   (** Product state storage adds component storage. *)
-  Parameter F8_size : forall r s, size (r, s) = R.size r + E.size s.
+  Parameter size_def : forall r s, size (r, s) = R.size r + E.size s.
 End REL_ENV_PLAN.
 
 Module Type REL_ENV_ALL (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)

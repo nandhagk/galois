@@ -64,10 +64,10 @@ Module Type CFG_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
   (** Destination projection has bounded cost. *)
   Parameter T_dst_le : forall p e, (T_dst p e <= c_cfg)%N.
   (** Edge enumeration is linear in its output. *)
-  Parameter edges_bigO : bigO (fun _ : P.t => True)
+  Parameter edges_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (edges p))) T_edges.
   (** Entry enumeration is linear in its output. *)
-  Parameter entries_bigO : bigO (fun _ : P.t => True)
+  Parameter entries_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (entries p))) T_entries.
 End CFG_TIME.
 
@@ -86,13 +86,13 @@ Module Type CFG_ADJ_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
   Parameter T_inc_le : forall p n,
     (T_inc p n <= c_cfg_adj * N.of_nat (N.bits n + length (inc p n) + 1))%N.
   (** Outgoing lookup is linear in the node key and the returned edges. *)
-  Parameter out_bigO : bigO (X := P.t * N.t) (fun _ => True)
+  Parameter out_complexity : bigO (X := P.t * N.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (N.bits n + length (out p n))) (fun '(p, n) => T_out p n).
   (** Incoming lookup is linear in the node key and the returned edges. *)
-  Parameter inc_bigO : bigO (X := P.t * N.t) (fun _ => True)
+  Parameter inc_complexity : bigO (X := P.t * N.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (N.bits n + length (inc p n))) (fun '(p, n) => T_inc p n).
   (** Node enumeration is linear in its output. *)
-  Parameter nodes_bigO : bigO (fun _ : P.t => True)
+  Parameter nodes_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat (length (nodes p))) T_nodes.
 End CFG_ADJ_TIME.
 
@@ -126,7 +126,7 @@ Module Type CFG_PREPARE_TIME (P PT : TYPE) (N : KEY_T) (E : TYPE)
       N.of_nat (fold_right Nat.max 0%nat (List.map N.bits (entries p ++
         flat_map (fun e => src p e :: dst p e :: nil) (edges p))) + 1))%N.
   (** Preparation is linear in the entries and edges times the widest endpoint key. *)
-  Parameter prepare_bigO : bigO (X := P.t) (fun _ => True)
+  Parameter prepare_complexity : bigO (X := P.t) (fun _ => True)
     (fun p => N.of_nat ((length (entries p) + length (edges p) + 1) *
       (fold_right Nat.max 0%nat (List.map N.bits (entries p ++
         flat_map (fun e => src p e :: dst p e :: nil) (edges p))) + 1)))

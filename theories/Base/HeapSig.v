@@ -90,13 +90,13 @@ Module Type PQ_TIME (Import Q : PQ).
   (** Reading cached live size takes constant time. *)
   Parameter T_size_le : forall q, (T_size q <= c_pq)%N.
   (** Push has the worst-case logarithmic comparison cost of bounded width. *)
-  Parameter push_bigO : bigO (X := nat * nat * N * positive * t)
+  Parameter push_complexity : bigO (X := nat * nat * N * positive * t)
     (fun '(P, w, p, x, q) => wf q /\ fits w q /\ (pending q < P)%nat /\
       (Pos.size_nat x + N.size_nat p <= w)%nat)
     (fun '(P, w, _, _, _) => N.of_nat (unit_pq P w))
     (fun '(_, _, p, x, q) => T_push p x q).
   (** Pop pays one unit budget plus one for each stale entry it discards. *)
-  Parameter pop_bigO : bigO (X := nat * nat * t)
+  Parameter pop_complexity : bigO (X := nat * nat * t)
     (fun '(P, w, q) => wf q /\ fits w q /\ (pending q <= P)%nat)
     (fun '(P, w, q) =>
       N.of_nat (unit_pq P w * (pending q - N.to_nat (size q) + 1)))
@@ -140,48 +140,48 @@ Module Type PQ_PLAN (Import Q : PQ_T).
     end.
 
   (** Forest enumeration agrees with the pending counter. *)
-  Parameter F1_pending : forall q, wf q -> length (entries (forest q)) = pending q.
+  Parameter pending_is_entries_length : forall q, wf q -> length (entries (forest q)) = pending q.
   (** Binomial ranks are logarithmic in the pending cap. *)
-  Parameter F2_ranks : forall P q, wf q -> pending q <= P ->
+  Parameter ranks_le_log_pending : forall P q, wf q -> pending q <= P ->
     ranks (forest q) <= Nat.log2 P + 1.
   (** Pushing creates at most one stale entry. *)
-  Parameter F3_stale_push : forall p x q, wf q -> stale (push p x q) <= S (stale q).
+  Parameter stale_push_le : forall p x q, wf q -> stale (push p x q) <= S (stale q).
   (** Skipping a stale entry retains live size and consumes a pending entry. *)
-  Parameter F4_skip : forall q q1, wf q -> pop_step q = inl q1 ->
+  Parameter pop_step_skip_spec : forall q q1, wf q -> pop_step q = inl q1 ->
     wf q1 /\ size q1 = size q /\ pending q = S (pending q1).
   (** Skipping retains the finite entry-width budget. *)
-  Parameter F5_skip_bounded : forall w q q1, wf q -> bounded w q ->
+  Parameter pop_step_skip_bounded : forall w q q1, wf q -> bounded w q ->
     pop_step q = inl q1 -> bounded w q1.
   (** The public potential agrees with the landed stale potential on width-bounded queues. *)
-  Parameter F6_phi_bounded : forall P w q, wf q -> bounded w q ->
+  Parameter phi_is_stale_phi : forall P w q, wf q -> bounded w q ->
     phi P w q = stale_phi P w q.
   (** A stopping step returns the public pop result. *)
-  Parameter F7_stop : forall q r, wf q -> pop_step q = inr r -> pop q = r.
+  Parameter pop_step_stop_spec : forall q r, wf q -> pop_step q = inr r -> pop q = r.
   (** Pushing retains the stored-entry width budget when the new entry fits. *)
-  Parameter F8_push_bounded : forall w p x q, wf q -> bounded w q ->
+  Parameter push_bounded : forall w p x q, wf q -> bounded w q ->
     N.size_nat p + Pos.size_nat x <= w -> bounded w (push p x q).
 
   (** Insertion traverses the occupied rank positions and compares bounded entries. *)
-  Parameter T1_insert : forall P w p x q, (wf q -> bounded w q -> (pending q < P)%nat ->
+  Parameter T_insert_le : forall P w p x q, (wf q -> bounded w q -> (pending q < P)%nat ->
     (N.size_nat p + Pos.size_nat x <= w)%nat ->
     T_insert p x (forest q) <= k_insert * N.of_nat (unit_pq P w))%N.
   (** Removing a minimum scans and melds logarithmically many rank positions. *)
-  Parameter T2_remove_min : forall P w q, (wf q -> bounded w q -> (pending q <= P)%nat ->
+  Parameter T_remove_min_le : forall P w q, (wf q -> bounded w q -> (pending q <= P)%nat ->
     T_remove_min (forest q) <= k_remove * N.of_nat (unit_pq P w))%N.
   (** A skipped stale entry pays for its step and the strict loop decrease. *)
-  Parameter T3_skip_credit : forall P w q q1, (wf q -> bounded w q -> (pending q <= P)%nat ->
+  Parameter T_pop_step_skip_credit : forall P w q q1, (wf q -> bounded w q -> (pending q <= P)%nat ->
     pop_step q = inl q1 ->
     T_pop_step q + c_loopN + phi P w q1 <= phi P w q)%N.
   (** A stopping step pays its work and its actual output potential. *)
-  Parameter T4_stop_credit : forall P w q r, (wf q -> bounded w q -> (pending q <= P)%nat ->
+  Parameter T_pop_step_stop_credit : forall P w q r, (wf q -> bounded w q -> (pending q <= P)%nat ->
     pop_step q = inr r ->
     T_pop_step q + c_loopN + output_phi P w r <= k_step * N.of_nat (unit_pq P w) + phi P w q)%N.
   (** The binary loop driver absorbs initial fuel width into the operation budget. *)
-  Parameter T5_pop_bounded : forall P w q, (wf q -> bounded w q -> (pending q <= P)%nat ->
+  Parameter T_pop_plan_amort : forall P w q, (wf q -> bounded w q -> (pending q <= P)%nat ->
     T_pop q + output_phi P w (pop q) <=
       k_driver * N.of_nat (unit_pq P w) + phi P w q)%N.
   (** Width-bounded pushing pays its returned stale credit. *)
-  Parameter T6_push_bounded : forall P w p x q, (wf q -> bounded w q -> (pending q < P)%nat ->
+  Parameter T_push_plan_amort : forall P w p x q, (wf q -> bounded w q -> (pending q < P)%nat ->
     (N.size_nat p + Pos.size_nat x <= w)%nat ->
     T_push p x q + phi P w (push p x q) <=
       (k_insert + k_step + k_credit) * N.of_nat (unit_pq P w) + phi P w q)%N.

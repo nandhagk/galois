@@ -74,7 +74,7 @@ Module Type DESTROY_TIME (O : OPS)
   Parameter T_destroy_le : forall s,
     (T_destroy s <= c_ds * N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
   (** Destruction has the published linear bit-cost bound. *)
-  Parameter destroy_bigO : bigO (fun _ : P.t => True)
+  Parameter destroy_complexity : bigO (fun _ : P.t => True)
     (fun s => N.of_nat (destroy_work s * (function_width s + 1))) T_destroy.
 End DESTROY_TIME.
 
@@ -119,45 +119,45 @@ Module Type DESTROY_PLAN (O : OPS)
     | _, _ => False
     end.
   (** The public operation first splits edges and then inserts checked copies. *)
-  Parameter F1_destroy_phases : forall s, destroy s =
+  Parameter destroy_def : forall s, destroy s =
     match split s with None => None | Some split_s => copies split_s end.
   (** Splitting keeps SSA and has the required one-extra-step simulation in both directions. *)
-  Parameter F2_split_preserves : forall s split_s, ssa_wf s -> split s = Some split_s ->
+  Parameter split_semantics_preserved : forall s split_s, ssa_wf s -> split s = Some split_s ->
     ssa_wf split_s /\ forall n ins r, r <> Timeout ->
       (run_with O.eval O.test n s ins = r -> run_with O.eval O.test (2 * n) split_s ins = r) /\
       (run_with O.eval O.test n split_s ins = r -> run_with O.eval O.test n s ins = r).
   (** Each emitted edge sequence passes the move checker with a fresh temporary. *)
-  Parameter F3_moves_checked : forall s p par tmp sq, copies s = Some p ->
+  Parameter checked_moves_valid : forall s p par tmp sq, copies s = Some p ->
     In (par, tmp, sq) (checked_moves s) ->
     NoDup (map fst par) /\ ~ In tmp (map fst par ++ map snd par) /\
       PM.check_moves par tmp sq = true.
   (** Checked sequential moves agree with incoming parallel parameter binding. *)
-  Parameter F4_edge_copy_sim : forall s p par tmp sq, copies s = Some p ->
+  Parameter edge_copy_simulates : forall s p par tmp sq, copies s = Some p ->
     In (par, tmp, sq) (checked_moves s) -> forall (e : positive -> option O.C) x,
       x <> tmp -> exec_seq sq e x = exec_par par e x.
   (** Copy insertion simulates one block after its incoming parameter bindings. *)
-  Parameter F5_block_sim : forall s p ss sp, ssa_wf s -> copies s = Some p ->
+  Parameter block_copies_simulate : forall s p ss sp, ssa_wf s -> copies s = Some p ->
     entered_agree s p ss sp ->
     copy_outcomes s p (step O.eval O.test s ss) (step O.eval O.test p sp).
   (** The block simulation and matching inputs give equal fuelled copy-stage runs. *)
-  Parameter F6_copies_run : forall s p, ssa_wf s -> copies s = Some p ->
+  Parameter copies_run_agrees : forall s p, ssa_wf s -> copies s = Some p ->
     forall n ins, run_with O.eval O.test n s ins = run_with O.eval O.test n p ins.
   (** Copy insertion removes every block parameter and outgoing argument. *)
-  Parameter F7_copies_imp : forall s p, copies s = Some p -> imp_form p.
+  Parameter copies_imp_form : forall s p, copies s = Some p -> imp_form p.
   (** Additional fuel retains every non-timeout result. *)
-  Parameter F8_run_mono : forall (p : P.t) n m ins r, n <= m -> r <> Timeout ->
+  Parameter run_fuel_mono : forall (p : P.t) n m ins r, n <= m -> r <> Timeout ->
     run_with O.eval O.test n p ins = r -> run_with O.eval O.test m p ins = r.
   (** Splitting charges each source block and each parameter-carrying branch edge. *)
-  Parameter T1_split : forall s,
+  Parameter T_split_le : forall s,
     (T_split s <= k_split * N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
   (** Each checked problem is the emitted sequence of one edge, within the source budget. *)
-  Parameter F9_moves_size : forall s split_s, split s = Some split_s ->
+  Parameter checked_moves_size_le : forall s split_s, split s = Some split_s ->
     fold_right (fun mc n => length (fst (fst mc)) + 1 + n) 0 (checked_moves split_s) <=
       destroy_work s /\
     forall par tmp sq, In (par, tmp, sq) (checked_moves split_s) ->
       sq = PM.seq par tmp /\ bits_of par + Pos.size_nat tmp <= 2 * (function_width s + 1).
   (** Copy insertion charges its index, its rewriting and the actual move calls. *)
-  Parameter T2_copies : forall s split_s, split s = Some split_s ->
+  Parameter T_copies_split : forall s split_s, split s = Some split_s ->
     (T_copies split_s <= k_copies * N.of_nat (destroy_work s) *
       N.of_nat (function_width s + 1) +
       fold_right N.add 0%N (map (fun mc =>
@@ -165,7 +165,7 @@ Module Type DESTROY_PLAN (O : OPS)
         PM.T_check_moves (fst (fst mc)) (snd (fst mc)) (snd mc))%N
         (checked_moves split_s)))%N.
   (** The wrapper charges exactly the selected transformation phases. *)
-  Parameter T3_wrapper : forall s,
+  Parameter T_destroy_split : forall s,
     (T_destroy s <= T_split s +
       match split s with None => k_wrap | Some split_s => T_copies split_s + k_wrap end)%N.
 End DESTROY_PLAN.

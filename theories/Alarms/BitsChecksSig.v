@@ -209,14 +209,14 @@ Module Type BITS_CHECKS_PLAN (V : VALUE_DOMAIN_T BitsLangT)
     (Import C : BITS_CHECKS_T V Q QS W).
   Parameter k_bits_checks : N.
   (** Excluding zero from a containing range excludes a zero divisor. *)
-  Parameter F1_zero : forall a c, V.gamma a c -> range_zero (Q.range a) = false ->
+  Parameter range_zero_sound : forall a c, V.gamma a c -> range_zero (Q.range a) = false ->
     snd c <> 0%Z.
   (** Ordered abstract endpoints imply concrete bounds safety. *)
-  Parameter F2_bounds : forall a b i len, V.gamma a i -> V.gamma b len ->
+  Parameter bounds_sound : forall a b i len, V.gamma a i -> V.gamma b len ->
     range_nonnegative (Q.range a) = true ->
     bound_lt (snd (Q.range a)) (fst (Q.range b)) = true -> (0 <= snd i < snd len)%Z.
   (** The generated zero-membership clock charges its finite endpoints. *)
-  Parameter T1_zero : forall r, (T_range_zero r <=
+  Parameter T_range_zero_le : forall r, (T_range_zero r <=
     k_bits_checks * N.of_nat (range_bits r + 1))%N.
 End BITS_CHECKS_PLAN.
 

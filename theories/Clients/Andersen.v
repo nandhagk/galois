@@ -1311,7 +1311,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** Seeding is linear in the input entries at the final database unit and identifier width. *)
-  Lemma seed_bigO : bigO (fun _ => True)
+  Lemma seed_complexity : bigO (fun _ => True)
     (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
       D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
     T_seed.
@@ -1323,7 +1323,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** Compiling the fixed inclusion program costs a constant. *)
-  Lemma compile_bigO : bigO (fun _ => True) (fun _ => 0%N) T_compile.
+  Lemma compile_complexity : bigO (fun _ => True) (fun _ => 0%N) T_compile.
   Proof.
     apply bigO_intro with (c := c_andersen).
     intros q _; cbn beta.
@@ -1331,7 +1331,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** A points-to lookup is linear in the database unit and the two value widths. *)
-  Lemma points_bigO : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
+  Lemma points_complexity : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
     (fun z => let '(db, x, a) := z in
       N.of_nat (3 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
     (fun z => let '(db, x, a) := z in T_points db x a).
@@ -1343,7 +1343,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** Solving composes the seed, plan and run bounds under the final database budgets. *)
-  Lemma solve_bigO : bigO
+  Lemma solve_complexity : bigO
     (fun x : N * nat * pointer_input * limits =>
       let '(B, U, q, lim) := x in
       (D.ids (snd (solve q lim)) <= B)%N /\ D.unit (snd (solve q lim)) <= U)
@@ -1355,9 +1355,9 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
       R.run_cost B U (compile q) (R.plan (compile q)) lim (seed q))%N)
     (fun x => let '(_, _, q, lim) := x in T_solve q lim).
   Proof.
-    destruct seed_bigO as [c_seed Hseed].
-    destruct R.plan_bigO as [c_plan Hplan].
-    destruct R.run_bigO as [c_run Hrun].
+    destruct seed_complexity as [c_seed Hseed].
+    destruct R.plan_complexity as [c_plan Hplan].
+    destruct R.run_complexity as [c_run Hrun].
     apply bigO_intro with (c := (c_andersen + c_andersen + c_seed + c_plan + c_run)%N).
     intros [[[B U] q] lim] Hbounds; cbn beta iota zeta in Hbounds |- *.
     rewrite solve_run in Hbounds.
@@ -1372,18 +1372,18 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     nia.
   Qed.
 
-  Lemma F1_source_closed : forall q, pointer_closed q (may_points q).
+  Lemma source_closed : forall q, pointer_closed q (may_points q).
   Proof.
     exact pointer_source_closed.
   Qed.
 
-  Lemma F2_source_least : forall q r, pointer_closed q r ->
+  Lemma source_least : forall q r, pointer_closed q r ->
     forall x a, may_points q x a -> r x a.
   Proof.
     exact pointer_source_least.
   Qed.
 
-  Lemma F3_rule_valid : forall q r rho, In r (rules V.t (compile q)) ->
+  Lemma rule_valid : forall q r rho, In r (rules V.t (compile q)) ->
     Forall (model_atom V.prim (andersen_model q) (program_kind (compile q)) rho)
       (query V.t r) ->
     model_actions V.prim (andersen_model q) (program_kind (compile q)) rho (actions V.t r).
@@ -1391,13 +1391,13 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     exact (andersen_rule_valid V.prim).
   Qed.
 
-  Lemma F4_seed_sat : forall q,
+  Lemma seed_sat_spec : forall q,
     sat V.merge (andersen_model q) (fun _ => tt) (D.view (seed q)).
   Proof.
     exact seed_sat.
   Qed.
 
-  Lemma F5_derives_source : forall q x a,
+  Lemma derives_source : forall q x a,
     derives V.prim (compile q) (D.view (seed q)) 5 [Val x; Val a] -> may_points q x a.
   Proof.
     intros q x a Hderive.
@@ -1424,7 +1424,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     - exact Hderive.
   Qed.
 
-  Lemma F6_closed_source : forall q w, closed V.prim V.merge (compile q) w ->
+  Lemma closed_source : forall q w, closed V.prim V.merge (compile q) w ->
     (forall f k o, row (D.view (seed q)) f k o -> row w f k o) ->
     (forall f, kind w f = program_kind (compile q) f) ->
     view_sorted (program_sorts (compile q)) w ->
@@ -1446,14 +1446,14 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
       discriminate Hout.
   Qed.
 
-  Lemma F7_step_covered : forall q r instruction before after,
+  Lemma step_covered : forall q r instruction before after,
     pointer_closed q r -> In instruction (constraints q) -> memory_covered r before ->
     pointer_exec instruction before = Some after -> memory_covered r after.
   Proof.
     exact pointer_step_covered.
   Qed.
 
-  Lemma T1_wrapper : forall q lim, let p := compile q in let cp := R.plan p in
+  Lemma T_solve_split : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
   Proof.
@@ -1468,13 +1468,13 @@ Module AndersenSound (V : VALUE with Definition t := positive)
     (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
     (A : ANDERSEN V I J D R) (L : POINTER_LINK) <: ANDERSEN_SOUND V I J D R A L.
   (** The least source relation contains all seeds and is closed under its four instructions. *)
-  Lemma F1_source_closed : forall q, pointer_closed q (may_points q).
+  Lemma source_closed : forall q, pointer_closed q (may_points q).
   Proof.
     exact pointer_source_closed.
   Qed.
 
   (** Each concrete instruction preserves coverage by a source-closed relation. *)
-  Lemma F7_step_covered : forall q r instruction before after,
+  Lemma step_covered : forall q r instruction before after,
     pointer_closed q r -> In instruction (constraints q) -> memory_covered r before ->
     pointer_exec instruction before = Some after -> memory_covered r after.
   Proof.
@@ -1491,7 +1491,7 @@ Module AndersenSound (V : VALUE with Definition t := positive)
     { induction Hreach as [s Hinitial | s t Hreach IH Hstep].
       - intros y b Hy; apply May_initial; eapply L.initial_coverage; eassumption.
       - destruct (L.step_update q s t Hstep) as [instruction [Hin Hexec]].
-        eapply F7_step_covered; [apply F1_source_closed | exact Hin | exact IH | exact Hexec]. }
+        eapply step_covered; [apply source_closed | exact Hin | exact IH | exact Hexec]. }
     intros x a Hget; apply (proj2 (A.solve_exact q lim db Hsolve x a)).
     apply Hcovered; exact Hget.
   Qed.

@@ -15192,7 +15192,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Located historical keys resolve to stored rows of declared functions. *)
-  Lemma F_forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
+  Lemma forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
     exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
   Proof.
     intros db f k0 k Hforest Hlocated. exact (proj1 Hforest f k0 k Hlocated).
@@ -19931,27 +19931,27 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Public well-formedness is the maintained invariant at an empty active batch. *)
-  Lemma F1_inv_wf : forall db, wf db <-> inv db.
+  Lemma wf_inv : forall db, wf db <-> inv db.
   Proof.
     intro db. unfold wf, inv.
     exact (database_public_inv_iff db).
   Qed.
 
   (** Direct bucket lookup agrees with the occurrence inventory. *)
-  Lemma F4_bucket : forall db work x, inv_on db work -> get_uses x db = bucket db x.
+  Lemma bucket_spec : forall db work x, inv_on db work -> get_uses x db = bucket db x.
   Proof.
     intros db work x _. apply get_uses_bucket.
   Qed.
 
   (** An empty pop detects an empty pending queue. *)
-  Lemma F4_pop_none : forall db, inv db -> (pop_loser db = None <-> queue db = []).
+  Lemma pop_none_spec : forall db, inv db -> (pop_loser db = None <-> queue db = []).
   Proof.
     intros db _. unfold pop_loser, db_pop_loser, queue.
     destruct (runtime_queue (db_runtime db)); split; congruence.
   Qed.
 
   (** A pop transfers its selected bucket into the active work list. *)
-  Lemma F4_pop : forall db x db', inv db -> pop_loser db = Some (x, db') ->
+  Lemma pop_loser_spec : forall db x db', inv db -> pop_loser db = Some (x, db') ->
     queue db = x :: queue db' /\ view db' = view db /\
     (forall y e, uses db' y e <->
       (uses db y e /\ y <> x) \/ (y = repr db x /\ uses db x e)) /\
@@ -20025,7 +20025,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The driver consumes one active entry or dequeues one loser. *)
-  Lemma F5_rstep : forall db work,
+  Lemma rstep_def : forall db work,
     rstep (db, work) =
       match work with
       | e :: rest => inl (repair_entry e db, rest)
@@ -20040,7 +20040,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Entries without a current row are discarded without changing the database. *)
-  Lemma F6_absent : forall db f k,
+  Lemma repair_entry_absent : forall db f k,
     located db f k = None -> repair_entry (f, k) db = db.
   Proof.
     intros db f k Habsent.
@@ -20094,7 +20094,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     inv_on (repair_entry (f, k) db) rest.
   Proof.
     intros db f k rest Hinv Habsent.
-    rewrite (F6_absent db f k Habsent).
+    rewrite (repair_entry_absent db f k Habsent).
     exact (inv_on_drop_absent db f k rest Hinv Habsent).
   Qed.
 
@@ -20265,7 +20265,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     pose proof Hinv as Hfacts.
     unfold inv_on in Hfacts.
     destruct Hfacts as [Hrows [_ [_ [_ [_ [_ [_ [Hforest _]]]]]]]].
-    destruct (F_forest_located db f key current Hforest Hlocated)
+    destruct (forest_located db f key current Hforest Hlocated)
       as [output [Hin _]].
     exists output. change (row (view db) f current output).
     apply (proj1 (Hrows f current output)). exact Hin.
@@ -23109,7 +23109,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
-  Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
+  Lemma repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
   Proof.
     intros db [f k] rest Hinv.
@@ -23153,25 +23153,25 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Continuing steps retain the queue and active-batch invariant. *)
-  Lemma F8_rstep_inv : forall s s', state_inv s -> rstep s = inl s' -> state_inv s'.
+  Lemma rstep_inv : forall s s', state_inv s -> rstep s = inl s' -> state_inv s'.
   Proof.
     intros [db work] s' Hinv Hstep.
     destruct work as [| e rest].
     - cbn [state_inv fst snd] in Hinv.
-      rewrite F5_rstep in Hstep.
+      rewrite rstep_def in Hstep.
       destruct (pop_loser db) as [[x db'] |] eqn:Hpop; [| discriminate].
       injection Hstep as Hstate. subst s'.
       cbn [state_inv fst snd].
-      rewrite (F4_bucket db [] x Hinv).
-      exact (proj2 (proj2 (proj2 (proj2 (F4_pop db x db' Hinv Hpop))))).
-    - rewrite F5_rstep in Hstep.
+      rewrite (bucket_spec db [] x Hinv).
+      exact (proj2 (proj2 (proj2 (proj2 (pop_loser_spec db x db' Hinv Hpop))))).
+    - rewrite rstep_def in Hstep.
       injection Hstep as Hstate. subst s'.
       cbn [state_inv fst snd] in *.
-      exact (F7_repair_inv db e rest Hinv).
+      exact (repair_inv db e rest Hinv).
   Qed.
 
   (** Repair retains kinds and identifier allocation. *)
-  Lemma F9_rstep_layout : forall s s', state_inv s -> rstep s = inl s' ->
+  Lemma rstep_layout : forall s s', state_inv s -> rstep s = inl s' ->
     kind (view (fst s')) = kind (view (fst s)) /\ ids (fst s') = ids (fst s).
   Proof.
     intros [db work] next _ Hstep. unfold rstep in Hstep.
@@ -23203,7 +23203,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Collision unions keep the same functional-dependency closure. *)
-  Lemma F10_rstep_cong : forall s s' i j, state_inv s -> rstep s = inl s' ->
+  Lemma rstep_cong : forall s s' i j, state_inv s -> rstep s = inl s' ->
     (cong (fst s') i j <-> cong (fst s) i j).
   Proof.
     intros [db work] next i j Hinv Hstep. change (inv_on db work) in Hinv.
@@ -23258,7 +23258,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Every old row survives one step at an equivalent, possibly unfinished key. *)
-  Lemma F11_rstep_keeps : forall s s' f k o, state_inv s -> rstep s = inl s' ->
+  Lemma rstep_keeps : forall s s' f k o, state_inv s -> rstep s = inl s' ->
     row (view (fst s)) f k o ->
     exists k' o', row (view (fst s')) f k' o' /\
       Forall2 (cell_rel (same (view (fst s')))) k k' /\
@@ -23315,7 +23315,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** A stopped driver exposes canonical rows and constructor closure. *)
-  Lemma F13_rstep_done : forall s r, state_inv s -> rstep s = inr r ->
+  Lemma rstep_done : forall s r, state_inv s -> rstep s = inr r ->
     r = fst s /\ snd s = [] /\ inv r /\ canonical r /\ pending r = 0 /\
     (forall f k1 k2 i j, row (view r) f k1 (Some (Id i)) ->
       row (view r) f k2 (Some (Id j)) ->
@@ -23327,7 +23327,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct (db_pop_loser db) as [[x current] |] eqn:Hpop; [discriminate |].
     injection Hstop as Hresult. subst result. cbn [fst snd].
     assert (Hqueue : queue db = []).
-    { apply (proj1 (F4_pop_none db Hinv)). exact Hpop. }
+    { apply (proj1 (pop_none_spec db Hinv)). exact Hpop. }
     assert (Hcanonical : canonical db) by (now apply inv_quiet_canonical).
     split; [reflexivity |]. split; [reflexivity |]. split; [exact Hinv |].
     split; [exact Hcanonical |]. split.
@@ -23346,7 +23346,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Fuel budgets logarithmic relabelings of all stored use occurrences. *)
-  Lemma F15_fuel_formula : forall db, rebuild_fuel db =
+  Lemma rebuild_fuel_def : forall db, rebuild_fuel db =
     ((N.size (ids db) + 2) * (nuses db + 1) + npending db + 1)%N.
   Proof.
     intro db. reflexivity.
@@ -23372,7 +23372,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct (Pos.eqb (fst xe) (repr db (fst xe))); lia.
   Qed.
 
-  Lemma F15_fuel_enough : forall db, inv db ->
+  Lemma rebuild_fuel_enough : forall db, inv db ->
     (N.of_nat (rebuild_measure (db, [])) < rebuild_fuel db)%N.
   Proof.
     intros db Hinv.
@@ -23383,7 +23383,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     pose proof (rebuild_measure_entries_le db (uses_entries db)) as Hentries.
     pose proof (rebuild_class_count_le db) as Hclasses.
     pose proof (database_log_width_upper (ids db)) as Hwidth.
-    rewrite F15_fuel_formula.
+    rewrite rebuild_fuel_def.
     unfold rebuild_measure. cbn [fst snd length].
     unfold nuses, npending. rewrite Hpending.
     rewrite <- (N2Nat.id (db_nuses db)).
@@ -23431,7 +23431,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Singleton source groups establish lineage before the first repair. *)
-  Lemma F20_lineage_initial : forall db, inv db -> lineage db db.
+  Lemma lineage_initial : forall db, inv db -> lineage db db.
   Proof.
     intros db Hinv. apply lineage_initial_from_repr. intro i.
     apply (proj2 (inv_on_same_repr db [] i (repr db i) Hinv)).
@@ -23950,7 +23950,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Actual repair flattens source groups through canonicalization and lattice merging. *)
-  Lemma F21_lineage_step : forall initial s s', state_inv s ->
+  Lemma lineage_step : forall initial s s', state_inv s ->
     rstep s = inl s' -> lineage initial (fst s) -> lineage initial (fst s').
   Proof.
     intros initial [db work] next Hinv Hstep Hlineage.
@@ -23963,7 +23963,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Every repaired row groups a nonempty list of rows from before the step. *)
-  Lemma F12_rstep_from : forall s s' f k' o', state_inv s -> rstep s = inl s' ->
+  Lemma rstep_from : forall s s' f k' o', state_inv s -> rstep s = inl s' ->
     row (view (fst s')) f k' o' ->
     exists srcs, srcs <> [] /\
       Forall (fun ko => row (view (fst s)) f (fst ko) (snd ko) /\
@@ -23973,7 +23973,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros s next f k o Hinv Hstep Hrow.
     assert (Hinitial : lineage (fst s) (fst s)).
     { apply lineage_initial_forest. exact (inv_on_forest_agrees (fst s) (snd s) Hinv). }
-    exact (F21_lineage_step (fst s) s next Hinv Hstep Hinitial f k o Hrow).
+    exact (lineage_step (fst s) s next Hinv Hstep Hinitial f k o Hrow).
   Qed.
 
   (** Related cells normalize to the same already canonical target cell. *)
@@ -24064,7 +24064,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Stopped lineage gives the exact public output equation for each original group. *)
-  Lemma F22_lineage_done : forall initial s r, inv initial -> state_inv s ->
+  Lemma lineage_done : forall initial s r, inv initial -> state_inv s ->
     rstep s = inr r -> lineage initial r ->
     forall f k o, row (view r) f k o ->
     exists srcs, srcs <> [] /\
@@ -24072,7 +24072,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         map (canon r) (fst ko) = k) srcs /\ o = merged r f (map snd srcs).
   Proof.
     intros initial s r _ Hstate Hstop Hlineage f k o Hrow.
-    destruct (F13_rstep_done s r Hstate Hstop) as (_ & _ & Hinv & Hcanonical & _).
+    destruct (rstep_done s r Hstate Hstop) as (_ & _ & Hinv & Hcanonical & _).
     destruct (Hlineage f k o Hrow) as [srcs [Hnonempty [Hsources Houtput]]].
     destruct (canonical_row_identity r f k o Hcanonical Hrow) as [Hkey Hout].
     exists srcs. split; [exact Hnonempty |]. split.
@@ -24133,7 +24133,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Root classes are nonempty and bounded by allocation. *)
-  Lemma F_class_size : forall db work x, inv_on db work ->
+  Lemma class_size_bounds : forall db work x, inv_on db work ->
     (1 <= class_size db (repr db x))%N /\
     (class_size db (repr db x) <= N.max 1 (ids db))%N.
   Proof.
@@ -24546,7 +24546,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db f k rest x Hinv.
     pose proof (inv_on_forest_wf db ((f, k) :: rest) Hinv) as Hwf.
-    pose proof (F7_repair_inv db (f, k) rest Hinv) as Hnext.
+    pose proof (repair_inv db (f, k) rest Hinv) as Hnext.
     pose proof (inv_on_forest_wf (db_repair_entry f k db) rest Hnext) as Hwf'.
     unfold class_size, uf_state, repr.
     rewrite <- (UnionFind.size_of_repr (db_forest db) x Hwf),
@@ -24566,26 +24566,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       database_weighted_sum (rebuild_entry_measure db) (uses_entries db).
   Proof.
     intros db f k rest Hinv.
-    pose proof (F7_repair_inv db (f, k) rest Hinv) as Hnext.
+    pose proof (repair_inv db (f, k) rest Hinv) as Hnext.
     assert (Huses : uses_entries (db_repair_entry f k db) = uses_entries db).
     { unfold uses_entries. now rewrite db_repair_entry_uses_store. }
     rewrite Huses. apply database_weighted_sum_mono. intro xe.
     apply rebuild_entry_measure_mono.
     - exact (proj2 (proj2 (db_repair_entry_layout db f k))).
     - exact (repair_entry_class_size_mono db f k rest (fst xe) Hinv).
-    - pose proof (proj1 (F_class_size db ((f, k) :: rest) (fst xe) Hinv)). lia.
-    - exact (proj2 (F_class_size (db_repair_entry f k db) rest (fst xe) Hnext)).
+    - pose proof (proj1 (class_size_bounds db ((f, k) :: rest) (fst xe) Hinv)). lia.
+    - exact (proj2 (class_size_bounds (db_repair_entry f k db) rest (fst xe) Hnext)).
     - intros Hfixed Hchanged. rewrite Hfixed.
       exact (db_repair_entry_root_doubling db f k (fst xe)
         (inv_on_forest_wf db ((f, k) :: rest) Hinv) Hfixed Hchanged).
   Qed.
 
   (** Continuing steps strictly decrease the pending, active and class-debt measure. *)
-  Lemma F14_rstep_measure : forall s s', state_inv s -> rstep s = inl s' ->
+  Lemma rstep_measure_lt : forall s s', state_inv s -> rstep s = inl s' ->
     rebuild_measure s' < rebuild_measure s.
   Proof.
     intros [db work] next Hinv Hstep. change (inv_on db work) in Hinv.
-    rewrite F5_rstep in Hstep. destruct work as [| [f k] rest].
+    rewrite rstep_def in Hstep. destruct work as [| [f k] rest].
     - destruct (pop_loser db) as [[x db'] |] eqn:Hpop; [| discriminate].
       injection Hstep as Hnext. subst next.
       pose proof (rebuild_measure_pop db x db' Hinv Hpop). lia.
@@ -24597,18 +24597,18 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The rebuild operation runs the same step and fuel as the plan. *)
-  Lemma F16_rebuild_run : forall db, wf db ->
+  Lemma rebuild_loop_spec : forall db, wf db ->
     loopN rstep (rebuild_fuel db) (db, []) = inr (rebuild db).
   Proof.
     intros db Hwf.
-    assert (Hinv : inv db) by (now apply (proj1 (F1_inv_wf db))).
+    assert (Hinv : inv db) by (now apply (proj1 (wf_inv db))).
     assert (Hgo : forall s s', state_inv s -> rstep s = inl s' ->
       state_inv s' /\ rebuild_measure s' < rebuild_measure s).
     { intros s s' Hstate Hstep. split.
-      - exact (F8_rstep_inv s s' Hstate Hstep).
-      - exact (F14_rstep_measure s s' Hstate Hstep). }
+      - exact (rstep_inv s s' Hstate Hstep).
+      - exact (rstep_measure_lt s s' Hstate Hstep). }
     destruct (@loopN_done repair_state t rstep state_inv rebuild_measure
-      (rebuild_fuel db) (db, []) Hgo Hinv (F15_fuel_enough db Hinv)) as [result Hrun].
+      (rebuild_fuel db) (db, []) Hgo Hinv (rebuild_fuel_enough db Hinv)) as [result Hrun].
     change (loopN rstep (rebuild_fuel db) (db, []) =
       inr (match loopN rstep (rebuild_fuel db) (db, []) with
       | inl s => fst s
@@ -24625,14 +24625,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db Hwf.
     assert (Hinitial : state_inv (db, [])).
-    { exact (proj1 (F1_inv_wf db) Hwf). }
+    { exact (proj1 (wf_inv db) Hwf). }
     assert (Hstop : forall s result, state_inv s -> rstep s = inr result ->
       exists final, state_inv final /\ rstep final = inr result).
     { intros s result Hinv Hdone. exists s. now split. }
     pose proof (LoopNFacts.loopN_preserves repair_state t rstep state_inv
       (fun result => exists final, state_inv final /\ rstep final = inr result)
-      F8_rstep_inv Hstop (rebuild_fuel db) (db, []) Hinitial) as Hrun.
-    rewrite (F16_rebuild_run db Hwf) in Hrun. exact Hrun.
+      rstep_inv Hstop (rebuild_fuel db) (db, []) Hinitial) as Hrun.
+    rewrite (rebuild_loop_spec db Hwf) in Hrun. exact Hrun.
   Qed.
 
   (** A property preserved by active steps holds at the completed database. *)
@@ -24645,25 +24645,25 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     assert (Hgo : forall s next, state_inv s /\ P (fst s) ->
       rstep s = inl next -> state_inv next /\ P (fst next)).
     { intros s next [Hinv HP] Hnext. split.
-      - exact (F8_rstep_inv s next Hinv Hnext).
+      - exact (rstep_inv s next Hinv Hnext).
       - exact (Hstep s next Hinv Hnext HP). }
     assert (Hstop : forall s result, state_inv s /\ P (fst s) ->
       rstep s = inr result -> P result).
     { intros s result [Hinv HP] Hdone.
-      destruct (F13_rstep_done s result Hinv Hdone) as [Hequal _].
+      destruct (rstep_done s result Hinv Hdone) as [Hequal _].
       now rewrite Hequal. }
     pose proof (LoopNFacts.loopN_preserves repair_state t rstep
       (fun s => state_inv s /\ P (fst s)) P Hgo Hstop
-      (rebuild_fuel db) (db, []) (conj (proj1 (F1_inv_wf db) Hwf) Hinitial)) as Hrun.
-    rewrite (F16_rebuild_run db Hwf) in Hrun. exact Hrun.
+      (rebuild_fuel db) (db, []) (conj (proj1 (wf_inv db) Hwf) Hinitial)) as Hrun.
+    rewrite (rebuild_loop_spec db Hwf) in Hrun. exact Hrun.
   Qed.
 
   (** Rebuilding keeps the database well formed. *)
   Lemma wf_rebuild : forall db, wf db -> wf (rebuild db).
   Proof.
     intros db Hwf. destruct (rebuild_stopped db Hwf) as [s [Hinv Hstop]].
-    destruct (F13_rstep_done s (rebuild db) Hinv Hstop) as (_ & _ & Hfinal & _).
-    exact (proj2 (F1_inv_wf (rebuild db)) Hfinal).
+    destruct (rstep_done s (rebuild db) Hinv Hstop) as (_ & _ & Hfinal & _).
+    exact (proj2 (wf_inv (rebuild db)) Hfinal).
   Qed.
 
   (** Rebuilding canonicalizes every row and empties pending work. *)
@@ -24671,7 +24671,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     canonical (rebuild db) /\ pending (rebuild db) = 0.
   Proof.
     intros db Hwf. destruct (rebuild_stopped db Hwf) as [s [Hinv Hstop]].
-    destruct (F13_rstep_done s (rebuild db) Hinv Hstop)
+    destruct (rstep_done s (rebuild db) Hinv Hstop)
       as (_ & _ & _ & Hcanonical & Hpending & _).
     now split.
   Qed.
@@ -24684,7 +24684,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply (rebuild_active_preserves
       (fun current => forall i j, cong current i j <-> cong db i j)).
     - intros s next Hinv Hnext Hbefore i j.
-      rewrite (F10_rstep_cong s next i j Hinv Hnext). apply Hbefore.
+      rewrite (rstep_cong s next i j Hinv Hnext). apply Hbefore.
     - exact Hwf.
     - intros i j. reflexivity.
   Qed.
@@ -24695,7 +24695,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db i j Hwf.
     destruct (rebuild_stopped db Hwf) as [s [Hinv Hstop]].
-    destruct (F13_rstep_done s (rebuild db) Hinv Hstop)
+    destruct (rstep_done s (rebuild db) Hinv Hstop)
       as (_ & _ & _ & _ & _ & Hclosed).
     split.
     - intro Hsame. apply (proj1 (rebuild_cong db Hwf i j)). now apply cong_same.
@@ -24770,9 +24770,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       exists k' o', row (view current) f k' o' /\
         Forall2 (cell_rel (same (view current))) k k' /\ out_le current f o o')).
     - intros s next Hinv Hnext [before [output [Hcurrent [Hkeys Hout]]]].
-      destruct (F11_rstep_keeps s next f before output Hinv Hnext Hcurrent)
+      destruct (rstep_keeps s next f before output Hinv Hnext Hcurrent)
         as [after [result [Hresult [Hmoved Hlarger]]]].
-      pose proof (F8_rstep_inv s next Hinv Hnext) as Hinv'.
+      pose proof (rstep_inv s next Hinv Hnext) as Hinv'.
       assert (Hforest : forest_agrees (fst next)).
       { exact (inv_on_forest_agrees (fst next) (snd next) Hinv'). }
       assert (Hsame : forall i j, same (view (fst s)) i j -> same (view (fst next)) i j).
@@ -24784,7 +24784,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + apply (proj1 (database_out_le_canon_left (fst next) f output result Hforest)) in Hlarger.
         eapply database_out_le_transitive; [| exact Hlarger].
         eapply database_out_le_monotone; [| exact Hsame | exact Hout].
-        exact (proj1 (F9_rstep_layout s next Hinv Hnext)).
+        exact (proj1 (rstep_layout s next Hinv Hnext)).
     - exact Hwf.
     - exists k, o. split; [exact Hrow |]. split; [apply key_related_refl |].
       apply (proj1 (database_out_le_canon_left db f o o (forest_agrees_initial db Hwf))).
@@ -24805,7 +24805,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     pose proof (proj1 (canonical_row_identity (rebuild db) f k' o' Hcanonical Htarget)) as Hkey.
     assert (Hequal : map (canon (rebuild db)) k = k').
     { exact (related_key_canonical (rebuild db) [] k k'
-        (proj1 (F1_inv_wf (rebuild db)) Hfinal) Hkeys Hkey). }
+        (proj1 (wf_inv (rebuild db)) Hfinal) Hkeys Hkey). }
     exists o'. split; [now rewrite Hequal |].
     apply (proj2 (database_out_le_canon_left (rebuild db) f o o'
       (forest_agrees_initial (rebuild db) Hfinal))). exact Hout.
@@ -24820,7 +24820,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db f k o Hwf Hrow.
     destruct (rebuild_stopped db Hwf) as [s [Hinv Hstop]].
-    exact (F22_lineage_done db s (rebuild db) (proj1 (F1_inv_wf db) Hwf)
+    exact (lineage_done db s (rebuild db) (proj1 (wf_inv db) Hwf)
       Hinv Hstop (rebuild_lineage db Hwf) f k o Hrow).
   Qed.
 
@@ -25255,7 +25255,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** The declaration inventory is exactly the domain of the stored kind trie. *)
-  Lemma decl_names_spec : forall db f,
+  Lemma decl_names_spec_aux : forall db f,
     kind (view db) f <> None <-> In f (decl_names db).
   Proof.
     intros db f. unfold decl_names.
@@ -25618,7 +25618,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros db f Hkind. unfold wmark. apply fold_max_member.
     apply in_app_iff. right. apply in_app_iff. left. apply in_map.
-    now apply decl_names_spec.
+    now apply decl_names_spec_aux.
   Qed.
 
   (** Every recorded cell has a tagged encoding whose width is covered by the watermark. *)
@@ -26042,7 +26042,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db f _ Hkind. change (N.size_nat (Npos f) <= N.size_nat (wmark db)).
     apply N_width_mono. unfold wmark. apply fold_max_member.
     apply in_app_iff. right. apply in_app_iff. left. apply in_map.
-    now apply decl_names_spec.
+    now apply decl_names_spec_aux.
   Qed.
 
   (** One database unit covers the watermark width and a constant step. *)
@@ -26829,7 +26829,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition row_up (db : t) (n : nat) (r : positive) : positive :=
     Nat.iter n (row_parent db) r.
   (** A historical key resolves through a merge chain of logarithmic depth. *)
-  Lemma F_row_locate : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
+  Lemma row_locate : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
     exists d, d <= length k * (N.to_nat (N.log2 (ids db)) + 1) /\
       row_parent db (row_up db d r) = row_up db d r /\
       located db f k = row_current db (row_up db d r).
@@ -26847,7 +26847,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (Hdepth f k key id Hget).
   Qed.
   (** A key without a row identifier has no current row. *)
-  Lemma F_row_absent : forall db work f k, inv_on db work -> row_id db f k = None ->
+  Lemma row_absent : forall db work f k, inv_on db work -> row_id db f k = None ->
     located db f k = None.
   Proof.
     intros db work f k _ Habsent.
@@ -26856,10 +26856,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       as [[key r] |]; [discriminate | reflexivity].
   Qed.
   (** The executable resolution agrees with the observation. *)
-  Lemma F_locate : forall db work f k, inv_on db work -> locate f k db = located db f k.
+  Lemma locate_def : forall db work f k, inv_on db work -> locate f k db = located db f k.
   Proof. reflexivity. Qed.
   (** Merged row groups at least double the losing group. *)
-  Lemma F_row_by_size : forall db work r, inv_on db work -> row_parent db r <> r ->
+  Lemma row_by_size : forall db work r, inv_on db work -> row_parent db r <> r ->
     (1 <= row_size db r)%N /\ (2 * row_size db r <= row_size db (row_parent db r))%N.
   Proof.
     intros db work r Hinv Hparent.
@@ -26873,7 +26873,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (proj2 (proj2 (Hlinks r p Hlink)) Hparent).
   Qed.
   (** A row group holds at most one row per assignment of its identifier positions. *)
-  Lemma F_row_group : forall db work f k r d, inv_on db work -> row_id db f k = Some r ->
+  Lemma row_group_le : forall db work f k r d, inv_on db work -> row_id db f k = Some r ->
     row_parent db (row_up db d r) = row_up db d r ->
     (row_size db (row_up db d r) <= (ids db + 1) ^ N.of_nat (length k))%N.
   Proof.
@@ -26890,7 +26890,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (Hgroup f k key id d Hget Hroot).
   Qed.
   (** Row identifiers stay below a counter that the watermark covers. *)
-  Lemma F_row_counter : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
+  Lemma row_counter_lt : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
     (r < next_row db)%positive /\ (row_parent db r < next_row db)%positive /\
     In (next_row db) (index_counters db).
   Proof.
@@ -26907,7 +26907,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (Hcounter f k key id Hget).
   Qed.
   (** The keys of use entries are written cells. *)
-  Lemma F_entry_cells : forall db work x f k c, inv_on db work -> uses db x (f, k) ->
+  Lemma entry_cells_fit : forall db work x f k c, inv_on db work -> uses db x (f, k) ->
     In c k -> In c (written_cells db).
   Proof.
     intros db work x f k c Hinv Huse Hcell.
@@ -27145,7 +27145,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply N_width_mono, declared_names_wmark. exact Hkind. }
     assert (Hcells : forall c, In c k -> cell_bits V.encode c <= N.size_nat (wmark db)).
     { intros c Hin. apply recorded_cells_wmark.
-      exact (F_entry_cells db work x f k c Hinv Huse Hin). }
+      exact (entry_cells_fit db work x f k c Hinv Huse Hin). }
     pose proof (T_db_locate_width db f k Hstore Hname Hcells) as Htime.
     pose proof (unit_positive db) as Hunit.
     time_unfold T_locate. clear -Htime Hunit.
@@ -27174,7 +27174,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct (database_history_complete_locate db f k (f, k) r
       Hstore Hcomplete Hhistory) as [current Hlocated].
     change (located db f k = Some current) in Hlocated.
-    destruct (F_forest_located db f k current Hforest Hlocated) as [o [_ Hkind]].
+    destruct (forest_located db f k current Hforest Hlocated) as [o [_ Hkind]].
     now apply (T_locate_declared_width db work x f k).
   Qed.
 
@@ -27524,7 +27524,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Every slot has a place whose group rank and offset do not exceed the slot number. *)
-  Lemma F_slot_place : forall db work s f perm, inv_on db work ->
+  Lemma slot_place_spec : forall db work s f perm, inv_on db work ->
     slot_of db s = Some (f, perm) ->
     exists d g j, slot_place db s = Some (d, g, j) /\ (g <= s)%N /\ (j <= s)%N /\
       nth_error (group_slots db d g) (N.to_nat j) = Some s /\
@@ -27588,7 +27588,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         eapply metadata_slot_strict; eassumption.
   Qed.
   (** A declared group lists precisely the slots of its function, once each. *)
-  Lemma F_group_slots : forall db work f g, inv_on db work -> group_of db f = Some g ->
+  Lemma group_slots_spec : forall db work f g, inv_on db work -> group_of db f = Some g ->
     NoDup (group_slots db true g) /\
     forall s, In s (group_slots db true g) <-> exists perm, slot_of db s = Some (f, perm).
   Proof.
@@ -27655,7 +27655,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       * unfold n. rewrite N.add_0_l, N2Nat.id. reflexivity.
   Qed.
   (** Initialization stores the ranking of its slot list. *)
-  Lemma F_init_place : forall ds sl s,
+  Lemma init_place_spec : forall ds sl s,
     slot_place (init ds sl) s = nth_error (rank_slots ds sl) (N.to_nat s).
   Proof. reflexivity. Qed.
   (** Ranking pays for slot positions and the bits of function names. *)
@@ -27737,7 +27737,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exfalso. apply Hmember. reflexivity.
   Qed.
 
-  Lemma F_union_roots : forall i j db, inv db -> allocated db i -> allocated db j ->
+  Lemma union_roots_spec : forall i j db, inv db -> allocated db i -> allocated db j ->
     let '(ri, u1) := UnionFind.find i (uf_state db) in
     let '(rj, u2) := UnionFind.find j u1 in
     uf_state (union i j db) =
@@ -27790,7 +27790,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct (Pos.eqb ri rj); reflexivity.
   Qed.
   (** Membership and key width stay within allocation. *)
-  Lemma F_uf_card : forall db work, inv_on db work ->
+  Lemma uf_card_le : forall db work, inv_on db work ->
     UnionFind.card (uf_state db) <= 3 * N.to_nat (ids db) /\
     UnionFind.width (uf_state db) <= N.size_nat (ids db).
   Proof.
@@ -27802,7 +27802,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition proj_count (db : t) (s : N) (u : list (cell V.t)) : N :=
     stored_projection_count db s u.
   (** The count of a projected tuple is the number of rows that project onto it. *)
-  Lemma F_proj_count : forall db work s f perm u, inv_on db work ->
+  Lemma proj_count_spec : forall db work s f perm u, inv_on db work ->
     slot_of db s = Some (f, perm) ->
     exists rs, NoDup rs /\
       (forall r, In r rs <-> In r (rows db) /\ fst (fst r) = f /\
@@ -27820,13 +27820,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** The counter of the empty index is recorded. *)
-  Lemma F_counter_one : forall db, inv db -> In 1%positive (index_counters db).
+  Lemma wmark_pos : forall db, inv db -> In 1%positive (index_counters db).
   Proof.
     intros db Hinv. exact (proj1 (inv_on_metadata db [] Hinv)).
   Qed.
 
   (** The maintained invariant gives the slot facts that an update reads. *)
-  Lemma F_slots_ok : forall db work, inv_on db work -> slots_ok db.
+  Lemma slots_ok_holds : forall db work, inv_on db work -> slots_ok db.
   Proof.
     intros db work Hinv. split; [exact (inv_on_metadata db work Hinv) |].
     intros s f perm new Hslot.
@@ -27834,7 +27834,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     specialize (Hindexes s f perm Hslot). destruct new; tauto.
   Qed.
   (** A slot update keeps those facts. *)
-  Lemma F_slots_ok_update : forall db b f u, slots_ok db ->
+  Lemma slots_update_ok : forall db b f u, slots_ok db ->
     slots_fit db f (length u) -> slots_ok (slots_update b f u db).
   Proof.
     intros db b f u [Hmetadata Harity] Hfits.
@@ -28100,16 +28100,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** The public potential is the weighted occurrence credit. *)
-  Lemma F2_potential : forall B db, (potential B db = k_loop * rebuild_potential B db)%N.
+  Lemma potential_def : forall B db, (potential B db = k_loop * rebuild_potential B db)%N.
   Proof. reflexivity. Qed.
 
   (** The unit charges identifier traversal and cell encoding widths. *)
-  Lemma F3_unit : forall db,
+  Lemma unit_def : forall db,
     unit db = (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
   Proof. reflexivity. Qed.
 
   (** Congruent cells have equal denotations in every satisfying model. *)
-  Lemma F17_cong_den : forall (M : model (V := V.t)) nu db i j, wf db ->
+  Lemma cong_den : forall (M : model (V := V.t)) nu db i j, wf db ->
     sat V.merge M nu (view db) -> cong db i j -> nu i = nu j.
   Proof.
     intros M nu db i j _ Hsat Hcong.
@@ -28117,7 +28117,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Nonempty output groups keep their model meaning through the actual merge fold. *)
-  Lemma F18_merged_holds : forall (M : model (V := V.t)) nu db f k os,
+  Lemma merged_holds : forall (M : model (V := V.t)) nu db f k os,
     wf db -> lat_closed V.merge M (view db) -> os <> [] -> (forall i, nu (repr db i) = nu i) ->
     Forall (holds M nu (view db) f k) os ->
     holds M nu (view db) f k (merged db f os).
@@ -28154,7 +28154,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Repair preserves satisfaction through its collision, lattice and index branches. *)
-  Lemma F19_rstep_sat : forall (M : model (V := V.t)) nu s s',
+  Lemma rstep_sat : forall (M : model (V := V.t)) nu s s',
     state_inv s -> rstep s = inl s' -> sat V.merge M nu (view (fst s)) ->
     sat V.merge M nu (view (fst s')).
   Proof.
@@ -28164,7 +28164,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** A losing root enters a class at least twice as large. *)
-  Lemma T1_doubling : forall db i j x, inv db -> repr db x = x ->
+  Lemma class_size_doubles : forall db i j x, inv db -> repr db x = x ->
     repr (union i j db) x <> x ->
     (2 * class_size db x <= class_size (union i j db) (repr (union i j db) x))%N.
   Proof.
@@ -28176,7 +28176,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Initialization has no use-occurrence debt. *)
-  Lemma T2_init_credit : forall B ds sl, (rebuild_potential B (init ds sl) = 0)%N.
+  Lemma rebuild_potential_init : forall B ds sl, (rebuild_potential B (init ds sl) = 0)%N.
   Proof.
     intros B ds sl. unfold rebuild_potential, queue_weight, queue, uses_entries.
     cbn [init db_row_store row_uses db_runtime runtime_queue].
@@ -29430,7 +29430,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     { unfold slots_of. now rewrite Hwithout_slots. }
     assert (Hwithout_ok : slots_ok without).
     { unfold without. destruct previous as [before |]; [| exact Hslots].
-      apply F_slots_ok_update; [exact Hslots |]. apply Hbefore_fit. reflexivity. }
+      apply slots_update_ok; [exact Hslots |]. apply Hbefore_fit. reflexivity. }
     assert (Hwithout_store : database_row_store_ok without).
     { unfold without. destruct previous; [apply slots_update_row_store_ok |]; exact Hstore. }
     assert (Hnew_fit_without : slots_fit without f (length (k ++ option_list o))).
@@ -30411,7 +30411,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db f k Hslots Hfits. unfold row_delete.
     destruct (row_get f k db) as [o |] eqn:Hrow; [| exact Hslots].
     change (slots_ok (slots_update false f (k ++ option_list o) db)).
-    apply F_slots_ok_update; [exact Hslots |]. exact (Hfits o eq_refl).
+    apply slots_update_ok; [exact Hslots |]. exact (Hfits o eq_refl).
   Qed.
 
   (** Repairing a known current row pays for its temporary insertion at the restored final unit. *)
@@ -30483,7 +30483,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - set (deleted := row_delete f k db). fold deleted in Hparts.
       set (updated := put f ck co deleted).
       set (bits := N.size_nat (wmark updated) + 1).
-      assert (Hslots : slots_ok db) by (apply F_slots_ok with (work := work); exact Hinv).
+      assert (Hslots : slots_ok db) by (apply slots_ok_holds with (work := work); exact Hinv).
       assert (Hstore : database_row_store_ok db).
       { exact (proj1 (inv_on_owned db work Hinv)). }
       pose proof (inv_on_recorded_rows db work Hinv) as Hrecorded.
@@ -31030,11 +31030,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         N.of_nat (length k + 2) * N.of_nat (unit (put f k o db)))%N.
   Proof.
     intros db f k o Hwf Hfit.
-    pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
+    pose proof (proj1 (wf_inv db) Hwf) as Hinv.
     assert (Hstore : database_row_store_ok db).
     { exact (proj1 (inv_on_owned db [] Hinv)). }
     pose proof (T_put_explicit_width db f k o (N.size_nat (wmark (put f k o db)))
-      (F_slots_ok db [] Hinv) Hstore (wf_recorded_rows db Hwf)
+      (slots_ok_holds db [] Hinv) Hstore (wf_recorded_rows db Hwf)
       (wf_forest db Hwf) (wf_forest_members db Hwf) (forest_card_ids db Hwf)
       (wf_forest_width db Hwf) (inv_on_pending_bound db [] Hinv)
       (fun g args output Hrow => wf_row_slots db Hwf g args output Hrow)
@@ -31169,7 +31169,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     assert (Hlength : length k = length current).
     { exact (database_history_located_length db f k current Hstore Hcomplete Howner Hshape Hlocated). }
     assert (Hlocated_public : located db f k = Some current) by exact Hlocated.
-    destruct (F_forest_located db f k current Hforest Hlocated_public) as [o [Hin Hkind]].
+    destruct (forest_located db f k current Hforest Hlocated_public) as [o [Hin Hkind]].
     assert (Hrow : row_get f current db = Some o).
     { pose proof Hinv as Hfacts. destruct Hfacts as [Hrows _].
       exact (proj1 (Hrows f current o) Hin). }
@@ -31178,7 +31178,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply N_width_mono, declared_names_wmark. exact Hkind. }
     assert (Hcells : forall c, In c k -> cell_bits V.encode c <= N.size_nat (wmark db)).
     { intros c Hcell. apply recorded_cells_wmark.
-      exact (F_entry_cells db ((f, k) :: rest) x f k c Hinv Huse Hcell). }
+      exact (entry_cells_fit db ((f, k) :: rest) x f k c Hinv Huse Hcell). }
     pose proof (T_db_locate_width db f k Hstore Hname Hcells) as Hlocate.
     pose proof (T_repair_row_prefix db ((f, k) :: rest) f current o Hinv Hrow) as Hprefix.
     pose proof (T_repair_current_row db ((f, k) :: rest) f current o Hinv Hrow) as Hcurrent.
@@ -31329,7 +31329,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Stopping charges one unit of the final database. *)
-  Lemma T7_rstep_stop : forall s r, state_inv s -> rstep s = inr r ->
+  Lemma T_rstep_stop_le : forall s r, state_inv s -> rstep s = inr r ->
     (T_rstep s <= k_stop * N.of_nat (unit (fst s)))%N.
   Proof.
     intros s r Hinv Hstop.
@@ -31338,14 +31338,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Stopping retains result credit and spends the reserved stop allowance. *)
-  Lemma T7a_stop_credit : forall B U s r, state_inv s -> unit (fst s) <= U ->
+  Lemma T_rstep_stop_loop_credit : forall B U s r, state_inv s -> unit (fst s) <= U ->
     rstep s = inr r ->
     (T_rstep s + c_loopN + k_loop * N.of_nat U * rebuild_potential B r <=
       k_loop * N.of_nat U * state_potential B s + k_stop * N.of_nat U)%N.
   Proof.
     intros B U [db work] result Hinv Hunit Hstop.
     pose proof (T_rstep_stop_bound (db, work) result Hinv Hstop) as Htime.
-    destruct (F13_rstep_done (db, work) result Hinv Hstop) as [Hresult [Hwork _]].
+    destruct (rstep_done (db, work) result Hinv Hstop) as [Hresult [Hwork _]].
     cbn [fst snd] in Hresult, Hwork, Hunit, Htime. subst result work.
     pose proof (unit_positive db) as Hpositive.
     unfold state_potential. cbn [fst snd work_weight fold_right].
@@ -31353,7 +31353,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** The wrapper exposes fuel construction and driver overhead. *)
-  Lemma T9_rebuild_driver : forall db,
+  Lemma T_rebuild_split : forall db,
     (T_rebuild db <= T_rebuild_fuel db +
       T_loopN rstep T_rstep (rebuild_fuel db) (db, []) + k_driver)%N.
   Proof.
@@ -31372,20 +31372,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Slot lookup charges its binary slot code. *)
-  Lemma T10_index : forall s new db,
+  Lemma T_index_plan_le : forall s new db,
     (T_index s new db <= c_db * N.of_nat (N.to_nat (N.log2 s) + 1))%N.
   Proof.
     exact T_index_le.
   Qed.
 
   (** Advancing clears each maintained slot once. *)
-  Lemma T11_advance : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
+  Lemma T_advance_plan_le : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
   Proof.
     exact T_advance_le.
   Qed.
 
   (** Stored counters agree with the occurrence inventory and pending queue. *)
-  Lemma F15_counts : forall db work, inv_on db work ->
+  Lemma counters_spec : forall db work, inv_on db work ->
     N.to_nat (nuses db) = length (uses_entries db) /\ N.of_nat (pending db) = npending db.
   Proof.
     intros db work Hinv. split.
@@ -31399,14 +31399,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** The declaration inventory contains precisely the names with a kind. *)
-  Lemma F_decl_names : forall db f, inv db ->
+  Lemma decl_names_spec : forall db f, inv db ->
     (kind (view db) f <> None <-> In f (decl_names db)).
   Proof.
-    intros db f _. apply decl_names_spec.
+    intros db f _. apply decl_names_spec_aux.
   Qed.
 
   (** The stored watermark is the exact historical maximum of written payloads and counters. *)
-  Lemma F_wmark : forall db, inv db ->
+  Lemma wmark_covers : forall db, inv db ->
     wmark db = fold_right N.max (N.max (nuses db) (ids db))
       (map Npos (index_counters db) ++ map Npos (decl_names db) ++
         map (fun c => match c with
@@ -31418,7 +31418,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Every slot index fits the stored counter and cell watermark. *)
-  Lemma F_wmark_index : forall db s new, inv db ->
+  Lemma wmark_covers_index : forall db s new, inv db ->
     (Npos (I.next (index s new db)) <= wmark db)%N /\
     I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
   Proof.
@@ -31426,7 +31426,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Class sizes come from the size-based union-find. *)
-  Lemma F_uf_bridge : forall db work x, inv_on db work ->
+  Lemma uf_bridge : forall db work x, inv_on db work ->
     repr db x = UnionFind.repr (uf_state db) x /\
     class_size db x = N.of_nat (UnionFind.size_of (uf_state db) x) /\
     UnionFind.wf (uf_state db).
@@ -31436,7 +31436,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Collision unions also double the losing class. *)
-  Lemma F_rstep_doubling : forall s s' x, state_inv s -> rstep s = inl s' ->
+  Lemma rstep_doubling : forall s s' x, state_inv s -> rstep s = inl s' ->
     repr (fst s) x = x -> repr (fst s') x <> x ->
     (2 * class_size (fst s) x <= class_size (fst s') (repr (fst s') x))%N.
   Proof.
@@ -31454,7 +31454,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Repair never reduces the spending unit. *)
-  Lemma F9b_rstep_unit : forall s s', state_inv s -> rstep s = inl s' ->
+  Lemma rstep_keeps_unit : forall s s', state_inv s -> rstep s = inl s' ->
     unit (fst s) <= unit (fst s').
   Proof.
     intros [db work] next _ Hstep. unfold rstep in Hstep.
@@ -31471,7 +31471,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof. unfold k_loop. lia. Qed.
 
   (** Fuel construction uses stored binary counters. *)
-  Lemma T7b_fuel : forall db, inv db ->
+  Lemma T_rebuild_fuel_le : forall db, inv db ->
     (T_rebuild_fuel db <= k_driver * N.of_nat (unit db))%N.
   Proof.
     intros db Hinv.
@@ -32011,8 +32011,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         <- (UnionFind.size_of_repr (db_forest next) x Hwf'), Hforest.
       pose proof (database_union_size_monotone i j (db_forest db) x Hwf) as Hsize.
       rewrite Hunion in Hsize. cbn [snd] in Hsize. lia.
-    - intro x. pose proof (proj1 (F_class_size db work x Hinv)). lia.
-    - intro x. pose proof (proj2 (F_class_size next rest x Hnext)) as Hsize.
+    - intro x. pose proof (proj1 (class_size_bounds db work x Hinv)). lia.
+    - intro x. pose proof (proj2 (class_size_bounds next rest x Hnext)) as Hsize.
       eapply N.le_trans; [exact Hsize |]. apply N.max_le_compat_l. exact Hbudget.
     - intros x Hclass. unfold class_size, uf_state, repr. rewrite Hforest.
       pose proof (database_union_losing_size i j (db_forest db) winner loser forest x
@@ -32038,7 +32038,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros B db f k rest Hcoefficient Hinv Hbudget.
     set (next := db_repair_entry f k db).
-    assert (Hnext : inv_on next rest) by (exact (F7_repair_inv db (f, k) rest Hinv)).
+    assert (Hnext : inv_on next rest) by (exact (repair_inv db (f, k) rest Hinv)).
     pose proof (inv_on_forest_wf db ((f, k) :: rest) Hinv) as Hwf.
     assert (Huses : uses_entries next = uses_entries db).
     { unfold next, uses_entries. now rewrite db_repair_entry_uses_store. }
@@ -32220,8 +32220,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (rebuild_potential B (union i j db) <= rebuild_potential B db + k_queue)%N.
   Proof.
     intros B db i j Hcoefficient Hwf Hi Hj Hbudget.
-    pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
-    pose proof (proj1 (F1_inv_wf (union i j db)) (wf_union i j db Hwf Hi Hj)) as Hnext.
+    pose proof (proj1 (wf_inv db) Hwf) as Hinv.
+    pose proof (proj1 (wf_inv (union i j db)) (wf_union i j db Hwf Hi Hj)) as Hnext.
     pose proof (inv_on_forest_wf db [] Hinv) as Hforest.
     assert (Hbudget' : (ids (union i j db) <= B)%N) by (now rewrite union_ids).
     assert (Hslots : slots (union i j db) = slots db).
@@ -32273,7 +32273,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros Hcredit_coefficient Hcoefficient B i j db Hwf Hi Hj Hbudget.
     pose proof (database_union_potential_le B db i j Hcredit_coefficient Hwf Hi Hj Hbudget)
       as Hpotential.
-    pose proof (T_union_inv_on_unit db [] i j (proj1 (F1_inv_wf db) Hwf) Hi Hj) as Htime.
+    pose proof (T_union_inv_on_unit db [] i j (proj1 (wf_inv db) Hwf) Hi Hj) as Htime.
     assert (Hunit : unit (union i j db) = unit db).
     { unfold unit. now rewrite union_ids, wmark_union. }
     rewrite Hunit in *. clear - Hcoefficient Hpotential Htime.
@@ -32565,7 +32565,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (database_union_potential_le B db i j Hcoefficient Hwf Hi Hallocation Hbudget).
     - assert (Hfresh : ~ (Npos j <= ids db)%N).
       { intro Hallocated. apply N.leb_le in Hallocated. congruence. }
-      pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
+      pose proof (proj1 (wf_inv db) Hwf) as Hinv.
       assert (Hnotmem : ~ UnionFind.mem (db_forest db) j).
       { intro Hmem. apply Hfresh. exact (proj1 (wf_forest_members db Hwf j) Hmem). }
       pose proof (database_union_fresh_second_loser i j (db_forest db) (wf_forest db Hwf)
@@ -32644,7 +32644,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))%N.
   Proof.
     intros B db f k o Hcoefficient Hwf Howners Hbudget.
-    pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
+    pose proof (proj1 (wf_inv db) Hwf) as Hinv.
     pose proof (database_inv_queue_valid db Hinv) as Hqueue.
     assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
     { unfold inv, inv_on, forest_ok, row_store_ok, database_row_store_ok in Hinv. tauto. }
@@ -32707,7 +32707,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))%N.
   Proof.
     intros B db f k Hwf.
-    pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
+    pose proof (proj1 (wf_inv db) Hwf) as Hinv.
     pose proof (database_inv_queue_valid db Hinv) as Hqueue.
     assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
     { unfold inv, inv_on, forest_ok, row_store_ok, database_row_store_ok in Hinv. tauto. }
@@ -32988,7 +32988,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** The put allowance pays all execution and every newly recorded occurrence. *)
-  Lemma T3_put_credit : forall B f k o db, wf db ->
+  Lemma T_put_credit : forall B f k o db, wf db ->
     slots_fit db f (length (k ++ option_list o)) -> (ids (put f k o db) <= B)%N ->
     (T_put f k o db +
       N.of_nat (unit (put f k o db)) * (k_loop * rebuild_potential B (put f k o db)) <=
@@ -32998,7 +32998,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           (k_loop * rebuild_potential B db)))%N.
   Proof.
     intros B f k o db Hwf Hfit Hids.
-    pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
+    pose proof (proj1 (wf_inv db) Hwf) as Hinv.
     assert (Howners : forall x e, uses db x e -> allocated db x).
     { intros x e Huse. eapply database_uses_allocated_entry.
       - exact (proj1 (inv_on_owned db [] Hinv)).
@@ -33039,7 +33039,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Constructor allocation uses the same allowance, including the unchanged reuse branch. *)
-  Lemma T4_make_credit : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
+  Lemma T_make_credit : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
     (ids (snd (make f k db)) <= B)%N ->
     (T_make f k db +
       N.of_nat (unit (snd (make f k db))) * (k_loop * rebuild_potential B (snd (make f k db))) <=
@@ -33118,7 +33118,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     lia.
   Qed.
 
-  Lemma T5_union_credit : forall B i j db, wf db -> allocated db i -> allocated db j ->
+  Lemma T_union_credit : forall B i j db, wf db -> allocated db i -> allocated db j ->
     (ids db <= B)%N ->
     (T_union i j db +
       N.of_nat (unit (union i j db)) * (k_loop * rebuild_potential B (union i j db)) <=
@@ -33127,7 +33127,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (database_T5_union_credit k_credit_queue_budget c_db_union_credit_budget).
   Qed.
 
-  Lemma T6_rstep_go : forall B U s s', state_inv s -> (ids (fst s') <= B)%N ->
+  Lemma T_rstep_go_credit : forall B U s s', state_inv s -> (ids (fst s') <= B)%N ->
     unit (fst s') <= U -> rstep s = inl s' ->
     (T_rstep s + k_loop * N.of_nat U * state_potential B s' <
       k_loop * N.of_nat U * state_potential B s)%N.
@@ -33139,7 +33139,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     clear - Hpaid. lia.
   Qed.
 
-  Lemma T6a_rstep_credit : forall B U s s', state_inv s ->
+  Lemma T_rstep_go_loop_credit : forall B U s s', state_inv s ->
     (ids (fst s') <= B)%N -> unit (fst s') <= U -> rstep s = inl s' ->
     (T_rstep s + c_loopN + k_loop * N.of_nat U * state_potential B s' <=
       k_loop * N.of_nat U * state_potential B s)%N.
@@ -33181,7 +33181,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     pose proof (LoopNFacts.loopN_preserves repair_state t rstep Inv
       (fun result => database_finishes result (db, [])) Hgo Hstop
       (rebuild_fuel db) (db, []) Hinitial) as Hrun.
-    rewrite (F16_rebuild_run db Hwf) in Hrun. exact Hrun.
+    rewrite (rebuild_loop_spec db Hwf) in Hrun. exact Hrun.
   Qed.
 
   (** Every state on a completed trace fits the allocation and unit of its result. *)
@@ -33191,16 +33191,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros result s Hfinished. induction Hfinished as
       [s Hstop | s next Hstep Hfinished IH]; intro Hinv.
-    - destruct (F13_rstep_done s result Hinv Hstop) as [Hresult _].
+    - destruct (rstep_done s result Hinv Hstop) as [Hresult _].
       rewrite Hresult. split; reflexivity.
-    - destruct (IH (F8_rstep_inv s next Hinv Hstep)) as [Hids Hunit].
+    - destruct (IH (rstep_inv s next Hinv Hstep)) as [Hids Hunit].
       split.
-      + rewrite <- Hids. symmetry. exact (proj2 (F9_rstep_layout s next Hinv Hstep)).
-      + eapply Nat.le_trans; [exact (F9b_rstep_unit s next Hinv Hstep) | exact Hunit].
+      + rewrite <- Hids. symmetry. exact (proj2 (rstep_layout s next Hinv Hstep)).
+      + eapply Nat.le_trans; [exact (rstep_keeps_unit s next Hinv Hstep) | exact Hunit].
   Qed.
 
   (** The actual amortized binary driver preserves the final database's credit. *)
-  Lemma T8a_loop_final : forall B U db, inv db -> (ids (rebuild db) <= B)%N ->
+  Lemma T_rstep_loop_amort : forall B U db, inv db -> (ids (rebuild db) <= B)%N ->
     unit (rebuild db) <= U ->
     (T_loopN rstep T_rstep (rebuild_fuel db) (db, []) +
       k_loop * N.of_nat U * rebuild_potential B (rebuild db) <=
@@ -33208,7 +33208,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       c_loopN * N.of_nat (N.size_nat (rebuild_fuel db) + 1))%N.
   Proof.
     intros B U db Hinv Hids Hunit.
-    pose proof (proj2 (F1_inv_wf db) Hinv) as Hwf.
+    pose proof (proj2 (wf_inv db) Hinv) as Hwf.
     set (Inv := fun s => state_inv s /\ database_finishes (rebuild db) s).
     set (Phi := fun s =>
       (k_loop * N.of_nat U * state_potential B s + k_stop * N.of_nat U)%N).
@@ -33216,26 +33216,26 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     assert (Hgo : forall s next, Inv s -> rstep s = inl next ->
       Inv next /\ (T_rstep s + c_loopN + Phi next <= Phi s)%N).
     { intros s next [Hstate Hfinished] Hstep.
-      pose proof (F8_rstep_inv s next Hstate Hstep) as Hnext.
+      pose proof (rstep_inv s next Hstate Hstep) as Hnext.
       pose proof (database_finishes_next (rebuild db) s next Hfinished Hstep) as Hsuffix.
       destruct (database_finishes_bounds (rebuild db) next Hsuffix Hnext)
         as [Hnext_ids Hnext_unit].
       split; [now split |].
       assert (Hbound : (ids (fst next) <= B)%N) by now rewrite Hnext_ids.
       assert (Hspend : unit (fst next) <= U) by lia.
-      pose proof (T6a_rstep_credit B U s next Hstate Hbound Hspend Hstep) as Hcredit.
+      pose proof (T_rstep_go_loop_credit B U s next Hstate Hbound Hspend Hstep) as Hcredit.
       unfold Phi. lia. }
     assert (Hstop : forall s result, Inv s -> rstep s = inr result ->
       (T_rstep s + c_loopN + Psi result <= Phi s)%N).
     { intros s result [Hstate Hfinished] Hstep.
       destruct (database_finishes_bounds (rebuild db) s Hfinished Hstate)
         as [_ Hcurrent_unit].
-      exact (T7a_stop_credit B U s result Hstate ltac:(lia) Hstep). }
+      exact (T_rstep_stop_loop_credit B U s result Hstate ltac:(lia) Hstep). }
     assert (Hinitial : Inv (db, [])).
     { split; [exact Hinv | now apply rebuild_finishes]. }
     pose proof (T_loopN_amort repair_state t rstep T_rstep Inv Phi Psi
       (rebuild_fuel db) (db, []) Hgo Hstop Hinitial) as Hloop.
-    rewrite (F16_rebuild_run db Hwf) in Hloop.
+    rewrite (rebuild_loop_spec db Hwf) in Hloop.
     unfold Phi, Psi, state_potential in Hloop.
     change
       (T_loopN rstep T_rstep (rebuild_fuel db) (db, []) +
@@ -33280,14 +33280,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         (c_db * N.of_nat (pending db + 1) + potential B db))%N.
   Proof.
     intros Hbudget B db Hwf Hids.
-    pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
-    pose proof (T8a_loop_final B (unit (rebuild db)) db Hinv Hids
+    pose proof (proj1 (wf_inv db) Hwf) as Hinv.
+    pose proof (T_rstep_loop_amort B (unit (rebuild db)) db Hinv Hids
       (Nat.le_refl _)) as Hloop.
-    pose proof (T7b_fuel db Hinv) as Hfuel.
+    pose proof (T_rebuild_fuel_le db Hinv) as Hfuel.
     pose proof (rebuild_fuel_bits_unit db Hinv) as Hbits.
     pose proof (unit_mono_rebuild db Hwf) as Hunit.
     pose proof (unit_positive (rebuild db)) as Hpositive.
-    rewrite !F2_potential.
+    rewrite !potential_def.
     set (spend := N.of_nat (unit (rebuild db))) in *.
     assert (Hfuel_final : (T_rebuild_fuel db <= k_driver * spend)%N).
     { eapply N.le_trans; [exact Hfuel |]. apply N.mul_le_mono_l. lia. }
@@ -33309,7 +33309,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Fuel, callback, stop, and driver charges fit the rebuild allowance. *)
-  Lemma T8_rebuild_loop : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
+  Lemma T_rebuild_loop_amort : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
     (T_rebuild_fuel db + T_loopN rstep T_rstep (rebuild_fuel db) (db, []) + k_driver +
       N.of_nat (unit (rebuild db)) * potential B (rebuild db) <=
       N.of_nat (unit (rebuild db)) *
@@ -33327,7 +33327,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
           N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
           potential B db))%N.
-  Proof. intros B f k o db Hwf Hslots Hids. rewrite !F2_potential. now apply T3_put_credit. Qed.
+  Proof. intros B f k o db Hwf Hslots Hids. rewrite !potential_def. now apply T_put_credit. Qed.
 
   (** Constructor allocation has the same amortized budget as insertion. *)
   Lemma T_make_amort : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
@@ -33338,7 +33338,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
           N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
           potential B db))%N.
-  Proof. intros B f k db Hwf Hslots Hids. rewrite !F2_potential. now apply T4_make_credit. Qed.
+  Proof. intros B f k db Hwf Hslots Hids. rewrite !potential_def. now apply T_make_credit. Qed.
 
   (** Union transfers the deferred work to potential. *)
   Lemma T_union_amort : forall B i j db, wf db -> allocated db i -> allocated db j ->
@@ -33346,7 +33346,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (T_union i j db +
       N.of_nat (unit (union i j db)) * potential B (union i j db) <=
       N.of_nat (unit (union i j db)) * (c_db + potential B db))%N.
-  Proof. intros B i j db Hwf Hi Hj Hids. rewrite !F2_potential. now apply T5_union_credit. Qed.
+  Proof. intros B i j db Hwf Hi Hj Hids. rewrite !potential_def. now apply T_union_credit. Qed.
 
   (** Rebuilding spends potential on pending union work. *)
   Lemma T_rebuild_amort : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
@@ -33355,14 +33355,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         (c_db * N.of_nat (pending db + 1) + potential B db))%N.
   Proof.
     intros B db Hwf Hids.
-    pose proof (T8_rebuild_loop B db Hwf Hids) as Hloop.
-    pose proof (T9_rebuild_driver db) as Hdriver. lia.
+    pose proof (T_rebuild_loop_amort B db Hwf Hids) as Hloop.
+    pose proof (T_rebuild_split db) as Hdriver. lia.
   Qed.
 
   (** Published big-O classes, raw and amortized. *)
 
   (** Find is linear in the bit steps of one identifier operation. *)
-  Lemma find_bigO : bigO
+  Lemma find_complexity : bigO
     (fun x : positive * t => wf (snd x) /\ allocated (snd x) (fst x))
     (fun x => N.of_nat (unit (snd x)))
     (fun x => T_find (fst x) (snd x)).
@@ -33373,7 +33373,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Lookup is linear in the key length and the key's encoded cells. *)
-  Lemma lookup_bigO : bigO
+  Lemma lookup_complexity : bigO
     (fun x : positive * list (cell V.t) * t => wf (snd x))
     (fun x => N.of_nat ((length (snd (fst x)) + 1) * unit (snd x) +
       fold_right (fun c n => cell_bits V.encode c + n) 0 (snd (fst x))))
@@ -33387,7 +33387,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Initialization is linear in the declarations and the permutation sizes, with the
       layout work of insertion sorting. *)
-  Lemma init_bigO : bigO (fun _ => True)
+  Lemma init_complexity : bigO (fun _ => True)
     (fun x : list decl * list (positive * list nat) =>
       N.of_nat ((length (fst x) + length (snd x) + layout_work (snd x) + 1) *
         (fold_right (fun s n => length (snd s) + n) 0 (snd x) + 1) +
@@ -33414,7 +33414,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Insertion, without its share of the deferred rebuild, is linear in the arity and the
       number of slots of its function. *)
-  Lemma put_bigO : bigO
+  Lemma put_complexity : bigO
     (fun x : positive * list (cell V.t) * option (cell V.t) * t =>
       let '(f, k, o, db) := x in wf db /\ slots_fit db f (length (k ++ option_list o)))
     (fun x => let '(f, k, o, db) := x in
@@ -33434,7 +33434,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Constructor allocation, without its share of the deferred rebuild, has the same class. *)
-  Lemma make_bigO : bigO
+  Lemma make_complexity : bigO
     (fun x : positive * list (cell V.t) * t =>
       let '(f, k, db) := x in wf db /\ slots_fit db f (S (length k)))
     (fun x => let '(f, k, db) := x in
@@ -33453,7 +33453,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Union, without queued work, is linear in the bit steps of one identifier operation. *)
-  Lemma union_bigO : bigO
+  Lemma union_complexity : bigO
     (fun x : positive * positive * t =>
       let '(i, j, db) := x in wf db /\ allocated db i /\ allocated db j)
     (fun x => let '(i, j, db) := x in N.of_nat (unit db))
@@ -33461,7 +33461,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     eapply bigO_intro with (c := c_db).
     intros [[i j] db] [Hwf [Hi Hj]]. cbn beta iota zeta.
-    pose proof (T_union_unit_bound i j db (proj1 (F1_inv_wf db) Hwf) Hi Hj) as Htime.
+    pose proof (T_union_unit_bound i j db (proj1 (wf_inv db) Hwf) Hi Hj) as Htime.
     lia.
   Qed.
 
@@ -33499,7 +33499,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Insertion pays its own clock and the rebuild credit of its new use entries. *)
-  Lemma put_amort_bigO : bigO
+  Lemma put_amort_complexity : bigO
     (fun x : N * positive * list (cell V.t) * option (cell V.t) * t =>
       let '(B, f, k, o, db) := x in
       wf db /\ slots_fit db f (length (k ++ option_list o)) /\ (ids (put f k o db) <= B)%N)
@@ -33523,7 +33523,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Constructor allocation has the same amortized class as insertion. *)
-  Lemma make_amort_bigO : bigO
+  Lemma make_amort_complexity : bigO
     (fun x : N * positive * list (cell V.t) * t =>
       let '(B, f, k, db) := x in
       wf db /\ slots_fit db f (S (length k)) /\ (ids (snd (make f k db)) <= B)%N)
@@ -33547,7 +33547,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Union is constant at the spending unit, because it only queues rebuild work. *)
-  Lemma union_amort_bigO : bigO
+  Lemma union_amort_complexity : bigO
     (fun x : N * positive * positive * t =>
       let '(B, i, j, db) := x in
       wf db /\ allocated db i /\ allocated db j /\ (ids db <= B)%N)
@@ -33564,7 +33564,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Rebuilding is linear in the pending equalities at the spending unit. *)
-  Lemma rebuild_amort_bigO : bigO
+  Lemma rebuild_amort_complexity : bigO
     (fun x : N * t => let '(B, db) := x in wf db /\ (ids (rebuild db) <= B)%N)
     (fun x => let '(B, db) := x in
       N.of_nat (unit (rebuild db) * (pending db + 1)))
@@ -33580,7 +33580,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Slot lookup is logarithmic in the slot number. *)
-  Lemma index_bigO : bigO (fun _ => True)
+  Lemma index_complexity : bigO (fun _ => True)
     (fun x : N * bool * t => N.of_nat (N.to_nat (N.log2 (fst (fst x))) + 1))
     (fun x => T_index (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -33599,7 +33599,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Advancing is constant, because it empties the new-row indexes with one store. *)
-  Lemma advance_bigO : bigO (fun _ => True) (fun _ : t => 0%N) T_advance.
+  Lemma advance_complexity : bigO (fun _ => True) (fun _ : t => 0%N) T_advance.
   Proof.
     eapply bigO_intro with (c := c_db). intros db _.
     rewrite N.mul_0_r, N.add_0_l. apply T_advance_const.

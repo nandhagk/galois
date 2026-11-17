@@ -906,7 +906,7 @@ Module LinCert (X : KEY) <: LINCERT X.
 
 
   (** Certificates without integer cuts also entail their rational conclusion. *)
-  Lemma check_entails_sound_Q : forall P c k,
+  Lemma check_entails_sound_rational : forall P c k,
     check_entails P c k = true -> cut k = false ->
     forall v, Forall (satQ v) P -> satQ v c.
   Proof.
@@ -1838,7 +1838,7 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
       fold_right N.add 0%N (map (fun p => f (snd p)) (PTrieCode.elements tr)).
   Proof.
     intros f tr.
-    pose proof (PTrieT.F9_fold_values (Z * Z) N
+    pose proof (PTrieT.fold_values_def (Z * Z) N
       (fun acc z => (acc + f z)%N) tr 0%N) as Hfold.
     rewrite lc_trie_sum_fold, lc_sum_fold_left in Hfold. lia.
   Qed.
@@ -2433,7 +2433,7 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     pose proof (csize_nz_le P ms) as Hsize. nia.
   Qed.
   (** Combination charges the rows with a nonzero multiplier. *)
-  Lemma combine_bigO : bigO (fun _ : list (lcons X.t) * list Z => True)
+  Lemma combine_complexity : bigO (fun _ : list (lcons X.t) * list Z => True)
     (fun x => N.of_nat (csize_nz (fst x) (snd x)))
     (fun x => T_combine (fst x) (snd x)).
   Proof.
@@ -2441,7 +2441,7 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     pose proof (T_combine_le_nz P ms). cbn [fst snd]. nia.
   Qed.
   (** Entailment checking charges the nonzero rows, the certificate scale and the conclusion. *)
-  Lemma check_entails_bigO :
+  Lemma check_entails_complexity :
     bigO (fun _ : list (lcons X.t) * lcons X.t * cert => True)
     (fun x => N.of_nat (csize_nz (fst (fst x)) (mults (snd x)) +
       (Z.size_nat (scale (snd x)) + 1) *
@@ -2452,7 +2452,7 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     pose proof (T_check_entails_le_nz P c k). cbn [fst snd]. nia.
   Qed.
   (** Contradiction checking charges the nonzero rows. *)
-  Lemma check_empty_bigO : bigO (fun _ : list (lcons X.t) * list Z => True)
+  Lemma check_empty_complexity : bigO (fun _ : list (lcons X.t) * list Z => True)
     (fun x => N.of_nat (csize_nz (fst x) (snd x)))
     (fun x => T_check_empty (fst x) (snd x)).
   Proof.
@@ -2539,7 +2539,7 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     exact combine_valid.
   Qed.
   (** Combination without cuts is valid over rational stores. *)
-  Lemma combine_sound_Q : forall P ms s, combine P ms = Some s ->
+  Lemma combine_sound_rational : forall P ms s, combine P ms = Some s ->
     forall v, Forall (satQ v) P -> satQ v s.
   Proof.
     exact combine_valid_Q.

@@ -438,7 +438,7 @@ Module DigraphT <: DIGRAPH_T.
     nia.
   Qed.
 
-  Lemma prepare_bigO : bigO (fun _ => True)
+  Lemma prepare_complexity : bigO (fun _ => True)
     (fun g => N.of_nat ((graph_n g + graph_e g + 1) * (graph_width g + 1))) T_prepare.
   Proof.
     exists c_prepare. intros g _.

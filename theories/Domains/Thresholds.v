@@ -217,7 +217,7 @@ Module Thresholds <: THRESHOLDS.
   Qed.
 
   (** Deduplication changes multiplicity but never membership. *)
-  Lemma dedup_vals : forall zs x, In x (dedup_sorted zs) <-> In x zs.
+  Lemma dedup_vals_aux : forall zs x, In x (dedup_sorted zs) <-> In x zs.
   Proof.
     induction zs as [|a zs IH]; intro x; [reflexivity|].
     destruct zs as [|b zs]; [reflexivity|].
@@ -229,7 +229,7 @@ Module Thresholds <: THRESHOLDS.
   Qed.
 
   (** Deduplicating a weakly ordered list makes its order strict. *)
-  Lemma dedup_ordered : forall zs, StronglySorted Z.le zs ->
+  Lemma dedup_ordered_aux : forall zs, StronglySorted Z.le zs ->
     StronglySorted Z.lt (dedup_sorted zs).
   Proof.
     induction zs as [|a zs IH]; intro Hsort; [constructor|].
@@ -244,7 +244,7 @@ Module Thresholds <: THRESHOLDS.
     assert (Hlt : (a < b)%Z) by lia.
     constructor; [now apply IH|].
     apply Forall_forall. intros z Hin.
-    apply (proj1 (dedup_vals (b :: zs) z)) in Hin.
+    apply (proj1 (dedup_vals_aux (b :: zs) z)) in Hin.
     destruct Hin as [<-|Hin]; [exact Hlt|].
     rewrite Forall_forall in Hallb. specialize (Hallb z Hin). lia.
   Qed.
@@ -261,8 +261,8 @@ Module Thresholds <: THRESHOLDS.
   Lemma prepared_length : forall zs, length (dedup_sorted (msort zs)) <= length zs.
   Proof.
     intro zs. apply NoDup_incl_length.
-    - apply ordered_nodup, dedup_ordered, sort_fuel_sorted. lia.
-    - intros z Hin. apply (proj1 (dedup_vals (msort zs) z)) in Hin.
+    - apply ordered_nodup, dedup_ordered_aux, sort_fuel_sorted. lia.
+    - intros z Hin. apply (proj1 (dedup_vals_aux (msort zs) z)) in Hin.
       eapply Permutation_in; [apply Permutation_sym, sort_fuel_perm|exact Hin].
   Qed.
 
@@ -289,7 +289,7 @@ Module Thresholds <: THRESHOLDS.
   Qed.
 
   (** Sufficient fuel preserves the list as the tree's inorder traversal. *)
-  Lemma build_vals : forall fuel zs, length zs <= fuel -> vals (build fuel zs) = zs.
+  Lemma build_vals_aux : forall fuel zs, length zs <= fuel -> vals (build fuel zs) = zs.
   Proof.
     induction fuel as [|fuel IH]; intros zs Hfuel.
     - destruct zs; cbn in *; [reflexivity|lia].
@@ -317,7 +317,7 @@ Module Thresholds <: THRESHOLDS.
   Qed.
 
   (** Median construction has logarithmic depth, even when fuel is truncated. *)
-  Lemma build_depth : forall fuel zs,
+  Lemma build_depth_aux : forall fuel zs,
     depth (build fuel zs) <= Nat.log2 (length zs) + 1.
   Proof.
     intros fuel zs. destruct zs as [|z zs].
@@ -345,7 +345,7 @@ Module Thresholds <: THRESHOLDS.
   (** Construction retains precisely the supplied thresholds. *)
   Lemma make_vals : forall zs x, In x (vals (make zs)) <-> In x zs.
   Proof.
-    intros zs x. unfold make. rewrite build_vals by lia. rewrite dedup_vals.
+    intros zs x. unfold make. rewrite build_vals_aux by lia. rewrite dedup_vals_aux.
     split; intro Hin; eapply Permutation_in; [|exact Hin| |exact Hin].
     - apply Permutation_sym, sort_fuel_perm.
     - apply sort_fuel_perm.
@@ -353,13 +353,13 @@ Module Thresholds <: THRESHOLDS.
   (** Construction orders and deduplicates thresholds. *)
   Lemma make_ordered : forall zs, ordered (make zs).
   Proof.
-    intro zs. unfold ordered, make. rewrite build_vals by lia.
-    apply dedup_ordered, sort_fuel_sorted. lia.
+    intro zs. unfold ordered, make. rewrite build_vals_aux by lia.
+    apply dedup_ordered_aux, sort_fuel_sorted. lia.
   Qed.
   (** Construction produces a logarithmic-depth tree. *)
   Lemma make_depth : forall zs, depth (make zs) <= Nat.log2 (length zs) + 1.
   Proof.
-    intro zs. unfold make. eapply Nat.le_trans; [apply build_depth|].
+    intro zs. unfold make. eapply Nat.le_trans; [apply build_depth_aux|].
     apply Nat.add_le_mono_r, Nat.log2_le_mono, prepared_length.
   Qed.
 
@@ -882,7 +882,7 @@ Module ThresholdsT <: THRESHOLDS_ALL.
   Qed.
 
   (** Threshold preparation has the published comparison-sort complexity. *)
-  Lemma make_bigO : (bigO (fun _ => True)
+  Lemma make_complexity : (bigO (fun _ => True)
     (fun zs => N.of_nat
       (((length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1))%nat)) T_make)%N.
   Proof.
@@ -891,7 +891,7 @@ Module ThresholdsT <: THRESHOLDS_ALL.
   Qed.
 
   (** Upper search has the published path-times-bits class. *)
-  Lemma above_bigO : bigO (X := ttree * Z) (fun _ => True)
+  Lemma above_complexity : bigO (X := ttree * Z) (fun _ => True)
     (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
     (fun x => T_above (fst x) (snd x)).
   Proof.
@@ -900,7 +900,7 @@ Module ThresholdsT <: THRESHOLDS_ALL.
   Qed.
 
   (** Lower search has the published path-times-bits class. *)
-  Lemma below_bigO : bigO (X := ttree * Z) (fun _ => True)
+  Lemma below_complexity : bigO (X := ttree * Z) (fun _ => True)
     (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
     (fun x => T_below (fst x) (snd x)).
   Proof.
@@ -909,54 +909,54 @@ Module ThresholdsT <: THRESHOLDS_ALL.
   Qed.
 
   (** Merge sort orders every input list. *)
-  Lemma F1_msort_sorted : forall zs, Sorted Z.le (msort zs).
+  Lemma msort_sorted : forall zs, Sorted Z.le (msort zs).
   Proof.
     intro zs. apply StronglySorted_Sorted, sort_fuel_sorted. lia.
   Qed.
 
   (** Merge sort keeps the input multiset. *)
-  Lemma F2_msort_perm : forall zs, Permutation zs (msort zs).
+  Lemma msort_perm : forall zs, Permutation zs (msort zs).
   Proof.
     intro zs. apply sort_fuel_perm.
   Qed.
 
   (** Deduplication keeps exactly the input values. *)
-  Lemma F3_dedup_vals : forall zs x, In x (dedup_sorted zs) <-> In x zs.
+  Lemma dedup_vals : forall zs x, In x (dedup_sorted zs) <-> In x zs.
   Proof.
-    apply dedup_vals.
+    apply dedup_vals_aux.
   Qed.
 
   (** Deduplication strengthens weak sortedness to strict sortedness. *)
-  Lemma F4_dedup_ordered : forall zs, Sorted Z.le zs ->
+  Lemma dedup_ordered : forall zs, Sorted Z.le zs ->
     StronglySorted Z.lt (dedup_sorted zs).
   Proof.
-    intros zs Hsorted. apply dedup_ordered, Sorted_StronglySorted; [|exact Hsorted].
+    intros zs Hsorted. apply dedup_ordered_aux, Sorted_StronglySorted; [|exact Hsorted].
     intros x y z Hxy Hyz. lia.
   Qed.
 
   (** Sufficient construction fuel preserves the inorder traversal. *)
-  Lemma F5_build_vals : forall fuel zs, length zs <= fuel ->
+  Lemma build_vals : forall fuel zs, length zs <= fuel ->
     vals (build fuel zs) = zs.
   Proof.
-    apply build_vals.
+    apply build_vals_aux.
   Qed.
 
   (** Median construction has logarithmic depth. *)
-  Lemma F6_build_depth : forall fuel zs, length zs <= fuel ->
+  Lemma build_depth : forall fuel zs, length zs <= fuel ->
     depth (build fuel zs) <= Nat.log2 (length zs) + 1.
   Proof.
-    intros fuel zs Hfuel. apply build_depth.
+    intros fuel zs Hfuel. apply build_depth_aux.
   Qed.
 
   (** Increasing fuel to the original list length preserves the constructed tree. *)
-  Lemma F7_make_eq : forall zs,
+  Lemma make_def : forall zs,
     make zs = build (length zs) (dedup_sorted (msort zs)).
   Proof.
     intro zs. unfold make. apply build_fuel_eq; [lia|apply prepared_length].
   Qed.
 
   (** Merge sort fits the declared logarithmic sorting envelope. *)
-  Lemma T1_msort : forall zs,
+  Lemma T_msort_le : forall zs,
     (T_msort zs <= k_sort * N.of_nat
       (length zs * (Nat.log2 (length zs) + 1) + 1) *
       N.of_nat (zb zs + 1))%N.
@@ -965,7 +965,7 @@ Module ThresholdsT <: THRESHOLDS_ALL.
   Qed.
 
   (** Deduplication fits one pass of stored integer comparisons. *)
-  Lemma T2_dedup : forall zs,
+  Lemma T_dedup_sorted_le : forall zs,
     (T_dedup_sorted zs <= k_dedup * N.of_nat ((length zs + 1)%nat) *
       N.of_nat ((zb zs + 1)%nat))%N.
   Proof.
@@ -974,7 +974,7 @@ Module ThresholdsT <: THRESHOLDS_ALL.
   Qed.
 
   (** Median construction fits the logarithmic splitting envelope. *)
-  Lemma T3_build : forall fuel zs, length zs <= fuel ->
+  Lemma T_build_le : forall fuel zs, length zs <= fuel ->
     (T_build fuel zs <= k_build * N.of_nat
       ((length zs * (Nat.log2 (length zs) + 1) + fuel + 1)%nat))%N.
   Proof.
@@ -982,7 +982,7 @@ Module ThresholdsT <: THRESHOLDS_ALL.
   Qed.
 
   (** Upper lookup pays for one path of bounded comparisons. *)
-  Lemma T4_above : forall t z,
+  Lemma T_above_plan_le : forall t z,
     (T_above t z <= k_search * N.of_nat ((depth t + 1)%nat) *
       N.of_nat ((tree_bits t + 1)%nat))%N.
   Proof.
@@ -991,7 +991,7 @@ Module ThresholdsT <: THRESHOLDS_ALL.
   Qed.
 
   (** Lower lookup pays for one path of bounded comparisons. *)
-  Lemma T5_below : forall t z,
+  Lemma T_below_plan_le : forall t z,
     (T_below t z <= k_search * N.of_nat ((depth t + 1)%nat) *
       N.of_nat ((tree_bits t + 1)%nat))%N.
   Proof.

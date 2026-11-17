@@ -3525,7 +3525,7 @@ Module DestroyT (O : OPS)
   Proof.
     intro s. unfold c_ds. apply destroy_source_clock.
   Qed.
-  Lemma destroy_bigO : bigO (fun _ : P.t => True)
+  Lemma destroy_complexity : bigO (fun _ : P.t => True)
     (fun s => N.of_nat (destroy_work s * (function_width s + 1))) T_destroy.
   Proof.
     exists c_ds. intros s Htrue. pose proof (T_destroy_le s) as Hclock.
@@ -3534,20 +3534,20 @@ Module DestroyT (O : OPS)
   Definition k_split : N := 4096.
   Definition k_copies : N := 16384 * (PTrieT.c_trie + PM.c_pm + 1).
   Definition k_wrap : N := 1.
-  Lemma F1_destroy_phases : forall s, destroy s =
+  Lemma destroy_def : forall s, destroy s =
     match split s with None => None | Some split_s => copies split_s end.
   Proof.
     reflexivity.
   Qed.
   (** Splitting preserves SSA and the stated finite-observation fuel bounds. *)
-  Lemma F2_split_preserves : forall s split_s, ssa_wf s -> split s = Some split_s ->
+  Lemma split_semantics_preserved : forall s split_s, ssa_wf s -> split s = Some split_s ->
     ssa_wf split_s /\ forall n ins r, r <> Timeout ->
       (run_with O.eval O.test n s ins = r -> run_with O.eval O.test (2 * n) split_s ins = r) /\
       (run_with O.eval O.test n split_s ins = r -> run_with O.eval O.test n s ins = r).
   Proof.
     exact split_preserves_complete.
   Qed.
-  Lemma F3_moves_checked : forall s p par tmp sq, copies s = Some p ->
+  Lemma checked_moves_valid : forall s p par tmp sq, copies s = Some p ->
     In (par, tmp, sq) (checked_moves s) ->
     NoDup (map fst par) /\ ~ In tmp (map fst par ++ map snd par) /\
       PM.check_moves par tmp sq = true.
@@ -3556,40 +3556,40 @@ Module DestroyT (O : OPS)
     pose proof (checked_moves_good s) as Hchecked.
     rewrite Forall_forall in Hchecked. exact (Hchecked (par, tmp, sq) Hin).
   Qed.
-  Lemma F4_edge_copy_sim : forall s p par tmp sq, copies s = Some p ->
+  Lemma edge_copy_simulates : forall s p par tmp sq, copies s = Some p ->
     In (par, tmp, sq) (checked_moves s) -> forall (e : positive -> option O.C) x,
       x <> tmp -> exec_seq sq e x = exec_par par e x.
   Proof.
     intros s p par tmp sq Hcopies Hin e x Hneq.
-    destruct (F3_moves_checked s p par tmp sq Hcopies Hin) as [Hdistinct [Hfresh Hchecked]].
+    destruct (checked_moves_valid s p par tmp sq Hcopies Hin) as [Hdistinct [Hfresh Hchecked]].
     exact (PM.check_moves_sound par tmp sq Hdistinct Hfresh Hchecked O.C e x Hneq).
   Qed.
-  Lemma F5_block_sim : forall s p ss sp, ssa_wf s -> copies s = Some p ->
+  Lemma block_copies_simulate : forall s p ss sp, ssa_wf s -> copies s = Some p ->
     entered_agree s p ss sp ->
     copy_outcomes s p (step O.eval O.test s ss) (step O.eval O.test p sp).
   Proof.
     intros s p ss sp Hssa Hcopies Hagree. exact (copies_block_sim s p ss sp Hcopies Hagree).
   Qed.
-  Lemma F6_copies_run : forall s p, ssa_wf s -> copies s = Some p ->
+  Lemma copies_run_agrees : forall s p, ssa_wf s -> copies s = Some p ->
     forall n ins, run_with O.eval O.test n s ins = run_with O.eval O.test n p ins.
   Proof.
     intros s p Hssa Hcopies. exact (copies_run s p Hcopies).
   Qed.
-  Lemma F7_copies_imp : forall s p, copies s = Some p -> imp_form p.
+  Lemma copies_imp_form : forall s p, copies s = Some p -> imp_form p.
   Proof.
     intros s p Hcopies. exact (proj2 (proj2 (copies_shape s p Hcopies))).
   Qed.
-  Lemma F8_run_mono : forall (p : P.t) n m ins r, n <= m -> r <> Timeout ->
+  Lemma run_fuel_mono : forall (p : P.t) n m ins r, n <= m -> r <> Timeout ->
     run_with O.eval O.test n p ins = r -> run_with O.eval O.test m p ins = r.
   Proof.
     apply run_with_mono.
   Qed.
-  Lemma T1_split : forall s,
+  Lemma T_split_le : forall s,
     (T_split s <= k_split * N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
   Proof.
     intro s. unfold k_split. apply split_source_clock.
   Qed.
-  Lemma F9_moves_size : forall s split_s, split s = Some split_s ->
+  Lemma checked_moves_size_le : forall s split_s, split s = Some split_s ->
     fold_right (fun mc n => length (fst (fst mc)) + 1 + n) 0 (checked_moves split_s) <=
       destroy_work s /\
     forall par tmp sq, In (par, tmp, sq) (checked_moves split_s) ->
@@ -3615,7 +3615,7 @@ Module DestroyT (O : OPS)
         (function_width_positive s) Hwidth) as Hfresh.
       rewrite Htmp. lia.
   Qed.
-  Lemma T2_copies : forall s split_s, split s = Some split_s ->
+  Lemma T_copies_split : forall s split_s, split s = Some split_s ->
     (T_copies split_s <= k_copies * N.of_nat (destroy_work s) *
       N.of_nat (function_width s + 1) +
       fold_right N.add 0%N (map (fun mc =>
@@ -3626,7 +3626,7 @@ Module DestroyT (O : OPS)
     intros s split_s Hsplit. pose proof (copies_source_clock s split_s Hsplit) as Hcopies.
     unfold k_copies. lia.
   Qed.
-  Lemma T3_wrapper : forall s,
+  Lemma T_destroy_split : forall s,
     (T_destroy s <= T_split s +
       match split s with None => k_wrap | Some split_s => T_copies split_s + k_wrap end)%N.
   Proof.

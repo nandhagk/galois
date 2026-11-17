@@ -75,7 +75,7 @@ Module Type LINCERT_LAWS (X : KEY) (Import C : LINCERT_BASE X).
   Parameter check_entails_sound : forall P c k, check_entails P c k = true ->
     forall v, Forall (sat v) P -> sat v c.
   (** Certificates without integer cuts also entail their rational conclusion. *)
-  Parameter check_entails_sound_Q : forall P c k,
+  Parameter check_entails_sound_rational : forall P c k,
     check_entails P c k = true -> cut k = false ->
     forall v, Forall (satQ v) P -> satQ v c.
   (** Accepted contradictions exclude every integer model. *)
@@ -129,18 +129,18 @@ Module Type LINCERT_TIME (X : KEY_T) (Import C : LINCERT X).
   Parameter T_check_empty_le : forall P ms,
     (T_check_empty P ms <= c_lc * N.of_nat ((csize P ms + 1)%nat))%N.
   (** Combination charges the rows with a nonzero multiplier. *)
-  Parameter combine_bigO : bigO (fun _ : list (lcons X.t) * list Z => True)
+  Parameter combine_complexity : bigO (fun _ : list (lcons X.t) * list Z => True)
     (fun x => N.of_nat (csize_nz (fst x) (snd x)))
     (fun x => T_combine (fst x) (snd x)).
   (** Entailment checking charges the nonzero rows, the certificate scale and the conclusion. *)
-  Parameter check_entails_bigO :
+  Parameter check_entails_complexity :
     bigO (fun _ : list (lcons X.t) * lcons X.t * cert => True)
     (fun x => N.of_nat (csize_nz (fst (fst x)) (mults (snd x)) +
       (Z.size_nat (scale (snd x)) + 1) *
         (lsize (snd (fst x)) + cbits (fst (fst x)) (mults (snd x)) + 1)))
     (fun x => T_check_entails (fst (fst x)) (snd (fst x)) (snd x)).
   (** Contradiction checking charges the nonzero rows. *)
-  Parameter check_empty_bigO : bigO (fun _ : list (lcons X.t) * list Z => True)
+  Parameter check_empty_complexity : bigO (fun _ : list (lcons X.t) * list Z => True)
     (fun x => N.of_nat (csize_nz (fst x) (snd x)))
     (fun x => T_check_empty (fst x) (snd x)).
 End LINCERT_TIME.
@@ -171,7 +171,7 @@ Module Type LINCERT_PLAN (X : KEY_T) (Import C : LINCERT_T X).
   Parameter combine_sound : forall P ms s, combine P ms = Some s ->
     forall v, Forall (sat v) P -> sat v s.
   (** Combination without cuts is valid over rational stores. *)
-  Parameter combine_sound_Q : forall P ms s, combine P ms = Some s ->
+  Parameter combine_sound_rational : forall P ms s, combine P ms = Some s ->
     forall v, Forall (satQ v) P -> satQ v s.
 End LINCERT_PLAN.
 

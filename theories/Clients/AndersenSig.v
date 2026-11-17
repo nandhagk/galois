@@ -199,19 +199,19 @@ Module Type ANDERSEN_TIME (V : VALUE_T with Definition t := positive)
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + c_andersen)%N.
   (** Seeding is linear in the constraints and initial pointers at the database unit. *)
-  Parameter seed_bigO : bigO (fun _ => True)
+  Parameter seed_complexity : bigO (fun _ => True)
     (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
       D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
     T_seed.
   (** Compilation emits a fixed program, so its cost is a constant. *)
-  Parameter compile_bigO : bigO (fun _ => True) (fun _ => 0%N) T_compile.
+  Parameter compile_complexity : bigO (fun _ => True) (fun _ => 0%N) T_compile.
   (** A points-to query is linear in the database unit and the bits of its two cells. *)
-  Parameter points_bigO : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
+  Parameter points_complexity : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
     (fun z => let '(db, x, a) := z in
       N.of_nat (3 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
     (fun z => let '(db, x, a) := z in T_points db x a).
   (** A solve costs its seed, the cube of the fixed program for planning, and the run. *)
-  Parameter solve_bigO : bigO
+  Parameter solve_complexity : bigO
     (fun x : N * nat * pointer_input * limits =>
       let '(B, U, q, lim) := x in
       (D.ids (snd (solve q lim)) <= B)%N /\ D.unit (snd (solve q lim)) <= U)
@@ -235,34 +235,34 @@ Module Type ANDERSEN_PLAN (V : VALUE_T with Definition t := positive)
     (Import A : ANDERSEN_T V I J D R).
   Parameter k_rules k_seed k_wrap : N.
   (** The least source relation contains all seeds and is closed under the four instructions. *)
-  Parameter F1_source_closed : forall q, pointer_closed q (may_points q).
+  Parameter source_closed : forall q, pointer_closed q (may_points q).
   (** Every relation closed under the four source rules contains the least source relation. *)
-  Parameter F2_source_least : forall q r, pointer_closed q r ->
+  Parameter source_least : forall q r, pointer_closed q r ->
     forall x a, may_points q x a -> r x a.
   (** Each generated rule is valid by its matching source closure rule. *)
-  Parameter F3_rule_valid : forall q r rho, In r (rules V.t (compile q)) ->
+  Parameter rule_valid : forall q r rho, In r (rules V.t (compile q)) ->
     Forall (model_atom V.prim (andersen_model q) (program_kind (compile q)) rho)
       (query V.t r) ->
     model_actions V.prim (andersen_model q) (program_kind (compile q)) rho (actions V.t r).
   (** Initial database rows satisfy the least inclusion model. *)
-  Parameter F4_seed_sat : forall q,
+  Parameter seed_sat_spec : forall q,
     sat V.merge (andersen_model q) (fun _ => tt) (D.view (seed q)).
   (** Engine derivations of points-to rows yield source inclusion derivations. *)
-  Parameter F5_derives_source : forall q x a,
+  Parameter derives_source : forall q x a,
     derives V.prim (compile q) (D.view (seed q)) 5 [Val x; Val a] -> may_points q x a.
   (** Source inclusion derivations occur in every closed extension of the seed view that keeps
       the program's kinds and sorts. *)
-  Parameter F6_closed_source : forall q w, closed V.prim V.merge (compile q) w ->
+  Parameter closed_source : forall q w, closed V.prim V.merge (compile q) w ->
     (forall f k o, row (D.view (seed q)) f k o -> row w f k o) ->
     (forall f, kind w f = program_kind (compile q) f) ->
     view_sorted (program_sorts (compile q)) w ->
     forall x a, may_points q x a -> row w 5 [Val x; Val a] None.
   (** Concrete updates preserve coverage by every source-closed relation. *)
-  Parameter F7_step_covered : forall q r instruction before after,
+  Parameter step_covered : forall q r instruction before after,
     pointer_closed q r -> In instruction (constraints q) -> memory_covered r before ->
     pointer_exec instruction before = Some after -> memory_covered r after.
   (** Wrapper composition retains each actual primitive cost. *)
-  Parameter T1_wrapper : forall q lim, let p := compile q in let cp := R.plan p in
+  Parameter T_solve_split : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
 End ANDERSEN_PLAN.

@@ -614,7 +614,7 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
   Qed.
 
   (** Inclusion is linear in both disjunction sizes for the fixed cap. *)
-  Lemma leb_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma leb_complexity : bigO (X := t * t) (fun _ => True)
     (fun xy => N.of_nat (size (fst xy) + size (snd xy)))
     (fun xy => T_leb (fst xy) (snd xy)).
   Proof.
@@ -625,7 +625,7 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
   Qed.
 
   (** Joining is linear in both disjunction sizes for the fixed cap. *)
-  Lemma join_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma join_complexity : bigO (X := t * t) (fun _ => True)
     (fun xy => N.of_nat (size (fst xy) + size (snd xy)))
     (fun xy => T_join (fst xy) (snd xy)).
   Proof.
@@ -636,7 +636,7 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
   Qed.
 
   (** Bottom testing is linear in the disjunction size. *)
-  Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Lemma is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
   Proof.
     apply bigO_intro with (c := c_lat).
     intros a _.
@@ -645,7 +645,7 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
   Qed.
 
   (** Clipping within twice the cap is linear in raw length and component sizes. *)
-  Lemma clip_bigO : bigO (fun xs : list L.t => length xs <= 2 * C.k)
+  Lemma clip_complexity : bigO (fun xs : list L.t => length xs <= 2 * C.k)
     (fun xs => N.of_nat (length xs + fold_right (fun a n => L.size a + n) 0 xs)) T_clip.
   Proof.
     apply bigO_intro with (c := c_lat).

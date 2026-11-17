@@ -326,7 +326,7 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
   Qed.
 
   (** Inclusion is linear in both map sizes. *)
-  Theorem leb_bigO : bigO (X := t * t) (fun _ => True)
+  Theorem leb_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_leb (fst ab) (snd ab)).
   Proof.
@@ -337,7 +337,7 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
   Qed.
 
   (** Joining is linear in both map sizes. *)
-  Theorem join_bigO : bigO (X := t * t) (fun _ => True)
+  Theorem join_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_join (fst ab) (snd ab)).
   Proof.
@@ -348,7 +348,7 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
   Qed.
 
   (** Bottom testing is linear in the map size. *)
-  Theorem is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Theorem is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
   Proof.
     apply bigO_intro with (c := c_lat).
     intros a _.

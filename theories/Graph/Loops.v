@@ -2598,7 +2598,7 @@ Proof.
         - apply loop_successor_width; [exact Hgraph|apply Hincl; now left].
         - apply IH. intros u Hu. apply Hincl. now right. }
       exact (Hall _ Hlisted). }
-  pose proof (LoopTraceClock.F7b_events_raw g [r]) as Hevents.
+  pose proof (LoopTraceClock.trace_length_raw_le g [r]) as Hevents.
   unfold LoopTraceClock.n_reach, LoopTraceClock.e_reach, LoopTraceClock.trace in *.
   repeat split; try assumption. lia.
 Qed.
@@ -2664,7 +2664,7 @@ Local Lemma loop_trace_clock_bound : forall g r,
 Proof.
   intros g r Hgraph Hcounts Hroot.
   destruct (loop_trace_measures g r Hgraph Hcounts Hroot) as [Hvertices [Hedges [Hwidth _]]].
-  pose proof (LoopTraceClock.T4_raw g [r]) as Hclock.
+  pose proof (LoopTraceClock.T_search_trace_raw_le g [r]) as Hclock.
   pose proof (DomProducer.dom_size_value (nv g)) as Hnv.
   pose proof (DomProducer.dom_size_value (ne g)) as Hne.
   destruct Hcounts as [Hcachev Hcachee].
@@ -4918,7 +4918,7 @@ Module LoopsT <: LOOPS_ALL.
   Definition assembly_prefix g t n :=
     fold_left install (firstn n (forest_rows g t)) (Loops Empty Empty Empty).
 
-  Lemma F1_tree_initial : forall g t r,
+  Lemma tree_initial_inv : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r (tree_initial g).
   Proof.
@@ -4982,7 +4982,7 @@ Module LoopsT <: LOOPS_ALL.
     now rewrite Hwhite, Hpending.
   Qed.
 
-  Lemma F2_tree_step : forall g t r st next,
+  Lemma tree_step_inv : forall g t r st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r st -> tree_step g t st = inl next ->
     tree_invariant g t r next /\ (tree_potential g t next < tree_potential g t st)%N.
@@ -5000,7 +5000,7 @@ Module LoopsT <: LOOPS_ALL.
       rewrite !tree_potential_work. lia.
   Qed.
 
-  Lemma F3_tree_driver : forall g t r,
+  Lemma tree_driver_spec : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     loopN (tree_step g t) (tree_fuel g) (tree_initial g) = inr (classify g t).
   Proof.
@@ -5008,7 +5008,7 @@ Module LoopsT <: LOOPS_ALL.
     exact (loop_classify_driver g t r Hgraph Hprepared Htree).
   Qed.
 
-  Lemma F4_tree_order : forall g t r,
+  Lemma tree_order : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     NoDup (loop_order (classify g t)) /\ hd_error (loop_order (classify g t)) = Some r /\
     (forall v, In v (loop_order (classify g t)) <-> reach (base g) [r] v) /\
@@ -5019,7 +5019,7 @@ Module LoopsT <: LOOPS_ALL.
     exact (loop_classify_order g t r Hgraph Hprepared Htree).
   Qed.
 
-  Lemma F5_back_edges : forall g t r u v,
+  Lemma back_edges_spec : forall g t r u v,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (back_member (classify g t) u v <->
       reach (base g) [r] u /\ edge (base g) u v /\ dominates (base g) r v u) /\
@@ -5030,7 +5030,7 @@ Module LoopsT <: LOOPS_ALL.
     unfold back_member. rewrite <- loop_back_present_row. now split.
   Qed.
 
-  Lemma F6_latch_count : forall g t r,
+  Lemma latch_count : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     NoDup (headers g t) /\ incl (headers g t) (nodes g) /\
     fold_right (fun h n => length (latches (classify g t) h) + n) 0 (headers g t) <=
@@ -5046,7 +5046,7 @@ Module LoopsT <: LOOPS_ALL.
       reach (base g) [r] v /\ edge (base g) v h /\ dominates (base g) r h v).
   Proof.
     intros g t r h v Hgraph Hprepared Htree.
-    destruct (F5_back_edges g t r v h Hgraph Hprepared Htree) as [Hback Hlatch].
+    destruct (back_edges_spec g t r v h Hgraph Hprepared Htree) as [Hback Hlatch].
     now rewrite Hlatch, Hback.
   Qed.
 
@@ -5114,7 +5114,7 @@ Module LoopsT <: LOOPS_ALL.
       now apply (proj1 (Forall_forall _ _) Hpending v).
   Qed.
 
-  Lemma F7_body_initial : forall g t r h,
+  Lemma body_initial_inv : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h (body_initial h (latches (classify g t) h)).
   Proof.
@@ -5135,11 +5135,11 @@ Module LoopsT <: LOOPS_ALL.
     - split.
       + intros v [<-|Hin]; [|contradiction]. unfold collected. apply loop_collect_header.
       + intros v Hin.
-        destruct (F5_back_edges g t r v h Hgraph Hprepared Htree) as [Hback Hlatch].
+        destruct (back_edges_spec g t r v h Hgraph Hprepared Htree) as [Hback Hlatch].
         exact (proj1 (proj1 Hback (proj1 Hlatch Hin))).
   Qed.
 
-  Lemma F8_body_step : forall g t r h st next,
+  Lemma body_step_inv : forall g t r h st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h st -> body_step g t h st = inl next ->
     body_invariant g t r h next /\ (body_potential g t h next < body_potential g t h st)%N.
@@ -5171,7 +5171,7 @@ Module LoopsT <: LOOPS_ALL.
   Qed.
 
 
-  Lemma F9_body_driver : forall g t r h,
+  Lemma body_driver_spec : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     loopN (body_step g t h) (body_fuel g (latches (classify g t) h))
       (body_initial h (latches (classify g t) h)) = inr (collected g t h).
@@ -5182,7 +5182,7 @@ Module LoopsT <: LOOPS_ALL.
   Qed.
 
 
-  Lemma F10_body_exact : forall g t r h,
+  Lemma body_exact : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     NoDup (collected g t h) /\ incl (collected g t h) (nodes g) /\
       forall v, In v (collected g t h) <-> natural_loop (base g) r h v.
@@ -5192,7 +5192,7 @@ Module LoopsT <: LOOPS_ALL.
   Qed.
 
 
-  Lemma F11_laminar : forall g r h outer v,
+  Lemma loops_laminar : forall g r h outer v,
     natural_loop g r h v -> natural_loop g r outer v -> h <> outer ->
     loop_inside g r h outer \/ loop_inside g r outer h.
   Proof.
@@ -5209,7 +5209,7 @@ Module LoopsT <: LOOPS_ALL.
         (loop_meeting_header g r h outer v Hinner Houter Hsecond Hne) Hsecond Hne).
   Qed.
 
-  Lemma F12_header_order : forall g t r inner outer,
+  Lemma header_order : forall g t r inner outer,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     loop_inside (base g) r inner outer -> order_before (headers g t) outer inner.
   Proof.
@@ -5218,7 +5218,7 @@ Module LoopsT <: LOOPS_ALL.
     assert (Hselected : forall h, natural_header (base g) r h ->
       match loop_latches_at (classify g t) h with [] => false | _ => true end = true).
     { intros h [latch [Hreach [Hedge Hdom]]].
-      destruct (F5_back_edges g t r latch h Hgraph Hprepared Htree) as [Hback Hlatch].
+      destruct (back_edges_spec g t r latch h Hgraph Hprepared Htree) as [Hback Hlatch].
       assert (Hin : In latch (latches (classify g t) h)).
       { apply (proj2 Hlatch), (proj2 Hback). repeat split; assumption. }
       change (In latch (loop_latches_at (classify g t) h)) in Hin.
@@ -5226,7 +5226,7 @@ Module LoopsT <: LOOPS_ALL.
     assert (Hmember : natural_loop (base g) r outer inner).
     { apply Hcontained. split; [exact Hinner|now left]. }
     pose proof (loop_header_dominates (base g) r outer inner Hmember) as Hdom.
-    destruct (F4_tree_order g t r Hgraph Hprepared Htree) as [_ [_ [_ Horder]]].
+    destruct (tree_order g t r Hgraph Hprepared Htree) as [_ [_ [_ Horder]]].
     cbv beta delta [headers loop_headers_of]. apply loop_order_filter.
     - apply Horder.
       + now apply loop_header_reachable.
@@ -5235,7 +5235,7 @@ Module LoopsT <: LOOPS_ALL.
     - now apply Hselected.
   Qed.
 
-  Lemma F13_install : forall l h vs,
+  Lemma install_spec : forall l h vs,
     body (install l (h, vs)) = PTrieCode.set h vs (body l) /\
     parent (install l (h, vs)) =
       match trie_get h (header l) with
@@ -5249,7 +5249,7 @@ Module LoopsT <: LOOPS_ALL.
     repeat split; reflexivity.
   Qed.
 
-  Lemma F14_assembly : forall g t r,
+  Lemma assembly_immediate_outer : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (forall n, forest_supported g (assembly_prefix g t n)) /\
     (forall v h,
@@ -5270,20 +5270,20 @@ Module LoopsT <: LOOPS_ALL.
       + intros h outer. now apply parent_spec.
   Qed.
 
-  Lemma F15_forest_equation : forall g t,
+  Lemma forest_def : forall g t,
     forest g t = fold_left install (forest_rows g t) (Loops Empty Empty Empty).
   Proof.
     intros g t. unfold forest_rows, install, collect, classify, latches.
     unfold forest. apply loop_assemble_equation.
   Qed.
 
-  Lemma F15a_assemble : forall rows,
+  Lemma assemble_def : forall rows,
     assemble rows = fold_left install rows (Loops Empty Empty Empty).
   Proof.
     reflexivity.
   Qed.
 
-  Lemma F16_nesting_charge : forall g t r,
+  Lemma nesting_charge : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     fold_right (fun h n => body_work g (collected g t h) + n) 0 (headers g t) <=
       (graph_n (base g) + graph_e (base g)) * loop_depth g (forest g t).
@@ -5292,14 +5292,14 @@ Module LoopsT <: LOOPS_ALL.
     exact (loop_classify_nesting_charge g t r Hgraph Hprepared Htree).
   Qed.
 
-  Lemma F17_retreat_trace : forall g t r,
+  Lemma retreat_trace_spec : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     exists final, dfs_roots (base g) []
       (firstn 1 (loop_order (classify g t)))
       (retreat_trace g (firstn 1 (loop_order (classify g t)))) final.
   Proof.
     intros g t r Hgraph Hprepared Htree.
-    destruct (F4_tree_order g t r Hgraph Hprepared Htree) as [_ [Hroot _]].
+    destruct (tree_order g t r Hgraph Hprepared Htree) as [_ [Hroot _]].
     pose proof (loop_first_head (loop_order (classify g t)) r Hroot) as Hfirst.
     assert (Hlisted : forall v,
       In v (firstn 1 (loop_order (classify g t))) -> In v (nodes g)).
@@ -5312,7 +5312,7 @@ Module LoopsT <: LOOPS_ALL.
     - exact Hlisted.
   Qed.
 
-  Lemma F18_test_back : forall scan es,
+  Lemma test_back_spec : forall scan es,
     test_back (loop_back_rows scan) es = true <->
       forall u v, In (Edge Back u v) es -> back_member scan u v.
   Proof.
@@ -5337,7 +5337,7 @@ Module LoopsT <: LOOPS_ALL.
       destruct (Hall u v Hin) as [row [Hrow Hget]]. now rewrite Hrow, Hget.
   Qed.
 
-  Lemma F19_retreat_reflect : forall g r es final,
+  Lemma retreat_reflect : forall g r es final,
     dfs_roots g [] [r] es final ->
     ((forall u v, In (Edge Back u v) es -> dominates g r v u) <-> reducible g r).
   Proof.
@@ -5348,7 +5348,7 @@ Module LoopsT <: LOOPS_ALL.
     - intros Hreducible u v Hin. apply Hreducible. now exists es, final.
   Qed.
 
-  Lemma F20_reducible_equation : forall g t,
+  Lemma reducible_b_def : forall g t,
     reducible_b g t = test_back (loop_back_rows (classify g t))
       (retreat_trace g (firstn 1 (loop_order (classify g t)))).
   Proof.
@@ -5356,7 +5356,7 @@ Module LoopsT <: LOOPS_ALL.
     now rewrite loop_first_equation.
   Qed.
 
-  Lemma T1_tree_step : forall g t r st next,
+  Lemma T_tree_step_credit : forall g t r st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r st -> tree_step g t st = inl next ->
     (T_tree_step g t st + tree_credit g t next + c_loopN <= tree_credit g t st)%N.
@@ -5378,12 +5378,12 @@ Module LoopsT <: LOOPS_ALL.
       now apply Forall_forall with (x := task) in Hkeys. }
     pose proof (loop_tree_continue_clock g t st next (graph_width (base g)) Hwidth Hstep)
       as Hclock.
-    pose proof (proj2 (F2_tree_step g t r st next Hgraph Hprepared Htree Hinv Hstep)) as Hdrop.
+    pose proof (proj2 (tree_step_inv g t r st next Hgraph Hprepared Htree Hinv Hstep)) as Hdrop.
     clear -Hclock Hdrop.
     unfold T_tree_step. time_simpl. unfold tree_credit, k_tree_step. nia.
   Qed.
 
-  Lemma T2_tree_stop : forall g t r st scan,
+  Lemma T_tree_step_stop_le : forall g t r st scan,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r st -> tree_step g t st = inr scan ->
     (T_tree_step g t st <= k_tree_stop * N.of_nat (graph_n (base g) + 1))%N.
@@ -5417,25 +5417,25 @@ Module LoopsT <: LOOPS_ALL.
       (loop_classify_callback_clock g t) (tree_invariant g t r) (tree_credit g t)
       (k_tree_stop * N.of_nat (graph_n (base g) + 1))%N).
     - intros st next Hinv Hstep. split.
-      + exact (proj1 (F2_tree_step g t r st next Hgraph Hprepared Htree Hinv Hstep)).
-      + pose proof (T1_tree_step g t r st next Hgraph Hprepared Htree Hinv Hstep) as Hclock.
+      + exact (proj1 (tree_step_inv g t r st next Hgraph Hprepared Htree Hinv Hstep)).
+      + pose proof (T_tree_step_credit g t r st next Hgraph Hprepared Htree Hinv Hstep) as Hclock.
         unfold T_tree_step in Hclock. cbn beta iota zeta in Hclock.
         unfold loop_classify_callback_clock. lia.
     - intros st result Hinv Hstep.
-      pose proof (T2_tree_stop g t r st result Hgraph Hprepared Htree Hinv Hstep) as Hclock.
+      pose proof (T_tree_step_stop_le g t r st result Hgraph Hprepared Htree Hinv Hstep) as Hclock.
       unfold T_tree_step in Hclock. cbn beta iota zeta in Hclock.
       unfold loop_classify_callback_clock. lia.
-    - now apply (F1_tree_initial g t r).
+    - now apply (tree_initial_inv g t r).
   Qed.
 
-  Lemma T3_classify : forall g t r,
+  Lemma T_classify_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_classify g t <= k_classify *
       N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
   Proof.
     intros g t r Hgraph Hprepared Htree.
-    pose proof (F3_tree_driver g t r Hgraph Hprepared Htree) as Hdone.
+    pose proof (tree_driver_spec g t r Hgraph Hprepared Htree) as Hdone.
     pose proof (loop_classify_clock_wrapper g t (classify g t) Hdone) as Hwrapper.
     fold (tree_fuel g) in Hwrapper.
     fold (tree_initial g) in Hwrapper.
@@ -5527,7 +5527,7 @@ Module LoopsT <: LOOPS_ALL.
     pose proof (filter_length_le (fun u => match trie_get u (pre t) with
       | Some _ => true | None => false end) (preds g v)) as Hlength.
     pose proof (loop_body_fresh_work g (collected g t h) v rest seen
-      (proj1 (F10_body_exact g t r h Hgraph Hprepared Htree Hheader)) Hin Hseen _ Hlength)
+      (proj1 (body_exact g t r h Hgraph Hprepared Htree Hheader)) Hin Hseen _ Hlength)
       as Hwork.
     rewrite length_app in Hwork. cbn [length] in Hwork.
     apply time_of_nat_le in Hwork. rewrite !Nat2N.inj_add in Hwork, Hclock.
@@ -5538,13 +5538,13 @@ Module LoopsT <: LOOPS_ALL.
     unfold loop_unseen_work in Hwork. cbn beta in Hwork. nia.
   Qed.
 
-  Lemma T4_body_step : forall g t r h st next,
+  Lemma T_body_step_credit : forall g t r h st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h st -> body_step g t h st = inl next ->
     (T_body_step g t h st + body_credit g t h next + c_loopN <= body_credit g t h st)%N.
   Proof.
     intros g t r h [pending seen answer] next Hgraph Hprepared Htree Hheader Hinv Hstep.
-    pose proof (F8_body_step g t r h _ next Hgraph Hprepared Htree Hheader Hinv Hstep)
+    pose proof (body_step_inv g t r h _ next Hgraph Hprepared Htree Hheader Hinv Hstep)
       as [Hnext _].
     destruct Hinv as [_ [_ [_ [_ [_ Hpending]]]]].
     destruct Hnext as [_ [_ [_ [_ [Hsubset _]]]]].
@@ -5561,7 +5561,7 @@ Module LoopsT <: LOOPS_ALL.
   Qed.
 
 
-  Lemma T5_body_stop : forall g t r h st result,
+  Lemma T_body_step_stop_le : forall g t r h st result,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h st -> body_step g t h st = inr result ->
     (T_body_step g t h st <= k_body_stop * N.of_nat (length (collected g t h) + 1))%N.
@@ -5610,20 +5610,20 @@ Module LoopsT <: LOOPS_ALL.
       (loop_body_clock g t h) (body_invariant g t r h) (body_credit g t h)
       (k_body_stop * N.of_nat (length (collected g t h) + 1))%N).
     - intros st next Hinv Hstep. split.
-      + exact (proj1 (F8_body_step g t r h st next Hgraph Hprepared Htree Hheader Hinv Hstep)).
-      + pose proof (T4_body_step g t r h st next Hgraph Hprepared Htree Hheader Hinv Hstep)
+      + exact (proj1 (body_step_inv g t r h st next Hgraph Hprepared Htree Hheader Hinv Hstep)).
+      + pose proof (T_body_step_credit g t r h st next Hgraph Hprepared Htree Hheader Hinv Hstep)
           as Hclock.
         unfold T_body_step in Hclock. cbn beta iota zeta in Hclock.
         unfold loop_body_clock. lia.
     - intros st result Hinv Hstep.
-      pose proof (T5_body_stop g t r h st result Hgraph Hprepared Htree Hheader Hinv Hstep)
+      pose proof (T_body_step_stop_le g t r h st result Hgraph Hprepared Htree Hheader Hinv Hstep)
         as Hclock.
       unfold T_body_step in Hclock. cbn beta iota zeta in Hclock.
       unfold loop_body_clock. lia.
-    - now apply (F7_body_initial g t r h).
+    - now apply (body_initial_inv g t r h).
   Qed.
 
-  Lemma T6_collect : forall g t r h,
+  Lemma T_collect_le : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     (T_collect g t h (latches (classify g t) h) <= k_collect *
       (N.of_nat (body_work g (collected g t h) +
@@ -5632,7 +5632,7 @@ Module LoopsT <: LOOPS_ALL.
         N.of_nat (N.size_nat (body_fuel g (latches (classify g t) h)))))%N.
   Proof.
     intros g t r h Hgraph Hprepared Htree Hheader.
-    pose proof (F9_body_driver g t r h Hgraph Hprepared Htree Hheader) as Hdone.
+    pose proof (body_driver_spec g t r h Hgraph Hprepared Htree Hheader) as Hdone.
     assert (Hheaderwidth : Pos.size_nat h <= graph_width (base g)).
     { apply loop_listed_width. rewrite loop_nodes_verts.
       apply (loop_reachable_listed (base g) r h Hgraph (proj1 Htree)).
@@ -5672,7 +5672,7 @@ Module LoopsT <: LOOPS_ALL.
   Qed.
 
 
-  Lemma T7_install : forall g l h vs,
+  Lemma T_install_le : forall g l h vs,
     forest_supported g l -> In h (nodes g) -> incl vs (nodes g) ->
     (T_install l (h, vs) <= k_install * N.of_nat (length vs + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
@@ -5686,7 +5686,7 @@ Module LoopsT <: LOOPS_ALL.
   Qed.
 
 
-  Lemma T7a_assemble : forall g t r,
+  Lemma T_assemble_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_assemble (forest_rows g t) <= k_install *
       N.of_nat
@@ -5694,7 +5694,7 @@ Module LoopsT <: LOOPS_ALL.
           0%nat (headers g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   Proof.
     intros g t r Hgraph Hprepared Htree.
-    destruct (F6_latch_count g t r Hgraph Hprepared Htree) as [_ [Hheaders _]].
+    destruct (latch_count g t r Hgraph Hprepared Htree) as [_ [Hheaders _]].
     assert (Hrows : forall h vertices, In (h, vertices) (forest_rows g t) ->
       Pos.size_nat h <= graph_width (base g) /\
         forall v, In v vertices -> Pos.size_nat v <= graph_width (base g)).
@@ -5702,7 +5702,7 @@ Module LoopsT <: LOOPS_ALL.
       destruct Hin as [key [Heq Hin]]. inversion Heq; subst h vertices.
       split; [apply loop_listed_width; now apply Hheaders|].
       intros v Hv. apply loop_listed_width.
-      apply (proj1 (proj2 (F10_body_exact g t r key Hgraph Hprepared Htree Hin))).
+      apply (proj1 (proj2 (body_exact g t r key Hgraph Hprepared Htree Hin))).
       exact Hv. }
     pose proof (loop_assemble_clock (forest_rows g t) (graph_width (base g)) Hrows) as Hclock.
     unfold forest_rows in Hclock. rewrite loop_fold_map in Hclock.
@@ -5711,7 +5711,7 @@ Module LoopsT <: LOOPS_ALL.
   Qed.
 
 
-  Lemma T7b_fuel_widths : forall g t r,
+  Lemma fuel_widths_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (fold_right (fun h cost =>
       N.of_nat (N.size_nat (body_fuel g (latches (classify g t) h))) + cost)%N
@@ -5720,7 +5720,7 @@ Module LoopsT <: LOOPS_ALL.
         N.of_nat (graph_width (base g) + 1))%N.
   Proof.
     intros g t r Hgraph Hprepared Htree.
-    destruct (F6_latch_count g t r Hgraph Hprepared Htree)
+    destruct (latch_count g t r Hgraph Hprepared Htree)
       as [Hunique [Hlisted Hedges]].
     assert (Hnodes : length (nodes g) = graph_n (base g)).
     { destruct g as [[vertices adjacency] predecessors vertex_count edge_count]. reflexivity. }
@@ -5758,7 +5758,7 @@ Module LoopsT <: LOOPS_ALL.
   Qed.
 
 
-  Lemma T7c_forest_wrapper : forall g t,
+  Lemma T_forest_split : forall g t,
     (T_forest g t <= k_forest * (T_classify g t +
       fold_right (fun h cost =>
         T_collect g t h (latches (classify g t) h) + cost)%N 0%N (headers g t) +
@@ -5803,7 +5803,7 @@ Module LoopsT <: LOOPS_ALL.
   Proof.
     intros g t r vertices Hgraph Hprepared Htree Hincl.
     apply loop_collectors_clock_sum. intros h Hin.
-    apply (T6_collect g t r h Hgraph Hprepared Htree), Hincl, Hin.
+    apply (T_collect_le g t r h Hgraph Hprepared Htree), Hincl, Hin.
   Qed.
 
   Local Lemma installation_work : forall g t vertices,
@@ -5815,7 +5815,7 @@ Module LoopsT <: LOOPS_ALL.
     intros h Hin. apply body_work_length.
   Qed.
 
-  Lemma T8_forest : forall g t r,
+  Lemma T_forest_plan_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_forest g t <= c_loops *
       N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
@@ -5823,19 +5823,19 @@ Module LoopsT <: LOOPS_ALL.
       N.of_nat (graph_width (base g) + 1))%N.
   Proof.
     intros g t r Hgraph Hprepared Htree.
-    destruct (F6_latch_count g t r Hgraph Hprepared Htree)
+    destruct (latch_count g t r Hgraph Hprepared Htree)
       as [Hunique [Hlisted Hinputs]].
     pose proof (NoDup_incl_length Hunique Hlisted) as Hheaders.
     assert (Hnodes : length (nodes g) = graph_n (base g)).
     { destruct g as [[vertices adjacency] predecessors vertex_count edge_count]. reflexivity. }
     rewrite Hnodes in Hheaders.
-    pose proof (F16_nesting_charge g t r Hgraph Hprepared Htree) as Hwork.
+    pose proof (nesting_charge g t r Hgraph Hprepared Htree) as Hwork.
     pose proof (collectors_clock g t r (headers g t) Hgraph Hprepared Htree
       (fun h Hin => Hin)) as Hcollectors.
-    pose proof (T7a_assemble g t r Hgraph Hprepared Htree) as Hassembly.
-    pose proof (T7b_fuel_widths g t r Hgraph Hprepared Htree) as Hbits.
-    pose proof (T3_classify g t r Hgraph Hprepared Htree) as Hclassify.
-    pose proof (T7c_forest_wrapper g t) as Hwrapper.
+    pose proof (T_assemble_le g t r Hgraph Hprepared Htree) as Hassembly.
+    pose proof (fuel_widths_le g t r Hgraph Hprepared Htree) as Hbits.
+    pose proof (T_classify_le g t r Hgraph Hprepared Htree) as Hclassify.
+    pose proof (T_forest_split g t) as Hwrapper.
     pose proof (installation_work g t (headers g t)) as Hinstallation.
     clear Hgraph Hprepared Htree Hunique Hlisted Hnodes.
     set (size := N.of_nat (graph_n (base g) + graph_e (base g) + 1)) in *.
@@ -5921,7 +5921,7 @@ Module LoopsT <: LOOPS_ALL.
   Qed.
 
 
-  Lemma T9_retreat_test : forall g t r,
+  Lemma T_retreat_test_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_retreat_trace g (firstn 1 (loop_order (classify g t))) +
       T_test_back (loop_back_rows (classify g t))
@@ -5930,7 +5930,7 @@ Module LoopsT <: LOOPS_ALL.
         N.of_nat (graph_width (base g) + 1))%N.
   Proof.
     intros g t r Hgraph Hprepared Htree.
-    destruct (F4_tree_order g t r Hgraph Hprepared Htree) as [_ [Hroot _]].
+    destruct (tree_order g t r Hgraph Hprepared Htree) as [_ [Hroot _]].
     rewrite (loop_first_head (loop_order (classify g t)) r Hroot).
     assert (Hcounts : counts_ok g) by (exact (conj (proj1 Hprepared) (proj1 (proj2 Hprepared)))).
     pose proof (loop_tree_root_listed g r t Htree) as Hlisted.
@@ -5942,7 +5942,7 @@ Module LoopsT <: LOOPS_ALL.
   Qed.
 
 
-  Lemma T10_reducible_wrapper : forall g t,
+  Lemma T_reducible_b_split : forall g t,
     (T_reducible_b g t <= k_reducible * (T_classify g t +
       T_retreat_trace g (firstn 1 (loop_order (classify g t))) +
       T_test_back (loop_back_rows (classify g t))
@@ -5956,7 +5956,7 @@ Module LoopsT <: LOOPS_ALL.
     time_simpl. rewrite !loop_first_equation. lia.
   Qed.
 
-  Lemma T11_reducible_public : forall g t r,
+  Lemma T_reducible_b_plan_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_reducible_b g t <= c_loops *
       N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
@@ -5964,9 +5964,9 @@ Module LoopsT <: LOOPS_ALL.
       N.of_nat (graph_width (base g) + 1))%N.
   Proof.
     intros g t r Hgraph Hprepared Htree.
-    pose proof (T3_classify g t r Hgraph Hprepared Htree) as Hclassify.
-    pose proof (T9_retreat_test g t r Hgraph Hprepared Htree) as Htest.
-    pose proof (T10_reducible_wrapper g t) as Hwrapper.
+    pose proof (T_classify_le g t r Hgraph Hprepared Htree) as Hclassify.
+    pose proof (T_retreat_test_le g t r Hgraph Hprepared Htree) as Htest.
+    pose proof (T_reducible_b_split g t) as Hwrapper.
     clear Hgraph Hprepared Htree.
     set (size := N.of_nat (graph_n (base g) + graph_e (base g) + 1)) in *.
     set (depth := N.of_nat (loop_depth g (forest g t) + 1)) in *.
@@ -6015,7 +6015,7 @@ Module LoopsT <: LOOPS_ALL.
       N.of_nat (loop_depth g (forest g t) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
   Proof.
-    exact T8_forest.
+    exact T_forest_plan_le.
   Qed.
 
   Lemma T_reducible_b_le : forall g t r,
@@ -6024,10 +6024,10 @@ Module LoopsT <: LOOPS_ALL.
       N.of_nat (loop_depth g (forest g t) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
   Proof.
-    exact T11_reducible_public.
+    exact T_reducible_b_plan_le.
   Qed.
 
-  Lemma forest_bigO : bigO (fun '(g, t, r) =>
+  Lemma forest_complexity : bigO (fun '(g, t, r) =>
       wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
     (fun '(g, t, _) => N.of_nat
       ((graph_n (base g) + graph_e (base g) + 1) *
@@ -6039,7 +6039,7 @@ Module LoopsT <: LOOPS_ALL.
     clear -Hbound. rewrite !Nat2N.inj_mul. nia.
   Qed.
 
-  Lemma reducible_b_bigO : bigO (fun '(g, t, r) =>
+  Lemma reducible_b_complexity : bigO (fun '(g, t, r) =>
       wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
     (fun '(g, t, _) => N.of_nat
       ((graph_n (base g) + graph_e (base g) + 1) *
@@ -6051,7 +6051,7 @@ Module LoopsT <: LOOPS_ALL.
     clear -Hbound. rewrite !Nat2N.inj_mul. nia.
   Qed.
 
-  Lemma reducible_b_linear_bigO : bigO (fun '(g, t, r) =>
+  Lemma reducible_b_linear_complexity : bigO (fun '(g, t, r) =>
       wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
     (fun '(g, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))
@@ -6059,9 +6059,9 @@ Module LoopsT <: LOOPS_ALL.
   Proof.
     exists (k_reducible * (k_classify + k_trace + k_test + 1))%N.
     intros [[g t] r] [Hgraph [Hprepared Htree]].
-    pose proof (T3_classify g t r Hgraph Hprepared Htree) as Hclassify.
-    pose proof (T9_retreat_test g t r Hgraph Hprepared Htree) as Htest.
-    pose proof (T10_reducible_wrapper g t) as Hwrapper.
+    pose proof (T_classify_le g t r Hgraph Hprepared Htree) as Hclassify.
+    pose proof (T_retreat_test_le g t r Hgraph Hprepared Htree) as Htest.
+    pose proof (T_reducible_b_split g t) as Hwrapper.
     clear Hgraph Hprepared Htree. rewrite Nat2N.inj_mul.
     set (size := N.of_nat (graph_n (base g) + graph_e (base g) + 1)) in *.
     set (width := N.of_nat (graph_width (base g) + 1)) in *.

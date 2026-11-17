@@ -723,7 +723,7 @@ Lemma poly_normal_coef_nodup : forall A (encode : A -> positive) xs,
   NoDup (map fst (poly_normal_coef encode xs)).
 Proof.
   intros A encode xs. unfold poly_normal_coef.
-  rewrite PTrieT.F9_fold_values.
+  rewrite PTrieT.fold_values_def.
   rewrite (poly_fold_values_list _ _
     (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) _ nil).
   rewrite poly_fold_normalized, app_nil_r, map_rev.
@@ -770,7 +770,7 @@ Lemma poly_normal_coef_lookup : forall A (encode : A -> positive) xs q,
     snd q <> 0%Z.
 Proof.
   intros A encode xs q Hin. unfold poly_normal_coef in Hin.
-  rewrite PTrieT.F9_fold_values in Hin.
+  rewrite PTrieT.fold_values_def in Hin.
   rewrite (poly_fold_values_list _ _
     (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) _ nil) in Hin.
   rewrite poly_fold_normalized, app_nil_r in Hin.
@@ -2069,7 +2069,7 @@ Lemma poly_parallel_merge_shape : forall A (encode : A -> positive) rows,
   poly_parallel_merge encode rows =
     rev (map snd (PTrieCode.elements (poly_parallel_table encode rows))).
 Proof.
-  intros A encode rows. unfold poly_parallel_merge. rewrite PTrieT.F9_fold_values.
+  intros A encode rows. unfold poly_parallel_merge. rewrite PTrieT.fold_values_def.
   rewrite (poly_fold_values_list _ _ (fun acc r => r :: acc) _ nil).
   now rewrite poly_parallel_cons_fold, app_nil_r.
 Qed.
@@ -5198,7 +5198,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     In r rows -> In (x, a) (lhs r) -> In x (poly_variables X.encode rows).
   Proof.
     intros rows r x a Hrow Hterm. unfold poly_variables.
-    rewrite PTrieT.F9_fold_values. apply poly_variables_fold_present. left.
+    rewrite PTrieT.fold_values_def. apply poly_variables_fold_present. left.
     apply in_map_iff. exists (X.encode x, x). split; [reflexivity|].
     apply (proj2 (PTrie.elements_spec _ _ _ _)).
     apply poly_variables_rows_present. left. exists r. split; [exact Hrow|].
@@ -6107,7 +6107,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     destruct (poly_parallel_failed_model_Q P c Hrel Hnone) as [v [Hmodels Hfalse]].
     pose proof (poly_parallel_full_engine_valid P c k Hfull) as Hvalid.
     pose proof (proj1 (poly_certificate_valid_checked P c k Hvalid)) as Hcheck.
-    exfalso. apply Hfalse. eapply C.check_entails_sound_Q;
+    exfalso. apply Hfalse. eapply C.check_entails_sound_rational;
       [exact Hcheck|exact (proj1 Hvalid)|exact Hmodels].
   Qed.
 
@@ -6120,7 +6120,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     destruct (poly_parallel_failed_model_Q P c Hrel Hnone) as [v [Hmodels Hfalse]].
     pose proof (poly_parallel_stop_engine_valid P c k Hfull) as Hvalid.
     pose proof (proj1 (poly_certificate_valid_checked P c k Hvalid)) as Hcheck.
-    exfalso. apply Hfalse. eapply C.check_entails_sound_Q;
+    exfalso. apply Hfalse. eapply C.check_entails_sound_rational;
       [exact Hcheck|exact (proj1 Hvalid)|exact Hmodels].
   Qed.
 
@@ -6342,7 +6342,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     intros P c v Hresult Hmodels. unfold entails_row in Hresult.
     destruct (entail_cert P c) as [k|] eqn:Hcertificate; [|discriminate].
     destruct (entail_cert_returned P c k Hcertificate) as [Hcheck Hcut].
-    now apply C.check_entails_sound_Q with (P := P) (k := k).
+    now apply C.check_entails_sound_rational with (P := P) (k := k).
   Qed.
 
   Lemma entails_row_complete_Q : forall P c,
@@ -6431,7 +6431,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
   (** Every rational semantic inclusion is recognized by Boolean inclusion. *)
-  Lemma leb_complete_Q : forall a b,
+  Lemma leb_complete_rational : forall a b,
     (forall v : X.t -> Q, poly_models_Q a v -> poly_models_Q b v) -> leb a b = true.
   Proof.
     intros [|P] [|Q] Hsemantic; [reflexivity|reflexivity| |].
@@ -6443,16 +6443,16 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Lemma leb_iff_Q : forall a b,
     leb a b = true <-> forall v : X.t -> Q, poly_models_Q a v -> poly_models_Q b v.
   Proof.
-    intros a b. split; [apply leb_sound_Q|apply leb_complete_Q].
+    intros a b. split; [apply leb_sound_Q|apply leb_complete_rational].
   Qed.
 
   Lemma leb_refl  : forall a, leb a a = true.
   Proof.
-    intro a. apply leb_complete_Q. intros v Hmodels. exact Hmodels.
+    intro a. apply leb_complete_rational. intros v Hmodels. exact Hmodels.
   Qed.
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
   Proof.
-    intros a b c Hab Hbc. apply leb_complete_Q. intros v Hmodels.
+    intros a b c Hab Hbc. apply leb_complete_rational. intros v Hmodels.
     apply leb_sound_Q with (a := b); [exact Hbc|].
     now apply leb_sound_Q with (a := a).
   Qed.
@@ -6466,7 +6466,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
   Proof.
-    intros a b Hbot. apply leb_complete_Q. intros v Hmodels.
+    intros a b Hbot. apply leb_complete_rational. intros v Hmodels.
     exfalso. exact (is_bot_sound_Q a v Hbot Hmodels).
   Qed.
 
@@ -6548,7 +6548,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
 
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
-    intros a b. apply leb_complete_Q. intros v Hmodels.
+    intros a b. apply leb_complete_rational. intros v Hmodels.
     apply (proj2 (join_models_Q a b v)).
     destruct a as [|P], b as [|Q];
       cbn [poly_models_Q join_spec] in *; try contradiction; try exact Hmodels.
@@ -6559,7 +6559,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
   Proof.
-    intros a b. apply leb_complete_Q. intros v Hmodels.
+    intros a b. apply leb_complete_rational. intros v Hmodels.
     apply (proj2 (join_models_Q a b v)).
     destruct a as [|P], b as [|Q];
       cbn [poly_models_Q join_spec] in *; try contradiction; try exact Hmodels.
@@ -6574,14 +6574,14 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
   Proof.
-    intros p [|P] [|Q]; apply leb_complete_Q; intros v Hmodels;
+    intros p [|P] [|Q]; apply leb_complete_rational; intros v Hmodels;
       cbn [poly_models_Q widen] in *; try contradiction; try exact Hmodels.
     apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin _].
     exact (proj1 (Forall_forall _ _) Hmodels r Hin).
   Qed.
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
   Proof.
-    intros p [|P] [|Q]; apply leb_complete_Q; intros v Hmodels;
+    intros p [|P] [|Q]; apply leb_complete_rational; intros v Hmodels;
       cbn [poly_models_Q widen] in *; try contradiction.
     - destruct (is_bot (Reached Q)) eqn:Hbot.
       + exfalso. exact (is_bot_sound_Q (Reached Q) v Hbot Hmodels).
@@ -6610,7 +6610,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
   Proof.
-    intros a b Hle. split; [|exact Hle]. apply leb_complete_Q. intros v Hmodels. exact Hmodels.
+    intros a b Hle. split; [|exact Hle]. apply leb_complete_rational. intros v Hmodels. exact Hmodels.
   Qed.
   Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
   Proof.
@@ -6815,7 +6815,7 @@ Module PolyClockLinearize (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
   Qed.
   (** Linearization of a term is linear in its size and bit measure. *)
-  Lemma lin_of_bigO : bigO (fun _ : term L.op X.t => True)
+  Lemma lin_of_complexity : bigO (fun _ : term L.op X.t => True)
     (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
     (fun e => T_lin_of e).
   Proof.
@@ -6823,7 +6823,7 @@ Module PolyClockLinearize (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     time_unfold T_lin_of. lia.
   Qed.
   (** Guard linearization is linear in the operand sizes and bit measure. *)
-  Lemma atoms_of_bigO : bigO (fun _ : L.guard * list (term L.op X.t) => True)
+  Lemma atoms_of_complexity : bigO (fun _ : L.guard * list (term L.op X.t) => True)
     (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
       (bits_es (fst x) (snd x) + 1))%nat))
     (fun x => T_atoms_of (fst x) (snd x)).
@@ -7337,7 +7337,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     snd q <> 0%Z -> In q (poly_normal_coef X.encode xs).
   Proof.
     intros xs key q Hget Hnonzero. unfold poly_normal_coef.
-    rewrite PTrieT.F9_fold_values.
+    rewrite PTrieT.fold_values_def.
     rewrite (poly_fold_values_list _ _
       (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) _ nil).
     rewrite poly_fold_normalized, app_nil_r. apply (proj1 (in_rev _ _)).
@@ -7526,7 +7526,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (poly_accum_nodes (xs ++ ys) PTrieCode.empty keys Hkeys) as Hnodes.
     change (PTrie.nodes tr <= length (xs ++ ys) * keys) in Hnodes.
     rewrite length_app in Hnodes.
-    pose proof (PTrieT.T9_fold_values (X.t * Z) (list (X.t * Z))
+    pose proof (PTrieT.T_fold_values_le (X.t * Z) (list (X.t * Z))
       poly_normal_keep T_poly_normal_keep tr nil 5 T_poly_normal_keep_le) as Hfold.
     time_unfold (@T_poly_normal_coef). fold tr.
     change (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) with poly_normal_keep.
@@ -7785,7 +7785,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     { eapply Forall_impl; [|exact Hsizes]. intros p [Hp _]. exact Hp. }
     pose proof (poly_accum_nodes xs PTrieCode.empty keys Hkeys) as Hnodes.
     change (PTrie.nodes tr <= length xs * keys) in Hnodes.
-    pose proof (PTrieT.T9_fold_values (X.t * Z) (list (X.t * Z))
+    pose proof (PTrieT.T_fold_values_le (X.t * Z) (list (X.t * Z))
       poly_normal_keep T_poly_normal_keep tr nil 5 T_poly_normal_keep_le) as Hfold.
     time_unfold (@T_poly_normal_coef). fold tr.
     change (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) with poly_normal_keep.
@@ -9846,7 +9846,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma poly_variables_shape : forall rows,
     poly_variables X.encode rows = rev (map snd (PTrieCode.elements (poly_variable_table rows))).
   Proof.
-    intro rows. unfold poly_variables, poly_variable_table. rewrite PTrieT.F9_fold_values.
+    intro rows. unfold poly_variables, poly_variable_table. rewrite PTrieT.fold_values_def.
     rewrite (poly_fold_values_list _ _ (fun acc x => x :: acc) _ nil).
     now rewrite poly_variable_cons_fold, app_nil_r.
   Qed.
@@ -10662,7 +10662,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         (length rows + 1) * (dim + 1) * (keys + 1)) by nia.
       unfold work, entry_work. rewrite N.mul_assoc, <- !Nat2N.inj_mul.
       clear -Hnat. lia. }
-    pose proof (PTrieT.T9_fold_values X.t (list X.t) (fun acc x => x :: acc)
+    pose proof (PTrieT.T_fold_values_le X.t (list X.t) (fun acc x => x :: acc)
       (fun _ _ => 1%N) tr nil 1 (fun _ _ => N.le_refl 1%N)) as Hfold.
     assert (Hfold_total : (PTrieT.T_fold_values (fun acc x => x :: acc)
       (fun _ _ => 1%N) tr nil <= 2 * PTrieT.k_fold * work)%N).
@@ -11061,7 +11061,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     { eapply Forall_impl; [|exact Hsizes]. intros p [Hp _]. exact Hp. }
     pose proof (poly_accum_nodes xs PTrieCode.empty keys Hkeys) as Hnodes.
     change (PTrie.nodes tr <= length xs * keys) in Hnodes.
-    pose proof (PTrieT.T9_fold_values (X.t * Z) (list (X.t * Z))
+    pose proof (PTrieT.T_fold_values_le (X.t * Z) (list (X.t * Z))
       poly_normal_keep T_poly_normal_keep tr nil 5 T_poly_normal_keep_le) as Hfold.
     time_unfold (@T_poly_normal_coef). fold tr.
     change (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) with poly_normal_keep.
@@ -12446,7 +12446,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     try change (fun y : X.t => X.T_encode y) with X.T_encode.
     lazymatch goal with
     | |- context [PTrieT.T_fold_values ?f ?T_f table ?acc] =>
-        pose proof (PTrieT.T9_fold_values _ _ f T_f table acc 2
+        pose proof (PTrieT.T_fold_values_le _ _ f T_f table acc 2
           ltac:(intros; time_simpl; lia)) as Hvalues
     end.
     unfold poly_parallel_merge_factor.
@@ -22558,7 +22558,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     unfold poly_entail_budget. apply N.mul_le_mono_r. unfold c_poly. lia.
   Qed.
   (** Assignment charges row normalization and one elimination after linearization. *)
-  Lemma F_assign_work : forall x e s,
+  Lemma assign_work_def : forall x e s,
     (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
       (length (prows s) + 3)^2 *
       (n (prows s) + terms s + tsize e + length (prows s) + 3) *
@@ -22567,7 +22567,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros x e s. unfold assign_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
   (** Havoc charges row normalization and one elimination of the selected variable. *)
-  Lemma F_havoc_work : forall x s,
+  Lemma havoc_work_def : forall x s,
     havoc_work x s = terms s * (nell s + 1) +
       (length (prows s) + 1)^2 * (n (prows s) + terms s + length (prows s) + 1) *
       (nell s + X.bits x + 1)^2.
@@ -22575,7 +22575,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     reflexivity.
   Qed.
   (** Assumption charges every emitted atom and the bits of its merged coefficients. *)
-  Lemma F_assume_work : forall g es s,
+  Lemma assume_work_def : forall g es s,
     (N.of_nat (assume_work g es s) =
       N.of_nat ((length (prows s) + 1) * (length (F.atoms_of g es) + 1) *
         (fold_right Nat.add 0%nat (map tsize es) + 1) *
@@ -22969,7 +22969,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - exact Hnormal.
   Qed.
   (** This widening has no repeated threshold search. *)
-  Lemma F_wunits : forall s, wunits s = 0.
+  Lemma wunits_def : forall s, wunits s = 0.
   Proof.
     reflexivity.
   Qed.
@@ -22980,7 +22980,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof.
     apply fm_step_mults_checked.
   Qed.
-  Lemma entail_cert_checks : forall P c k,
+  Lemma entail_cert_check_sound : forall P c k,
     entail_cert P c = Some k -> C.check_entails P c k = true.
   Proof.
     intros P c k Hresult. exact (proj1 (entail_cert_returned P c k Hresult)).
@@ -22995,7 +22995,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof.
     intros x P Hnormal. apply Forall_map. apply fm_elim_nodup.
   Qed.
-  Lemma fm_complete_Q : forall P c, lrel c = RLe -> entail_cert P c = None ->
+  Lemma fm_complete_rational : forall P c, lrel c = RLe -> entail_cert P c = None ->
     exists v : X.t -> Q, Forall (satQ v) P /\ ~ satQ v c.
   Proof.
     exact poly_failed_certificate_model_Q.
@@ -23031,12 +23031,12 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     lia.
   Qed.
 
-  Lemma subst_sat : forall v x f r, sat v (subst x f r) <->
+  Lemma subst_sat_iff_update : forall v x f r, sat v (subst x f r) <->
     sat (upd X.eqb v x (eval_lin v f)) r.
   Proof.
     apply subst_sat_checked.
   Qed.
-  Lemma wrank_rows : forall p P, wrank p (Reached P) = length P.
+  Lemma wrank_def : forall p P, wrank p (Reached P) = length P.
   Proof.
     reflexivity.
   Qed.
@@ -23044,16 +23044,16 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun keep.
   Definition entails (P : list (lcons X.t)) (r : lcons X.t) : bool :=
     match entail_cert P r with Some k => C.check_entails P r k | None => false end.
-  Lemma F_leb_keep : forall a b, leb (Reached b) (Reached a) = forallb (keep b) a.
+  Lemma leb_keep_spec : forall a b, leb (Reached b) (Reached a) = forallb (keep b) a.
   Proof.
     reflexivity.
   Qed.
-  Lemma F_widen_keep : forall p a b,
+  Lemma widen_filter_spec : forall p a b,
     widen p (Reached a) (Reached b) = Reached (filter (keep b) a).
   Proof.
     reflexivity.
   Qed.
-  Lemma F_leb_split : forall a b, leb (Reached a) (Reached b) =
+  Lemma leb_entails_rows_spec : forall a b, leb (Reached a) (Reached b) =
     forallb (fun r => match lrel r with
       | RLe => entails a r
       | REq => andb (entails a (LCons _ (lhs r) RLe (rhs r)))
@@ -23093,46 +23093,46 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact poly_lattice_lat_size.
   Qed.
 
-  Lemma T1_leb : forall a b,
+  Lemma T_leb_plan_le : forall a b,
     (T_leb a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   Proof.
     exact T_poly_leb_lattice.
   Qed.
-  Lemma T1_join : forall a b,
+  Lemma T_join_plan_le : forall a b,
     (T_join a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   Proof.
     exact T_poly_join_lattice.
   Qed.
-  Lemma T1_widen : forall p a b,
+  Lemma T_widen_plan_le : forall p a b,
     (T_widen p a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   Proof.
     exact T_poly_widen_lattice.
   Qed.
-  Lemma T1_narrow : forall a b,
+  Lemma T_narrow_plan_le : forall a b,
     (T_narrow a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   Proof.
     intros a b. time_unfold T_narrow. unfold k_poly.
     change (1 * 1 <= poly_lattice_factor * N.of_nat (lat (mu a + mu b)))%N.
     apply N.mul_le_mono; [exact poly_lattice_factor_positive|apply poly_lattice_lat_positive].
   Qed.
-  Lemma F_size : forall s, size s = lat (2 * mu s).
+  Lemma size_def : forall s, size s = lat (2 * mu s).
   Proof.
     reflexivity.
   Qed.
   (** Range work charges the numeric query and its linearization. *)
-  Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
+  Lemma range_work_def : forall e s, (N.of_nat (range_work e s) =
     N.of_nat (terms s * (nell s + 1) +
       fmcost (n (prows s) + tsize e) (length (prows s) + 2) (n (prows s) + tsize e)
         (length (prows s) + 2) (nell s + F.bits_e e + 1)) + F.T_lin_of e)%N.
   Proof.
     intros e s. unfold range_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
-  Lemma F_range_bits : forall e s, range_bits e s = range_work e s.
+  Lemma range_bits_def : forall e s, range_bits e s = range_work e s.
   Proof.
     reflexivity.
   Qed.
   (** Assignment is linear in its stated numeric work. *)
-  Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+  Lemma assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -23141,7 +23141,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
   Qed.
   (** Havoc is linear in its stated numeric work. *)
-  Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
+  Lemma havoc_complexity : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x)))
     (fun x => T_havoc (fst x) (snd x)).
   Proof.
@@ -23150,7 +23150,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
   Qed.
   (** Assumption is linear in its stated numeric work. *)
-  Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+  Lemma assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -23159,7 +23159,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
   Qed.
   (** A range query is linear in its stated numeric work. *)
-  Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
+  Lemma range_complexity : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
     (fun x => T_range (fst x) (snd x)).
   Proof.
@@ -23168,7 +23168,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. cbn [fst snd]. nia.
   Qed.
   (** One elimination is quadratic in the rows. *)
-  Lemma fm_elim_bigO : bigO (fun x : X.t * list (lcons X.t) => normal (snd x))
+  Lemma fm_elim_complexity : bigO (fun x : X.t * list (lcons X.t) => normal (snd x))
     (fun x => N.of_nat (((length (snd x) + 1)^2 * (n (snd x) + length (snd x) + 1) *
       (ell (snd x) + 1)^2)%nat))
     (fun x => T_fm_elim (fst x) (snd x)).
@@ -23178,7 +23178,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     cbn [fst snd]. rewrite !Nat2N.inj_mul. nia.
   Qed.
   (** Certificate production follows the Fourier-Motzkin recurrence. *)
-  Lemma entail_cert_bigO : bigO
+  Lemma entail_cert_complexity : bigO
     (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
     (fun x => N.of_nat (fmcost (n (fst x) + length (lhs (snd x))) (length (fst x) + 1)
       (n (fst x) + length (lhs (snd x))) (length (fst x) + 1)
@@ -23189,28 +23189,28 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (T_entail_cert_le P c HP Hc) as Htime. cbn [fst snd]. nia.
   Qed.
   (** Inclusion is one certified check per conclusion. *)
-  Lemma leb_bigO : bigO (fun _ : t * t => True)
+  Lemma leb_complexity : bigO (fun _ : t * t => True)
     (fun x => N.of_nat (lat (mu (fst x) + mu (snd x))))
     (fun x => T_leb (fst x) (snd x)).
   Proof.
     apply bigO_intro with (c := k_poly). intros [a b] _.
-    pose proof (T1_leb a b) as Htime. cbn [fst snd]. lia.
+    pose proof (T_leb_plan_le a b) as Htime. cbn [fst snd]. lia.
   Qed.
   (** Join is two filters of certified checks. *)
-  Lemma join_bigO : bigO (fun _ : t * t => True)
+  Lemma join_complexity : bigO (fun _ : t * t => True)
     (fun x => N.of_nat (lat (mu (fst x) + mu (snd x))))
     (fun x => T_join (fst x) (snd x)).
   Proof.
     apply bigO_intro with (c := k_poly). intros [a b] _.
-    pose proof (T1_join a b) as Htime. cbn [fst snd]. lia.
+    pose proof (T_join_plan_le a b) as Htime. cbn [fst snd]. lia.
   Qed.
   (** Widening is one filter of certified checks. *)
-  Lemma widen_bigO : bigO (fun _ : wparam * t * t => True)
+  Lemma widen_complexity : bigO (fun _ : wparam * t * t => True)
     (fun x => N.of_nat (lat (mu (snd (fst x)) + mu (snd x))))
     (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
     apply bigO_intro with (c := k_poly). intros [[p a] b] _.
-    pose proof (T1_widen p a b) as Htime. cbn [fst snd]. lia.
+    pose proof (T_widen_plan_le p a b) as Htime. cbn [fst snd]. lia.
   Qed.
 End PolyT.
 
@@ -23526,7 +23526,7 @@ Module PolyPresent (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition poly_present_factor : N := (poly_present_keep_factor + 8)%N.
 
   (** Each already-present target row contributes the direct source-scan bound. *)
-  Theorem leb_present_bigO : bigO
+  Theorem leb_present_complexity : bigO
     (fun x : Core.t * Core.t => match fst x, snd x with
       | Unreached, _ => True
       | Reached P, Reached Q => incl Q P

@@ -293,7 +293,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
     now rewrite wrap_0, wrap_id in Hwrap by exact Hword.
   Qed.
   (** Payload concretization reads the sign flags. *)
-  Lemma F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
+  Lemma gamma_def : forall w a z, pgamma w a z <-> sign_gamma w a z.
   Proof.
     intros w a z. reflexivity.
   Qed.
@@ -341,7 +341,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Qed.
 
   (** Bitwise negation retains every normalized concrete result. *)
-  Lemma F3_sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
+  Lemma sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
     pgamma w (sign_not a) (L.wrap w (Z.lnot x)).
   Proof.
     intros w a x Hx Ha. pose proof (sign_class w a x Ha) as Hfa.
@@ -352,7 +352,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
       destruct (msb w x); cbn in Hfa |- *; intro Hresult; try discriminate; auto.
   Qed.
   (** Arithmetic negation retains every normalized concrete result. *)
-  Lemma F4_sign_neg_sound : forall w a x, L.is_word w x -> pgamma w a x ->
+  Lemma sign_neg_sound : forall w a x, L.is_word w x -> pgamma w a x ->
     pgamma w (sign_neg a) (L.wrap w (- x)).
   Proof.
     intros w a x Hx Ha. apply pgamma_cases in Ha as [Hn [Hz Hp]].
@@ -380,7 +380,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
       + rewrite (Hn ltac:(lia)). reflexivity.
   Qed.
   (** Bitwise conjunction retains every normalized concrete result. *)
-  Lemma F5_sign_and_sound : forall w a b x y,
+  Lemma sign_and_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_and a b) (L.wrap w (Z.land x y)).
   Proof.
@@ -394,7 +394,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
       cbn; auto.
   Qed.
   (** Bitwise disjunction retains every normalized concrete result. *)
-  Lemma F6_sign_or_sound : forall w a b x y,
+  Lemma sign_or_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_or a b) (L.wrap w (Z.lor x y)).
   Proof.
@@ -408,7 +408,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
       cbn; auto.
   Qed.
   (** Bitwise exclusive disjunction retains every normalized concrete result. *)
-  Lemma F7_sign_xor_sound : forall w a b x y,
+  Lemma sign_xor_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
   Proof.
@@ -674,11 +674,11 @@ End SignT.
 
 Module SignAll (L : WORD_LANGUAGE_T) <: SIGN_ALL L.
   Include SignT L.
-  Lemma F2_level : forall a, (sign_level a <= 3)%nat.
+  Lemma sign_level_le : forall a, (sign_level a <= 3)%nat.
   Proof.
     intros [a b c]. destruct a, b, c; cbn; lia.
   Qed.
-  Lemma F_pwrank : forall q w a, pwrank q w a = Nat.sub 3 (sign_level a).
+  Lemma pwrank_def : forall q w a, pwrank q w a = Nat.sub 3 (sign_level a).
   Proof.
     intros q w a. reflexivity.
   Qed.
@@ -750,7 +750,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
     (Word.signed w z = 0 -> zero a = true) /\
     (0 < Word.signed w z -> pos a = true).
   Proof.
-    rewrite W.F1_gamma. unfold W.sign_gamma, L.signed.
+    rewrite W.gamma_def. unfold W.sign_gamma, L.signed.
     destruct (Word.signed w z <? 0) eqn:Hneg.
     - apply Z.ltb_lt in Hneg. split; intros H; intuition lia.
     - apply Z.ltb_ge in Hneg. destruct (Word.signed w z =? 0) eqn:Hzero.
@@ -791,7 +791,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
     W.pgamma 1%positive s (if b then 1 else 0) <->
     (if b then neg s = true else zero s = true).
   Proof.
-    rewrite W.F1_gamma. destruct b; reflexivity.
+    rewrite W.gamma_def. destruct b; reflexivity.
   Qed.
 
   Local Lemma sign_boolean_sound b :
@@ -956,7 +956,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
     W.pgamma target (Sgn false true true) z.
   Proof.
     intros Hx Ha Heval. rewrite eval_zext_value in Heval. inversion Heval; subst target z.
-    rewrite W.F1_gamma. unfold W.sign_gamma, L.signed. rewrite (wrap_id w x Hx).
+    rewrite W.gamma_def. unfold W.sign_gamma, L.signed. rewrite (wrap_id w x Hx).
     assert (Hs : Word.signed (w + extra)%positive x = x).
     { apply signed_id. pose proof (half_pos (w + extra)%positive).
       assert (Hm : modulus w <= half (w + extra)%positive).
@@ -973,7 +973,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
     eval_op (bvsext extra) [(w, x)] = Some (target, z) -> W.pgamma target a z.
   Proof.
     intros Hx Ha Heval. rewrite eval_sext_value in Heval. inversion Heval; subst target z.
-    rewrite W.F1_gamma in *. unfold W.sign_gamma, L.signed in *. rewrite signed_wrap.
+    rewrite W.gamma_def in *. unfold W.sign_gamma, L.signed in *. rewrite signed_wrap.
     assert (Hs : Word.signed (w + extra)%positive (Word.signed w x) = Word.signed w x).
     { apply signed_id. pose proof (signed_range w x).
       assert (Hhalf : half w <= half (w + extra)%positive).
@@ -990,7 +990,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
   Proof.
     intros Hx Ha Heval. rewrite (eval_op_fun1 bvnot w x UNot eq_refl) in Heval.
     cbn [eval_unary_tag] in Heval. inversion Heval; subst target z.
-    rewrite wnot_lnot, (wrap_id w x Hx). now apply W.F3_sign_not_sound.
+    rewrite wnot_lnot, (wrap_id w x Hx). now apply W.sign_not_sound.
   Qed.
 
   (** Negation dispatch agrees with the payload's modular-negation contract. *)
@@ -1000,7 +1000,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
   Proof.
     intros Hx Ha Heval. rewrite (eval_op_fun1 bvneg w x UNeg eq_refl) in Heval.
     cbn [eval_unary_tag] in Heval. inversion Heval; subst target z.
-    now apply W.F4_sign_neg_sound.
+    now apply W.sign_neg_sound.
   Qed.
 
   (** Conjunction checks equal operand widths before applying the payload law. *)
@@ -1015,7 +1015,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
     cbn [eval_binary_tag] in Heval. inversion Heval; subst target z.
     rewrite <- (wrap_id w (wand w x y)) by apply wand_is_word.
     unfold wand. rewrite (wrap_id w x Hx), (wrap_id w y Hy).
-    now apply W.F5_sign_and_sound.
+    now apply W.sign_and_sound.
   Qed.
 
   (** Disjunction checks equal operand widths before applying the payload law. *)
@@ -1030,7 +1030,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
     cbn [eval_binary_tag] in Heval. inversion Heval; subst target z.
     rewrite <- (wrap_id w (wor w x y)) by apply wor_is_word.
     unfold wor. rewrite (wrap_id w x Hx), (wrap_id w y Hy).
-    now apply W.F6_sign_or_sound.
+    now apply W.sign_or_sound.
   Qed.
 
   (** Exclusive disjunction checks equal widths before applying the payload law. *)
@@ -1045,7 +1045,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
     cbn [eval_binary_tag] in Heval. inversion Heval; subst target z.
     rewrite <- (wrap_id w (wxor w x y)) by apply wxor_is_word.
     unfold wxor. rewrite (wrap_id w x Hx), (wrap_id w y Hy).
-    now apply W.F7_sign_xor_sound.
+    now apply W.sign_xor_sound.
   Qed.
 
   (** A forward word entry retains each concrete result at its checked width. *)
@@ -1123,7 +1123,7 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_ALL L S.
   Definition c_sign_table : N := (S.c_sign + 1024)%N.
   Definition c_word_table : N := (c_sign_table + 1)%N.
   (** The bounded flag comparison keeps every numeric comparator result. *)
-  Lemma F_sign_cmp_sym : forall c w a b, sign_cmp_sym c w a b = sign_cmp c w a b.
+  Lemma sign_cmp_sym_def : forall c w a b, sign_cmp_sym c w a b = sign_cmp c w a b.
   Proof.
     exact sign_cmp_sym_agrees.
   Qed.
@@ -1208,7 +1208,7 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_ALL L S.
     exact sign_entry_ticks.
   Qed.
   (** Sign-table dispatch has a constant bound independent of word widths. *)
-  Lemma sign_entry_bigO : bigO
+  Lemma sign_entry_complexity : bigO
     (X := L.op * (positive * list (positive * S.p))) (fun _ => True)
     (fun _ => 0%N) (fun x => T_wfwd (fst x) (fst (snd x)) (snd (snd x))).
   Proof.

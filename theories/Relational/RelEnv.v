@@ -544,7 +544,7 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
   Lemma size_pair : forall a, P.size a = R.size (fst a) + E.size (snd a).
   Proof. reflexivity. Qed.
   (** Evaluation is linear in the work of both components. *)
-  Lemma eval_bigO : bigO (fun _ : term L.op X.t * t => True)
+  Lemma eval_complexity : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (eval_work (fst x) (snd x))) (fun x => T_eval (fst x) (snd x)).
   Proof.
     apply bigO_intro with (c := c_state).
@@ -553,7 +553,7 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Assignment is linear in the work of both components. *)
-  Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+  Lemma assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -563,7 +563,7 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Havoc is linear in the work of both components. *)
-  Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
+  Lemma havoc_complexity : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x))) (fun x => T_havoc (fst x) (snd x)).
   Proof.
     apply bigO_intro with (c := c_state).
@@ -572,7 +572,7 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Assumption is linear in the work of both components. *)
-  Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+  Lemma assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -582,55 +582,55 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Relational environments denote the intersection of their two meanings. *)
-  Lemma F1_gamma : forall r s st,
+  Lemma gamma_def : forall r s st,
     gamma (r, s) st <-> R.ngamma r (fun x => N.num (st x)) /\ E.gamma s st.
   Proof.
     reflexivity.
   Qed.
   (** Evaluation refines the value result using the numeric range of the same expression. *)
-  Lemma F2_eval : forall e r s, eval e (r, s) =
+  Lemma eval_def : forall e r s, eval e (r, s) =
     RR.refine_range (fst (R.range e r)) (snd (R.range e r)) (E.eval e s).
   Proof.
     reflexivity.
   Qed.
   (** Assignment updates both components. *)
-  Lemma F3_assign : forall x e r s, assign x e (r, s) =
+  Lemma assign_def : forall x e r s, assign x e (r, s) =
     (R.assign x e r, E.assign x e s).
   Proof.
     reflexivity.
   Qed.
   (** Havoc updates both components. *)
-  Lemma F4_havoc : forall x r s, havoc x (r, s) = (R.havoc x r, E.havoc x s).
+  Lemma havoc_def : forall x r s, havoc x (r, s) = (R.havoc x r, E.havoc x s).
   Proof.
     reflexivity.
   Qed.
   (** Assumption updates both components. *)
-  Lemma F5_assume : forall g es r s,
+  Lemma assume_def : forall g es r s,
     assume g es (r, s) = (R.assume g es r, E.assume g es s).
   Proof.
     reflexivity.
   Qed.
   (** Widening ignores a bottom candidate and otherwise widens componentwise. *)
-  Lemma F6_widen : forall p r s r' s', widen p (r, s) (r', s') =
+  Lemma widen_def : forall p r s r' s', widen p (r, s) (r', s') =
     if is_bot (r', s') then (r, s)
     else (R.widen (fst p) r r', E.widen (snd p) s s').
   Proof.
     reflexivity.
   Qed.
   (** Narrowing keeps a bottom candidate and otherwise narrows componentwise. *)
-  Lemma F6a_narrow : forall a b, narrow a b =
+  Lemma narrow_def : forall a b, narrow a b =
     if is_bot b then b else (R.narrow (fst a) (fst b), E.narrow (snd a) (snd b)).
   Proof.
     intros a b. unfold narrow, product_narrow, product_is_bot, is_bot.
     rewrite PL.is_bot_pair. reflexivity.
   Qed.
   (** The widening rank is the sum of the ranks of the actual component states. *)
-  Lemma F7_rank : forall p r s,
+  Lemma wrank_def : forall p r s,
     wrank p (r, s) = R.wrank (fst p) r + E.wrank (snd p) s.
   Proof.
     reflexivity.
   Qed.
   (** Stored state size is the sum of component sizes. *)
-  Lemma F8_size : forall r s, size (r, s) = R.size r + E.size s.
+  Lemma size_def : forall r s, size (r, s) = R.size r + E.size s.
   Proof. reflexivity. Qed.
 End RelEnvT.

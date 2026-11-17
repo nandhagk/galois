@@ -123,27 +123,27 @@ Module Type DISJUNCTION_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Parameter wunits_alternatives : forall d,
     wunits d = fold_right Nat.add 0%nat (map S.wunits (proj1_sig d)).
   (** Widening is linear in the sizes and in the units times the parameter size. *)
-  Parameter widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
+  Parameter widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
     (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
     (fun '(p, a, b) => T_widen p a b).
   (** Narrowing is linear in both sizes for the fixed cap. *)
-  Parameter narrow_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter narrow_complexity : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_narrow (fst ab) (snd ab)).
   (** Assignment is linear in its work measure. *)
-  Parameter assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
+  Parameter assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
     (fun '(x, e, d) => N.of_nat (assign_work x e d)) (fun '(x, e, d) => T_assign x e d).
   (** Havoc is linear in its work measure. *)
-  Parameter havoc_bigO : bigO (X := X.t * t) (fun _ => True)
+  Parameter havoc_complexity : bigO (X := X.t * t) (fun _ => True)
     (fun '(x, d) => N.of_nat (havoc_work x d)) (fun '(x, d) => T_havoc x d).
   (** Assumption is linear in its work measure. *)
-  Parameter assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+  Parameter assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
     (fun '(gd, es, d) => N.of_nat (assume_work gd es d)) (fun '(gd, es, d) => T_assume gd es d).
   (** Evaluation is linear in its work measure. *)
-  Parameter eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
+  Parameter eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
     (fun '(e, d) => N.of_nat (eval_work e d)) (fun '(e, d) => T_eval e d).
   (** Collapsing at most the cap plus one alternatives is linear in their sizes. *)
-  Parameter collapse_bigO : bigO (fun xs : list S.t => length xs <= C.k + 1)
+  Parameter collapse_complexity : bigO (fun xs : list S.t => length xs <= C.k + 1)
     (fun xs => N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs)) T_collapse.
   (** The widening parameter is the component's parameter. *)
   Parameter wsize_component : forall p, wsize p = S.wsize p.
@@ -177,7 +177,7 @@ Module Type DISJUNCTION_PLAN (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       ((fst acc + V.T_join (snd acc) (S.eval e s) + 1)%N,
        V.join (snd acc) (S.eval e s))) xs (0%N, V.bot)).
   (** Unstable widening widens the first nonbottom alternative with every uncovered one. *)
-  Parameter F2_widen : forall p a b, proj1_sig (widen p a b) =
+  Parameter widen_def : forall p a b, proj1_sig (widen p a b) =
     if leb b a then proj1_sig a else
     if is_bot a then proj1_sig b else
     if forallb S.is_bot (proj1_sig a) then [S.top] else
@@ -185,23 +185,23 @@ Module Type DISJUNCTION_PLAN (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       (fun x => S.widen p x (collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b))))
       (proj1_sig a).
   (** The rank adds the alternatives' ranks and credits a list of bottom alternatives. *)
-  Parameter F3_rank : forall p d, wrank p d =
+  Parameter rank_def : forall p d, wrank p d =
     fold_right Nat.add 0%nat (map (S.wrank p) (proj1_sig d)) +
       if forallb S.is_bot (proj1_sig d) then 1 + S.wrank p S.top else 0.
   (** Assignment maps its transfer over the alternatives. *)
-  Parameter F4_assign : forall x e d,
+  Parameter assign_def : forall x e d,
     proj1_sig (assign x e d) = map (S.assign x e) (proj1_sig d).
   (** Havoc maps its transfer over the alternatives. *)
-  Parameter F5_havoc : forall x d,
+  Parameter havoc_def : forall x d,
     proj1_sig (havoc x d) = map (S.havoc x) (proj1_sig d).
   (** Assumption maps its transfer over the alternatives. *)
-  Parameter F6_assume : forall g es d,
+  Parameter assume_def : forall g es d,
     proj1_sig (assume g es d) = map (S.assume g es) (proj1_sig d).
   (** Evaluation joins the values of the alternatives from bottom. *)
-  Parameter F7_eval : forall e d,
+  Parameter eval_def : forall e d,
     eval e d = fold_left (fun a s => V.join a (S.eval e s)) (proj1_sig d) V.bot.
   (** Widening charges the order, the scans, one collapse and one component widening. *)
-  Parameter T1_widen : forall p a b, (T_widen p a b <= k_disjunction *
+  Parameter T_widen_split : forall p a b, (T_widen p a b <= k_disjunction *
     (T_leb b a + T_is_bot a + P.T_clip [S.top] + N.of_nat (length (proj1_sig a) + 1) +
      fold_right N.add 0%N (map S.T_is_bot (proj1_sig a)) +
      fold_right N.add 0%N (map (fun y => fold_right N.add 0%N
@@ -211,11 +211,11 @@ Module Type DISJUNCTION_PLAN (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
        T_collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) + S.T_widen p x c)
        (proj1_sig a))))%N.
   (** Evaluation charges each alternative's evaluation and the value joins. *)
-  Parameter T2_eval : forall e d, (T_eval e d <= k_disjunction *
+  Parameter T_eval_split : forall e d, (T_eval e d <= k_disjunction *
     (fold_right N.add 0%N (map (fun s => S.T_eval e s + 1) (proj1_sig d)) +
      eval_joins e (proj1_sig d) + 1))%N.
   (** The value joins of a capped list charge the sizes of the evaluated values. *)
-  Parameter T3_eval_joins : forall e xs, length xs <= C.k ->
+  Parameter eval_joins_le : forall e xs, length xs <= C.k ->
     (eval_joins e xs <= k_disjunction * N.of_nat (fold_right Nat.add 0%nat
       (map (fun s => (V.size (S.eval e s) + 1)%nat) xs) + 1))%N.
 End DISJUNCTION_PLAN.

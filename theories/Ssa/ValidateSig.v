@@ -203,11 +203,11 @@ Module Type VALIDATE_TIME (O : OPS)
     (T_check_ssa s <= c_val * (N.of_nat (function_size s + 1) + dom_bound s) *
       N.of_nat (function_width s + 1))%N.
   (** Translation checking has the published certificate-sensitive bit-cost bound. *)
-  Parameter check_bigO : bigO (fun _ : P.t * P.t * cert => True)
+  Parameter check_complexity : bigO (fun _ : P.t * P.t * cert => True)
     (fun '(p, s, c) => N.of_nat ((function_size p + function_size s + cert_size c + 1) *
       (check_width p s c + 1) + op_bits p + 1)) (fun '(p, s, c) => T_check p s c).
   (** SSA checking has the published syntax and dominator bit-cost bound. *)
-  Parameter check_ssa_bigO : bigO (fun _ : P.t => True)
+  Parameter check_ssa_complexity : bigO (fun _ : P.t => True)
     (fun s => ((N.of_nat (function_size s + 1) + dom_bound s) *
       N.of_nat (function_width s + 1))%N) T_check_ssa.
 End VALIDATE_TIME.
@@ -273,17 +273,17 @@ Module Type VALIDATE_PLAN (O : OPS)
     | _, _ => False
     end.
   (** The tables keep the first block and the first certificate row of each identifier. *)
-  Parameter F0_tables : forall p s c b,
+  Parameter tables_spec : forall p s c b,
     trie_get b (source_bodies (tables p s c)) = find_block b (blocks _ _ _ p) /\
     trie_get b (target_bodies (tables p s c)) = find_block b (blocks _ _ _ s) /\
     trie_get b (cert_envs (tables p s c)) = lookup b (fst c) /\
     index_row (cert_rows (tables p s c)) b = cert_live c b.
   (** Acceptance checks the entry and every listed source block. *)
-  Parameter F1_checks : forall p s c, check p s c = true ->
+  Parameter check_parts : forall p s c, check p s c = true ->
     check_entry p s c (tables p s c) = true /\ forall b body,
       In (b, body) (blocks _ _ _ p) -> check_block (tables p s c) b = true.
   (** Statement checking carries the extended variable relation through equal operations. *)
-  Parameter F2_code_sim : forall ic sc rho rho' live ss si,
+  Parameter check_code_simulates : forall ic sc rho rho' live ss si,
     check_code ic sc rho live = Some rho' -> agrees rho live ss si ->
     match exec_code O.eval sc ss, exec_code O.eval ic si with
     | None, None => True
@@ -291,7 +291,7 @@ Module Type VALIDATE_PLAN (O : OPS)
     | _, _ => False
     end.
   (** Checked outgoing copies re-establish the destination's entry relation. *)
-  Parameter F3_edge_sim : forall p s c b target rho ss si sa ia sb ib sx ix choice,
+  Parameter check_edge_simulates : forall p s c b target rho ss si sa ia sb ib sx ix choice,
     check p s c = true -> check_edge (tables p s c) b target rho = true ->
     find_block b (blocks _ _ _ s) = Some sb ->
     find_block b (blocks _ _ _ p) = Some ib ->
@@ -301,42 +301,42 @@ Module Type VALIDATE_PLAN (O : OPS)
     agrees rho (cert_live c target) ss si ->
     state_sim p s c (target, sa, ss) (target, ia, si).
   (** A checked block takes ready states to equal ending outcomes or ready successor states. *)
-  Parameter F4_block_sim : forall p s c ss si,
+  Parameter block_simulates : forall p s c ss si,
     imp_form p -> check p s c = true -> state_ready p s c ss si ->
     outcome_ready p s c (step O.eval O.test s ss) (step O.eval O.test p si).
   (** A successful input binding makes the two entry states ready. *)
-  Parameter F5_entry_sim : forall p s c ins ss si,
+  Parameter entry_simulates : forall p s c ins ss si,
     imp_form p -> check p s c = true ->
     bind_vars (inputs _ _ _ s) ins [] = Some ss ->
     bind_vars (inputs _ _ _ p) ins [] = Some si ->
     state_ready p s c (entry _ _ _ s, [], ss) (entry _ _ _ p, [], si).
   (** The checked input lists reject the same arity mismatches. *)
-  Parameter F6_input_arity : forall p s c, check p s c = true ->
+  Parameter inputs_arity_eq : forall p s c, check p s c = true ->
     length (inputs _ _ _ s) = length (inputs _ _ _ p).
   (** Induction on fuel transports the block simulation to matching loop outcomes. *)
-  Parameter F7_run_sim : forall p s c n ss si,
+  Parameter run_simulates : forall p s c n ss si,
     imp_form p -> check p s c = true -> state_ready p s c ss si ->
     outcome_ready p s c (loop_fuel (step O.eval O.test s) n ss)
       (loop_fuel (step O.eval O.test p) n si).
   (** The SSA checker validates the dominator certificate it uses. *)
-  Parameter F8_dom_checked : forall s, check_ssa s = true ->
+  Parameter check_ssa_dom_checked : forall s, check_ssa s = true ->
     D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) = true.
   (** Accepted strict local-order and dominance checks establish language SSA form. *)
-  Parameter F9_ssa_wf : forall s, check_ssa s = true -> ssa_wf s.
+  Parameter check_ssa_sound_plan : forall s, check_ssa s = true -> ssa_wf s.
   (** Graph preparation and certificate work fit the syntax and dominator budget. *)
-  Parameter T1_dom : forall s,
+  Parameter T_dom_phases_le : forall s,
     (T_graph s + T_dom_cert s +
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) <=
       k_ssa * (N.of_nat (function_size s + 1) + dom_bound s) *
         N.of_nat (function_width s + 1))%N.
   (** Entry checking, with its certificate row-size guard, charges both functions and the
       certificate. *)
-  Parameter T2b_entry : forall p s c,
+  Parameter T_check_entry_le : forall p s c,
     (T_check_entry p s c (tables p s c) <= k_entry *
       N.of_nat (function_size p + function_size s + cert_size c + 1) *
       N.of_nat (check_width p s c + 1))%N.
   (** Code checking indexes its initial renaming and reads both instruction streams once. *)
-  Parameter T2c_code : forall ic sc rho live,
+  Parameter T_check_code_le : forall ic sc rho live,
     (T_check_code ic sc rho live <= k_code *
       N.of_nat (length rho + length live + length ic + length sc +
         fold_right (fun i n => (length (snd i) + n)%nat) 0%nat (ic ++ sc) + 1) *
@@ -346,13 +346,13 @@ Module Type VALIDATE_PLAN (O : OPS)
       k_code * N.of_nat
         (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat ic + 1))%N.
   (** Indexing reads both functions and the certificate once. *)
-  Parameter T0_tables : forall p s c,
+  Parameter T_tables_le : forall p s c,
     (T_tables p s c <= k_blocks *
       N.of_nat (function_size p + function_size s + cert_size c + 1) *
       N.of_nat (check_width p s c + 1))%N.
   (** Translation checking indexes once, checks the entry and the first block of each
       identifier. *)
-  Parameter T2_checks : forall p s c,
+  Parameter T_check_split : forall p s c,
     (T_check p s c <= T_tables p s c +
       k_blocks * N.of_nat (function_size p + 1) * N.of_nat (check_width p s c + 1) +
       T_check_entry p s c (tables p s c) +
@@ -360,7 +360,7 @@ Module Type VALIDATE_PLAN (O : OPS)
         (first_blocks (blocks _ _ _ p))))%N.
   (** After an accepted entry check, the block checks together charge both functions, the
       certificate and the operators. *)
-  Parameter T2a_block : forall p s c,
+  Parameter T_check_blocks_le : forall p s c,
     check_entry p s c (tables p s c) = true ->
     (fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
       (first_blocks (blocks _ _ _ p))) <=
@@ -368,7 +368,7 @@ Module Type VALIDATE_PLAN (O : OPS)
         N.of_nat (check_width p s c + 1) + k_code * N.of_nat (op_bits p))%N.
   (** SSA checking adds the syntax scans, and the dominator tree of an accepted certificate,
       to the graph phase. *)
-  Parameter T3_ssa : forall s,
+  Parameter T_check_ssa_split : forall s,
     (T_check_ssa s <= T_graph s + T_dom_cert s +
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
       (if D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s))

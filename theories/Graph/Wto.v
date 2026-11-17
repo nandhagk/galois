@@ -3741,7 +3741,7 @@ Module WtoT <: WTO_ALL.
     rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
-  Lemma heads_bigO : bigO (fun _ : wto => True)
+  Lemma heads_complexity : bigO (fun _ : wto => True)
     (fun w => N.of_nat (length (wto_order w))) T_heads.
   Proof.
     exists c_wto. intros w _.
@@ -3749,7 +3749,7 @@ Module WtoT <: WTO_ALL.
     rewrite Nat2N.inj_add. nia.
   Qed.
 
-  Lemma ranks_bigO : bigO (fun _ : wto => True)
+  Lemma ranks_complexity : bigO (fun _ : wto => True)
     (fun w => N.of_nat ((length (wto_order w) + 1) *
       (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1)))
     T_ranks.
@@ -3759,7 +3759,7 @@ Module WtoT <: WTO_ALL.
     rewrite Nat2N.inj_mul. nia.
   Qed.
 
-  Lemma check_bigO : bigO (fun _ : prepared * list positive * wto => True)
+  Lemma check_complexity : bigO (fun _ : prepared * list positive * wto => True)
     (fun '(g, roots, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
       (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
     (fun '(g, roots, w) => T_check g roots w).
@@ -3896,14 +3896,14 @@ Module WtoT <: WTO_ALL.
     history_from g (3 * length (concat (comps (wto_components g roots))) + 1)
       (initial g roots).
 
-  Lemma F1_lists :
+  Lemma member_unique_spec :
     (forall v vs, wto_member v vs = true <-> In v vs) /\
     (forall vs, wto_unique vs = true <-> NoDup vs).
   Proof.
     split; [apply wto_member_spec|apply wto_unique_spec].
   Qed.
 
-  Lemma F2_annotation : forall w, NoDup (wto_order w) ->
+  Lemma annotation_encloses : forall w, NoDup (wto_order w) ->
     map fst (wto_annotate [] w) = wto_order w /\
     forall u stack, In (u, stack) (wto_annotate [] w) ->
       forall h, In h stack <-> wto_encloses h u w.
@@ -3912,7 +3912,7 @@ Module WtoT <: WTO_ALL.
     now apply wto_annotation_spec.
   Qed.
 
-  Lemma F3_index : forall w, NoDup (wto_order w) -> index_correct w.
+  Lemma index_correct_of_nodup : forall w, NoDup (wto_order w) -> index_correct w.
   Proof.
     intros w Hunique u. unfold checked_index.
     destruct (wto_positions_spec (wto_annotate [] w)
@@ -3985,7 +3985,7 @@ Module WtoT <: WTO_ALL.
         * apply N.ltb_lt. exact (proj2 Hbounds).
   Qed.
 
-  Lemma F4_check : forall g roots w, check g roots w = true <-> checked g roots w.
+  Lemma check_spec : forall g roots w, check g roots w = true <-> checked g roots w.
   Proof.
     intros g roots w. split.
     - exact (wto_checked_from_acceptance g roots w).
@@ -3996,23 +3996,23 @@ Module WtoT <: WTO_ALL.
   Qed.
 
 
-  Lemma F5_live : forall g roots v, In v (live g roots) <-> reach (base g) roots v.
+  Lemma live_spec : forall g roots v, In v (live g roots) <-> reach (base g) roots v.
   Proof.
     intros g roots v. unfold live, search_trace. apply search_trace_reach_raw.
   Qed.
 
-  Lemma F6_sound : forall g roots w, check g roots w = true -> is_wto g roots w.
+  Lemma check_sound_plan : forall g roots w, check g roots w = true -> is_wto g roots w.
   Proof.
     apply check_sound.
   Qed.
 
-  Lemma F7_encloses : forall w h v,
+  Lemma encloses_heads : forall w h v,
     wto_encloses h v w -> In h (wto_heads w) /\ In h (wto_order w).
   Proof.
     apply wto_encloses_member.
   Qed.
 
-  Lemma F8_cycle : forall g roots w,
+  Lemma cycle_spec : forall g roots w,
     is_wto g roots w -> forall vs, cycle (base g) vs ->
     (forall v, In v vs -> reach (base g) roots v) ->
     exists h, In h vs /\ In h (wto_heads w).
@@ -4020,7 +4020,7 @@ Module WtoT <: WTO_ALL.
     apply wto_cycle_head.
   Qed.
 
-  Lemma F9_ranks : forall w,
+  Lemma ranks_def : forall w,
     ranks w = wto_rank_rows 1%positive (wto_order w) /\
     (forall v, ~ In v (wto_order w) -> trie_get v (ranks w) = None) /\
     (NoDup (wto_order w) -> forall v i,
@@ -4032,7 +4032,7 @@ Module WtoT <: WTO_ALL.
     - split; [apply ranks_absent|apply ranks_spec].
   Qed.
 
-  Lemma F10_forward : forall g roots w u v,
+  Lemma ranks_forward_plan : forall g roots w u v,
     check g roots w = true -> edge (base g) u v -> reach (base g) roots u ->
     exists ru rv, trie_get u (ranks w) = Some ru /\ trie_get v (ranks w) = Some rv /\
       ((ru < rv)%positive \/ (In v (heads w) /\ (rv <= ru)%positive)).
@@ -4040,13 +4040,13 @@ Module WtoT <: WTO_ALL.
     apply ranks_forward.
   Qed.
 
-  Lemma F11_select : forall preferred c h body,
+  Lemma select_perm : forall preferred c h body,
     wto_select preferred c = Some (h, body) -> Permutation c (h :: body).
   Proof.
     apply wto_select_spec.
   Qed.
 
-  Lemma F12_scope : forall g vs,
+  Lemma scoped_succs : forall g vs,
     nodes (wto_scoped g (Some vs)) = vs /\
     forall v, In v vs -> succs (base (wto_scoped g (Some vs))) v =
       filter (fun u => wto_member u vs) (succs (base g) v).
@@ -4112,7 +4112,7 @@ Module WtoT <: WTO_ALL.
       rewrite IH, length_app. lia.
   Qed.
 
-  Lemma F14_initial : forall g roots,
+  Lemma initial_inv : forall g roots,
     invariant g roots (initial g roots) /\
     potential g (initial g roots) = 3 * length (concat (comps (wto_components g roots))).
   Proof.
@@ -4129,7 +4129,7 @@ Module WtoT <: WTO_ALL.
 
   Local Opaque loopN.
 
-  Lemma F16_done : forall g roots,
+  Lemma loop_done : forall g roots,
     exists w, loopN (wto_step g)
       (N.of_nat (3 * length (concat (comps (wto_components g roots))) + 1))
       (initial g roots) = inr w.
@@ -4140,7 +4140,7 @@ Module WtoT <: WTO_ALL.
       apply Forall_rev. apply wto_components_nonempty.
     - change (potential g (initial g roots) <
         3 * length (concat (comps (wto_components g roots))) + 1).
-      rewrite (proj2 (F14_initial g roots)). lia.
+      rewrite (proj2 (initial_inv g roots)). lia.
   Qed.
 
   Local Transparent loopN.
@@ -4178,14 +4178,14 @@ Module WtoT <: WTO_ALL.
 
   Local Opaque loopN.
 
-  Lemma F17_history : forall g roots,
+  Lemma history_spec : forall g roots,
     exists terminal prefix, history g roots = prefix ++ [terminal] /\
       (match prefix with [] => terminal | first :: _ => first end) = initial g roots /\
       Forall2 (fun before after => wto_step g before = inl after)
         prefix (tl (history g roots)) /\
       wto_step g terminal = inr (build g roots).
   Proof.
-    intros g roots. destruct (F16_done g roots) as [w Hrun].
+    intros g roots. destruct (loop_done g roots) as [w Hrun].
     assert (Hbuild : build g roots = w).
     { unfold build. rewrite rev_append_rev, app_nil_r.
       change ((match loopN (wto_step g)
@@ -4274,7 +4274,7 @@ Module WtoT <: WTO_ALL.
       unfold ready. rewrite wto_scc_root_test. now apply wto_member_spec.
   Qed.
 
-  Lemma F13_partition : forall g body,
+  Lemma components_partition : forall g body,
     NoDup body ->
     let r := wto_components (wto_scoped g (Some body)) (rev body) in
     Permutation (concat (comps r)) body /\
@@ -4282,7 +4282,7 @@ Module WtoT <: WTO_ALL.
   Proof.
     intros g body.
     intro Hunique. cbn zeta.
-    pose proof (proj1 (F12_scope g body)) as Hnodes.
+    pose proof (proj1 (scoped_succs g body)) as Hnodes.
     assert (Hready : NoDup (nodes (wto_scoped g (Some body)))) by (now rewrite Hnodes).
     assert (Hroots : forall v, In v (nodes (wto_scoped g (Some body))) -> In v (rev body)).
     { intros v Hin. rewrite Hnodes in Hin. now apply (proj1 (in_rev body v)). }
@@ -4460,7 +4460,7 @@ Module WtoT <: WTO_ALL.
         pose proof (level_entry_credit g level st). lia.
   Qed.
 
-  Lemma F18_level_mass : forall g roots level,
+  Lemma level_mass_spec : forall g roots level,
     level_mass g level (history g roots) <=
       source_mass g (concat (comps (wto_components g roots))).
   Proof.
@@ -4644,7 +4644,7 @@ Module WtoT <: WTO_ALL.
     length (wto_parents st) <= wto_depth (build g roots).
   Proof.
     intros g roots st Hin.
-    destruct (F16_done g roots) as [w Hrun].
+    destruct (loop_done g roots) as [w Hrun].
     assert (Hbuild : build g roots = w).
     { unfold build. rewrite rev_append_rev, app_nil_r.
       change ((match loopN (wto_step g)
@@ -4660,7 +4660,7 @@ Module WtoT <: WTO_ALL.
     eapply Nat.le_trans; [apply state_depth_lower|exact Hdepth].
   Qed.
 
-  Lemma F19_depth : forall g roots st within entries owners c tasks,
+  Lemma history_depth_le : forall g roots st within entries owners c tasks,
     In st (history g roots) ->
     wto_tasks st = WtoExpand within entries owners c :: tasks ->
     length (wto_parents st) <= wto_depth (build g roots).
@@ -4672,7 +4672,7 @@ Module WtoT <: WTO_ALL.
   Local Transparent loopN Galois.Graph.Wto.wto_components.
 
 
-  Lemma T1_member : forall v vs,
+  Lemma T_wto_member_le : forall v vs,
     (T_wto_member v vs <= k_member * N.of_nat (length vs + 1) *
       N.of_nat (graph_max (Pos.size_nat v) (vertex_width vs) + 1))%N.
   Proof.
@@ -4966,7 +4966,7 @@ Module WtoT <: WTO_ALL.
     apply N.mul_le_mono_r. apply N.mul_le_mono_r. unfold k_scope, k_build. lia.
   Qed.
 
-  Lemma T3_scope : forall g vs,
+  Lemma T_wto_scoped_le : forall g vs,
     (forall v, In v vs -> In v (nodes g)) ->
     (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
   Proof.
@@ -4974,7 +4974,7 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** The index loop checks each key's width and listing before it reads a trie. *)
-  Lemma T4a_index : forall g w,
+  Lemma T_wto_check_index_le : forall g w,
     (T_wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
       [WtoCheckVisit w] 0 Empty Empty [] <=
     k_index * N.of_nat (graph_n (base g) + 1) * N.of_nat (graph_width (base g) + 1))%N.
@@ -4986,7 +4986,7 @@ Module WtoT <: WTO_ALL.
   Local Opaque loopN.
 
   (** An index result lists distinct listed vertices. *)
-  Lemma F4a_index : forall g w ranks intervals vs,
+  Lemma index_spec : forall g w ranks intervals vs,
     wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
       [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
     NoDup vs /\ (forall v, In v vs -> In v (nodes g)).
@@ -5001,7 +5001,7 @@ Module WtoT <: WTO_ALL.
   Local Transparent loopN.
 
   (** The edge scan is the final conjunct of the checker. *)
-  Lemma F4b_edges : forall b ranks intervals vs,
+  Lemma wto_edges_ok_def : forall b ranks intervals vs,
     wto_edges_ok b ranks intervals vs =
       forallb (fun u => forallb (wto_interval_edge ranks intervals u) (succs b u)) vs.
   Proof.
@@ -5011,7 +5011,7 @@ Module WtoT <: WTO_ALL.
   (** The edge scan reads the rows of distinct listed vertices once each. *)
   Local Opaque loopN.
 
-  Lemma T4b_edges : forall g w ranks intervals vs,
+  Lemma T_wto_edges_ok_le : forall g w ranks intervals vs,
     wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
       [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
     (T_wto_edges_ok (base g) ranks intervals vs <=
@@ -5026,7 +5026,7 @@ Module WtoT <: WTO_ALL.
 
   Local Transparent loopN.
 
-  Lemma T5_check_public : forall g roots w,
+  Lemma T_check_plan_le : forall g roots w,
     (T_check g roots w <= c_wto *
       N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
       N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
@@ -5034,7 +5034,7 @@ Module WtoT <: WTO_ALL.
     exact T_check_le.
   Qed.
 
-  Lemma T6_expand : forall g within entries owners c tasks partial parents h body,
+  Lemma T_wto_step_expand_split : forall g within entries owners c tasks partial parents h body,
     wto_select (wto_preferred owners entries c) c = Some (h, body) -> body <> [] ->
     (T_wto_step g (WtoState (WtoExpand within entries owners c :: tasks) partial parents) <=
       k_expand * (T_wto_preferred owners entries c +
@@ -5053,20 +5053,20 @@ Module WtoT <: WTO_ALL.
     time_simpl. nia.
   Qed.
 
-  Lemma T8_heads_source : forall w,
+  Lemma T_heads_split : forall w,
     (T_heads w <= k_heads * (T_wto_heads_into w [] + 1))%N.
   Proof.
     intro w. unfold k_heads. time_step.
     time_unfold @T_wto_heads_into. time_cbn. lia.
   Qed.
 
-  Lemma T9_heads_public : forall w,
+  Lemma T_heads_plan_le : forall w,
     (T_heads w <= c_wto * N.of_nat (length (wto_order w) + 1))%N.
   Proof.
     apply T_heads_le.
   Qed.
 
-  Lemma T10_ranks_source : forall w,
+  Lemma T_ranks_split : forall w,
     (T_ranks w <= k_ranks *
       (T_wto_order_into w [] + T_wto_rank_rows 1%positive (wto_order w) + 1))%N.
   Proof.
@@ -5075,7 +5075,7 @@ Module WtoT <: WTO_ALL.
     time_unfold @T_wto_order_into. time_unfold @T_wto_rank_rows. time_cbn. nia.
   Qed.
 
-  Lemma T11_ranks_public : forall w,
+  Lemma T_ranks_plan_le : forall w,
     (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
       N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
   Proof.
@@ -5083,7 +5083,7 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** Accumulating traversals compute the structural lists. *)
-  Lemma F20_into : forall w acc,
+  Lemma heads_order_into_eq : forall w acc,
       wto_heads_into w acc = wto_heads w ++ acc /\
       wto_order_into w acc = wto_order w ++ acc.
   Proof.
@@ -5091,7 +5091,7 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** An accumulating traversal visits each constructor once. *)
-  Lemma T8b_heads_into : forall w acc,
+  Lemma T_wto_heads_into_le : forall w acc,
       (T_wto_heads_into w acc <= k_heads * N.of_nat (2 * length (wto_order w) + 2))%N.
   Proof.
     intros w acc. pose proof (wto_heads_into_clock w acc) as Hheads.
@@ -5099,7 +5099,7 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** Flattening by accumulation visits each constructor once. *)
-  Lemma T10b_order_into : forall w acc,
+  Lemma T_wto_order_into_le : forall w acc,
       (T_wto_order_into w acc <= k_ranks * N.of_nat (2 * length (wto_order w) + 2))%N.
   Proof.
     intros w acc. pose proof (wto_order_into_clock w acc) as Horder.
@@ -5107,7 +5107,7 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** Rank insertion pays each key and an amortised binary successor. *)
-  Lemma T10c_rank_rows : forall vs,
+  Lemma T_wto_rank_rows_le : forall vs,
       (T_wto_rank_rows 1%positive vs <= k_ranks * N.of_nat (length vs + 1) *
         N.of_nat (vertex_width vs + Nat.log2 (length vs) + 1))%N.
   Proof.
@@ -5486,7 +5486,7 @@ Module WtoT <: WTO_ALL.
   (** Initial components and entries pay the listed graph and the supplied roots. *)
   Local Opaque loopN prepared_search_trace.
 
-  Lemma T13_initial : forall g roots,
+  Lemma T_wto_components_initial_amort : forall g roots,
       (T_wto_components g roots + T_wto_entries g roots (wto_components g roots) <=
         k_build * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
         N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
@@ -5526,7 +5526,7 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** Scoped components and entries read the materialized rows once. *)
-  Lemma T12_scoped : forall g vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
+  Lemma T_wto_components_scoped_amort : forall g vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
       (T_wto_components (wto_scoped g (Some vs)) (rev vs) +
         T_wto_entries (wto_scoped g (Some vs)) (rev vs)
           (wto_components (wto_scoped g (Some vs)) (rev vs)) <=
@@ -5534,7 +5534,7 @@ Module WtoT <: WTO_ALL.
   Proof.
     intros g vs Hunique Hlisted.
     exact (N.le_trans _ _ _
-      (T13_initial (wto_scoped g (Some vs)) (rev vs))
+      (T_wto_components_initial_amort (wto_scoped g (Some vs)) (rev vs))
       (scope_count_width_bound k_build
         (graph_n (base (wto_scoped g (Some vs))) +
           graph_e (base (wto_scoped g (Some vs))) + length (rev vs) + 1)
@@ -5738,7 +5738,7 @@ Module WtoT <: WTO_ALL.
         * assert (Hbody : NoDup (v :: body)).
           { pose proof (Permutation_NoDup Hselect_perm Hunique) as Hselected.
             inversion Hselected. assumption. }
-          pose proof (proj1 (F13_partition g (v :: body) Hbody)) as Hpartition.
+          pose proof (proj1 (components_partition g (v :: body) Hbody)) as Hpartition.
           rewrite !rev_append_rev, !app_nil_r.
           cbn [wto_tasks wto_partial wto_parents wto_order].
           rewrite map_app, concat_app, inventory_heads_app.
@@ -5763,7 +5763,7 @@ Module WtoT <: WTO_ALL.
         cbn [wto_order] in Hreverse. now rewrite app_nil_r in Hreverse.
   Qed.
 
-  Lemma F15_step : forall g roots st next,
+  Lemma step_inv : forall g roots st next,
     invariant g roots st -> wto_step g st = inl next ->
     invariant g roots next /\ potential g next < potential g st.
   Proof.
@@ -5836,7 +5836,7 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** Preference and selection scan an actual component once. *)
-  Lemma T14_select : forall g roots st within entries owners c tasks,
+  Lemma T_wto_select_le : forall g roots st within entries owners c tasks,
       In st (history g roots) -> wto_tasks st = WtoExpand within entries owners c :: tasks ->
       (T_wto_preferred owners entries c + T_wto_select (wto_preferred owners entries c) c <=
         k_expand * N.of_nat (scope_work g c))%N.
@@ -5922,7 +5922,7 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** Close, terminal and singleton steps pay the reversed partial order and one row. *)
-  Lemma T15_short_step : forall g roots st,
+  Lemma T_wto_step_short_le : forall g roots st,
       In st (history g roots) ->
       (forall within entries owners c tasks h body,
         wto_tasks st = WtoExpand within entries owners c :: tasks ->
@@ -5987,7 +5987,7 @@ Module WtoT <: WTO_ALL.
       (initial g roots) <= execution_cost g (history g roots) +
       18 * N.of_nat (length (concat (comps (wto_components g roots)))) + 9)%N.
   Proof.
-    intros g roots. destruct (F16_done g roots) as [w Hrun].
+    intros g roots. destruct (loop_done g roots) as [w Hrun].
     rewrite search_loopN_fuel, Nat2N.id in Hrun.
     destruct (search_loop_trace_clock (wto_step g) (fun st => T_wto_step g st)
       (N.of_nat (3 * length (concat (comps (wto_components g roots))) + 1))
@@ -6034,7 +6034,7 @@ Module WtoT <: WTO_ALL.
       (fun st => Galois.Graph.Wto.T_wto_step g st) (fun st => T_wto_step g st)
       Hcallback (N.of_nat (3 * length (concat (comps (wto_components g roots))) + 1))
       (initial g roots)) as Hmono.
-    destruct (F16_done g roots) as [w Hrun].
+    destruct (loop_done g roots) as [w Hrun].
     unfold initial in Hloop, Hmono, Hrun.
     unfold wto_components, wto_entries, wto_expand_tasks, wto_step in *.
     rewrite rev_append_rev, app_nil_r, length_rev in Htasks.
@@ -6044,7 +6044,7 @@ Module WtoT <: WTO_ALL.
     rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. lia.
   Qed.
 
-  Lemma T16_build : forall g roots,
+  Lemma T_build_split : forall g roots,
     (T_build g roots <= k_build * (T_wto_components g roots +
       T_wto_entries g roots (wto_components g roots) +
       N.of_nat (length (concat (comps (wto_components g roots)))) +
@@ -6226,7 +6226,7 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** Close and terminal steps at one depth reverse disjoint partial outputs. *)
-  Lemma F21_partial_mass : forall g roots level,
+  Lemma partial_mass_spec : forall g roots level,
     fold_right (fun st n =>
       if Nat.eqb (length (wto_parents st)) level then
         match wto_tasks st with
@@ -6469,7 +6469,7 @@ Module WtoT <: WTO_ALL.
       (wto_depth (build g roots) + 1) * source_mass g (concat (comps (wto_components g roots)))).
     { apply (state_level_bound wto_state (fun st => length (wto_parents st))
         (state_expansion_mass g)); [exact Hdepth|].
-      intro level. rewrite expansion_level_mass. apply F18_level_mass. }
+      intro level. rewrite expansion_level_mass. apply level_mass_spec. }
     assert (Hpartials : fold_right (fun st n => state_partial_mass st + n) 0 (history g roots) <=
       (wto_depth (build g roots) + 1) * length (concat (comps (wto_components g roots)))).
     { apply (state_level_bound wto_state (fun st => length (wto_parents st))
@@ -6581,11 +6581,11 @@ Module WtoT <: WTO_ALL.
                (WtoState (WtoExpand within entries owners c :: tasks) partial parents)
                within entries owners c tasks h (v :: body) Hin eq_refl Hselect)
                as [Hbody_unique Hbody_listed].
-             pose proof (T14_select g roots
+             pose proof (T_wto_select_le g roots
                (WtoState (WtoExpand within entries owners c :: tasks) partial parents)
                within entries owners c tasks Hin eq_refl) as Hselect_clock.
              pose proof (Hscope_bound (v :: body) Hbody_unique Hbody_listed) as Hscope_clock.
-             pose proof (T6_expand g within entries owners c tasks partial parents h (v :: body)
+             pose proof (T_wto_step_expand_split g within entries owners c tasks partial parents h (v :: body)
                Hselect ltac:(discriminate)) as Hstep.
              pose proof (source_mass_permutation g _ _ (wto_select_spec _ _ _ _ Hselect))
                as Hmass.
@@ -6738,7 +6738,7 @@ Module WtoT <: WTO_ALL.
       N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
   Proof.
     intros g roots Hinitial Hscope Hpartial.
-    pose proof (T16_build g roots) as Hbuild.
+    pose proof (T_build_split g roots) as Hbuild.
     pose proof (execution_cost_from_bounds g roots Hscope Hpartial) as Hexecution.
     pose proof (wto_components_size g roots) as Hsize. rewrite listed_graph_size in Hsize.
     pose proof (initial_count_margin _ _ (graph_e (base g)) (length roots) Hsize) as Hmargin.
@@ -6777,7 +6777,7 @@ Module WtoT <: WTO_ALL.
   Proof.
     intros g vs Hunique Hlisted.
     pose proof (T3_scope_listed g vs Hlisted) as Hscoped.
-    pose proof (T12_scoped g vs Hunique Hlisted) as Hcomponents.
+    pose proof (T_wto_components_scoped_amort g vs Hunique Hlisted) as Hcomponents.
     unfold k_scope in Hscoped, Hcomponents. nia.
   Qed.
 
@@ -6788,9 +6788,9 @@ Module WtoT <: WTO_ALL.
       N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
   Proof.
     intros g roots. apply build_clock_from_bounds.
-    - exact (T13_initial g roots).
+    - exact (T_wto_components_initial_amort g roots).
     - apply builder_scope_phase.
-    - intro level. rewrite partial_level_mass. apply F21_partial_mass.
+    - intro level. rewrite partial_level_mass. apply partial_mass_spec.
   Qed.
 
   Lemma c_wto_builder : (4096 * k_build * k_build <= c_wto)%N.
@@ -6806,13 +6806,13 @@ Module WtoT <: WTO_ALL.
     exact c_wto_builder.
   Qed.
 
-  Lemma T7_build_public : forall g roots,
+  Lemma T_build_plan_le : forall g roots,
     (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
       N.of_nat (wto_depth (build g roots) + 1) *
       N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
   Proof. apply T_build_le. Qed.
 
-  Lemma build_bigO : bigO (fun _ : prepared * list positive => True)
+  Lemma build_complexity : bigO (fun _ : prepared * list positive => True)
     (fun '(g, roots) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
       (wto_depth (build g roots) + 1) *
       (graph_max (graph_width (base g)) (vertex_width roots) + 1)))

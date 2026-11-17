@@ -369,7 +369,7 @@ Module IntervalBaseT (T : THRESHOLDS_T) <: INTERVAL_SCALAR_T T.
   Qed.
 
   (** Scalar inclusion has the published endpoint-bit class. *)
-  Lemma interval_leb_bigO : bigO (X := itv * itv) (fun _ => True)
+  Lemma interval_leb_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
     (fun x => T_interval_leb (fst x) (snd x)).
   Proof.
@@ -378,7 +378,7 @@ Module IntervalBaseT (T : THRESHOLDS_T) <: INTERVAL_SCALAR_T T.
   Qed.
 
   (** Scalar join has the published endpoint-bit class. *)
-  Lemma interval_join_bigO : bigO (X := itv * itv) (fun _ => True)
+  Lemma interval_join_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
     (fun x => T_interval_join (fst x) (snd x)).
   Proof.
@@ -387,7 +387,7 @@ Module IntervalBaseT (T : THRESHOLDS_T) <: INTERVAL_SCALAR_T T.
   Qed.
 
   (** Scalar meet has the published endpoint-bit class. *)
-  Lemma interval_meet_bigO : bigO (X := itv * itv) (fun _ => True)
+  Lemma interval_meet_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
     (fun x => T_interval_meet (fst x) (snd x)).
   Proof.
@@ -396,7 +396,7 @@ Module IntervalBaseT (T : THRESHOLDS_T) <: INTERVAL_SCALAR_T T.
   Qed.
 
   (** Scalar widening has the published bits-plus-search-path class. *)
-  Lemma interval_stable_widen_bigO : bigO (X := ttree * (itv * itv)) (fun _ => True)
+  Lemma interval_stable_widen_complexity : bigO (X := ttree * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst (snd x)) + interval_bits (snd (snd x)) +
       (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
     (fun x => T_interval_stable_widen (fst x) (fst (snd x)) (snd (snd x))).
@@ -1081,7 +1081,7 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Qed.
 
   (** Addition retains every sum of represented operands. *)
-  Lemma add_sound : forall a b x y,
+  Lemma add_sound_aux : forall a b x y,
     gamma a x -> gamma b y -> gamma (add a b) (x + y).
   Proof.
     intros [|la ha] [|lb hb] x y Hx Hy; try contradiction.
@@ -1093,7 +1093,7 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Qed.
 
   (** Subtraction retains every difference of represented operands. *)
-  Lemma sub_sound : forall a b x y,
+  Lemma sub_sound_aux : forall a b x y,
     gamma a x -> gamma b y -> gamma (sub a b) (x - y).
   Proof.
     intros [|la ha] [|lb hb] x y Hx Hy; try contradiction.
@@ -1135,7 +1135,7 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Qed.
 
   (** Multiplication retains every product of represented operands. *)
-  Lemma mul_sound : forall a b x y,
+  Lemma mul_sound_aux : forall a b x y,
     gamma a x -> gamma b y -> gamma (mul a b) (x * y).
   Proof.
     intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]] x y Hx Hy;
@@ -1156,23 +1156,23 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Qed.
 
   (** Backward addition retains both operands of a represented sum. *)
-  Lemma add_back_sound : forall r a b x y,
+  Lemma add_back_sound_aux : forall r a b x y,
     gamma a x -> gamma b y -> gamma r (x + y) ->
     gamma (fst (add_back r a b)) x /\ gamma (snd (add_back r a b)) y.
   Proof.
     intros r a b x y Ha Hb Hr. split; apply gamma_meet; try assumption.
-    - replace x with ((x + y) - y)%Z by lia. now apply sub_sound.
-    - replace y with ((x + y) - x)%Z by lia. now apply sub_sound.
+    - replace x with ((x + y) - y)%Z by lia. now apply sub_sound_aux.
+    - replace y with ((x + y) - x)%Z by lia. now apply sub_sound_aux.
   Qed.
 
   (** Backward subtraction retains both operands of a represented difference. *)
-  Lemma sub_back_sound : forall r a b x y,
+  Lemma sub_back_sound_aux : forall r a b x y,
     gamma a x -> gamma b y -> gamma r (x - y) ->
     gamma (fst (sub_back r a b)) x /\ gamma (snd (sub_back r a b)) y.
   Proof.
     intros r a b x y Ha Hb Hr. split; apply gamma_meet; try assumption.
-    - replace x with ((x - y) + y)%Z by lia. now apply add_sound.
-    - replace y with (x - (x - y))%Z by lia. now apply sub_sound.
+    - replace x with ((x - y) + y)%Z by lia. now apply add_sound_aux.
+    - replace y with (x - (x - y))%Z by lia. now apply sub_sound_aux.
   Qed.
 
   (** Multiplication preimages retain an operand of a represented product. *)
@@ -1187,11 +1187,11 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
     - destruct (Z.eqb z (-1)) eqn:Hneg; [|apply gamma_top].
       apply Z.eqb_eq in Hneg. subst z.
       replace x with (0 - x * (-1))%Z by ring.
-      apply sub_sound; [apply abst_sound|exact Hr].
+      apply sub_sound_aux; [apply abst_sound|exact Hr].
   Qed.
 
   (** Backward multiplication retains both operands of a represented product. *)
-  Lemma mul_back_sound : forall r a b x y,
+  Lemma mul_back_sound_aux : forall r a b x y,
     gamma a x -> gamma b y -> gamma r (x * y) ->
     gamma (fst (mul_back r a b)) x /\ gamma (snd (mul_back r a b)) y.
   Proof.
@@ -1403,7 +1403,7 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
         destruct test eqn:Hdefined in Heval; try discriminate
       end).
     all: injection Heval as Hvalue; subst c.
-    all: first [now apply add_sound | now apply sub_sound | now apply mul_sound |
+    all: first [now apply add_sound_aux | now apply sub_sound_aux | now apply mul_sound_aux |
       now apply raw_udiv_sound | now apply raw_urem_sound | now apply raw_bitand_sound |
       now apply raw_bitor_sound | now apply raw_cmp_sound |
       eapply raw_shl_sound; [exact Ha|exact Hb|now apply Z.leb_le in Hdefined]].
@@ -1429,9 +1429,9 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
     all: try (apply andb_true_iff in Hdefined as [Hnonneg Hpositive];
       apply Z.leb_le in Hnonneg; apply Z.ltb_lt in Hpositive).
     all: first
-      [destruct (add_back_sound r a b x y Ha Hb Hr) as [Hleft Hright] |
-       destruct (sub_back_sound r a b x y Ha Hb Hr) as [Hleft Hright] |
-       destruct (mul_back_sound r a b x y Ha Hb Hr) as [Hleft Hright] |
+      [destruct (add_back_sound_aux r a b x y Ha Hb Hr) as [Hleft Hright] |
+       destruct (sub_back_sound_aux r a b x y Ha Hb Hr) as [Hleft Hright] |
+       destruct (mul_back_sound_aux r a b x y Ha Hb Hr) as [Hleft Hright] |
        destruct (unsigned_back_sound a b x y Ha Hb Hnonneg Hpositive) as [Hleft Hright]].
     all: constructor; [exact Hleft|constructor; [exact Hright|constructor]].
   Qed.
@@ -1462,7 +1462,7 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Qed.
 
   (** A represented comparison result preserves both operands of unsigned comparison. *)
-  Lemma ult_back_sound : forall r a b x y,
+  Lemma ult_back_sound_aux : forall r a b x y,
     gamma a x -> gamma b y -> gamma r (if x <? y then 1 else 0) ->
     gamma (fst (ult_back r a b)) x /\ gamma (snd (ult_back r a b)) y.
   Proof.
@@ -1540,7 +1540,7 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
       assert (Hresult : gamma (abst 1) (if x <? y then 1 else 0)).
       { assert (Hltb : (x <? y) = true) by (apply Z.ltb_lt; exact Hlt).
         rewrite Hltb. apply abst_sound. }
-      destruct (ult_back_sound (abst 1) a b x y Ha Hb Hresult) as [Hx Hy].
+      destruct (ult_back_sound_aux (abst 1) a b x y Ha Hb Hresult) as [Hx Hy].
       constructor; [exact Hx|constructor; [exact Hy|constructor]].
   Qed.
   (** Guard transfer refines each operand in its original position. *)
@@ -3265,17 +3265,17 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     apply N.mul_le_mono_r. unfold c_val. nia.
   Qed.
   (** Interval concretization is inclusive endpoint membership. *)
-  Lemma F1_gamma : forall a z, gamma a z <-> in_itv a z.
+  Lemma gamma_def : forall a z, gamma a z <-> in_itv a z.
   Proof.
     reflexivity.
   Qed.
   (** Widening uses the count of thresholds beyond each finite endpoint. *)
-  Lemma F2_wrank : forall ts a, wrank ts a = interval_wrank ts a.
+  Lemma wrank_def : forall ts a, wrank ts a = interval_wrank ts a.
   Proof.
     reflexivity.
   Qed.
   (** Each endpoint contributes at most one plus the threshold count. *)
-  Lemma F3_wrank_le : forall ts a, wrank ts a <= 2 * (length (T.vals ts) + 1).
+  Lemma wrank_le : forall ts a, wrank ts a <= 2 * (length (T.vals ts) + 1).
   Proof.
     intros ts [|lo hi]; [cbn; lia|].
     change (upper_rank (T.vals ts) hi + lower_rank (T.vals ts) lo <=
@@ -3285,29 +3285,29 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
       try pose proof (upper_count_bounded (T.vals ts) hi); lia.
   Qed.
   (** Raising a finite upper endpoint to its next threshold removes one rank unit. *)
-  Lemma F4_count_gt : forall ts z u, In u (T.vals ts) ->
+  Lemma count_gt_decreasing : forall ts z u, In u (T.vals ts) ->
     (z < u)%Z -> count_gt ts u < count_gt ts z.
   Proof.
     intros ts z u Hin Hlt. exact (upper_count_strict (T.vals ts) z u Hin Hlt).
   Qed.
   (** Lowering a finite lower endpoint to its previous threshold removes one rank unit. *)
-  Lemma F5_count_lt : forall ts z u, In u (T.vals ts) ->
+  Lemma count_lt_decreasing : forall ts z u, In u (T.vals ts) ->
     (u < z)%Z -> count_lt ts u < count_lt ts z.
   Proof.
     intros ts z u Hin Hlt. exact (lower_count_strict (T.vals ts) u z Hin Hlt).
   Qed.
   (** Widening parameter size pays for a threshold search path. *)
-  Lemma F_wsize : forall ts, wsize ts = (T.depth ts + 1) * (T.tree_bits ts + 1).
+  Lemma wsize_def : forall ts, wsize ts = (T.depth ts + 1) * (T.tree_bits ts + 1).
   Proof.
     reflexivity.
   Qed.
   (** Shift transfer computes finite endpoints below the cutoff and a sound infinity above it. *)
-  Lemma F_shl_cutoff : forall a b, shl a b = shift_cutoff a b.
+  Lemma shl_cutoff_def : forall a b, shl a b = shift_cutoff a b.
   Proof.
     reflexivity.
   Qed.
   (** Viewed forward transfer dispatches to the proved interval primitives. *)
-  Lemma F_forward_view : forall o xs, forward o xs =
+  Lemma forward_view_def : forall o xs, forward o xs =
     match L.view o, xs with
     | ZConst z, nil => abst z
     | ZAdd, a :: b :: nil => add a b
@@ -3325,7 +3325,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     reflexivity.
   Qed.
   (** Viewed strict guards dispatch to unsigned comparison refinement. *)
-  Lemma F_guard_lt : forall g a b, L.gview g = ZGuardUlt ->
+  Lemma guard_lt_def : forall g a b, L.gview g = ZGuardUlt ->
     guard g (a :: b :: nil) =
       let result := ult_back (I (Fin 1) (Fin 1)) a b in
       fst result :: snd result :: nil.
@@ -3333,74 +3333,74 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     intros g a b Hview. unfold guard. now rewrite Hview.
   Qed.
   (** Cutoff shifting keeps the published quadratic endpoint bound. *)
-  Lemma T3_shl : forall a b,
+  Lemma T_shl_plan_le : forall a b,
     (T_shl a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
   Proof.
     exact shl_time_quadratic.
   Qed.
   (** Addition retains every sum of represented operands. *)
-  Lemma F6_add_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Lemma add_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (add a b) (x + y).
   Proof.
-    exact add_sound.
+    exact add_sound_aux.
   Qed.
   (** Subtraction retains every difference of represented operands. *)
-  Lemma F7_sub_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Lemma sub_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (sub a b) (x - y).
   Proof.
-    exact sub_sound.
+    exact sub_sound_aux.
   Qed.
   (** Multiplication retains every product of represented operands. *)
-  Lemma F8_mul_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Lemma mul_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (mul a b) (x * y).
   Proof.
-    exact mul_sound.
+    exact mul_sound_aux.
   Qed.
   (** Unsigned division retains each defined quotient of nonnegative operands. *)
-  Lemma F9_udiv_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Lemma udiv_sound : forall a b x y, in_itv a x -> in_itv b y ->
     (0 <= x)%Z -> (0 < y)%Z -> in_itv (udiv a b) (Z.div x y).
   Proof.
     intros a b x y Ha Hb _ _. now apply raw_udiv_sound.
   Qed.
   (** Unsigned remainder retains each defined remainder of nonnegative operands. *)
-  Lemma F10_urem_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Lemma urem_sound : forall a b x y, in_itv a x -> in_itv b y ->
     (0 <= x)%Z -> (0 < y)%Z -> in_itv (urem a b) (Z.modulo x y).
   Proof.
     intros a b x y Ha Hb _ _. now apply raw_urem_sound.
   Qed.
   (** Bitwise conjunction retains every represented pair of operands. *)
-  Lemma F11_and_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Lemma and_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (bitand a b) (Z.land x y).
   Proof.
     exact raw_bitand_sound.
   Qed.
   (** Bitwise disjunction retains every represented pair of operands. *)
-  Lemma F12_or_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Lemma or_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (bitor a b) (Z.lor x y).
   Proof.
     exact raw_bitor_sound.
   Qed.
   (** Left shifting retains represented operands for every nonnegative shift. *)
-  Lemma F13_shl_sound : forall a b x y, in_itv a x -> in_itv b y ->
+  Lemma shl_sound : forall a b x y, in_itv a x -> in_itv b y ->
     (0 <= y)%Z -> in_itv (shl a b) (Z.shiftl x y).
   Proof.
     exact raw_shl_sound.
   Qed.
   (** Unsigned comparison refinement descends in both operands. *)
-  Lemma F22_ult_back_lower : forall r a b,
+  Lemma ult_back_lower : forall r a b,
     leb (fst (ult_back r a b)) a = true /\ leb (snd (ult_back r a b)) b = true.
   Proof.
     exact ult_back_refines.
   Qed.
   (** Comparison contains the Boolean result as zero or one. *)
-  Lemma F14_cmp_sound : forall c a b x y, in_itv a x -> in_itv b y ->
+  Lemma cmp_sound : forall c a b x y, in_itv a x -> in_itv b y ->
     in_itv (cmp c a b) (match Z.compare x y, c with Eq, Eq | Lt, Lt | Gt, Gt => 1 | _, _ => 0 end).
   Proof.
     intros c a b x y Ha Hb. pose proof (raw_cmp_sound c a b x y Ha Hb) as Hcmp.
     destruct (Z.compare x y), c; exact Hcmp.
   Qed.
   (** Signed splitting retains the signed view of every normalized word. *)
-  Lemma F15_signed_split_sound : forall w a x, in_itv a x ->
+  Lemma signed_split_sound : forall w a x, in_itv a x ->
     (0 <= x < 2 ^ Zpos w)%Z ->
     exists b, In b (signed_split w a) /\
       in_itv b (if (x <? 2 ^ (Zpos w - 1))%Z then x else x - 2 ^ Zpos w).
@@ -3413,60 +3413,60 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
       apply gamma_meet; [exact Ha|]. change (0 <= x <= h - 1)%Z.
       apply Z.ltb_lt in Hhalf. lia.
     - exists (sub (meet a (I (Fin h) (Fin (m - 1)))) (abst m)).
-      split; [right; now left|]. apply sub_sound; [|apply abst_sound].
+      split; [right; now left|]. apply sub_sound_aux; [|apply abst_sound].
       apply gamma_meet; [exact Ha|]. change (h <= x <= m - 1)%Z.
       apply Z.ltb_ge in Hhalf. lia.
   Qed.
   (** Backward addition retains operands consistent with its result. *)
-  Lemma F16_add_back_sound : forall r a b x y,
+  Lemma add_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> in_itv r (x + y) ->
     in_itv (fst (add_back r a b)) x /\ in_itv (snd (add_back r a b)) y.
   Proof.
-    exact add_back_sound.
+    exact add_back_sound_aux.
   Qed.
   (** Backward subtraction retains operands consistent with its result. *)
-  Lemma F17_sub_back_sound : forall r a b x y,
+  Lemma sub_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> in_itv r (x - y) ->
     in_itv (fst (sub_back r a b)) x /\ in_itv (snd (sub_back r a b)) y.
   Proof.
-    exact sub_back_sound.
+    exact sub_back_sound_aux.
   Qed.
   (** Backward multiplication retains operands consistent with its result. *)
-  Lemma F18_mul_back_sound : forall r a b x y,
+  Lemma mul_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> in_itv r (x * y) ->
     in_itv (fst (mul_back r a b)) x /\ in_itv (snd (mul_back r a b)) y.
   Proof.
-    exact mul_back_sound.
+    exact mul_back_sound_aux.
   Qed.
   (** Backward division retains operands consistent with a defined unsigned quotient. *)
-  Lemma F19_udiv_back_sound : forall r a b x y,
+  Lemma udiv_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> (0 <= x)%Z -> (0 < y)%Z -> in_itv r (Z.div x y) ->
     in_itv (fst (udiv_back r a b)) x /\ in_itv (snd (udiv_back r a b)) y.
   Proof.
     intros r a b x y Ha Hb Hx Hy _. now apply unsigned_back_sound.
   Qed.
   (** Backward remainder retains operands consistent with a defined unsigned remainder. *)
-  Lemma F20_urem_back_sound : forall r a b x y,
+  Lemma urem_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> (0 <= x)%Z -> (0 < y)%Z -> in_itv r (Z.modulo x y) ->
     in_itv (fst (urem_back r a b)) x /\ in_itv (snd (urem_back r a b)) y.
   Proof.
     intros r a b x y Ha Hb Hx Hy _. now apply unsigned_back_sound.
   Qed.
   (** Backward unsigned comparison retains operands with the specified Boolean result. *)
-  Lemma F21_ult_back_sound : forall r a b x y,
+  Lemma ult_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> (0 <= x)%Z -> (0 <= y)%Z ->
     in_itv r (if (x <? y)%Z then 1 else 0) ->
     in_itv (fst (ult_back r a b)) x /\ in_itv (snd (ult_back r a b)) y.
   Proof.
-    intros r a b x y Ha Hb _ _ Hr. now apply ult_back_sound.
+    intros r a b x y Ha Hb _ _ Hr. now apply ult_back_sound_aux.
   Qed.
   (** Endpoint arithmetic bounds multiplication before dispatch overhead. *)
-  Lemma T1_mul : forall a b, (T_mul a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
+  Lemma T_mul_plan_le : forall a b, (T_mul a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
   Proof.
     intros a b. pose proof (mul_time_quadratic a b). unfold k_interval_arith. nia.
   Qed.
   (** Threshold searches bound widening before dispatch overhead. *)
-  Lemma T2_widen : forall ts a b,
+  Lemma T_widen_plan_le : forall ts a b,
     (T_widen ts a b <= k_interval_widen * N.of_nat
       (size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1))%N.
   Proof.
@@ -3479,7 +3479,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     assert (Hpos : (1 <= N.of_nat (size a + size b + wsize ts + 1))%N) by lia. nia.
   Qed.
   (** Multiplication has the published quadratic endpoint bound. *)
-  Lemma mul_bigO : (bigO (fun _ => True)
+  Lemma mul_complexity : (bigO (fun _ => True)
     (fun ab => N.of_nat ((binary_work (fst ab) (snd ab))%nat))
     (fun ab => T_mul (fst ab) (snd ab)))%N.
   Proof.
@@ -3488,7 +3488,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Addition has the published linear class. *)
-  Lemma add_bigO : bigO (X := itv * itv) (fun _ => True)
+  Lemma add_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
     (fun x => T_add (fst x) (snd x)).
   Proof.
@@ -3497,7 +3497,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Subtraction has the published linear class. *)
-  Lemma sub_bigO : bigO (X := itv * itv) (fun _ => True)
+  Lemma sub_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
     (fun x => T_sub (fst x) (snd x)).
   Proof.
@@ -3506,7 +3506,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Unsigned division has the published quadratic endpoint class. *)
-  Lemma udiv_bigO : bigO (X := itv * itv) (fun _ => True)
+  Lemma udiv_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_udiv (fst x) (snd x)).
   Proof.
     exists c_interval. intros [a b] _. cbn [fst snd].
@@ -3514,7 +3514,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Unsigned remainder has the published quadratic endpoint class. *)
-  Lemma urem_bigO : bigO (X := itv * itv) (fun _ => True)
+  Lemma urem_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_urem (fst x) (snd x)).
   Proof.
     exists c_interval. intros [a b] _. cbn [fst snd].
@@ -3522,7 +3522,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Shift has the published quadratic endpoint class. *)
-  Lemma shl_bigO : bigO (X := itv * itv) (fun _ => True)
+  Lemma shl_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_shl (fst x) (snd x)).
   Proof.
     exists c_interval. intros [a b] _. cbn [fst snd].
@@ -3530,7 +3530,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Threshold widening has the published bits-plus-search-path class. *)
-  Lemma widen_bigO : bigO (X := ttree * (itv * itv)) (fun _ => True)
+  Lemma widen_complexity : bigO (X := ttree * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) +
       (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
     (fun x => T_widen (fst x) (fst (snd x)) (snd (snd x))).
@@ -3540,7 +3540,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Backward addition is linear in the result and operand sizes. *)
-  Lemma add_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Lemma add_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_add_back (fst x) (fst (snd x)) (snd (snd x))).
   Proof.
@@ -3549,7 +3549,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Backward subtraction is linear in the result and operand sizes. *)
-  Lemma sub_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Lemma sub_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_sub_back (fst x) (fst (snd x)) (snd (snd x))).
   Proof.
@@ -3558,7 +3558,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Bitwise conjunction is linear, because the result is a minimum of upper endpoints. *)
-  Lemma bitand_bigO : bigO (X := itv * itv) (fun _ => True)
+  Lemma bitand_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitand (fst x) (snd x)).
   Proof.
     exists 16%N. intros [a b] _. cbn [fst snd].
@@ -3566,7 +3566,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Bitwise disjunction is linear, because the result is a mask of one bit length. *)
-  Lemma bitor_bigO : bigO (X := itv * itv) (fun _ => True)
+  Lemma bitor_complexity : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitor (fst x) (snd x)).
   Proof.
     exists 64%N. intros [a b] _. cbn [fst snd].
@@ -3574,7 +3574,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Comparison has the published linear class. *)
-  Lemma cmp_bigO : bigO (X := comparison * (itv * itv)) (fun _ => True)
+  Lemma cmp_complexity : bigO (X := comparison * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_cmp (fst x) (fst (snd x)) (snd (snd x))).
   Proof.
@@ -3583,7 +3583,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Backward multiplication is linear, because a preimage only reads a point. *)
-  Lemma mul_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Lemma mul_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_mul_back (fst x) (fst (snd x)) (snd (snd x))).
   Proof.
@@ -3592,7 +3592,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Backward division is linear, because it only meets with fixed bounds. *)
-  Lemma udiv_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Lemma udiv_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_udiv_back (fst x) (fst (snd x)) (snd (snd x))).
   Proof.
@@ -3601,7 +3601,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Backward remainder is linear, because it only meets with fixed bounds. *)
-  Lemma urem_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Lemma urem_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_urem_back (fst x) (fst (snd x)) (snd (snd x))).
   Proof.
@@ -3610,7 +3610,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Backward comparison is linear in the result and operand sizes. *)
-  Lemma ult_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
+  Lemma ult_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_ult_back (fst x) (fst (snd x)) (snd (snd x))).
   Proof.
@@ -3619,7 +3619,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Signed splitting is linear in the width and the endpoints. *)
-  Lemma signed_split_bigO : bigO (X := positive * itv) (fun _ => True)
+  Lemma signed_split_complexity : bigO (X := positive * itv) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + size (snd x) + 1))
     (fun x => T_signed_split (fst x) (snd x)).
   Proof.
@@ -3628,7 +3628,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
   (** Forward transfer has the published operator-work class. *)
-  Lemma forward_bigO : (bigO (fun _ => True)
+  Lemma forward_complexity : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
   Proof.

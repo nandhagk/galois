@@ -181,7 +181,7 @@ Module CongruenceCRT.
 
 
   (** Aligned division keeps the standard quotient and remainder on its input domain. *)
-  Lemma F_div_aligned : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
+  Lemma div_aligned_def : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
     div_aligned a b = Z.div_eucl a b.
   Proof.
     intros a b Ha Hb.
@@ -204,7 +204,7 @@ Module CongruenceCRT.
     div_aligned a b = Z.div_eucl a b.
   Proof.
     intros a b. destruct a as [| p | p], b as [| q | q]; try reflexivity.
-    apply F_div_aligned; lia.
+    apply div_aligned_def; lia.
   Qed.
 
   (** Each consumed scan bit pays for at most one additional quotient bit. The other
@@ -2130,7 +2130,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Qed.
 
   (** Normalization is closed without using a public admission. *)
-  Lemma norm_gamma : forall w a z,
+  Lemma norm_gamma_aux : forall w a z,
     pgamma w (congr_norm w a) z <-> pgamma w a z.
   Proof.
     intros w a z. rewrite <- !gamma_mod_agrees. apply cong_norm_gamma.
@@ -2455,7 +2455,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
   Proof.
-    intros w a z Hbot Ha. apply (proj2 (norm_gamma w a z)) in Ha.
+    intros w a z Hbot Ha. apply (proj2 (norm_gamma_aux w a z)) in Ha.
     unfold pis_bot in Hbot. destruct (congr_norm w a); [exact Ha | discriminate].
   Qed.
   (** Every payload below a recognized bottom is recognized as bottom. *)
@@ -2474,24 +2474,24 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
   Proof.
-    intros w a z v Hpoint Hword Ha. apply (proj2 (norm_gamma w a z)) in Ha.
+    intros w a z v Hpoint Hword Ha. apply (proj2 (norm_gamma_aux w a z)) in Ha.
     unfold ppoint in Hpoint. destruct (congr_norm w a) as [| [| m | m] r];
       try discriminate.
     injection Hpoint as <-. destruct Ha as [_ [k Hk]]. lia.
   Qed.
   (** Payload concretization agrees with residue-class membership. *)
-  Lemma F1_gamma : forall w a z, pgamma w a z <-> congr_gamma w a z.
+  Lemma gamma_def : forall w a z, pgamma w a z <-> congr_gamma w a z.
   Proof.
     intros w a z. reflexivity.
   Qed.
   (** Normalization keeps precisely the same represented integers. *)
-  Lemma F2_norm_gamma : forall w a z,
+  Lemma norm_gamma : forall w a z,
     pgamma w (congr_norm w a) z <-> pgamma w a z.
   Proof.
-    apply norm_gamma.
+    apply norm_gamma_aux.
   Qed.
   (** Negation retains wrapped concrete negation. *)
-  Lemma F6_congr_neg_sound : forall w a x,
+  Lemma congr_neg_sound : forall w a x,
     pgamma w a x -> pgamma w (congr_neg w a) (L.wrap w (- x)).
   Proof.
     intros w a x Ha. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a x)) in Ha.
@@ -2501,7 +2501,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     destruct Hresidue as [k Hk]. exists (-k). nia.
   Qed.
   (** Addition retains wrapped concrete addition. *)
-  Lemma F7_congr_add_sound : forall w a b x y,
+  Lemma congr_add_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_add w a b) (L.wrap w (x + y)).
   Proof.
     intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *.
@@ -2517,7 +2517,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     exists (i * k + j * l). nia.
   Qed.
   (** Subtraction retains wrapped concrete subtraction. *)
-  Lemma F8_congr_sub_sound : forall w a b x y,
+  Lemma congr_sub_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_sub w a b) (L.wrap w (x - y)).
   Proof.
     intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *.
@@ -2533,7 +2533,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     exists (i * k - j * l). nia.
   Qed.
   (** Multiplication retains wrapped concrete multiplication. *)
-  Lemma F9_congr_mul_sound : forall w a b x y,
+  Lemma congr_mul_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_mul w a b) (L.wrap w (x * y)).
   Proof.
     intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *.
@@ -2555,7 +2555,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     fold g. rewrite Hk, Hl, Hp. ring.
   Qed.
   (** Projection retains truncations to smaller widths. *)
-  Lemma F10_congr_project_sound : forall source target a x,
+  Lemma congr_project_sound : forall source target a x,
     (target <= source)%positive -> pgamma source a x ->
     pgamma target (congr_project source target a) (L.wrap target x).
   Proof.
@@ -2565,7 +2565,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     apply cong_wrap_class_sound. exact (proj2 Ha).
   Qed.
   (** Shift transfer retains the wrapped concrete shift. *)
-  Lemma F11_congr_shl_sound : forall w a b x y,
+  Lemma congr_shl_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y ->
     pgamma w (congr_shl w a b) (L.wrap w (Z.shiftl x y)).
   Proof.
@@ -2586,7 +2586,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
       destruct Hx as [i Hi]. exists i. nia.
   Qed.
   (** Remainder transfer retains unsigned remainder, including a zero divisor. *)
-  Lemma F12_congr_urem_sound : forall w a b x y,
+  Lemma congr_urem_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y ->
     pgamma w (congr_urem w a b) (L.wrap w (Z.modulo x y)).
   Proof.
@@ -2617,9 +2617,9 @@ Module CongruenceTable (L : WORD_LANGUAGE) (W : CONGRUENCE L) <: CONGRUENCE_TABL
     W.pgamma target (W.congr_norm target a) x.
   Proof.
     intros source target a x Hwidth Ha.
-    apply (proj2 (W.F2_norm_gamma target a x)).
-    apply (proj2 (W.F1_gamma target a x)).
-    apply (proj1 (W.F1_gamma source a x)) in Ha.
+    apply (proj2 (W.norm_gamma target a x)).
+    apply (proj2 (W.gamma_def target a x)).
+    apply (proj1 (W.gamma_def source a x)) in Ha.
     destruct a as [| m r]; [contradiction |].
     destruct Ha as [Hword Hresidue]. split; [| exact Hresidue].
     eapply word_widen; eassumption.
@@ -2642,7 +2642,7 @@ Module CongruenceTable (L : WORD_LANGUAGE) (W : CONGRUENCE L) <: CONGRUENCE_TABL
         (eq_sym (eval_op_fun1 bvneg w x UNeg eq_refl)) Heval) as Hresult.
       inversion Hresult; subst rw z. rewrite Pos.eqb_refl in Hf.
       injection Hf as <-. cbn [eval_unary_tag]. rewrite wneg_value.
-      now apply W.F6_congr_neg_sound.
+      now apply W.congr_neg_sound.
     - rewrite eval_zext_value in Heval. inversion Heval; subst rw z.
       rewrite (proj2 (Pos.leb_le _ _)) in Hf by apply width_add_le.
       injection Hf as <-. rewrite (wrap_id w x Hx).
@@ -2653,7 +2653,7 @@ Module CongruenceTable (L : WORD_LANGUAGE) (W : CONGRUENCE L) <: CONGRUENCE_TABL
         destruct (Pos.leb target w) eqn:Hwidth
       end; [| discriminate].
       inversion Heval; subst rw z. injection Hf as <-.
-      rewrite (wrap_id w x Hx). apply W.F10_congr_project_sound.
+      rewrite (wrap_id w x Hx). apply W.congr_project_sound.
       + now apply Pos.leb_le.
       + exact Ha.
   Qed.
@@ -2684,11 +2684,11 @@ Module CongruenceTable (L : WORD_LANGUAGE) (W : CONGRUENCE L) <: CONGRUENCE_TABL
       rewrite !Pos.eqb_refl in Hf; injection Hf as <-;
       cbn [eval_binary_tag]
     end.
-    - rewrite wadd_value. now apply W.F7_congr_add_sound.
-    - rewrite wsub_value. now apply W.F8_congr_sub_sound.
-    - rewrite wmul_value. now apply W.F9_congr_mul_sound.
-    - rewrite <- (normalized_wurem wa x y Hx Hy). now apply W.F12_congr_urem_sound.
-    - rewrite <- (normalized_wshl wa x y Hx Hy). now apply W.F11_congr_shl_sound.
+    - rewrite wadd_value. now apply W.congr_add_sound.
+    - rewrite wsub_value. now apply W.congr_sub_sound.
+    - rewrite wmul_value. now apply W.congr_mul_sound.
+    - rewrite <- (normalized_wurem wa x y Hx Hy). now apply W.congr_urem_sound.
+    - rewrite <- (normalized_wshl wa x y Hx Hy). now apply W.congr_shl_sound.
   Qed.
 
   (** Selection retains the chosen branch through the branch join. *)
@@ -2750,7 +2750,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   Definition T_extgcd := CongruenceCRT.T_extgcd.
   Definition k_div := CongruenceCRT.k_div.
   Definition k_gcd := CongruenceCRT.k_gcd.
-  Definition F_div_aligned := CongruenceCRT.F_div_aligned.
+  Definition div_aligned_def := CongruenceCRT.div_aligned_def.
   Definition extgcd_agrees := CongruenceCRT.extgcd_agrees.
   Definition T_div_aligned_le := CongruenceCRT.T_div_aligned_le.
   Definition T_extgcd_le := CongruenceCRT.T_extgcd_le.
@@ -3566,7 +3566,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite Nat.pow_mul_l, Nat2N.inj_mul in Hwrap. cost_constants. lia.
   Qed.
   (** Congruence multiplication has the published quadratic width bound. *)
-  Lemma mul_bigO : (bigO (fun _ => True)
+  Lemma mul_complexity : (bigO (fun _ => True)
     (fun x : positive * (congr * congr) => N.of_nat
       (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
     (fun x => T_congr_mul (fst x) (fst (snd x)) (snd (snd x))))%N.
@@ -3575,7 +3575,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     pose proof (T_congr_mul_le w a b). nia.
   Qed.
   (** Remainder has the published quadratic class, because it takes a gcd. *)
-  Lemma congr_urem_bigO : bigO (X := positive * (congr * congr)) (fun _ => True)
+  Lemma congr_urem_complexity : bigO (X := positive * (congr * congr)) (fun _ => True)
     (fun x => N.of_nat
       (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
     (fun x => T_congr_urem (fst x) (fst (snd x)) (snd (snd x))).
@@ -3584,7 +3584,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     pose proof (T_congr_urem_le w a b). nia.
   Qed.
   (** Canonical payloads normalize in linear time. *)
-  Lemma congr_norm_lin_bigO : bigO (X := positive * congr)
+  Lemma congr_norm_lin_complexity : bigO (X := positive * congr)
     (fun x => canonical (fst x) (snd x))
     (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
     (fun x => T_congr_norm (fst x) (snd x)).
@@ -3593,7 +3593,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     pose proof (normalization_time_linear w a Hcanonical). nia.
   Qed.
   (** Negation of a canonical payload is linear. *)
-  Lemma congr_neg_lin_bigO : bigO (X := positive * congr)
+  Lemma congr_neg_lin_complexity : bigO (X := positive * congr)
     (fun x => canonical (fst x) (snd x))
     (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
     (fun x => T_congr_neg (fst x) (snd x)).
@@ -3604,7 +3604,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
   Qed.
   (** Addition of canonical payloads is linear. *)
-  Lemma congr_add_lin_bigO : bigO (X := positive * (congr * congr))
+  Lemma congr_add_lin_complexity : bigO (X := positive * (congr * congr))
     (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
     (fun x => N.of_nat
       (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
@@ -3617,7 +3617,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
   Qed.
   (** Subtraction of canonical payloads is linear. *)
-  Lemma congr_sub_lin_bigO : bigO (X := positive * (congr * congr))
+  Lemma congr_sub_lin_complexity : bigO (X := positive * (congr * congr))
     (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
     (fun x => N.of_nat
       (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
@@ -3630,7 +3630,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
   Qed.
   (** Shifting a canonical payload by a canonical amount is linear. *)
-  Lemma congr_shl_lin_bigO : bigO (X := positive * (congr * congr))
+  Lemma congr_shl_lin_complexity : bigO (X := positive * (congr * congr))
     (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
     (fun x => N.of_nat
       (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
@@ -3643,7 +3643,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
   Qed.
   (** Projection of a canonical payload is linear in both widths. *)
-  Lemma congr_project_lin_bigO : bigO (X := positive * (positive * congr))
+  Lemma congr_project_lin_complexity : bigO (X := positive * (positive * congr))
     (fun x => (fst (snd x) <= fst x)%positive /\ canonical (fst x) (snd (snd x)))
     (fun x => N.of_nat
       (Pos.to_nat (fst x) + Pos.to_nat (fst (snd x)) + congr_bits (snd (snd x)) + 1))
@@ -3655,7 +3655,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
   Qed.
   (** Normalization produces a canonical representation. *)
-  Lemma F3_norm_canonical : forall w a, canonical w (congr_norm w a).
+  Lemma norm_canonical : forall w a, canonical w (congr_norm w a).
   Proof.
     intros w a. pose proof (cong_norm_canonical w a) as Hcanonical.
     destruct (congr_norm w a) as [| m r]; [exact I |].
@@ -3664,30 +3664,30 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     - right. split; [lia | exact Hr].
   Qed.
   (** Normalization is idempotent. *)
-  Lemma F4_norm_idempotent : forall w a,
+  Lemma norm_idempotent : forall w a,
     congr_norm w (congr_norm w a) = congr_norm w a.
   Proof.
     apply cong_norm_idempotent.
   Qed.
   (** Chinese remainder meet retains each shared integer. *)
-  Lemma F5_crt_meet_sound : forall w a b z,
+  Lemma crt_meet_sound : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
   Proof.
     apply pgamma_meet.
   Qed.
   (** The requested congruence rank is bounded by width plus two. *)
-  Lemma F13_wrank_le : forall w a, (congr_wrank w a <= Pos.to_nat w + 2)%nat.
+  Lemma congr_wrank_le : forall w a, (congr_wrank w a <= Pos.to_nat w + 2)%nat.
   Proof.
     intros w a. change (raw_wrank w (congr_norm w a) <= Pos.to_nat w + 2)%nat.
     apply raw_wrank_bound. apply cong_norm_canonical.
   Qed.
   (** Payload widening uses the normalized congruence rank. *)
-  Lemma F14_pwrank : forall q w a, pwrank q w a = congr_wrank w a.
+  Lemma pwrank_def : forall q w a, pwrank q w a = congr_wrank w a.
   Proof.
     intros q w a. reflexivity.
   Qed.
   (** Gcd-based joining has the published quadratic arithmetic bound. *)
-  Lemma T1_join : forall w a b,
+  Lemma T_pjoin_plan_le : forall w a b,
     (T_pjoin w a b <= k_congr_gcd *
       N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
   Proof.
@@ -3697,7 +3697,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     unfold k_congr_gcd. lia.
   Qed.
   (** Chinese remainder meet has the published quadratic arithmetic bound. *)
-  Lemma T2_meet : forall w a b,
+  Lemma T_pmeet_plan_le : forall w a b,
     (T_pmeet w a b <= k_congr_crt *
       N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
   Proof.

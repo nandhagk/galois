@@ -5760,7 +5760,7 @@ Lemma karr_values_elements : forall A (tr : ptrie A),
   karr_values tr = map snd (PTrieCode.elements tr).
 Proof.
   intros A tr.
-  pose proof (PTrieT.F9_fold_values A (list A)
+  pose proof (PTrieT.fold_values_def A (list A)
     (fun acc a => acc ++ [a]) tr []) as Hfold.
   rewrite karr_fold_values_append, karr_fold_left_values in Hfold.
   exact Hfold.
@@ -8221,7 +8221,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     Forall (fun r => lrel r = REq -> satQ v r) P -> satQ v c.
   Proof.
     intros P c ms sc [Hweights [Hpositive [Hcoeff Hrhs]]] v Hmodels.
-    apply (C.check_entails_sound_Q (equality_source P) c (Cert ms sc false)).
+    apply (C.check_entails_sound_rational (equality_source P) c (Cert ms sc false)).
     - apply equality_certificate_checked. split; [now apply equality_source_weights |].
       split; [exact Hpositive |]. split.
       + intro x. rewrite equality_source_coef by exact Hweights. apply Hcoeff.
@@ -8245,7 +8245,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
         + now rewrite equality_source_rhs by exact Hweights. }
     pose proof (C.check_entails_empty (equality_source P) (LCons X.t [] REq 1%Z)
       (Cert ms 1 false) Hempty) as Hchecked.
-    pose proof (C.check_entails_sound_Q (equality_source P) (LCons X.t [] REq 1%Z)
+    pose proof (C.check_entails_sound_rational (equality_source P) (LCons X.t [] REq 1%Z)
       (Cert ms 1 false) Hchecked eq_refl v (equality_source_models_Q P v Hmodels)) as Hfalse.
     cbn [satQ lhs rhs lrel fold_right inject_Z Qeq] in Hfalse. discriminate.
   Qed.
@@ -9801,7 +9801,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     intros r c Hrow. rewrite (checked_hull_row_shape _ _ _ _ _ Hrow). reflexivity.
   Qed.
 
-  Lemma wrank_rows : forall p P, wrank p (Reached P) = length P.
+  Lemma wrank_def : forall p P, wrank p (Reached P) = length P.
   Proof.
     intros p P. reflexivity.
   Qed.
@@ -9842,7 +9842,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
         now apply target_certificate_equality.
   Qed.
   (** An infeasible equality system is below every equality system. *)
-  Lemma leb_false : forall a b, in_span a false_row -> leb (Reached a) (Reached b) = true.
+  Lemma leb_false_row_in_span : forall a b, in_span a false_row -> leb (Reached a) (Reached b) = true.
   Proof.
     intros a b Hfalse. destruct (span_false_contradiction a Hfalse) as [ms Hempty].
     rewrite leb_eq. unfold leb_spec. now rewrite Hempty.
@@ -11052,7 +11052,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
 
 
   (** Every emitted equality is independent of all other emitted rows. *)
-  Lemma join_independent : forall a b P, join (Reached a) (Reached b) = Reached P ->
+  Lemma join_rows_independent : forall a b P, join (Reached a) (Reached b) = Reached P ->
     forall i r, nth_error P i = Some r -> ~ in_span (firstn i P ++ skipn (S i) P) r.
   Proof.
     intros A B P Hjoin i r Hnth Hspan.
@@ -11366,7 +11366,7 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     intros A B. destruct (join_span A B (affine_hull A B) eq_refl) as [Hleft Hright].
     destruct (span_dimension A (affine_hull A B)
       (join_eq A B (affine_hull A B) eq_refl)
-      (join_independent A B (affine_hull A B) eq_refl) Hleft) as [Hlength Hreverse].
+      (join_rows_independent A B (affine_hull A B) eq_refl) Hleft) as [Hlength Hreverse].
     split; [exact Hlength|]. intro Hdim. apply leb_complete_span.
     apply span_trans with (b := affine_hull A B); [exact Hright|now apply Hreverse].
   Qed.
@@ -15679,7 +15679,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
   Definition k_cert : N := 256%N.
   (** Assignment charges row normalization and elimination after linearization. *)
-  Lemma F_assign_work : forall x e s,
+  Lemma assign_work_def : forall x e s,
     (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
       (n s + tsize e + 1)^3 *
       (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
@@ -15687,14 +15687,14 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros x e s. unfold assign_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
   (** Havoc charges row normalization and elimination of the selected variable. *)
-  Lemma F_havoc_work : forall x s,
+  Lemma havoc_work_def : forall x s,
     havoc_work x s = terms s * (nell s + 1) +
       (n s + 1)^3 * (ellB (n s + 1) (nell s + X.bits x) + 1)^2.
   Proof.
     reflexivity.
   Qed.
   (** Assumption charges row normalization and elimination with the new rows. *)
-  Lemma F_assume_work : forall g es s,
+  Lemma assume_work_def : forall g es s,
     (N.of_nat (assume_work g es s) = N.of_nat (terms s * (nell s + 1) +
       (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
         (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
@@ -15978,7 +15978,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - apply normal_normalize_rows.
   Qed.
   (** This widening has no repeated threshold search. *)
-  Lemma F_wunits : forall s, wunits s = 0.
+  Lemma wunits_def : forall s, wunits s = 0.
   Proof.
     reflexivity.
   Qed.
@@ -16190,12 +16190,12 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     unfold bareiss_entries. apply karr_bareiss_record_final.
     apply in_flat_map. exists r. split; [exact Hr|exact Hz].
   Qed.
-  Lemma subst_sat : forall v x f r, sat v (subst x f r) <->
+  Lemma subst_sat_iff_update : forall v x f r, sat v (subst x f r) <->
     sat (upd X.eqb v x (eval_lin v f)) r.
   Proof.
     exact subst_sat_checked.
   Qed.
-  Lemma leb_complete_Q : forall a b, echelon a ->
+  Lemma leb_complete_rational : forall a b, echelon a ->
     (forall v : X.t -> Q, Forall (satQ v) a -> Forall (satQ v) b) ->
     leb (Reached a) (Reached b) = true.
   Proof.
@@ -17671,7 +17671,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     nia.
   Qed.
 
-  Lemma bareiss_minor : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
+  Lemma bareiss_entries_are_minors : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
   Proof.
     intros P z Hin. unfold bareiss_entries in Hin. unfold input_minors.
     eapply karr_run_state_record.
@@ -17734,11 +17734,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       pose proof (karr_variables_count P). lia.
     - intros z Hz. exact (input_minors_bits P z Hz).
   Qed.
-  Lemma widen_join : forall p a b, widen p a b = if leb b a then a else join a b.
+  Lemma widen_def : forall p a b, widen p a b = if leb b a then a else join a b.
   Proof.
     reflexivity.
   Qed.
-  Lemma entail_cert_checks : forall P c k,
+  Lemma entail_cert_check_sound : forall P c k,
     entail_cert P c = Some k -> C.check_entails P c k = true.
   Proof.
     exact entail_cert_checked.
@@ -20768,18 +20768,18 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - pose proof (lat_mono (mu a + mu b) (2 * mu a) ltac:(lia)). lia.
   Qed.
 
-  Lemma F_size : forall s, size s = lat (2 * mu s).
+  Lemma size_def : forall s, size s = lat (2 * mu s).
   Proof.
     reflexivity.
   Qed.
   (** Range work charges the numeric query and its linearization. *)
-  Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
+  Lemma range_work_def : forall e s, (N.of_nat (range_work e s) =
     N.of_nat (terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
       (ellB (n s + tsize e + 1) (nell s + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
   Proof.
     intros e s. unfold range_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
-  Lemma F_range_bits : forall e s, range_bits e s = range_work e s.
+  Lemma range_bits_def : forall e s, range_bits e s = range_work e s.
   Proof.
     reflexivity.
   Qed.
@@ -26446,21 +26446,21 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     unfold c_lat. lia.
   Qed.
 
-  Lemma T1_leb : forall a b,
+  Lemma T_leb_plan_le : forall a b,
     (T_leb a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
   Proof.
     intros a b. eapply N.le_trans; [apply T_karr_leb_raw|].
     apply N.mul_le_mono_r. unfold k_karr. lia.
   Qed.
 
-  Lemma T1_join : forall a b,
+  Lemma T_join_plan_le : forall a b,
     (T_join a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
   Proof.
     intros a b. eapply N.le_trans; [apply T_karr_join_raw|].
     apply N.mul_le_mono_r. unfold k_karr. lia.
   Qed.
 
-  Lemma T1_widen : forall p a b,
+  Lemma T_widen_plan_le : forall p a b,
     (T_widen p a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
   Proof.
     intros p a b.
@@ -26473,7 +26473,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       unfold k_karr; clear -Hleb Hjoin Hpositive; nia.
   Qed.
 
-  Lemma T1_narrow : forall a b,
+  Lemma T_narrow_plan_le : forall a b,
     (T_narrow a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
   Proof.
     intros a b. pose proof (karr_lat_pos (mu a + mu b)) as Hpositive_nat.
@@ -26485,7 +26485,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof.
-    intros a b. eapply N.le_trans; [apply T1_leb|].
+    intros a b. eapply N.le_trans; [apply T_leb_plan_le|].
     apply N.mul_le_mono; [unfold c_lat; lia|].
     pose proof (lat_size a b). lia.
   Qed.
@@ -26493,7 +26493,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof.
-    intros a b. eapply N.le_trans; [apply T1_join|].
+    intros a b. eapply N.le_trans; [apply T_join_plan_le|].
     apply N.mul_le_mono; [unfold c_lat; lia|].
     pose proof (lat_size a b). lia.
   Qed.
@@ -26511,7 +26511,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_widen p a b <= c_lat * N.of_nat
       ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
   Proof.
-    intros p a b. eapply N.le_trans; [apply T1_widen|].
+    intros p a b. eapply N.le_trans; [apply T_widen_plan_le|].
     apply N.mul_le_mono; [unfold c_lat; lia|].
     pose proof (lat_size a b). lia.
   Qed.
@@ -26525,7 +26525,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   (** Assignment is linear in its declared numeric work. *)
-  Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+  Lemma assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -26536,7 +26536,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   (** Havoc is linear in its declared numeric work. *)
-  Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
+  Lemma havoc_complexity : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x)))
     (fun x => T_havoc (fst x) (snd x)).
   Proof.
@@ -26547,7 +26547,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   (** Assumption is linear in its declared numeric work. *)
-  Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+  Lemma assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -26558,7 +26558,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   (** A range query is linear in its declared numeric work. *)
-  Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
+  Lemma range_complexity : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
     (fun x => T_range (fst x) (snd x)).
   Proof.
@@ -27505,7 +27505,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
   (** Inclusion of normal states uses one shared elimination allowance. *)
   (** Inclusion of normal states fits one shared elimination allowance. *)
-  Lemma leb_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
+  Lemma leb_complexity : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (fst x) (snd x)))
     (fun x => T_leb (fst x) (snd x)).
   Proof.
@@ -27516,7 +27516,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
 
   (** Join of normal states fits one public elimination allowance. *)
-  Lemma join_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
+  Lemma join_complexity : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (fst x) (snd x)))
     (fun x => T_join (fst x) (snd x)).
   Proof.
@@ -27527,7 +27527,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
   (** Widening combines the inclusion and join elimination allowances. *)
   (** Widening pays one inclusion check and at most one join. *)
-  Lemma widen_bigO : bigO (fun x : wparam * t * t =>
+  Lemma widen_complexity : bigO (fun x : wparam * t * t =>
       normal_s (snd (fst x)) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (snd (fst x)) (snd x)))
     (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
@@ -27544,7 +27544,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
 
   (** The affine hull of normal sources fits one public elimination allowance. *)
-  Lemma affine_hull_bigO : bigO
+  Lemma affine_hull_complexity : bigO
     (fun x : list (lcons X.t) * list (lcons X.t) => normal (fst x) /\ normal (snd x))
     (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x))))
     (fun x => T_affine_hull (fst x) (snd x)).
@@ -27555,7 +27555,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   (** Certificate production for normal inputs fits one public elimination allowance. *)
-  Lemma entail_cert_bigO : bigO
+  Lemma entail_cert_complexity : bigO
     (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
     (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x :: nil))))
     (fun x => T_entail_cert (fst x) (snd x)).

@@ -167,7 +167,7 @@ Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
     assert (Hk : (1 <= k_alarm)%N) by (unfold k_alarm; lia). nia.
   Qed.
 
-  Lemma inv_at_bigO : bigO (X := MN.t S.t * N.t) (fun _ => True)
+  Lemma inv_at_complexity : bigO (X := MN.t S.t * N.t) (fun _ => True)
     (fun x => N.of_nat (N.bits (snd x))) (fun x => T_inv_at (fst x) (snd x)).
   Proof.
     eapply bigO_intro with (c := c_alarms). intros [inv n] _.
@@ -176,7 +176,7 @@ Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
     rewrite Nat2N.inj_add in Hbound. nia.
   Qed.
 
-  Lemma alarm_bigO : bigO (X := MN.t S.t * check N.t L.op X.t C.kd) (fun _ => True)
+  Lemma alarm_complexity : bigO (X := MN.t S.t * check N.t L.op X.t C.kd) (fun _ => True)
     (fun x => N.of_nat (check_work (fst x) (snd x))) (fun x => T_alarm (fst x) (snd x)).
   Proof.
     eapply bigO_intro with (c := c_alarms). intros [inv k] _.
@@ -184,7 +184,7 @@ Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
     pose proof (T_alarm_le inv k) as Hbound. nia.
   Qed.
 
-  Lemma alarms_bigO : bigO (X := MN.t S.t * list (check N.t L.op X.t C.kd)) (fun _ => True)
+  Lemma alarms_complexity : bigO (X := MN.t S.t * list (check N.t L.op X.t C.kd)) (fun _ => True)
     (fun x => N.of_nat (fold_right Nat.add 0 (map (check_work (fst x)) (snd x))))
     (fun x => T_alarms (fst x) (snd x)).
   Proof.

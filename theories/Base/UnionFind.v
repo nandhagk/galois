@@ -415,7 +415,7 @@ Module UnionFind <: UNION_FIND.
   Qed.
 
   (** The executable walk returns the specified representative. *)
-  Lemma walk_root x u : wf u -> fst (walk x u) = repr u x.
+  Lemma walk_root_aux x u : wf u -> fst (walk x u) = repr u x.
   Proof.
     intro Hwf. exact (proj1 (walk_correct x u Hwf)).
   Qed.
@@ -1230,7 +1230,7 @@ Module UnionFind <: UNION_FIND.
     (forall z, is_root (snd (find x u)) z <-> is_root u z).
   Proof.
     intro Hwf. rewrite (find_eq_old x u Hwf).
-    pose proof (walk_root x u Hwf) as Hroot.
+    pose proof (walk_root_aux x u Hwf) as Hroot.
     pose proof (proj2 (walk_path x u Hwf)) as Hmembers.
     pose proof (walk_path_nonroot x u Hwf) as Hnonroot.
     unfold find_old. destruct (walk x u) as [r path] eqn:Hwalk. cbn [fst snd] in *.
@@ -1356,7 +1356,7 @@ Module UnionFind <: UNION_FIND.
   (** On a well-formed forest the read-only root is the representative. *)
   Lemma root_of_repr : forall x u, wf u -> root_of x u = repr u x.
   Proof.
-    intros x u Hwf. exact (walk_root x u Hwf).
+    intros x u Hwf. exact (walk_root_aux x u Hwf).
   Qed.
   Lemma find_same  : forall x u y, wf u -> repr (snd (find x u)) y = repr u y.
   Proof.
@@ -1631,32 +1631,32 @@ Module UnionFindT <: UNION_FIND_ALL.
     apply N.mul_le_mono_r. unfold c_uf. lia.
   Qed.
 
-  Lemma F1_ranked : forall u, wf u -> exists rk, ranked u rk.
+  Lemma ranked_exists : forall u, wf u -> exists rk, ranked u rk.
   Proof.
     intros u [_ [_ [_ [_ Hranks]]]]. exact Hranks.
   Qed.
-  Lemma F2_rank_log : forall u rk x, wf u -> ranked u rk -> mem u x ->
+  Lemma rank_le_log : forall u rk x, wf u -> ranked u rk -> mem u x ->
     rk x <= Nat.log2 (card u).
   Proof.
     exact rank_log.
   Qed.
-  Lemma F3_walk_root : forall x u, wf u -> fst (walk x u) = repr u x.
+  Lemma walk_root : forall x u, wf u -> fst (walk x u) = repr u x.
   Proof.
-    exact walk_root.
+    exact walk_root_aux.
   Qed.
-  Lemma F4_walk_path : forall x u, wf u ->
+  Lemma walk_path_spec : forall x u, wf u ->
     length (snd (walk x u)) <= Nat.log2 (card u) /\
     forall y, In y (snd (walk x u)) -> mem u y /\ repr u y = repr u x.
   Proof.
     exact walk_path.
   Qed.
-  Lemma F5_compress : forall u rk r path, wf u -> ranked u rk -> is_root u r ->
+  Lemma compress_preserves_ranked : forall u rk r path, wf u -> ranked u rk -> is_root u r ->
     (forall y, In y path -> mem u y /\ repr u y = r /\ y <> r) ->
     ranked (compress r path u) rk.
   Proof.
     intros u rk r path Hwf Hrank Hroot Hpath. apply ranked_compress; assumption.
   Qed.
-  Lemma F6_link : forall u rk w l, wf u -> ranked u rk ->
+  Lemma link_preserves_ranked : forall u rk w l, wf u -> ranked u rk ->
     mem u w -> mem u l -> is_root u w -> is_root u l -> w <> l ->
     size_of u l <= size_of u w ->
     ranked (link w l u)
@@ -1666,7 +1666,7 @@ Module UnionFindT <: UNION_FIND_ALL.
     apply ranked_link_members; assumption.
   Qed.
 
-  Lemma T1_parent_of : forall x u,
+  Lemma T_parent_of_le : forall x u,
     (T_parent_of x u <= k_get * N.of_nat (Pos.size_nat x + 1))%N.
   Proof.
     intros x u. pose proof (PTrieT.T_get_le positive x (parents u)) as Hget.
@@ -1682,7 +1682,7 @@ Module UnionFindT <: UNION_FIND_ALL.
     (T_walk_step u s <= k_step * N.of_nat (W + 1))%N.
   Proof.
     intros Hwf Hs Hu.
-    pose proof (T1_parent_of (fst s) u) as Hparent.
+    pose proof (T_parent_of_le (fst s) u) as Hparent.
     pose proof (Pos.T_eqb_le (parent_of (fst s) u) (fst s)) as Heq.
     pose proof (parent_width u (fst s) W Hwf Hs Hu) as Hp.
     apply time_of_nat_le in Hs. apply time_of_nat_le in Hp.
@@ -1692,7 +1692,7 @@ Module UnionFindT <: UNION_FIND_ALL.
       repeat rewrite Nat2N.inj_add in *; cbn [N.of_nat] in *; lia.
   Qed.
 
-  Lemma T2_walk_step : forall u s, (wf u -> mem u (fst s) ->
+  Lemma T_walk_step_le : forall u s, (wf u -> mem u (fst s) ->
     T_walk_step u s <= k_step * N.of_nat (width u + 1))%N.
   Proof.
     intros u s Hwf Hmem. apply walk_step_clock; [exact Hwf| |lia].
@@ -1720,7 +1720,7 @@ Module UnionFindT <: UNION_FIND_ALL.
       + rewrite Nat2N.inj_succ, N.mul_succ_r. lia.
   Qed.
 
-  Lemma T3_walk : forall x u, (wf u ->
+  Lemma T_walk_le : forall x u, (wf u ->
     T_walk x u <= k_walk * N.of_nat (Nat.log2 (card u) + 1) *
       N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
   Proof.
@@ -1758,7 +1758,7 @@ Module UnionFindT <: UNION_FIND_ALL.
       cbn [N.of_nat] in *. nia.
   Qed.
 
-  Lemma T4_compress : forall r path u, (wf u -> (forall y, In y path -> mem u y) ->
+  Lemma T_compress_le : forall r path u, (wf u -> (forall y, In y path -> mem u y) ->
     T_compress r path u <= k_comp * N.of_nat (length path + 1) *
       N.of_nat (width u + 1))%N.
   Proof.
@@ -1771,7 +1771,7 @@ Module UnionFindT <: UNION_FIND_ALL.
     unfold k_comp. repeat rewrite Nat2N.inj_add in *.
     cbn [N.of_nat] in *. nia.
   Qed.
-  Lemma T5_link : forall w l u, (wf u -> mem u w -> mem u l ->
+  Lemma T_link_le : forall w l u, (wf u -> mem u w -> mem u l ->
     T_link w l u <= k_link * N.of_nat (width u + Nat.log2 (card u) + 2))%N.
   Proof.
     intros w l u Hwf Hw Hl.
@@ -1800,14 +1800,14 @@ Module UnionFindT <: UNION_FIND_ALL.
     (T_find x u <= 32768 * N.of_nat (Nat.log2 (card u) + 1) *
       N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
   Proof.
-    intro Hwf. pose proof (T3_walk x u Hwf) as Hwalk.
-    destruct (F4_walk_path x u Hwf) as [Hlength Hmembers].
+    intro Hwf. pose proof (T_walk_le x u Hwf) as Hwalk.
+    destruct (walk_path_spec x u Hwf) as [Hlength Hmembers].
     set (path := match snd (walk x u) with [] => [] | _ :: rest => rest end).
     assert (Hsub : forall y, In y path -> In y (snd (walk x u))).
     { unfold path. destruct (snd (walk x u)) as [|z rest]; cbn [In]; auto. }
     assert (Hcutlength : length path <= Nat.log2 (card u)).
     { unfold path. destruct (snd (walk x u)); cbn [length] in *; lia. }
-    pose proof (T4_compress (fst (walk x u)) path u Hwf
+    pose proof (T_compress_le (fst (walk x u)) path u Hwf
       ltac:(intros y Hy; exact (proj1 (Hmembers y (Hsub y Hy))))) as Hcompress.
     pose proof (Nat.le_max_l (width u) (Pos.size_nat x)) as Hwidth.
     apply time_of_nat_le in Hcutlength. apply time_of_nat_le in Hwidth.
@@ -1830,7 +1830,7 @@ Module UnionFindT <: UNION_FIND_ALL.
     T_root_of x u <= c_uf * N.of_nat (Nat.log2 (card u) + 1) *
       N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
   Proof.
-    intros x u Hwf. pose proof (T3_walk x u Hwf) as Hwalk.
+    intros x u Hwf. pose proof (T_walk_le x u Hwf) as Hwalk.
     assert (Hunit : (1 <= N.of_nat (Nat.log2 (card u) + 1) *
       N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N) by nia.
     time_unfold T_root_of. time_unfold @Datatypes.T_fst.
@@ -1867,7 +1867,7 @@ Module UnionFindT <: UNION_FIND_ALL.
     (T_link w l u <= 16384 *
       (N.of_nat (Nat.log2 Q + 1) * N.of_nat (W + 1)))%N.
   Proof.
-    intros Hwf Hw Hl Hcard Hwidth. pose proof (T5_link w l u Hwf Hw Hl) as Hclock.
+    intros Hwf Hw Hl Hcard Hwidth. pose proof (T_link_le w l u Hwf Hw Hl) as Hclock.
     pose proof (Nat.log2_le_mono _ _ Hcard) as Hlog.
     apply time_of_nat_le in Hwidth. apply time_of_nat_le in Hlog.
     unfold k_link in Hclock.
@@ -1964,7 +1964,7 @@ Module UnionFindT <: UNION_FIND_ALL.
       unfold c_uf; repeat rewrite Nat2N.inj_add in *; cbn [N.of_nat] in *; lia.
   Qed.
 
-  Lemma find_bigO : bigO (fun xu : positive * t => wf (snd xu))
+  Lemma find_complexity : bigO (fun xu : positive * t => wf (snd xu))
     (fun xu => N.of_nat ((Nat.log2 (card (snd xu)) + 1) *
       (Nat.max (width (snd xu)) (Pos.size_nat (fst xu)) + 1)))
     (fun xu => T_find (fst xu) (snd xu)).
@@ -1975,7 +1975,7 @@ Module UnionFindT <: UNION_FIND_ALL.
   Qed.
 
   (** Adding costs at most a constant times the key and counter widths. *)
-  Lemma add_bigO : bigO (fun xu : positive * t => wf (snd xu))
+  Lemma add_complexity : bigO (fun xu : positive * t => wf (snd xu))
     (fun xu => N.of_nat (Pos.size_nat (fst xu) + Nat.log2 (card (snd xu)) + 1))
     (fun xu => T_add (fst xu) (snd xu)).
   Proof.
@@ -1985,7 +1985,7 @@ Module UnionFindT <: UNION_FIND_ALL.
   Qed.
 
   (** Union spends logarithmically many parent steps at the maximum key width. *)
-  Lemma union_bigO : bigO (fun xyu : positive * positive * t => wf (snd xyu))
+  Lemma union_complexity : bigO (fun xyu : positive * positive * t => wf (snd xyu))
     (fun xyu => N.of_nat ((Nat.log2 (card (snd xyu) + 2) + 1) *
       (Nat.max (width (snd xyu))
         (Nat.max (Pos.size_nat (fst (fst xyu))) (Pos.size_nat (snd (fst xyu)))) + 1)))

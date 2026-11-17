@@ -210,13 +210,13 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
     (2 * 4096 * 4096 + D.c_tables + E.c_key + N.c_key + 1056)%N.
 
   (** Flattening syntax preserves exactly the occurrence predicate. *)
-  Lemma F1_occurrences : forall p x, In x (occurrences p) <-> occurs p x.
+  Lemma occurrences_iff : forall p x, In x (occurrences p) <-> occurs p x.
   Proof.
     apply occurrences_spec.
   Qed.
 
   (** Deduplicating occurrences gives the prepared variable universe. *)
-  Lemma F2_universe : forall p x, In x (universe p) <-> In x (occurrences p).
+  Lemma universe_occurrences_iff : forall p x, In x (universe p) <-> In x (occurrences p).
   Proof.
     apply universe_members.
   Qed.
@@ -257,7 +257,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Edge uses are linear in the edge key and the returned variables. *)
-  Lemma uses_bigO : bigO (X := P.t * E.t) (fun _ => True)
+  Lemma uses_complexity : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(p, e) => N.of_nat (E.bits e + length (uses p e))) (fun '(p, e) => T_uses p e).
   Proof.
     apply bigO_intro with (c := c_vars).
@@ -266,7 +266,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Edge definitions are linear in the edge key and the returned variables. *)
-  Lemma defs_bigO : bigO (X := P.t * E.t) (fun _ => True)
+  Lemma defs_complexity : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(p, e) => N.of_nat (E.bits e + length (defs p e))) (fun '(p, e) => T_defs p e).
   Proof.
     apply bigO_intro with (c := c_vars).
@@ -275,7 +275,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Exit observations are linear in the node key and the returned variables. *)
-  Lemma exits_bigO : bigO (X := P.t * N.t) (fun _ => True)
+  Lemma exits_complexity : bigO (X := P.t * N.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (N.bits n + length (exits p n))) (fun '(p, n) => T_exits p n).
   Proof.
     apply bigO_intro with (c := c_vars).
@@ -284,7 +284,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** The named preparation table is the executable occurrence scan. *)
-  Lemma F3_seen : forall p,
+  Lemma seen_def : forall p,
     seen p = fold_left (fun s x => PTrieCode.set (X.encode x) x s) (occurrences p)
       PTrieCode.empty.
   Proof.
@@ -319,7 +319,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Universe preparation allocates at most one trie node per input key bit. *)
-  Lemma F4_seen_nodes : forall p,
+  Lemma seen_nodes_le : forall p,
     PTrie.nodes (seen p) <= length (occurrences p) * occurrence_width p.
   Proof.
     intro p; unfold seen.
@@ -480,7 +480,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Preparing the trie pays all readers and every encoded occurrence path. *)
-  Lemma T1_seen : forall p,
+  Lemma T_seen_le : forall p,
     (T_seen p <= k_seen * universe_work p)%N.
   Proof.
     intro p; pose proof (occurrences_time p) as Hreaders.
@@ -491,7 +491,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** Collecting the prepared trie pays its bounded skeleton and encoded key mass. *)
-  Lemma T2_universe : forall p,
+  Lemma T_universe_split : forall p,
     (T_universe p <= k_collect * (T_seen p +
       N.of_nat (length (occurrences p) + 1) * N.of_nat (occurrence_width p + 1)))%N.
   Proof.
@@ -501,7 +501,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
       (seen p) nil 1%N (fun _ _ _ => N.le_refl 1)) as Hfold.
     pose proof (List.T_rev_append_le
       (PTrieCode.fold (fun acc _ x => x :: acc) (seen p) nil) nil) as Hreverse.
-    pose proof (F4_seen_nodes p) as Hnodes.
+    pose proof (seen_nodes_le p) as Hnodes.
     pose proof (seen_weight p) as Hweight.
     pose proof (collected_length p) as Hlength.
     assert (Hcompose : (T_universe p <= T_seen p +
@@ -517,7 +517,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Lemma T_universe_le : forall p,
     (T_universe p <= c_vars * universe_work p)%N.
   Proof.
-    intro p; pose proof (T1_seen p) as Hseen; pose proof (T2_universe p) as Hcollect.
+    intro p; pose proof (T_seen_le p) as Hseen; pose proof (T_universe_split p) as Hcollect.
     assert (Hsize : (N.of_nat (length (occurrences p) + 1) *
       N.of_nat (occurrence_width p + 1) <= universe_work p)%N).
     { unfold universe_work; rewrite !Nat2N.inj_add; nia. }
@@ -525,7 +525,7 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   Qed.
 
   (** The universe bound includes every reader, encoding and occurrence width. *)
-  Lemma universe_bigO : bigO (fun _ : P.t => True) universe_work T_universe.
+  Lemma universe_complexity : bigO (fun _ : P.t => True) universe_work T_universe.
   Proof.
     exists c_vars; intros p _; pose proof (T_universe_le p); nia.
   Qed.

@@ -156,20 +156,20 @@ Module Type WTO_TIME (Import W : WTO).
     (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
       N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
   (** Head projection is linear in the order length. *)
-  Parameter heads_bigO : bigO (fun _ : wto => True)
+  Parameter heads_complexity : bigO (fun _ : wto => True)
     (fun w => N.of_nat (length (wto_order w))) T_heads.
   (** Ranking is linear in the order length and the key and counter widths. *)
-  Parameter ranks_bigO : bigO (fun _ : wto => True)
+  Parameter ranks_complexity : bigO (fun _ : wto => True)
     (fun w => N.of_nat ((length (wto_order w) + 1) *
       (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1)))
     T_ranks.
   (** Checking is linear in graph size and identifier width. *)
-  Parameter check_bigO : bigO (fun _ : prepared * list positive * wto => True)
+  Parameter check_complexity : bigO (fun _ : prepared * list positive * wto => True)
     (fun '(g, roots, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
       (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
     (fun '(g, roots, w) => T_check g roots w).
   (** Building has the published nesting-sensitive bound. *)
-  Parameter build_bigO : bigO (fun _ : prepared * list positive => True)
+  Parameter build_complexity : bigO (fun _ : prepared * list positive => True)
     (fun '(g, roots) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
       (wto_depth (build g roots) + 1) *
       (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
@@ -328,40 +328,40 @@ Module Type WTO_PLAN (Import W : WTO_T).
       (graph_max (graph_width (base g)) (vertex_width roots) + 1)).
 
   (** Membership and duplicate checking describe the supplied lists. *)
-  Parameter F1_lists :
+  Parameter member_unique_spec :
     (forall v vs, wto_member v vs = true <-> In v vs) /\
     (forall vs, wto_unique vs = true <-> NoDup vs).
 
   (** Annotation retains order and records the structural nesting relation. *)
-  Parameter F2_annotation : forall w, NoDup (wto_order w) ->
+  Parameter annotation_encloses : forall w, NoDup (wto_order w) ->
     map fst (wto_annotate [] w) = wto_order w /\
     forall u stack, In (u, stack) (wto_annotate [] w) ->
       forall h, In h stack <-> wto_encloses h u w.
 
   (** Unique annotations make every stored suffix agree with linear order. *)
-  Parameter F3_index : forall w, NoDup (wto_order w) -> index_correct w.
+  Parameter index_correct_of_nodup : forall w, NoDup (wto_order w) -> index_correct w.
 
   (** The selected checker tests uniqueness, exact coverage and each indexed edge. *)
-  Parameter F4_check : forall g roots w, check g roots w = true <-> checked g roots w.
+  Parameter check_spec : forall g roots w, check g roots w = true <-> checked g roots w.
 
   (** Search completeness supplies rooted coverage even for raw graphs and unlisted roots. *)
-  Parameter F5_live : forall g roots v, In v (live g roots) <-> reach (base g) roots v.
+  Parameter live_spec : forall g roots v, In v (live g roots) <-> reach (base g) roots v.
 
   (** Acceptance and the index relation establish the public WTO specification. *)
-  Parameter F6_sound : forall g roots w, check g roots w = true -> is_wto g roots w.
+  Parameter check_sound_plan : forall g roots w, check g roots w = true -> is_wto g roots w.
 
   (** An enclosing head belongs to both the structural order and its head projection. *)
-  Parameter F7_encloses : forall w h v,
+  Parameter encloses_heads : forall w h v,
     wto_encloses h v w -> In h (wto_heads w) /\ In h (wto_order w).
 
   (** A reachable cycle without heads would strictly increase position at every edge. *)
-  Parameter F8_cycle : forall g roots w,
+  Parameter cycle_spec : forall g roots w,
     is_wto g roots w -> forall vs, cycle (base g) vs ->
     (forall v, In v vs -> reach (base g) roots v) ->
     exists h, In h vs /\ In h (wto_heads w).
 
   (** Ranking starts at one and excludes all vertices absent from the structural order. *)
-  Parameter F9_ranks : forall w,
+  Parameter ranks_def : forall w,
     ranks w = wto_rank_rows 1%positive (wto_order w) /\
     (forall v, ~ In v (wto_order w) -> trie_get v (ranks w) = None) /\
     (NoDup (wto_order w) -> forall v i,
@@ -369,46 +369,46 @@ Module Type WTO_PLAN (Import W : WTO_T).
       trie_get v (ranks w) = Some (Pos.of_succ_nat i)).
 
   (** Position comparison becomes the accepted edge's rank comparison. *)
-  Parameter F10_forward : forall g roots w u v,
+  Parameter ranks_forward_plan : forall g roots w u v,
     check g roots w = true -> edge (base g) u v -> reach (base g) roots u ->
     exists ru rv, trie_get u (ranks w) = Some ru /\ trie_get v (ranks w) = Some rv /\
       ((ru < rv)%positive \/ (In v (heads w) /\ (rv <= ru)%positive)).
 
   (** Selection removes exactly one header occurrence from a nonempty component. *)
-  Parameter F11_select : forall preferred c h body,
+  Parameter select_perm : forall preferred c h body,
     wto_select preferred c = Some (h, body) -> Permutation c (h :: body).
 
   (** Child scopes keep the allowed vertices and their filtered successor occurrences. *)
-  Parameter F12_scope : forall g vs,
+  Parameter scoped_succs : forall g vs,
     nodes (wto_scoped g (Some vs)) = vs /\
     forall v, In v vs -> succs (base (wto_scoped g (Some vs))) v =
       filter (fun u => wto_member u vs) (succs (base g) v).
 
   (** Child SCC lists partition the header-deleted body and conserve additive original-row mass. *)
-  Parameter F13_partition : forall g body,
+  Parameter components_partition : forall g body,
     NoDup body ->
     let r := wto_components (wto_scoped g (Some body)) (rev body) in
     Permutation (concat (comps r)) body /\
     fold_right (fun c n => source_mass g c + n) 0 (comps r) = source_mass g body.
 
   (** Actual builder states maintain the member and parent inventory. *)
-  Parameter F14_initial : forall g roots,
+  Parameter initial_inv : forall g roots,
     invariant g roots (initial g roots) /\
     potential g (initial g roots) = 3 * length (concat (comps (wto_components g roots))).
 
   (** A continuing expansion spends member credit and a close step spends its reserved unit. *)
-  Parameter F15_step : forall g roots st next,
+  Parameter step_inv : forall g roots st next,
     invariant g roots st -> wto_step g st = inl next ->
     invariant g roots next /\ potential g next < potential g st.
 
   (** The producer fuel pays the entire expansion inventory without asserting producer soundness. *)
-  Parameter F16_done : forall g roots,
+  Parameter loop_done : forall g roots,
     exists w, loopN (wto_step g)
       (N.of_nat (3 * length (concat (comps (wto_components g roots))) + 1))
       (initial g roots) = inr w.
 
   (** The history enumerates actual callback states through the terminal step. *)
-  Parameter F17_history : forall g roots,
+  Parameter history_spec : forall g roots,
     exists terminal prefix, history g roots = prefix ++ [terminal] /\
       (match prefix with [] => terminal | first :: _ => first end) = initial g roots /\
       Forall2 (fun before after => wto_step g before = inl after)
@@ -416,46 +416,46 @@ Module Type WTO_PLAN (Import W : WTO_T).
       wto_step g terminal = inr (build g roots).
 
   (** Components expanded at one parent depth have disjoint original vertex inventories. *)
-  Parameter F18_level_mass : forall g roots level,
+  Parameter level_mass_spec : forall g roots level,
     level_mass g level (history g roots) <=
       source_mass g (concat (comps (wto_components g roots))).
 
   (** Each expansion depth is bounded by the produced structural nesting depth. *)
-  Parameter F19_depth : forall g roots st within entries owners c tasks,
+  Parameter history_depth_le : forall g roots st within entries owners c tasks,
     In st (history g roots) ->
     wto_tasks st = WtoExpand within entries owners c :: tasks ->
     length (wto_parents st) <= wto_depth (build g roots).
 
   (** Each membership query scans at most its list length and the compared key widths. *)
-  Parameter T1_member : forall v vs,
+  Parameter T_wto_member_le : forall v vs,
     (T_wto_member v vs <= k_member * N.of_nat (length vs + 1) *
       N.of_nat (graph_max (Pos.size_nat v) (vertex_width vs) + 1))%N.
 
   (** Materialized filtering of listed scope vertices pays a list membership scan for each
       outgoing occurrence. An unlisted vertex may have successors of any key width. *)
-  Parameter T3_scope : forall g vs,
+  Parameter T_wto_scoped_le : forall g vs,
     (forall v, In v vs -> In v (nodes g)) ->
     (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
 
   (** The index loop checks each key's width and listing before it reads a trie. *)
-  Parameter T4a_index : forall g w,
+  Parameter T_wto_check_index_le : forall g w,
     (T_wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
       [WtoCheckVisit w] 0 Empty Empty [] <=
     k_index * N.of_nat (graph_n (base g) + 1) * N.of_nat (graph_width (base g) + 1))%N.
 
   (** An index result lists distinct listed vertices. *)
-  Parameter F4a_index : forall g w ranks intervals vs,
+  Parameter index_spec : forall g w ranks intervals vs,
     wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
       [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
     NoDup vs /\ (forall v, In v vs -> In v (nodes g)).
 
   (** The edge scan is the final conjunct of the checker. *)
-  Parameter F4b_edges : forall b ranks intervals vs,
+  Parameter wto_edges_ok_def : forall b ranks intervals vs,
     wto_edges_ok b ranks intervals vs =
       forallb (fun u => forallb (wto_interval_edge ranks intervals u) (succs b u)) vs.
 
   (** The edge scan reads the rows of distinct listed vertices once each. *)
-  Parameter T4b_edges : forall g w ranks intervals vs,
+  Parameter T_wto_edges_ok_le : forall g w ranks intervals vs,
     wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
       [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
     (T_wto_edges_ok (base g) ranks intervals vs <=
@@ -463,13 +463,13 @@ Module Type WTO_PLAN (Import W : WTO_T).
        N.of_nat (graph_width (base g) + 1))%N.
 
   (** Index and edge phases combine with trie coverage and the raw search bound. *)
-  Parameter T5_check_public : forall g roots w,
+  Parameter T_check_plan_le : forall g roots w,
     (T_check g roots w <= c_wto *
       N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
       N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
 
   (** A child expansion pays scope materialization, SCC, entries and task assembly separately. *)
-  Parameter T6_expand : forall g within entries owners c tasks partial parents h body,
+  Parameter T_wto_step_expand_split : forall g within entries owners c tasks partial parents h body,
     wto_select (wto_preferred owners entries c) c = Some (h, body) -> body <> [] ->
     (T_wto_step g (WtoState (WtoExpand within entries owners c :: tasks) partial parents) <=
       k_expand * (T_wto_preferred owners entries c +
@@ -480,65 +480,65 @@ Module Type WTO_PLAN (Import W : WTO_T).
         N.of_nat (length body) + N.of_nat (length c) + 1))%N.
 
   (** The unchanged builder target needs depth charging for materialized scopes and root scans. *)
-  Parameter T7_build_public : forall g roots,
+  Parameter T_build_plan_le : forall g roots,
     (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
       N.of_nat (wto_depth (build g roots) + 1) *
       N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
 
   (** Accumulating traversals compute the structural lists. *)
-  Parameter F20_into : forall w acc,
+  Parameter heads_order_into_eq : forall w acc,
     wto_heads_into w acc = wto_heads w ++ acc /\
     wto_order_into w acc = wto_order w ++ acc.
 
   (** Head projection is one accumulating traversal. *)
-  Parameter T8_heads_source : forall w,
+  Parameter T_heads_split : forall w,
     (T_heads w <= k_heads * (T_wto_heads_into w [] + 1))%N.
 
   (** An accumulating traversal visits each constructor once. *)
-  Parameter T8b_heads_into : forall w acc,
+  Parameter T_wto_heads_into_le : forall w acc,
     (T_wto_heads_into w acc <= k_heads * N.of_nat (2 * length (wto_order w) + 2))%N.
 
   (** The accumulating head traversal meets the linear target. *)
-  Parameter T9_heads_public : forall w,
+  Parameter T_heads_plan_le : forall w,
     (T_heads w <= c_wto * N.of_nat (length (wto_order w) + 1))%N.
 
   (** Ranking flattens by accumulation before inserting binary positions. *)
-  Parameter T10_ranks_source : forall w,
+  Parameter T_ranks_split : forall w,
     (T_ranks w <= k_ranks * (T_wto_order_into w [] +
       T_wto_rank_rows 1%positive (wto_order w) + 1))%N.
 
   (** Flattening by accumulation visits each constructor once. *)
-  Parameter T10b_order_into : forall w acc,
+  Parameter T_wto_order_into_le : forall w acc,
     (T_wto_order_into w acc <= k_ranks * N.of_nat (2 * length (wto_order w) + 2))%N.
 
   (** Rank insertion pays each key and an amortised binary successor. *)
-  Parameter T10c_rank_rows : forall vs,
+  Parameter T_wto_rank_rows_le : forall vs,
     (T_wto_rank_rows 1%positive vs <= k_ranks * N.of_nat (length vs + 1) *
       N.of_nat (vertex_width vs + Nat.log2 (length vs) + 1))%N.
 
   (** Accumulating flattening and trie insertion meet the public rank target. *)
-  Parameter T11_ranks_public : forall w,
+  Parameter T_ranks_plan_le : forall w,
     (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
       N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
 
   (** Scoped components and entries read the materialized rows once. *)
-  Parameter T12_scoped : forall g vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
+  Parameter T_wto_components_scoped_amort : forall g vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
     (T_wto_components (wto_scoped g (Some vs)) (rev vs) +
       T_wto_entries (wto_scoped g (Some vs)) (rev vs)
         (wto_components (wto_scoped g (Some vs)) (rev vs)) <=
     k_scope * N.of_nat (scope_work g vs))%N.
   (** Initial components and entries pay the listed graph and the supplied roots. *)
-  Parameter T13_initial : forall g roots,
+  Parameter T_wto_components_initial_amort : forall g roots,
     (T_wto_components g roots + T_wto_entries g roots (wto_components g roots) <=
       k_build * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
       N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
   (** Preference and selection scan an actual component once. *)
-  Parameter T14_select : forall g roots st within entries owners c tasks,
+  Parameter T_wto_select_le : forall g roots st within entries owners c tasks,
     In st (history g roots) -> wto_tasks st = WtoExpand within entries owners c :: tasks ->
     (T_wto_preferred owners entries c + T_wto_select (wto_preferred owners entries c) c <=
       k_expand * N.of_nat (scope_work g c))%N.
   (** Close, terminal and singleton steps pay the reversed partial order and one row. *)
-  Parameter T15_short_step : forall g roots st,
+  Parameter T_wto_step_short_le : forall g roots st,
     In st (history g roots) ->
     (forall within entries owners c tasks h body,
       wto_tasks st = WtoExpand within entries owners c :: tasks ->
@@ -549,14 +549,14 @@ Module Type WTO_PLAN (Import W : WTO_T).
       N.of_nat (graph_width (base g) + 1))%N.
 
   (** Building pays the initial phases, the task list and each recorded step once. *)
-  Parameter T16_build : forall g roots,
+  Parameter T_build_split : forall g roots,
     (T_build g roots <= k_build * (T_wto_components g roots +
       T_wto_entries g roots (wto_components g roots) +
       N.of_nat (length (concat (comps (wto_components g roots)))) +
       execution_cost g (history g roots) + 1))%N.
 
   (** Close and terminal steps at one depth reverse disjoint partial outputs. *)
-  Parameter F21_partial_mass : forall g roots level,
+  Parameter partial_mass_spec : forall g roots level,
     fold_right (fun st n =>
       if Nat.eqb (length (wto_parents st)) level then
         match wto_tasks st with

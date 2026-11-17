@@ -2536,7 +2536,7 @@ Module LiveT (O : OPS)
   Definition searched p x :=
     explore (R.prepare p) (use_index (R.prepare p)) (kill_index (R.prepare p)) x.
   (** Indexed use points of a variable are distinct charged live pairs. *)
-  Lemma F0_use_index : forall p x,
+  Lemma use_index_spec : forall p x,
     NoDup (index_row (use_index (R.prepare p)) x) /\
     forall n, In n (index_row (use_index (R.prepare p)) x) -> In (n, x) (live_region p).
   Proof.
@@ -2545,7 +2545,7 @@ Module LiveT (O : OPS)
     apply seed_index_live; [exact (proj2 (PB.prepared_wf p))|exact Hin].
   Qed.
   (** The kill index answers, for a variable and a listed edge, whether the edge defines it. *)
-  Lemma F0b_kill_index : forall p x e, In e (C.edges (R.prepare p)) ->
+  Lemma kill_index_spec : forall p x e, In e (C.edges (R.prepare p)) ->
     ((exists m, trie_get x (kill_index (R.prepare p)) = Some m /\
       trie_get (E.encode e) m = Some tt) <-> In x (U.defs (R.prepare p) e)).
   Proof.
@@ -2620,7 +2620,7 @@ Module LiveT (O : OPS)
   Qed.
 
   (** Each per-variable search visits a point at most once. *)
-  Lemma F1_explore_nodup : forall p x, NoDup (searched p x).
+  Lemma searched_nodup : forall p x, NoDup (searched p x).
   Proof.
     intros p x. pose proof (plan_fuel_valid (length (C.nodes (R.prepare p)))
       (R.prepare p) (kill_index (R.prepare p)) x
@@ -2629,7 +2629,7 @@ Module LiveT (O : OPS)
     exact (proj1 Hvalid).
   Qed.
   (** Every visited search point belongs to its charged semantic region. *)
-  Lemma F2_explore_region : forall p x n,
+  Lemma searched_region : forall p x n,
     In n (searched p x) -> In (n, x) (live_region p).
   Proof.
     intros p x n Hin. apply (proj2 (live_region_spec p) n x).
@@ -2638,7 +2638,7 @@ Module LiveT (O : OPS)
       (plan_fuel (length (C.nodes (R.prepare p))) (R.prepare p) (kill_index (R.prepare p)) x
         (live_initial N.encode (index_row (use_index (R.prepare p)) x)))).
     { apply plan_fuel_sound; [exact Hwf| | |].
-      - intros e He. rewrite live_pair_member_spec. now apply F0b_kill_index.
+      - intros e He. rewrite live_pair_member_spec. now apply kill_index_spec.
       - apply live_initial_valid; exact N.encode_inj.
       - intros m Hm. apply live_initial_done in Hm; [|exact N.encode_inj].
         destruct (seed_index_live (R.prepare p) x m Hwf Hm) as [Hn [_ Hl]]; now split. }
@@ -2646,7 +2646,7 @@ Module LiveT (O : OPS)
     now apply point_live_universe with n.
   Qed.
   (** Deduplicated variables partition the total live-incidence budget. *)
-  Lemma F3_partition : forall p,
+  Lemma live_size_partition : forall p,
     fold_right (fun x n => variable_work p x + n) 0 (U.universe (R.prepare p)) =
       live_size p.
   Proof.
@@ -3457,7 +3457,7 @@ Module LiveT (O : OPS)
   Proof.
     intros p x. eapply Nat.le_trans; [apply live_points_length|].
     apply live_point_charge; [apply seed_index_nodup|].
-    intros n Hn. exact (proj2 (F0_use_index p x) n Hn).
+    intros n Hn. exact (proj2 (use_index_spec p x) n Hn).
   Qed.
 
   Lemma live_search_charge : forall p x,
@@ -4138,7 +4138,7 @@ Module LiveT (O : OPS)
         N.of_nat (live_size p + length (U.universe (R.prepare p))) + 1)%N.
   Proof.
     intro p. pose proof (live_clock_atom_positive p) as Hpositive.
-    rewrite <- (F3_partition p), <- live_sum_extra.
+    rewrite <- (live_size_partition p), <- live_sum_extra.
     apply live_fold_clock_weight; [intros; lia|]. intros x Hx rows.
     pose proof (search_atom p x Hx) as Hsearch.
     pose proof (group_search_atom p x rows Hx) as Hgroup.
@@ -4164,7 +4164,7 @@ Module LiveT (O : OPS)
         N.of_nat (live_size p + length (U.universe (R.prepare p))) + 1)%N.
   Proof.
     intro p. pose proof (live_clock_atom_positive p) as Hpositive.
-    rewrite <- (F3_partition p), <- live_sum_extra.
+    rewrite <- (live_size_partition p), <- live_sum_extra.
     apply live_fold_clock_weight; [intros; lia|]. intros x Hx rows.
     pose proof (cached_search_atom p x Hx) as Hsearch.
     pose proof (cached_group_search_atom p x rows Hx) as Hgroup.
@@ -4369,7 +4369,7 @@ Module LiveT (O : OPS)
     unfold live_clock_atom, live_clock_width, live_driver_budget in *. nia.
   Qed.
 
-  Lemma live_driver_bigO : bigO (fun _ : P.t => True)
+  Lemma live_driver_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
     T_live_in.
   Proof.
@@ -4397,21 +4397,21 @@ Module LiveT (O : OPS)
     exact live_driver_bound.
   Qed.
   (** The producer has the published output-sensitive bit-cost bound. *)
-  Lemma live_in_bigO : bigO (fun _ : P.t => True)
+  Lemma live_in_complexity : bigO (fun _ : P.t => True)
     (fun p => N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
     T_live_in.
   Proof.
-    exact live_driver_bigO.
+    exact live_driver_complexity.
   Qed.
   (** Indexing reads each variable occurrence once at the syntax width. *)
-  Lemma T0_use_index : forall p,
+  Lemma T_use_index_le : forall p,
     (T_use_index (R.prepare p) <= k_index * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
   Proof.
     exact use_index_bound.
   Qed.
   (** The kill index reads each definition occurrence once at the syntax width. *)
-  Lemma T0_kill_index : forall p,
+  Lemma T_kill_index_le : forall p,
     (T_kill_index (R.prepare p) <= k_index * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
   Proof.
@@ -4419,7 +4419,7 @@ Module LiveT (O : OPS)
   Qed.
   (** The driver prepares once, builds both indexes, searches each variable and groups
       rows. *)
-  Lemma T2_rows : forall p,
+  Lemma T_live_in_split : forall p,
     (T_live_in p <= R.T_prepare p +
       k_rows * N.of_nat (function_size p + live_size p + 1) *
         N.of_nat (function_width p + 1) + T_use_index (R.prepare p) +

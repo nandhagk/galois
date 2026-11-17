@@ -85,7 +85,7 @@ Module Type INDEXED_TIME (L : LATTICE_T) (S : SYSTEM_T L) (Import I : INDEXED L 
       N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1) +
       N.of_nat (length (S.rows p)) * (S.row_work p 0 + 1)))%N.
   (** Preparation is linear in rows and occurrences times the key width. *)
-  Parameter prepare_bigO : bigO (X := S.prog) (fun p => S.wf p)
+  Parameter prepare_complexity : bigO (X := S.prog) (fun p => S.wf p)
     (fun p => (N.of_nat ((length (S.rows p) +
         fold_right Nat.add 0 (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
           (S.rows p)) + 1)%nat) *

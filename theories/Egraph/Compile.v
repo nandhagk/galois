@@ -2051,7 +2051,7 @@ Module Compile (V : VALUE) <: COMPILE V.
   Qed.
 
   (** A compiled rewrite has a typed query followed by typed constructor and union actions. *)
-  Lemma compile_rule_sorted : forall ds rw g,
+  Lemma compile_rule_sorted_aux : forall ds rw g,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
     rule_ok (lookup_sorts ds) (lookup_kind ds) (compile_rule rw).
   Proof.
@@ -2783,7 +2783,7 @@ Module Compile (V : VALUE) <: COMPILE V.
   Qed.
 
   (** A well-sorted valid rewrite compiles to a rule valid on every typed query environment. *)
-  Lemma compile_rule_valid : forall (M : model (V := V.t)) ds rw g,
+  Lemma compile_rule_valid_aux : forall (M : model (V := V.t)) ds rw g,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
     valid_rw V.prim M (lookup_sorts ds) (lookup_kind ds) rw ->
     rule_valid_sorted V.prim M (lookup_sorts ds) (lookup_kind ds) (compile_rule rw).
@@ -2817,7 +2817,7 @@ Module Compile (V : VALUE) <: COMPILE V.
       (map compile_rule rws ++ ans)).
     apply Forall_app. split.
     - apply Forall_map. eapply Forall_impl; [|exact Hrewrites].
-      intros rw [g Hrw]. eapply compile_rule_sorted; exact Hrw.
+      intros rw [g Hrw]. eapply compile_rule_sorted_aux; exact Hrw.
     - eapply Forall_impl; [|exact Hanalyses]. intros r [Hrule Hactions]. exact Hrule.
   Qed.
 
@@ -2836,7 +2836,7 @@ Module Compile (V : VALUE) <: COMPILE V.
     apply Forall_forall. intros r Hin. apply in_map_iff in Hin.
     destruct Hin as [rw [<- Hin]].
     destruct (proj1 (Forall_forall _ _) Hrewrites rw Hin) as [g Hrw].
-    eapply compile_rule_valid; [exact Hrw|]. exact (proj1 (Forall_forall _ _) Hvalid rw Hin).
+    eapply compile_rule_valid_aux; [exact Hrw|]. exact (proj1 (Forall_forall _ _) Hvalid rw Hin).
   Qed.
 
   Lemma flatten_complete : forall ds w rw g tau c e,
@@ -3594,28 +3594,28 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
     exact compile_clock.
   Qed.
 
-  Lemma F1_compile_rule_valid : forall (M : model (V := V.t)) ds rw g,
+  Lemma compile_rule_valid : forall (M : model (V := V.t)) ds rw g,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
     valid_rw V.prim M (lookup_sorts ds) (lookup_kind ds) rw ->
     rule_valid_sorted V.prim M (lookup_sorts ds) (lookup_kind ds) (compile_rule rw).
   Proof.
-    exact compile_rule_valid.
+    exact compile_rule_valid_aux.
   Qed.
 
-  Lemma F2_compile_rule_sorted : forall ds rw g,
+  Lemma compile_rule_sorted : forall ds rw g,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
     rule_ok (lookup_sorts ds) (lookup_kind ds) (compile_rule rw).
   Proof.
-    exact compile_rule_sorted.
+    exact compile_rule_sorted_aux.
   Qed.
 
-  Lemma F3_flatten_spec : forall rw,
+  Lemma flatten_spec : forall rw,
     flatten_lhs rw = flatten_pat (lhs V.t rw) (root_var rw) ++ cond V.t rw.
   Proof.
     intros [lp rp conditions]. reflexivity.
   Qed.
 
-  Lemma T1_compile_split : forall ds rws ans,
+  Lemma T_compile_split : forall ds rws ans,
     (T_compile ds rws ans <= fold_right (fun rw n => T_compile_rule rw + n) 0 rws +
       k_compile * N.of_nat (length rws + length ans + 1))%N.
   Proof.
@@ -3623,7 +3623,7 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
     pose proof (compile_clock_split ds rws ans). lia.
   Qed.
 
-  Lemma T2_compile_rule_le : forall rw,
+  Lemma T_compile_rule_le : forall rw,
     (T_compile_rule rw <= k_compile * N.of_nat (rewrite_size rw + 1))%N.
   Proof.
     exact compile_rule_clock.
@@ -3644,7 +3644,7 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
   Qed.
 
   (** Compilation is linear in the rewrite inventory and the appended rules. *)
-  Lemma compile_bigO : bigO (fun _ => True)
+  Lemma compile_complexity : bigO (fun _ => True)
     (fun x : list decl * list (rewrite V.t) * list (rule V.t) =>
       let '(_, rws, ans) := x in
       N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0 rws + length ans + 1))
@@ -3656,11 +3656,11 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
   Qed.
 
   (** Compiling one rewrite is linear in its syntactic size. *)
-  Lemma compile_rule_bigO : bigO (fun _ => True)
+  Lemma compile_rule_complexity : bigO (fun _ => True)
     (fun rw => N.of_nat (rewrite_size rw + 1)) T_compile_rule.
   Proof.
     apply bigO_intro with (c := k_compile).
     intros rw _.
-    eapply N.le_trans; [exact (T2_compile_rule_le rw)|]. lia.
+    eapply N.le_trans; [exact (T_compile_rule_le rw)|]. lia.
   Qed.
 End CompileT.

@@ -108,7 +108,7 @@ Module LinearizeT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) <: LINEARIZE_ALL X L
     rewrite Z.mod_small by lia. lia.
   Qed.
   (** Linearization is linear in its stated syntax and bit measure. *)
-  Lemma lin_of_bigO : bigO (fun _ : term L.op X.t => True)
+  Lemma lin_of_complexity : bigO (fun _ : term L.op X.t => True)
     (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
     (fun e => T_lin_of e).
   Proof.
@@ -118,7 +118,7 @@ Module LinearizeT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) <: LINEARIZE_ALL X L
     rewrite Nat2N.inj_mul, N.mul_assoc. apply N.le_add_r.
   Qed.
   (** Guard linearization is linear in its stated operand and bit measure. *)
-  Lemma atoms_of_bigO : bigO (fun _ : L.guard * list (term L.op X.t) => True)
+  Lemma atoms_of_complexity : bigO (fun _ : L.guard * list (term L.op X.t) => True)
     (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
       (bits_es (fst x) (snd x) + 1))%nat))
     (fun x => T_atoms_of (fst x) (snd x)).
@@ -2490,7 +2490,7 @@ Module ZLinearizeT (X : KEY_T) <: LINEARIZE_ALL X ZLangT ZNum.
   Qed.
 
   (** Linearization is linear in its stated syntax and bit measure. *)
-  Lemma lin_of_bigO : bigO (fun _ : term ZLangT.op X.t => True)
+  Lemma lin_of_complexity : bigO (fun _ : term ZLangT.op X.t => True)
     (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
     (fun e => T_lin_of e).
   Proof.
@@ -2501,7 +2501,7 @@ Module ZLinearizeT (X : KEY_T) <: LINEARIZE_ALL X ZLangT ZNum.
   Qed.
 
   (** Guard linearization is linear in its stated operand and bit measure. *)
-  Lemma atoms_of_bigO : bigO (fun _ : ZLangT.guard * list (term ZLangT.op X.t) => True)
+  Lemma atoms_of_complexity : bigO (fun _ : ZLangT.guard * list (term ZLangT.op X.t) => True)
     (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
       (bits_es (fst x) (snd x) + 1))%nat))
     (fun x => T_atoms_of (fst x) (snd x)).
@@ -2627,7 +2627,7 @@ Module BitsLinearizeUT (X : KEY_T) <: LINEARIZE_ALL X BitsLangT BitsNumU.
   Qed.
 
   (** Linearization is linear in its stated syntax and bit measure. *)
-  Lemma lin_of_bigO : bigO (fun _ : term BitsLangT.op X.t => True)
+  Lemma lin_of_complexity : bigO (fun _ : term BitsLangT.op X.t => True)
     (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
     (fun e => T_lin_of e).
   Proof.
@@ -2638,7 +2638,7 @@ Module BitsLinearizeUT (X : KEY_T) <: LINEARIZE_ALL X BitsLangT BitsNumU.
   Qed.
 
   (** Guard linearization is linear in its stated operand and bit measure. *)
-  Lemma atoms_of_bigO : bigO (fun _ : BitsLangT.guard * list (term BitsLangT.op X.t) => True)
+  Lemma atoms_of_complexity : bigO (fun _ : BitsLangT.guard * list (term BitsLangT.op X.t) => True)
     (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
       (bits_es (fst x) (snd x) + 1))%nat))
     (fun x => T_atoms_of (fst x) (snd x)).
@@ -2764,7 +2764,7 @@ Module BitsLinearizeST (X : KEY_T) <: LINEARIZE_ALL X BitsLangT BitsNumS.
   Qed.
 
   (** Linearization is linear in its stated syntax and bit measure. *)
-  Lemma lin_of_bigO : bigO (fun _ : term BitsLangT.op X.t => True)
+  Lemma lin_of_complexity : bigO (fun _ : term BitsLangT.op X.t => True)
     (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
     (fun e => T_lin_of e).
   Proof.
@@ -2775,7 +2775,7 @@ Module BitsLinearizeST (X : KEY_T) <: LINEARIZE_ALL X BitsLangT BitsNumS.
   Qed.
 
   (** Guard linearization is linear in its stated operand and bit measure. *)
-  Lemma atoms_of_bigO : bigO (fun _ : BitsLangT.guard * list (term BitsLangT.op X.t) => True)
+  Lemma atoms_of_complexity : bigO (fun _ : BitsLangT.guard * list (term BitsLangT.op X.t) => True)
     (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
       (bits_es (fst x) (snd x) + 1))%nat))
     (fun x => T_atoms_of (fst x) (snd x)).

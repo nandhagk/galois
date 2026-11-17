@@ -1520,14 +1520,14 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Definition k_plan : N := 8%N.
 
   (** Construction uses the shared first-order graph builder. *)
-  Lemma F1_graph : forall p, dep_graph p =
+  Lemma dep_graph_def : forall p, dep_graph p =
     schedule_graph S.key_code (S.target p) (S.deps p) (S.sides p) (S.rows p).
   Proof.
     reflexivity.
   Qed.
 
   (** The graph builder lists each read or write code exactly once. *)
-  Lemma F2_vertices : forall p, NoDup (verts (dep_graph p)) /\
+  Lemma dep_graph_vertices_spec : forall p, NoDup (verts (dep_graph p)) /\
     forall c, In c (verts (dep_graph p)) <->
       exists r x, In r (S.rows p) /\
         In x ((S.target p r :: S.sides p r) ++ S.deps p r) /\ S.key_code x = c.
@@ -1536,14 +1536,14 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Every emitted adjacency occurrence comes from a declared dependency product. *)
-  Lemma F3_edges : forall p u v,
+  Lemma dep_graph_edges_plan : forall p u v,
     edge (dep_graph p) u v <-> dependency_edge p u v.
   Proof.
     exact dep_graph_edges.
   Qed.
 
   (** Preparation retains a well-formed graph whose vertices are all roots. *)
-  Lemma F4_prepared : forall p,
+  Lemma dep_graph_prepare_wf : forall p,
     wf_graph (dep_graph p) /\ base (G.prepare (dep_graph p)) = dep_graph p /\
     forall u, In u (verts (dep_graph p)) ->
       reach (base (G.prepare (dep_graph p))) (verts (dep_graph p)) u.
@@ -1553,14 +1553,14 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** WTO conversion pairs its public ranks with its configured structural heads. *)
-  Lemma F5_policy : forall w cfg wp n, of_wto w cfg wp n =
+  Lemma of_wto_def : forall w cfg wp n, of_wto w cfg wp n =
     @Policy L.wparam (W.ranks w) (schedule_head_map cfg (W.heads w)) wp n.
   Proof.
     reflexivity.
   Qed.
 
   (** Cut checking uses the maximum dependency rank for each row. *)
-  Lemma F6_cut_code : forall p pol, cuts p pol =
+  Lemma cuts_def : forall p pol, cuts p pol =
     forallb (schedule_cut_row S.key_code (S.target p) (S.deps p) (S.sides p) pol)
       (S.rows p).
   Proof.
@@ -1568,7 +1568,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Maximum-rank checking is equivalent to the public dependency-edge criterion. *)
-  Lemma F7_cut_spec : forall p pol, cuts p pol = true <-> forall u v,
+  Lemma cuts_spec_plan : forall p pol, cuts p pol = true <-> forall u v,
     dependency_edge p u v -> (priority pol u < priority pol v)%positive \/
       exists cfg, trie_get v (heads pol) = Some cfg.
   Proof.
@@ -1576,7 +1576,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Checked WTO forward ranks discharge every non-head dependency. *)
-  Lemma F8_wto_cuts : forall p w cfg wp n,
+  Lemma of_wto_cuts_plan : forall p w cfg wp n,
     W.check (G.prepare (dep_graph p)) (verts (dep_graph p)) w = true ->
     cuts p (of_wto w cfg wp n) = true.
   Proof.
@@ -1584,7 +1584,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Program vertices and edge occurrences fit the declared occurrence budgets. *)
-  Lemma F9_graph_sizes : forall p,
+  Lemma dep_graph_size_counts : forall p,
     graph_n (dep_graph p) <= occurrence_count p /\
     graph_e (dep_graph p) = edge_count p.
   Proof.
@@ -1602,7 +1602,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** All dependency graph identifiers fit the program key budget. *)
-  Lemma F10_width : forall p, S.wf p -> graph_width (dep_graph p) <= S.kw p.
+  Lemma dep_graph_width_le_kw : forall p, S.wf p -> graph_width (dep_graph p) <= S.kw p.
   Proof.
     intros p Hwf; apply schedule_graph_width_le; [apply dep_graph_wf|].
     intros v Hv; apply dep_graph_vertices in Hv as [r [x [Hr [Hx <-]]]].
@@ -1610,14 +1610,14 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Unique bounded-width identifiers bound the width of their assigned positive ranks. *)
-  Lemma F11_rank_width : forall p cfg wp n pol, S.wf p ->
+  Lemma plan_prio_width_plan : forall p cfg wp n pol, S.wf p ->
     plan p cfg wp n = Some pol -> prio_width p pol <= S.kw p + 1.
   Proof.
     exact plan_prio_width.
   Qed.
 
   (** Accepted WTO conversion scans distinct program vertices with bounded identifiers. *)
-  Lemma F12_checked_size : forall p w,
+  Lemma checked_wto_size_le : forall p w,
     W.check (G.prepare (dep_graph p)) (verts (dep_graph p)) w = true ->
     length (wto_order w) <= graph_n (dep_graph p) /\
     vertex_width (wto_order w) <= graph_width (dep_graph p).
@@ -1636,7 +1636,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Graph construction charges readers, encoded occurrences and emitted edges. *)
-  Lemma T1_graph : forall p, S.wf p ->
+  Lemma T_dep_graph_plan_le : forall p, S.wf p ->
     (T_dep_graph p <= k_graph *
       (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
         N.of_nat (S.kw p + 1) +
@@ -1646,7 +1646,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** WTO conversion charges the public projections and configured-head insertion. *)
-  Lemma T2_policy : forall w cfg wp n,
+  Lemma T_of_wto_split : forall w cfg wp n,
     (T_of_wto w cfg wp n <= k_heads *
       (W.T_ranks w + W.T_heads w + T_schedule_head_map cfg (W.heads w) + 1))%N.
   Proof.
@@ -1654,7 +1654,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Maximum-rank cut checking retains the linear public occurrence bound. *)
-  Lemma T3_cuts : forall p pol, S.wf p ->
+  Lemma T_cuts_plan_le : forall p pol, S.wf p ->
     (T_cuts p pol <= k_cuts *
       (N.of_nat (row_count p + occurrence_count p + 1) *
         N.of_nat (S.kw p + prio_width p pol + 1) +
@@ -1664,7 +1664,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Planning pays each graph, WTO and conversion phase explicitly. *)
-  Lemma T4_plan_phases : forall p cfg wp n,
+  Lemma T_plan_split : forall p cfg wp n,
     let graph := dep_graph p in
     let prepared := G.prepare graph in
     let roots := verts graph in
@@ -1682,8 +1682,8 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
     Nat.log2 (length (wto_order w)) <= S.kw p.
   Proof.
     intros Hwf Hcheck.
-    destruct (F12_checked_size p w Hcheck) as [Hlength Hwidth].
-    pose proof (F10_width p Hwf) as Hgraph_width.
+    destruct (checked_wto_size_le p w Hcheck) as [Hlength Hwidth].
+    pose proof (dep_graph_width_le_kw p Hwf) as Hgraph_width.
     assert (Hcount : length (wto_order w) <= 2 ^ S.kw p).
     { apply schedule_key_count; [exact (proj1 (W.check_sound _ _ _ Hcheck))|].
       intros v Hv; pose proof (schedule_vertex_width_member _ _ Hv); lia. }
@@ -1700,9 +1700,9 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Proof.
     intros Hwf Hcheck.
     pose proof (of_wto_time_bound w cfg wp n) as Htime.
-    destruct (F12_checked_size p w Hcheck) as [Hlength Hwidth].
-    destruct (F9_graph_sizes p) as [Hvertices Hedges].
-    pose proof (F10_width p Hwf) as Hgraph_width.
+    destruct (checked_wto_size_le p w Hcheck) as [Hlength Hwidth].
+    destruct (dep_graph_size_counts p) as [Hvertices Hedges].
+    pose proof (dep_graph_width_le_kw p Hwf) as Hgraph_width.
     pose proof (checked_order_log_width p w Hwf Hcheck) as Hlog.
     assert (Hcount : (N.of_nat (length (wto_order w) + 1) <=
       N.of_nat (row_count p + occurrence_count p + edge_count p + 1))%N)
@@ -1734,8 +1734,8 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
     set (width := N.of_nat (S.kw p + 1)).
     set (depth := N.of_nat (wto_depth
       (W.build (G.prepare (dep_graph p)) (verts (dep_graph p))) + 1)).
-    destruct (F9_graph_sizes p) as [Hvertices Hedges].
-    pose proof (F10_width p Hwf) as Hgraph_width.
+    destruct (dep_graph_size_counts p) as [Hvertices Hedges].
+    pose proof (dep_graph_width_le_kw p Hwf) as Hgraph_width.
     pose proof (schedule_graph_vertex_width (dep_graph p)) as Hroot_width.
     assert (Hprepare_size : (N.of_nat (graph_n (dep_graph p) +
       graph_e (dep_graph p) + 1) <= size)%N)
@@ -1785,8 +1785,8 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
         (W.build (G.prepare (dep_graph p)) (verts (dep_graph p)))) eqn:Hcheck.
       - apply checked_conversion_time; assumption.
       - apply N.le_0_l. }
-    pose proof (T4_plan_phases p cfg wp n) as Hphases.
-    pose proof (T1_graph p Hwf) as Hgraph.
+    pose proof (T_plan_split p cfg wp n) as Hphases.
+    pose proof (T_dep_graph_plan_le p Hwf) as Hgraph.
     cbn zeta in Hphases; unfold k_plan in Hphases; unfold k_graph in Hgraph.
     fold size width in Hgraph; unfold c_sched; fold size width depth.
     assert (Hsize : (1 <= size)%N) by (apply schedule_width_positive).
@@ -1811,7 +1811,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** The phase bounds discharge the unchanged public schedule contract. *)
-  Lemma T5_plan_public : forall p cfg wp n, S.wf p ->
+  Lemma T_plan_plan_le : forall p cfg wp n, S.wf p ->
     (T_plan p cfg wp n <= c_sched *
       (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
        N.of_nat (wto_depth (W.build (G.prepare (dep_graph p)) (verts (dep_graph p))) + 1) *
@@ -1822,7 +1822,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Dependency graph construction is linear in occurrences and edges. *)
-  Lemma dep_graph_bigO : bigO (X := S.prog) (fun p => S.wf p)
+  Lemma dep_graph_complexity : bigO (X := S.prog) (fun p => S.wf p)
     (fun p => (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
         N.of_nat (S.kw p + 1) + N.of_nat (row_count p) * (S.row_work p 0 + 1))%N)
     (fun p => T_dep_graph p).
@@ -1834,7 +1834,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Cut checking is linear in occurrences times the key and priority widths. *)
-  Lemma cuts_bigO : bigO (X := S.prog * policy L.wparam) (fun x => S.wf (fst x))
+  Lemma cuts_complexity : bigO (X := S.prog * policy L.wparam) (fun x => S.wf (fst x))
     (fun x => (N.of_nat (row_count (fst x) + occurrence_count (fst x) + 1) *
         N.of_nat (S.kw (fst x) + prio_width (fst x) (snd x) + 1) +
         N.of_nat (row_count (fst x)) * (S.row_work (fst x) 0 + 1))%N)
@@ -1847,7 +1847,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** Planning is linear in occurrences and edges times the nesting depth. *)
-  Lemma plan_bigO : bigO (X := S.prog * head_cfg * L.wparam * nat)
+  Lemma plan_complexity : bigO (X := S.prog * head_cfg * L.wparam * nat)
     (fun '(p, _, _, _) => S.wf p)
     (fun '(p, _, _, _) => (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
         N.of_nat (wto_depth (W.build (G.prepare (dep_graph p)) (verts (dep_graph p))) + 1) *
@@ -1861,7 +1861,7 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
   Qed.
 
   (** WTO conversion is linear in the order length times the key and rank widths. *)
-  Lemma of_wto_bigO : bigO (X := wto * head_cfg * L.wparam * nat) (fun _ => True)
+  Lemma of_wto_complexity : bigO (X := wto * head_cfg * L.wparam * nat) (fun _ => True)
     (fun '(w, _, _, _) => N.of_nat ((length (wto_order w) + 1) *
       (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1)))
     (fun '(w, cfg, wp, n) => T_of_wto w cfg wp n).

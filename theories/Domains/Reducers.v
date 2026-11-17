@@ -944,17 +944,17 @@ Module WrappedBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (A0 : WRAPPED L)
   Proof.
     reflexivity.
   Qed.
-  Lemma F_to_left : forall w a b, to_left (TVal w a, TVal w b) =
+  Lemma to_left_def : forall w a b, to_left (TVal w a, TVal w b) =
     (TVal w (A0.pmeet w a (bits_hull w b)), TVal w b).
   Proof.
     intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
   Qed.
-  Lemma F_to_right : forall w a b, to_right (TVal w a, TVal w b) =
+  Lemma to_right_def : forall w a b, to_right (TVal w a, TVal w b) =
     (TVal w a, TVal w (B0.pmeet w b (arc_prefix w a))).
   Proof.
     intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
   Qed.
-  Lemma F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
+  Lemma reduce_fixes_other_pairs : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
     to_left x = x /\ to_right x = x.
   Proof.
     intros [[|w a|] [|v b|]] Hshape; cbn [to_left to_right];
@@ -1030,7 +1030,7 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
   Lemma meet_word_clip_right : forall w a b,
     A0.pmeet w a (interval_word_clip w b) = A0.pmeet w a b.
   Proof.
-    intros w a b; rewrite !A0.F_pmeet, <- PrecisionFacts.word_clip_agrees,
+    intros w a b; rewrite !A0.pmeet_def, <- PrecisionFacts.word_clip_agrees,
       PrecisionFacts.clip_idempotent; reflexivity.
   Qed.
 
@@ -1039,12 +1039,12 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
     A0.pgamma w (congr_interval w a b) z.
   Proof.
     intros w a b z Ha Hb.
-    apply A0.F_pgamma in Ha; destruct Ha as [Hword Ha].
+    apply A0.pgamma_def in Ha; destruct Ha as [Hword Ha].
     pose proof (reducer_clip_sound w a z Hword Ha) as Hclip.
-    apply B0.F1_gamma in Hb; unfold B0.congr_gamma in Hb.
+    apply B0.gamma_def in Hb; unfold B0.congr_gamma in Hb.
     destruct b as [|m r]; [contradiction|].
     destruct Hb as [_ Hdiv].
-    apply A0.F_pgamma; split; [exact Hword|].
+    apply A0.pgamma_def; split; [exact Hword|].
     unfold congr_interval.
     destruct (interval_word_clip w a) as [|lo hi]; [contradiction|].
     destruct (m =? 0) eqn:Hmodulus.
@@ -1063,9 +1063,9 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
   Lemma singleton_sound : forall w a z, A0.pgamma w a z ->
     B0.pgamma w (interval_congr (interval_word_clip w a)) z.
   Proof.
-    intros w a z Ha; apply A0.F_pgamma in Ha; destruct Ha as [Hword Ha].
+    intros w a z Ha; apply A0.pgamma_def in Ha; destruct Ha as [Hword Ha].
     pose proof (reducer_clip_sound w a z Hword Ha) as Hclip.
-    apply B0.F1_gamma; unfold interval_congr.
+    apply B0.gamma_def; unfold interval_congr.
     destruct (interval_word_clip w a) as [|[|lo|] [|hi|]];
       try contradiction; unfold B0.congr_gamma;
       try (split; [exact Hword|exists z; lia]).
@@ -1136,17 +1136,17 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
   Proof.
     reflexivity.
   Qed.
-  Lemma F_to_left : forall w a b, to_left (TVal w a, TVal w b) =
+  Lemma to_left_def : forall w a b, to_left (TVal w a, TVal w b) =
     (TVal w (A0.pmeet w a (congr_interval w a b)), TVal w b).
   Proof.
     intros; unfold to_left; rewrite Pos.eqb_refl, meet_word_clip_right; reflexivity.
   Qed.
-  Lemma F_to_right : forall w a b, to_right (TVal w a, TVal w b) =
+  Lemma to_right_def : forall w a b, to_right (TVal w a, TVal w b) =
     (TVal w a, TVal w (B0.pmeet w b (interval_congr (interval_word_clip w a)))).
   Proof.
     intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
   Qed.
-  Lemma F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
+  Lemma reduce_fixes_other_pairs : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
     to_left x = x /\ to_right x = x.
   Proof.
     intros [[|w a|] [|v b|]] Hshape; cbn [to_left to_right];
@@ -1220,7 +1220,7 @@ Module IntervalBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (T : THRESHOLDS)
     apply B0.gamma_tnum in Hbits; unfold B0.tnum_gamma in Hbits.
     destruct Hbits as [Hzero Hone].
     pose proof (reducer_bits_bounds w b z Hword Hzero Hone) as Hbounds.
-    apply A0.F_pgamma; split; [exact Hword|].
+    apply A0.pgamma_def; split; [exact Hword|].
     unfold bits_interval, bits_hull.
     destruct (Z.leb (tnum_wrap w (ones b))
       (Z.lxor (tnum_wrap w (zeros b)) (Z.ones (Zpos w)))) eqn:Horder.
@@ -1232,7 +1232,7 @@ Module IntervalBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (T : THRESHOLDS)
   Lemma prefix_sound : forall w a z, A0.pgamma w a z ->
     B0.pgamma w (interval_prefix w a) z.
   Proof.
-    intros w a z Ha; apply A0.F_pgamma in Ha; destruct Ha as [Hword Ha].
+    intros w a z Ha; apply A0.pgamma_def in Ha; destruct Ha as [Hword Ha].
     pose proof (reducer_clip_sound w a z Hword Ha) as Hmember.
     apply B0.gamma_tnum; unfold B0.tnum_gamma, interval_prefix.
     destruct (interval_word_clip w a) as [|[|lo|] [|hi|]] eqn:Hclip;
@@ -1306,17 +1306,17 @@ Module IntervalBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (T : THRESHOLDS)
   Proof.
     reflexivity.
   Qed.
-  Lemma F_to_left : forall w a b, to_left (TVal w a, TVal w b) =
+  Lemma to_left_def : forall w a b, to_left (TVal w a, TVal w b) =
     (TVal w (A0.pmeet w a (bits_interval w b)), TVal w b).
   Proof.
     intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
   Qed.
-  Lemma F_to_right : forall w a b, to_right (TVal w a, TVal w b) =
+  Lemma to_right_def : forall w a b, to_right (TVal w a, TVal w b) =
     (TVal w a, TVal w (B0.pmeet w b (interval_prefix w a))).
   Proof.
     intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
   Qed.
-  Lemma F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
+  Lemma reduce_fixes_other_pairs : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
     to_left x = x /\ to_right x = x.
   Proof.
     intros [[|w a|] [|v b|]] Hshape; cbn [to_left to_right];
@@ -1454,24 +1454,24 @@ Module WrappedBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     pose proof (right_size a' b) as Hright.
     cbn [fst]; unfold c_reduce; rewrite !Nat2N.inj_add in *; nia.
   Qed.
-  Lemma F1_steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
+  Lemma steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_right (to_left (a, b)))) c /\
     B.gamma (snd (to_right (to_left (a, b)))) c.
   Proof.
     exact reduce_sound.
   Qed.
-  Lemma F2_steps_lower : forall a b,
+  Lemma steps_lower : forall a b,
     A.leb (fst (to_right (to_left (a, b)))) a = true /\
     B.leb (snd (to_right (to_left (a, b)))) b = true.
   Proof.
     exact reduce_lower.
   Qed.
-  Lemma T1_steps : forall x, (T_reduce x <=
+  Lemma T_reduce_split : forall x, (T_reduce x <=
     k_exchange * (T_to_left x + T_to_right (to_left x) + 1))%N.
   Proof.
     intro x; unfold k_exchange; time_step.
   Qed.
-  Lemma reduce_bigO : bigO (fun _ => True)
+  Lemma reduce_complexity : bigO (fun _ => True)
     (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
   Proof.
     exists c_reduce; intros [a b] _; cbn [fst snd].
@@ -1509,7 +1509,7 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros w [|[|lo|] [|hi|]] Hrange;
       cbn [reducer_interval_range] in Hrange; try contradiction.
-    - rewrite <- (A0.F_pbot w).
+    - rewrite <- (A0.pbot_def w).
       eapply N.le_trans; [apply A0.pbot_size|].
       apply N.mul_le_mono_r; nia.
     - assert (Hlo : Word.is_word w lo) by (unfold Word.is_word; lia).
@@ -1517,7 +1517,7 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       pose proof (reducer_word_bits w lo Hlo) as Hlobits.
       pose proof (reducer_word_bits w hi Hhi) as Hhibits.
       assert (Hjoin : A0.pjoin w (A0.pconst w lo) (A0.pconst w hi) = I (Fin lo) (Fin hi)).
-      { rewrite A0.F_pjoin, !A0.F_pconst.
+      { rewrite A0.pjoin_def, !A0.pconst_def.
         unfold L.wrap; rewrite !Word.wrap_id by assumption.
         rewrite !IntervalFacts.clip_finite by lia.
         unfold S.interval_join, S.bound_min, S.bound_max, S.bound_leb; cbn beta iota zeta.
@@ -1543,7 +1543,7 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   (** Every payload meet is canonical because its two operands are clipped. *)
   Lemma meet_payload_range : forall w a b, reducer_interval_range w (A0.pmeet w a b).
   Proof.
-    intros w a b; rewrite A0.F_pmeet; apply IntervalFacts.meet_range;
+    intros w a b; rewrite A0.pmeet_def; apply IntervalFacts.meet_range;
       apply IntervalFacts.clip_range.
   Qed.
 
@@ -1748,24 +1748,24 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     pose proof (right_size a' b) as Hright.
     cbn [fst]; unfold c_reduce; rewrite !Nat2N.inj_add in *; nia.
   Qed.
-  Lemma F1_steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
+  Lemma steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_right (to_left (a, b)))) c /\
     B.gamma (snd (to_right (to_left (a, b)))) c.
   Proof.
     exact reduce_sound.
   Qed.
-  Lemma F2_steps_lower : forall a b,
+  Lemma steps_lower : forall a b,
     A.leb (fst (to_right (to_left (a, b)))) a = true /\
     B.leb (snd (to_right (to_left (a, b)))) b = true.
   Proof.
     exact reduce_lower.
   Qed.
-  Lemma T1_steps : forall x, (T_reduce x <=
+  Lemma T_reduce_split : forall x, (T_reduce x <=
     k_exchange * (T_to_left x + T_to_right (to_left x) + 1))%N.
   Proof.
     intro x; unfold k_exchange; time_step.
   Qed.
-  Lemma reduce_bigO : bigO (fun _ => True)
+  Lemma reduce_complexity : bigO (fun _ => True)
     (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
   Proof.
     exists c_reduce; intros [a b] _; cbn [fst snd].
@@ -1774,7 +1774,7 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
 End IntervalCongrT.
 
 (** The interval payload stores its width and its raw endpoint bits, as the interval
-    component's own plan law [F_psize] states. Without this pin a lawful payload can store the
+    component's own plan law [psize_def] states. Without this pin a lawful payload can store the
     exchanged interval in quadratic space, as
     [ReducerIntervalSizeCounterexample.no_linear_precision_left_size] shows. *)
 Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
@@ -1884,24 +1884,24 @@ Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
     pose proof (right_size a' b) as Hright.
     cbn [fst]; unfold c_reduce; rewrite !Nat2N.inj_add in *; nia.
   Qed.
-  Lemma F1_steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
+  Lemma steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_right (to_left (a, b)))) c /\
     B.gamma (snd (to_right (to_left (a, b)))) c.
   Proof.
     exact reduce_sound.
   Qed.
-  Lemma F2_steps_lower : forall a b,
+  Lemma steps_lower : forall a b,
     A.leb (fst (to_right (to_left (a, b)))) a = true /\
     B.leb (snd (to_right (to_left (a, b)))) b = true.
   Proof.
     exact reduce_lower.
   Qed.
-  Lemma T1_steps : forall x, (T_reduce x <=
+  Lemma T_reduce_split : forall x, (T_reduce x <=
     k_exchange * (T_to_left x + T_to_right (to_left x) + 1))%N.
   Proof.
     intro x; unfold k_exchange; time_step.
   Qed.
-  Lemma reduce_bigO : bigO (fun _ => True)
+  Lemma reduce_complexity : bigO (fun _ => True)
     (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
   Proof.
     exists c_reduce; intros [a b] _; cbn [fst snd].

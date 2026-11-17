@@ -66,7 +66,7 @@ Module Type DIGRAPH_TIME (Import D : DIGRAPH).
     (T_prepare g <= c_prepare * N.of_nat (graph_n g + graph_e g + 1) *
       N.of_nat (graph_width g + 1))%N.
   (** Preparation has the published linear bit-cost bound. *)
-  Parameter prepare_bigO : bigO (fun _ => True)
+  Parameter prepare_complexity : bigO (fun _ => True)
     (fun g => N.of_nat ((graph_n g + graph_e g + 1) * (graph_width g + 1))) T_prepare.
 End DIGRAPH_TIME.
 

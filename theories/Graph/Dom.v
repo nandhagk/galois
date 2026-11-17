@@ -2298,7 +2298,7 @@ Local Definition dom_info_closed (m : ptrie positive) (pos : ptrie N) : Prop :=
 (** Initial paired cells agree with the empty size table's default value. *)
 Local Lemma dom_info_initial_agrees pos : dom_info_matches pos Empty (dom_info_initial pos).
 Proof.
-  intro v. unfold dom_info_initial. rewrite PTrieT.F8_filter.
+  intro v. unfold dom_info_initial. rewrite PTrieT.get_filter_map.
   change (PTrieT.get v pos) with (trie_get v pos).
   destruct (trie_get v pos); [|reflexivity].
   unfold dom_size_get. rewrite PTrie.get_empty. reflexivity.
@@ -2313,7 +2313,7 @@ Proof.
   intros Hagree Hclosed [pv Hv]. unfold dom_info_add_size.
   rewrite Hagree, Hv. destruct (trie_get v m) as [p|] eqn:Hparent.
   - destruct (Hclosed v p (ex_intro _ pv Hv) Hparent) as [pp Hp].
-    rewrite Hagree, Hp. intro x. rewrite PTrieT.F7_replace, dom_add_size_value, Hparent.
+    rewrite Hagree, Hp. intro x. rewrite PTrieT.get_replace, dom_add_size_value, Hparent.
     change (PTrieT.get x info) with (trie_get x info).
     destruct (Pos.eqb x p) eqn:Heq.
     + apply Pos.eqb_eq in Heq. subst x. now rewrite Hp.
@@ -5455,7 +5455,7 @@ Qed.
 Local Lemma dom_time_info_initial_nodes pos :
   (T_dom_info_initial pos <= 17 * N.of_nat (PTrie.nodes pos + 1))%N.
 Proof.
-  pose proof (PTrieT.T3_filter N (N * N) (fun p => Some (p, 1%N))
+  pose proof (PTrieT.T_filter_map_le N (N * N) (fun p => Some (p, 1%N))
     (fun _ => 1%N) pos 1%N (fun _ => N.le_refl 1)) as Hfilter.
   unfold PTrieT.k_filter in Hfilter.
   unfold T_dom_info_initial. time_simpl. rewrite Nat2N.inj_add in *. nia.
@@ -5559,7 +5559,7 @@ Module DomT <: DOM_ALL.
     (64 + k_tree + k_check * (k_scan + k_read + k_map + 2 * k_size + k_edge + 1) +
       k_dfs + k_semi + 4 * k_le + k_order + k_build)%N.
 
-  Lemma F0_path_last : forall g a vs b, path g a vs b ->
+  Lemma path_last : forall g a vs b, path g a vs b ->
   (vs = [b] /\ a = b) \/
   exists vs' c, path g a vs' c /\ edge g c b /\ vs = vs' ++ [b].
   Proof.
@@ -5574,7 +5574,7 @@ Module DomT <: DOM_ALL.
         * split; [exact Hcw | now rewrite Hvs].
   Qed.
 
-  Lemma F1_dominates_trans : forall g r x y v,
+  Lemma dominates_trans : forall g r x y v,
   dominates g r x y -> dominates g r y v -> dominates g r x v.
   Proof.
     intros g r x y v Hxy Hyv vs Hpath.
@@ -5583,13 +5583,13 @@ Module DomT <: DOM_ALL.
     apply Hincl. exact (Hxy prefix Hprefix).
   Qed.
 
-  Lemma F2_check_cert : forall g r m o, check g r m o = true -> dom_cert (base g) r m o.
+  Lemma check_cert_sound : forall g r m o, check g r m o = true -> dom_cert (base g) r m o.
   Proof.
     intros g r m o Hcheck. exact (dom_check_certificate g r m o Hcheck).
   Qed.
 
   (** An accepted order holds listed vertices only. *)
-  Lemma F2b_check_listed : forall g r m o, check g r m o = true ->
+  Lemma check_listed : forall g r m o, check g r m o = true ->
     forall v, In v o -> In v (verts (base g)).
   Proof.
     intros g r m o Hcheck v Hin. unfold check in Hcheck.
@@ -5600,75 +5600,75 @@ Module DomT <: DOM_ALL.
     exact (Hlisted v Hin).
   Qed.
 
-  Lemma F3_anc_before : forall g r m o u v, dom_cert g r m o ->
+  Lemma anc_before : forall g r m o u v, dom_cert g r m o ->
   tree_anc m u v -> u <> v -> order_before o u v.
   Proof.
     intros g r m o u v Hcert Hanc Hneq.
     exact (dom_cert_anc_before g r m o u v Hcert Hanc Hneq).
   Qed.
 
-  Lemma F4_root_anc : forall g r m o v, dom_cert g r m o -> In v o -> tree_anc m r v.
+  Lemma root_anc : forall g r m o v, dom_cert g r m o -> In v o -> tree_anc m r v.
   Proof.
     intros g r m o v Hcert Hin. exact (dom_cert_root_anc g r m o v Hcert Hin).
   Qed.
 
-  Lemma F5_reach_listed : forall g r m o v, dom_cert g r m o ->
+  Lemma reach_listed : forall g r m o v, dom_cert g r m o ->
   reach g [r] v -> In v o.
   Proof.
     intros g r m o v Hcert Hreach. exact (dom_cert_reach_listed g r m o v Hcert Hreach).
   Qed.
 
-  Lemma F6_listed_reach : forall g r m o v, dom_cert g r m o ->
+  Lemma listed_reach : forall g r m o v, dom_cert g r m o ->
   In v o -> reach g [r] v.
   Proof.
     intros g r m o v Hcert Hin. exact (dom_cert_listed_reach g r m o v Hcert Hin).
   Qed.
 
-  Lemma F7_anc_dominates : forall g r m o u v, dom_cert g r m o ->
+  Lemma anc_dominates : forall g r m o u v, dom_cert g r m o ->
   In v o -> tree_anc m u v -> dominates g r u v.
   Proof.
     intros g r m o u v Hcert Hin Hanc.
     exact (dom_cert_anc_dominates g r m o u v Hcert Hin Hanc).
   Qed.
 
-  Lemma F8_anc_dec : forall g r m o u v, dom_cert g r m o -> In v o ->
+  Lemma tree_anc_decidable : forall g r m o u v, dom_cert g r m o -> In v o ->
   tree_anc m u v \/ ~ tree_anc m u v.
   Proof.
     intros g r m o u v Hcert _. exact (dom_cert_anc_dec g r m o u v Hcert).
   Qed.
 
-  Lemma F9a_low_path : forall g r m o v, dom_cert g r m o -> In v o ->
+  Lemma path_through_lower : forall g r m o v, dom_cert g r m o -> In v o ->
   exists vs, path g r vs v /\ forall y, In y vs -> y = v \/ order_before o y v.
   Proof.
     intros g r m o v Hcert Hin. exact (dom_cert_low_path g r m o v Hcert Hin).
   Qed.
 
-  Lemma F9b_high_path : forall g r m o v p, dom_cert g r m o -> trie_get v m = Some p ->
+  Lemma path_through_higher : forall g r m o v p, dom_cert g r m o -> trie_get v m = Some p ->
   exists vs, path g p vs v /\
     forall y, In y vs -> y = p \/ y = v \/ order_before o v y.
   Proof.
     intros g r m o v p Hcert Hget. exact (dom_cert_high_path g r m o v p Hcert Hget).
   Qed.
 
-  Lemma F9c_avoid : forall g r m o x v, dom_cert g r m o -> In v o ->
+  Lemma path_avoiding_nonancestor : forall g r m o x v, dom_cert g r m o -> In v o ->
   ~ tree_anc m x v -> exists vs, path g r vs v /\ ~ In x vs.
   Proof.
     intros g r m o x v Hcert Hin Hnot. exact (dom_cert_avoid g r m o x v Hcert Hin Hnot).
   Qed.
 
-  Lemma F9_dominates_anc : forall g r m o x v, dom_cert g r m o ->
+  Lemma dominates_anc : forall g r m o x v, dom_cert g r m o ->
   In v o -> dominates g r x v -> tree_anc m x v.
   Proof.
     intros g r m o x v Hcert Hin Hdom.
     exact (dom_cert_dominates_anc g r m o x v Hcert Hin Hdom).
   Qed.
 
-  Lemma F10_cert_exact : forall g r m o, dom_cert (base g) r m o -> dom_exact g r m.
+  Lemma cert_exact : forall g r m o, dom_cert (base g) r m o -> dom_exact g r m.
   Proof.
     intros g r m o Hcert. exact (dom_cert_exact g r m o Hcert).
   Qed.
 
-  Lemma F11_intervals : forall g r m o u v, dom_cert g r m o -> In u o -> In v o ->
+  Lemma anc_iff_interval : forall g r m o u v, dom_cert g r m o -> In u o -> In v o ->
   (tree_anc m u v <->
    (pos_of o u <= pos_of o v /\ pos_of o v + size_of m o v <= pos_of o u + size_of m o u)%N).
   Proof.
@@ -5686,14 +5686,14 @@ Module DomT <: DOM_ALL.
     symmetry. exact Hinterval.
   Qed.
 
-  Lemma F12_tree_exact : forall g r m o, check g r m o = true ->
+  Lemma tree_exact_plan : forall g r m o, check g r m o = true ->
   domtree_exact g r (tree g r m o).
   Proof.
     intros g r m o Hcheck. exact (tree_exact g r m o Hcheck).
   Qed.
 
   (** A successful read lists distinct listed vertices within the budget, headed by the root. *)
-  Lemma F2c_read : forall g r o pos, read (scan g) r o = Some pos ->
+  Lemma read_ok : forall g r o pos, read (scan g) r o = Some pos ->
     NoDup o /\ length o <= graph_n (base g) /\ hd_error o = Some r /\
     (forall v, In v o -> In v (nodes g)) /\
     (forall v, In v o -> exists i, trie_get v pos = Some i).
@@ -5702,7 +5702,7 @@ Module DomT <: DOM_ALL.
   Qed.
 
   (** A successful parent check keeps every parent of an ordered vertex in the order. *)
-  Lemma F2d_map : forall g r m o, map_check (scan g) r m o = true ->
+  Lemma map_check_closed : forall g r m o, map_check (scan g) r m o = true ->
     forall v p, In v o -> trie_get v m = Some p -> In p o.
   Proof.
     intros g r m o Hcheck v p Hin Hget.
@@ -5715,7 +5715,7 @@ Module DomT <: DOM_ALL.
       eapply nth_error_In. exact Hp.
   Qed.
 
-  Lemma T1_scan : forall g,
+  Lemma T_scan_le : forall g,
     (T_scan g <= k_scan * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   Proof.
@@ -5741,7 +5741,7 @@ Module DomT <: DOM_ALL.
     rewrite Hlength in Hlisted, Hwidth_time. rewrite Nat2N.inj_mul. nia.
   Qed.
 
-  Lemma T2_read : forall g r o,
+  Lemma T_read_le : forall g r o,
     (T_read (scan g) r o <= k_read * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   Proof.
@@ -5763,11 +5763,11 @@ Module DomT <: DOM_ALL.
       + time_simpl. unfold k_read. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
   Qed.
 
-  Lemma T3_map : forall g r m o,
+  Lemma T_map_check_le : forall g r m o,
     (T_map_check (scan g) r m o <= k_map * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   Proof.
-    intros g r m o. pose proof (T2_read g r o) as Hread_time.
+    intros g r m o. pose proof (T_read_le g r o) as Hread_time.
     pose proof (dom_vertex_width_le g) as Hwidth_le.
     unfold T_read in Hread_time. cbn beta iota zeta in Hread_time.
     unfold T_map_check, T_dom_map_check_known. time_simpl.
@@ -5812,7 +5812,7 @@ Module DomT <: DOM_ALL.
     - time_simpl. unfold k_map. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
   Qed.
 
-  Lemma T4_sizes : forall g m o, NoDup o -> length o <= graph_n (base g) ->
+  Lemma T_sizes_le : forall g m o, NoDup o -> length o <= graph_n (base g) ->
     (forall v, In v o -> In v (nodes g)) ->
     (forall v p, In v o -> trie_get v m = Some p -> In p o) ->
     (T_sizes m o <= k_size * N.of_nat ((graph_n (base g) + 1) *
@@ -5836,7 +5836,7 @@ Module DomT <: DOM_ALL.
     clearbody running. clear -Hlength Hfold Hreverse. nia.
   Qed.
 
-  Lemma T5_edges : forall g m o, length o <= graph_n (base g) ->
+  Lemma T_edges_le : forall g m o, length o <= graph_n (base g) ->
     (forall v, In v o -> In v (verts (base g))) ->
     (forall v p, In v o -> trie_get v m = Some p -> In p o) ->
     (T_edges g m o <= k_edge * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
@@ -5846,8 +5846,8 @@ Module DomT <: DOM_ALL.
     set (root := match o with [] => 1%positive | h :: _ => h end).
     set (budget := N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1))).
-    pose proof (T1_scan g) as Hscan_time.
-    pose proof (T2_read g root o) as Hread_time.
+    pose proof (T_scan_le g) as Hscan_time.
+    pose proof (T_read_le g root o) as Hread_time.
     unfold T_scan in Hscan_time. unfold T_read, scan in Hread_time.
     cbn beta iota zeta in Hscan_time, Hread_time.
     fold budget in Hscan_time.
@@ -5887,7 +5887,7 @@ Module DomT <: DOM_ALL.
         - exact (proj2 (dom_time_graph_width (base g) u (Hlisted u Hu))). }
       pose proof (dom_time_edges (graph_width (base g)) g root m o pos (dom_sizes m o)
         Hkeys Hrows Hvalues Hparents Hsizes) as Hedges_time.
-      pose proof (T4_sizes g m o Hunique Hlength Haccepted Hclosed) as Hsizes_time.
+      pose proof (T_sizes_le g m o Hunique Hlength Haccepted Hclosed) as Hsizes_time.
       unfold T_sizes in Hsizes_time. cbn beta iota zeta in Hsizes_time.
       pose proof (@dom_nodup_sum_incl positive (fun u => length (succs (base g) u))
         o (verts (base g)) Hunique Hlisted) as Hrows_total.
@@ -5914,7 +5914,7 @@ Module DomT <: DOM_ALL.
       nia.
   Qed.
 
-  Lemma T6_tree : forall g r m o, check g r m o = true ->
+  Lemma T_tree_plan_le : forall g r m o, check g r m o = true ->
     (T_tree g r m o <= k_tree * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   Proof.
@@ -5938,7 +5938,7 @@ Module DomT <: DOM_ALL.
     { intro x. eapply dom_distinct_twice_width; [exact Hunique|exact Hkeys|].
       now apply dom_sizes_value_bound. }
     pose proof (dom_time_positions o (graph_width (base g)) Hkeys) as Hnumber.
-    pose proof (T4_sizes g m o Hunique Hlength Hlisted Hparents) as Hsizes_time.
+    pose proof (T_sizes_le g m o Hunique Hlength Hlisted Hparents) as Hsizes_time.
     unfold T_sizes in Hsizes_time.
     pose proof (@dom_time_fold_left (ptrie (list positive)) positive
       (dom_child_push m) (T_dom_child_push m)
@@ -6012,7 +6012,7 @@ Module DomT <: DOM_ALL.
     nia.
   Qed.
 
-  Lemma T7_dfs : forall g r, prepared_ok g ->
+  Lemma T_lt_dfs_le : forall g r, prepared_ok g ->
     (T_lt_dfs g r <= k_dfs * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   Proof.
@@ -6024,13 +6024,13 @@ Module DomT <: DOM_ALL.
     apply dom_time_lt_dfs.
   Qed.
 
-  Lemma F13_ops_length : forall g r, prepared_ok g ->
+  Lemma ops_length_le : forall g r, prepared_ok g ->
     length (lt_ops g r) <= 2 * (graph_n (base g) + graph_e (base g)) + 1.
   Proof.
     intros g r Hprepared. apply dom_lt_operations_length. exact Hprepared.
   Qed.
 
-  Lemma T8_link_eval : forall g r, prepared_ok g ->
+  Lemma T_run_ops_le : forall g r, prepared_ok g ->
     (T_run_ops (lt_ops g r) (lt_init g r) <= k_le *
       N.of_nat ((length (lt_ops g r) + graph_n (base g) + 1) *
         (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
@@ -6043,7 +6043,7 @@ Module DomT <: DOM_ALL.
     rewrite N.add_comm. apply dom_lt_replay_time.
   Qed.
 
-  Lemma T9_semi : forall g r, prepared_ok g ->
+  Lemma T_lt_semi_split : forall g r, prepared_ok g ->
     (T_lt_semi g r <= k_semi * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)) + T_run_ops (lt_ops g r) (lt_init g r))%N.
   Proof.
@@ -6056,7 +6056,7 @@ Module DomT <: DOM_ALL.
     lia.
   Qed.
 
-  Lemma T10_order : forall g r, prepared_ok g ->
+  Lemma T_lt_order_le : forall g r, prepared_ok g ->
     (T_lt_order g r <= k_order *
       N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
         (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
@@ -6074,7 +6074,7 @@ Module DomT <: DOM_ALL.
   Qed.
 
   (** Parent containment tests charge each accepted order entry. *)
-  Lemma T4b_sizes_ok : forall g r m o pos,
+  Lemma T_sizes_ok_le : forall g r m o pos,
       read (scan g) r o = Some pos -> map_check (scan g) r m o = true ->
       (T_sizes_ok m pos (sizes m o) o <= k_size * N.of_nat ((graph_n (base g) + 1) *
         (graph_width (base g) + 1)))%N.
@@ -6100,7 +6100,7 @@ Module DomT <: DOM_ALL.
   Qed.
 
   (** The checker runs its phases in order and stops at the first rejection. *)
-  Lemma T11_check : forall g r m o,
+  Lemma T_check_split : forall g r m o,
       (T_check g r m o <= k_check * (T_scan g + T_read (scan g) r o +
         T_map_check (scan g) r m o +
         match read (scan g) r o with
@@ -6113,7 +6113,7 @@ Module DomT <: DOM_ALL.
     unfold T_check, T_scan, T_read, T_map_check, T_sizes, T_sizes_ok, T_edges.
     unfold scan, read, map_check, sizes, sizes_ok, k_check. time_simpl.
     destruct (dom_read_known (dom_scan g) r o) as [pos|] eqn:Hread.
-    - pose proof (F2c_read g r o pos Hread) as [_ [_ [Hhead [_ Hkeys]]]].
+    - pose proof (read_ok g r o pos Hread) as [_ [_ [Hhead [_ Hkeys]]]].
       pose proof (dom_time_map_check_pos (dom_scan g) r m o pos Hread)
         as Hmap_time.
       rewrite <- (dom_map_check_known_pos (dom_scan g) r m o pos Hread).
@@ -6147,11 +6147,11 @@ Module DomT <: DOM_ALL.
     assert (Hsmall : (N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1))
       <= budget)%N) by (unfold budget; lia).
     assert (Hpositive : (1 <= budget)%N) by (unfold budget; nia).
-    pose proof (T1_scan g) as Hscan. fold budget in Hscan.
+    pose proof (T_scan_le g) as Hscan. fold budget in Hscan.
     assert (Hread : (T_read (scan g) r o <= k_read * budget)%N).
-    { eapply N.le_trans; [apply T2_read|]. now apply N.mul_le_mono_l. }
+    { eapply N.le_trans; [apply T_read_le|]. now apply N.mul_le_mono_l. }
     assert (Hmap : (T_map_check (scan g) r m o <= k_map * budget)%N).
-    { eapply N.le_trans; [apply T3_map|]. now apply N.mul_le_mono_l. }
+    { eapply N.le_trans; [apply T_map_check_le|]. now apply N.mul_le_mono_l. }
     assert (Hextras :
       (match read (scan g) r o with
        | Some pos => if map_check (scan g) r m o then
@@ -6160,21 +6160,21 @@ Module DomT <: DOM_ALL.
        end <= (2 * k_size + k_edge) * budget)%N).
     { destruct (read (scan g) r o) as [pos|] eqn:Hpositions; [|nia].
       destruct (map_check (scan g) r m o) eqn:Hparents; [|nia].
-      destruct (F2c_read g r o pos Hpositions) as
+      destruct (read_ok g r o pos Hpositions) as
         [Hunique [Hlength [Hhead [Hlisted Hpositioned]]]].
-      pose proof (F2d_map g r m o Hparents) as Hclosed.
+      pose proof (map_check_closed g r m o Hparents) as Hclosed.
       assert (Hsizes : (T_sizes m o <= k_size * budget)%N).
-      { eapply N.le_trans; [eapply T4_sizes; eassumption|].
+      { eapply N.le_trans; [eapply T_sizes_le; eassumption|].
         now apply N.mul_le_mono_l. }
       assert (Hintervals : (T_sizes_ok m pos (sizes m o) o <= k_size * budget)%N).
-      { eapply N.le_trans; [eapply T4b_sizes_ok; eassumption|].
+      { eapply N.le_trans; [eapply T_sizes_ok_le; eassumption|].
         now apply N.mul_le_mono_l. }
       assert (Hnodes : nodes g = verts (base g)).
       { destruct g as [[vertices adjacency] predecessors count_v count_e]. reflexivity. }
       rewrite Hnodes in Hlisted.
-      pose proof (T5_edges g m o Hlength Hlisted Hclosed) as Hedges.
+      pose proof (T_edges_le g m o Hlength Hlisted Hclosed) as Hedges.
       fold budget in Hedges. nia. }
-    pose proof (T11_check g r m o) as Hcheck.
+    pose proof (T_check_split g r m o) as Hcheck.
     assert (Hconstant :
       (k_check * (k_scan + k_read + k_map + 2 * k_size + k_edge + 1) <= c_dom)%N).
     { unfold c_dom. nia. }
@@ -6187,7 +6187,7 @@ Module DomT <: DOM_ALL.
       N.of_nat (graph_width (base g) + 1))%N.
   Proof.
     intros g r m o Hcheck.
-    pose proof (T6_tree g r m o Hcheck) as Htree.
+    pose proof (T_tree_plan_le g r m o Hcheck) as Htree.
     rewrite Nat2N.inj_mul in Htree.
     assert (Hconstant : (k_tree <= c_dom)%N) by (unfold c_dom; nia).
     assert (Hsize : (N.of_nat (graph_n (base g) + 1) <=
@@ -6213,7 +6213,7 @@ Module DomT <: DOM_ALL.
   Qed.
 
   (** Building runs the search, the semidominator phases and the order phase. *)
-  Lemma T11b_build : forall g r, prepared_ok g ->
+  Lemma T_build_split : forall g r, prepared_ok g ->
       (T_build g r <= T_lt_dfs g r + T_lt_semi g r + T_lt_order g r + k_build)%N.
   Proof.
     intros g r Hready.
@@ -6227,12 +6227,12 @@ Module DomT <: DOM_ALL.
       N.of_nat (Nat.log2 (graph_n (base g)) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   Proof.
     intros g r Hready.
-    pose proof (T11b_build g r Hready) as Hbuild.
-    pose proof (T7_dfs g r Hready) as Hdfs.
-    pose proof (T9_semi g r Hready) as Hsemi.
-    pose proof (T8_link_eval g r Hready) as Heval.
-    pose proof (F13_ops_length g r Hready) as Hlength.
-    pose proof (T10_order g r Hready) as Horder.
+    pose proof (T_build_split g r Hready) as Hbuild.
+    pose proof (T_lt_dfs_le g r Hready) as Hdfs.
+    pose proof (T_lt_semi_split g r Hready) as Hsemi.
+    pose proof (T_run_ops_le g r Hready) as Heval.
+    pose proof (ops_length_le g r Hready) as Hlength.
+    pose proof (T_lt_order_le g r Hready) as Horder.
     rewrite !Nat2N.inj_mul in Hdfs, Hsemi, Heval, Horder.
     set (a := N.of_nat (graph_n (base g) + graph_e (base g) + 1)) in *.
     set (w := N.of_nat (graph_width (base g) + 1)) in *.
@@ -6251,7 +6251,7 @@ Module DomT <: DOM_ALL.
     nia.
   Qed.
 
-  Lemma check_bigO : bigO (fun _ : prepared * positive * ptrie positive * list positive => True)
+  Lemma check_complexity : bigO (fun _ : prepared * positive * ptrie positive * list positive => True)
     (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1))) (fun '(g, r, m, o) => T_check g r m o).
   Proof.
@@ -6261,15 +6261,15 @@ Module DomT <: DOM_ALL.
   Qed.
 
   (** Tree numbering pays only for the listed vertices and their key width. *)
-  Lemma tree_bigO : bigO (fun '(g, r, m, o) => check g r m o = true)
+  Lemma tree_complexity : bigO (fun '(g, r, m, o) => check g r m o = true)
     (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))
     (fun '(g, r, m, o) => T_tree g r m o).
   Proof.
     exists k_tree. intros [[[g r] m] o] Hcheck.
-    pose proof (T6_tree g r m o Hcheck) as Htree. nia.
+    pose proof (T_tree_plan_le g r m o Hcheck) as Htree. nia.
   Qed.
 
-  Lemma dominates_b_bigO : bigO (fun _ : domtree * positive * positive => True)
+  Lemma dominates_b_complexity : bigO (fun _ : domtree * positive * positive => True)
     (fun '(t, u, v) => N.of_nat (query_width t u v + 1))
     (fun '(t, u, v) => T_dominates_b t u v).
   Proof.
@@ -6277,7 +6277,7 @@ Module DomT <: DOM_ALL.
     pose proof (T_dominates_b_le t u v) as Hbound. nia.
   Qed.
 
-  Lemma build_bigO : bigO (fun '(g, _) => prepared_ok g)
+  Lemma build_complexity : bigO (fun '(g, _) => prepared_ok g)
     (fun '(g, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))
     (fun '(g, r) => T_build g r).

@@ -62,7 +62,7 @@ Module MemoryT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Effect lookup is linear in the edge key and the returned effect sequence. *)
-  Lemma effects_bigO : bigO (X := P.t * E.t) (fun _ => True)
+  Lemma effects_complexity : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(p, e) => N.of_nat (EKey.bits e + length (effects p e)))
     (fun '(p, e) => T_effects p e).
   Proof.

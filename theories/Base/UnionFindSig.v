@@ -110,16 +110,16 @@ Module Type UNION_FIND_TIME (Import U : UNION_FIND).
       N.of_nat (Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)) + 1))%N.
   (* Published asymptotic bound. *)
   (** Finding has logarithmic path length and per-bit lookup cost. *)
-  Parameter find_bigO : bigO (fun xu : positive * t => wf (snd xu))
+  Parameter find_complexity : bigO (fun xu : positive * t => wf (snd xu))
     (fun xu => N.of_nat ((Nat.log2 (card (snd xu)) + 1) *
       (Nat.max (width (snd xu)) (Pos.size_nat (fst xu)) + 1)))
     (fun xu => T_find (fst xu) (snd xu)).
   (** Adding is linear in the key and the counter width. *)
-  Parameter add_bigO : bigO (fun xu : positive * t => wf (snd xu))
+  Parameter add_complexity : bigO (fun xu : positive * t => wf (snd xu))
     (fun xu => N.of_nat (Pos.size_nat (fst xu) + Nat.log2 (card (snd xu)) + 1))
     (fun xu => T_add (fst xu) (snd xu)).
   (** Union has logarithmic path length and per-bit lookup cost. *)
-  Parameter union_bigO : bigO (fun xyu : positive * positive * t => wf (snd xyu))
+  Parameter union_complexity : bigO (fun xyu : positive * positive * t => wf (snd xyu))
     (fun xyu => N.of_nat ((Nat.log2 (card (snd xyu) + 2) + 1) *
       (Nat.max (width (snd xyu))
         (Nat.max (Pos.size_nat (fst (fst xyu))) (Pos.size_nat (snd (fst xyu)))) + 1)))
@@ -150,39 +150,39 @@ Module Type UNION_FIND_PLAN (Import U : UNION_FIND_T).
     (forall r, mem u r -> is_root u r -> 2 ^ rk r <= size_of u r).
   (* F: functional chain *)
   (** Every well-formed forest admits increasing ghost ranks. *)
-  Parameter F1_ranked    : forall u, wf u -> exists rk, ranked u rk.
+  Parameter ranked_exists    : forall u, wf u -> exists rk, ranked u rk.
   (** Every member rank is bounded by the logarithm of cardinality. *)
-  Parameter F2_rank_log : forall u rk x, wf u -> ranked u rk -> mem u x ->
+  Parameter rank_le_log : forall u rk x, wf u -> ranked u rk -> mem u x ->
     rk x <= Nat.log2 (card u).
   (** Walking reaches the queried key representative. *)
-  Parameter F3_walk_root : forall x u, wf u -> fst (walk x u) = repr u x.
+  Parameter walk_root : forall x u, wf u -> fst (walk x u) = repr u x.
   (** The recorded path has logarithmic length and stays within the queried class. *)
-  Parameter F4_walk_path : forall x u, wf u ->
+  Parameter walk_path_spec : forall x u, wf u ->
     length (snd (walk x u)) <= Nat.log2 (card u) /\
     forall y, In y (snd (walk x u)) -> mem u y /\ repr u y = repr u x.
   (** Compressing nonroot class members retains the ghost rank invariant. *)
-  Parameter F5_compress  : forall u rk r path, wf u -> ranked u rk -> is_root u r ->
+  Parameter compress_preserves_ranked  : forall u rk r path, wf u -> ranked u rk -> is_root u r ->
     (forall y, In y path -> mem u y /\ repr u y = r /\ y <> r) -> ranked (compress r path u) rk.
   (** Linking by class size admits an updated ghost rank at the winning root. *)
-  Parameter F6_link : forall u rk w l, wf u -> ranked u rk ->
+  Parameter link_preserves_ranked : forall u rk w l, wf u -> ranked u rk ->
     mem u w -> mem u l -> is_root u w -> is_root u l -> w <> l ->
     size_of u l <= size_of u w ->
     ranked (link w l u) (fun x => if Pos.eqb x w then Nat.max (rk w) (S (rk l)) else rk x).
   (* T: time chain; T_find_le follows from T3, T4 and F4, T_union_le from T_find_le twice and T5 *)
   (** Reading a parent charges the queried positive key bits. *)
-  Parameter T1_parent_of : forall x u, (T_parent_of x u <= k_get * N.of_nat (Pos.size_nat x + 1))%N.
+  Parameter T_parent_of_le : forall x u, (T_parent_of x u <= k_get * N.of_nat (Pos.size_nat x + 1))%N.
   (** A member walk step charges the stored width budget. *)
-  Parameter T2_walk_step : forall u s, (wf u -> mem u (fst s) ->
+  Parameter T_walk_step_le : forall u s, (wf u -> mem u (fst s) ->
     T_walk_step u s <= k_step * N.of_nat (width u + 1))%N.
   (** A logarithmic rank potential pays the bounded walk loop. *)
-  Parameter T3_walk      : forall x u, (wf u ->
+  Parameter T_walk_le      : forall x u, (wf u ->
     T_walk x u <= k_walk * N.of_nat (Nat.log2 (card u) + 1) *
       N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
   (** Compression charges each path update at the stored width budget. *)
-  Parameter T4_compress  : forall r path u, (wf u -> (forall y, In y path -> mem u y) ->
+  Parameter T_compress_le  : forall r path u, (wf u -> (forall y, In y path -> mem u y) ->
     T_compress r path u <= k_comp * N.of_nat (length path + 1) * N.of_nat (width u + 1))%N.
   (** Linking charges root keys and the class size counter width. *)
-  Parameter T5_link      : forall w l u, (wf u -> mem u w -> mem u l ->
+  Parameter T_link_le      : forall w l u, (wf u -> mem u w -> mem u l ->
     T_link w l u <= k_link * N.of_nat (width u + Nat.log2 (card u) + 2))%N.
 End UNION_FIND_PLAN.
 

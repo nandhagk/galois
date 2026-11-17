@@ -168,15 +168,15 @@ Module Type HARNESS_TIME (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
       N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) +
         fold_right Nat.add 0%nat (map B.bsize ys) + length xs + length ys + 1)%nat))%N.
   (** Forward transfer has the published operator-work class. *)
-  Parameter forward_bigO : (bigO (fun _ => True)
+  Parameter forward_complexity : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
   (** Backward transfer has the published work-plus-request class. *)
-  Parameter backward_bigO : (bigO (fun _ => True)
+  Parameter backward_complexity : (bigO (fun _ => True)
     (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
     (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
   (** Guard transfer has the published guard-work class. *)
-  Parameter guard_bigO : (bigO (fun _ => True)
+  Parameter guard_complexity : (bigO (fun _ => True)
     (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
     (fun gx => T_guard (fst gx) (snd gx)))%N.
 End HARNESS_TIME.
@@ -190,51 +190,51 @@ Module Type HARNESS_PLAN (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
     match points xs with Some cs => cs | None => nil end.
   Parameter k_points k_meet k_forward k_backward k_guard : N.
   (** Harness concretization uses the base interpretation. *)
-  Parameter F0_gamma : forall a c, gamma a c <-> B.gamma a c.
+  Parameter gamma_def : forall a c, gamma a c <-> B.gamma a c.
   (** Harness inclusion uses the base order. *)
-  Parameter F0_leb : forall a b, leb a b = B.leb a b.
+  Parameter leb_def : forall a b, leb a b = B.leb a b.
   (** Harness join uses the base join. *)
-  Parameter F0_join : forall a b, join a b = B.join a b.
+  Parameter join_def : forall a b, join a b = B.join a b.
   (** Harness meet uses the base meet. *)
-  Parameter F0_meet : forall a b, meet a b = B.meet a b.
+  Parameter meet_def : forall a b, meet a b = B.meet a b.
   (** Harness sizes use the base sizes. *)
-  Parameter F0_size : forall a, size a = B.bsize a.
+  Parameter size_def : forall a, size a = B.bsize a.
   (** Harness forward work charges operands, concrete evaluation and the table. *)
-  Parameter F0_work : forall o xs, work o xs =
+  Parameter work_def : forall o xs, work o xs =
     fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
     L.work o (opt_vals xs) + T.twork o xs.
   (** Harness guard work charges operands and the table. *)
-  Parameter F0_gwork : forall g xs, gwork g xs =
+  Parameter gwork_def : forall g xs, gwork g xs =
     fold_right Nat.add 0%nat (map B.bsize xs) + length xs + T.tgwork g xs.
   (** Collected singletons agree with every represented concrete list. *)
-  Parameter F1_points_sound : forall xs cs vs,
+  Parameter points_sound : forall xs cs vs,
     Forall2 B.gamma xs cs -> points xs = Some vs -> vs = cs.
   (** Represented concrete lists contain no recognized bottom. *)
-  Parameter F2_no_bot : forall xs cs,
+  Parameter gamma_no_bot : forall xs cs,
     Forall2 B.gamma xs cs -> existsb B.is_bot xs = false.
   (** Equal-length positional meets retain common concrete operands. *)
-  Parameter F3_meet_all_sound : forall xs ys cs, length ys = length xs ->
+  Parameter meet_all_sound : forall xs ys cs, length ys = length xs ->
     Forall2 B.gamma xs cs -> Forall2 B.gamma ys cs -> Forall2 B.gamma (meet_all xs ys) cs.
   (** Positional meet descends in every original operand. *)
-  Parameter F4_meet_all_refines : forall xs ys,
+  Parameter meet_all_refines : forall xs ys,
     Forall2 (fun y x => B.leb y x = true) (meet_all xs ys) xs.
   (** Singleton collection charges one recognition per operand. *)
-  Parameter T1_points : forall xs, (T_points xs <=
+  Parameter T_points_split : forall xs, (T_points xs <=
     k_points * (fold_right N.add 0 (map (fun x => B.T_point x + 1) xs) + 1))%N.
   (** Forward transfer charges collection, concrete evaluation and the table. *)
-  Parameter T2_forward : forall o xs,
+  Parameter T_forward_plan_le : forall o xs,
     (T_forward o xs <= k_forward *
       N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
         L.work o (opt_vals xs) + T.twork o xs + 1)%nat))%N.
   (** Backward transfer charges the table, lengths and positional meets. *)
-  Parameter T3_backward : forall o r xs, (T_backward o r xs <= k_backward *
+  Parameter T_backward_split : forall o r xs, (T_backward o r xs <= k_backward *
     (T.T_bwd o r xs + N.of_nat ((length xs)%nat) +
      match T.bwd o r xs with
      | Some ys => N.of_nat ((length ys)%nat) + T_meet_all xs ys
      | None => 0
      end + 1))%N.
   (** Guard transfer charges the table, lengths and positional meets. *)
-  Parameter T4_guard : forall g xs, (T_guard g xs <= k_guard *
+  Parameter T_guard_split : forall g xs, (T_guard g xs <= k_guard *
     (T.T_grd g xs + N.of_nat ((length xs)%nat) +
      match T.grd g xs with
      | Some ys => N.of_nat ((length ys)%nat) + T_meet_all xs ys

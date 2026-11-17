@@ -118,48 +118,48 @@ Module Type WRAPPED_TIME (L : WORD_LANGUAGE_T) (Import W : WRAPPED L).
   Parameter T_wrapped_urem_le : forall w a b, (T_wrapped_urem w a b <=
     c_wrapped * N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   (** Circular multiplication has the published quadratic asymptotic work. *)
-  Parameter mul_bigO : bigO (fun _ => True)
+  Parameter mul_complexity : bigO (fun _ => True)
     (fun x : positive * (wrapped * wrapped) => N.of_nat
       ((Pos.to_nat (fst x) + 1) ^ 2 +
        wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_mul (fst x) (fst (snd x)) (snd (snd x))).
   (** Normalization is linear in the width and the raw endpoints. *)
-  Parameter norm_bigO : bigO (X := positive * wrapped) (fun _ => True)
+  Parameter norm_complexity : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_norm (fst x) (snd x)).
   (** Arithmetic negation is linear. *)
-  Parameter neg_bigO : bigO (X := positive * wrapped) (fun _ => True)
+  Parameter neg_complexity : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_neg (fst x) (snd x)).
   (** Circular expansion is linear. *)
-  Parameter double_bigO : bigO (X := positive * wrapped) (fun _ => True)
+  Parameter double_complexity : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_double (fst x) (snd x)).
   (** Bitwise negation is linear. *)
-  Parameter not_bigO : bigO (X := positive * wrapped) (fun _ => True)
+  Parameter not_complexity : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_not (fst x) (snd x)).
   (** Pole splitting is linear. *)
-  Parameter split_bigO : bigO (X := positive * wrapped) (fun _ => True)
+  Parameter split_complexity : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_split (fst x) (snd x)).
   (** Addition is linear. *)
-  Parameter add_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+  Parameter add_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
       wrapped_bits (snd (snd x)) + 1))
     (fun x => T_wrapped_add (fst x) (fst (snd x)) (snd (snd x))).
   (** Subtraction is linear. *)
-  Parameter sub_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+  Parameter sub_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
       wrapped_bits (snd (snd x)) + 1))
     (fun x => T_wrapped_sub (fst x) (fst (snd x)) (snd (snd x))).
   (** Unsigned division has the published quadratic class. *)
-  Parameter udiv_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+  Parameter udiv_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
       wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_udiv (fst x) (fst (snd x)) (snd (snd x))).
   (** Unsigned remainder has the published quadratic class. *)
-  Parameter urem_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
+  Parameter urem_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
       wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_urem (fst x) (fst (snd x)) (snd (snd x))).
@@ -183,32 +183,32 @@ Module Type WRAPPED_PLAN (L : WORD_LANGUAGE_T) (Import W : WRAPPED_T L).
   Parameter T_mul_piece : positive -> (Z * Z) -> (Z * Z) -> N.
   Parameter k_split k_mul_piece : N.
   (** Cardinality lies between zero and the word modulus. *)
-  Parameter F2_card : forall w a, (0 <= card w a <= Word.modulus w)%Z.
+  Parameter card_in_range : forall w a, (0 <= card w a <= Word.modulus w)%Z.
   (** Pole splitting produces at most four pieces. *)
-  Parameter F3_split_len : forall w a, length (wrapped_split w a) <= 4.
+  Parameter split_len : forall w a, length (wrapped_split w a) <= 4.
   (** Every arc member belongs to one ordinary split interval. *)
-  Parameter F4_split_covers : forall w a z, pgamma w a z ->
+  Parameter split_covers : forall w a z, pgamma w a z ->
     exists lo hi, In (lo, hi) (wrapped_split w a) /\ (lo <= z <= hi)%Z.
   (** Multiplication pieces retain each pair of represented endpoints. *)
-  Parameter F5_mul_piece : forall w lo hi lo' hi' x y,
+  Parameter mul_piece_sound : forall w lo hi lo' hi' x y,
     (lo <= x <= hi)%Z -> (lo' <= y <= hi')%Z ->
     pgamma w (mul_piece w (lo, hi) (lo', hi')) (L.wrap w (x * y)).
   (** Widening retains a contained candidate and otherwise expands the old arc first. *)
-  Parameter F7_widen : forall q w a b, pwiden q w a b =
+  Parameter widen_def : forall q w a b, pwiden q w a b =
     if pleb w b a then a else pjoin w (wrapped_double w a) b.
   (** Expansion triples cardinality until the circle is full. *)
-  Parameter F8_double_card : forall w a,
+  Parameter double_card : forall w a,
     card w (wrapped_double w a) = Z.min (Word.modulus w) (3 * card w a)%Z.
   (** Expansion contains the old arc. *)
-  Parameter F8a_double_contains : forall w a, pleb w a (wrapped_double w a) = true.
+  Parameter double_contains : forall w a, pleb w a (wrapped_double w a) = true.
   (** Cardinality is monotone in the payload order. *)
-  Parameter F8b_card_mono : forall w a b, pleb w a b = true -> (card w a <= card w b)%Z.
+  Parameter card_mono : forall w a b, pleb w a b = true -> (card w a <= card w b)%Z.
   (** Rank gives full circles zero credit and bottom width plus two credits. *)
-  Parameter F9_rank : forall q w a, pwrank q w a = size_rank w (card w a).
+  Parameter rank_def : forall q w a, pwrank q w a = size_rank w (card w a).
   (** The logarithmic credit is bounded by width plus two. *)
-  Parameter F10_rank_bound : forall q w a, pwrank q w a <= Pos.to_nat w + 2.
+  Parameter pwrank_le_width_plus_2 : forall q w a, pwrank q w a <= Pos.to_nat w + 2.
   (** Each multiplication piece has a quadratic endpoint budget. *)
-  Parameter T1_mul_piece : forall w lo hi lo' hi',
+  Parameter T_mul_piece_le : forall w lo hi lo' hi',
     (T_mul_piece w (lo, hi) (lo', hi') <= k_mul_piece * N.of_nat
       ((Pos.to_nat w + Z.size_nat lo + Z.size_nat hi + Z.size_nat lo' + Z.size_nat hi' + 1)
         ^ 2))%N.

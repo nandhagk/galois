@@ -64,7 +64,7 @@ Module Type JOIN_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN V I).
       N.of_nat ((nvars p + 1) * (nvars p + 1)))%N.
   (** A join costs its recursive probe work at the maximum index width. The factor of the
       variable count comes from unary level tests inside each probe. *)
-  Parameter run_bigO : bigO (fun x : jplan * list I.t => wf_plan (fst x) (snd x))
+  Parameter run_complexity : bigO (fun x : jplan * list I.t => wf_plan (fst x) (snd x))
     (fun x => N.of_nat ((work (fst x) (snd x) + length (snd x) + 2) *
       (wmax (fst x) (snd x) + 1) * ((nvars (fst x) + 1) * (nvars (fst x) + 1))))
     (fun x => T_run (fst x) (snd x)).

@@ -6953,13 +6953,13 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       rewrite !Nat2N.inj_add in *; change (N.of_nat 1) with 1%N in *; nia.
   Qed.
   (** Trie lookup reads precisely the recorded snapshot inventory. *)
-  Lemma snapshot_get_pin : forall st id ss,
+  Lemma snapshot_get_spec : forall st id ss,
     snapshot_get id st = Some ss <-> In (id, ss) (snapshots st).
   Proof.
     intros st id ss; unfold snapshot_get, snapshots; symmetry; apply PTrie.elements_spec.
   Qed.
   (** Trie update changes precisely one shared snapshot. *)
-  Lemma snapshot_set_pin : forall st id ss q,
+  Lemma snapshot_set_spec : forall st id ss q,
     snapshot_get q (snapshot_set id ss st) =
       if Pos.eqb q id then Some ss else snapshot_get q st.
   Proof.
@@ -6969,7 +6969,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     - apply Pos.eqb_neq in Hcode; apply PTrie.get_set_other; exact Hcode.
   Qed.
   (** Recording copies the new row's writes once before the previous live group. *)
-  Lemma snapshot_record_pin : forall st owner writes,
+  Lemma snapshot_record_spec : forall st owner writes,
     snapshot_get (S.key_code owner) (snapshot_record owner writes st) =
       Some {| snapshot_owner := owner;
         snapshot_writes := writes ++
@@ -6980,10 +6980,10 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
         snapshot_live := true |}.
   Proof.
     intros st owner writes; unfold snapshot_record.
-    rewrite snapshot_set_pin, Pos.eqb_refl; reflexivity.
+    rewrite snapshot_set_spec, Pos.eqb_refl; reflexivity.
   Qed.
   (** Snapshot mass counts each unvisited write occurrence once. *)
-  Lemma snapshot_mass_pin : forall st, snapshot_mass st =
+  Lemma snapshot_mass_spec : forall st, snapshot_mass st =
     fold_right (fun ss n =>
       if snapshot_live (snd ss) then length (snapshot_writes (snd ss)) + n else n)
       0 (snapshots st).
@@ -6991,13 +6991,13 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     reflexivity.
   Qed.
   (** The recorded key inventory includes visited snapshots for identifier width accounting. *)
-  Lemma snapshot_keys_pin : forall st, snapshot_keys st =
+  Lemma snapshot_keys_spec : forall st, snapshot_keys st =
     flat_map (fun ss => snapshot_writes (snd ss)) (snapshots st).
   Proof.
     reflexivity.
   Qed.
   (** Every snapshot identifier is the code of an owner among its writes. *)
-  Lemma snapshot_owner_pin : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
+  Lemma snapshot_owner_spec : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
     id = S.key_code (snapshot_owner ss) /\ In (snapshot_owner ss) (snapshot_writes ss).
   Proof.
     intros st id ss [_ [_ [Howner Hrest]]] Hin; apply Howner; exact Hin.
@@ -7008,20 +7008,20 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     intro st; unfold snapshots; apply PTrie.elements_nodup.
   Qed.
   (** Read entries resolve to a retained shared snapshot, including stale entries. *)
-  Lemma infl_snapshot_pin : forall st x id, state_ok st -> In id (infl_at st x) ->
+  Lemma infl_snapshot_spec : forall st x id, state_ok st -> In id (infl_at st x) ->
     exists ss, In (id, ss) (snapshots st).
   Proof.
     intros st x id [_ [_ [_ [Hrefs Hrest]]]] Hin; apply Hrefs with (x := x); exact Hin.
   Qed.
   (** Unvisited snapshots contain stored keys. *)
-  Lemma snapshot_stored_pin : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
+  Lemma snapshot_stored_spec : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
     snapshot_live ss = true -> forall x, In x (snapshot_writes ss) -> dom st x.
   Proof.
     intros st id ss [_ [_ [_ [_ [Hlive Hrest]]]]] Hin Hactive x Hx.
     exact (Hlive id ss Hin Hactive x Hx).
   Qed.
   (** Co-write memberships are precisely the unvisited snapshot key occurrences. *)
-  Lemma cowrite_count_pin : forall st x id, state_ok st ->
+  Lemma cowrite_count_spec : forall st x id, state_ok st ->
     length (filter (Pos.eqb id) (cowrite_at st x)) =
     fold_right (fun iss n =>
       if (Pos.eqb id (fst iss) && snapshot_live (snd iss))%bool then
@@ -7031,7 +7031,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     intros st x id [_ [_ [_ [_ [_ [Hcounts Hrest]]]]]]; exact (Hcounts x id).
   Qed.
   (** Shared snapshot mass pays the co-write memberships without a second inventory charge. *)
-  Lemma cowrite_mass_pin : forall st, state_ok st -> snapshot_mass st =
+  Lemma cowrite_mass_spec : forall st, state_ok st -> snapshot_mass st =
     fold_right Nat.add 0 (map (fun x => length (cowrite_at st x)) (stored st)).
   Proof.
     intros st [_ [_ [_ [_ [_ [_ [Hmass Hwidth]]]]]]]; exact Hmass.
@@ -7106,7 +7106,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     reflexivity.
   Qed.
   (** The public invalidation list is the plan's closure. *)
-  Lemma invalidated_pin : forall p p' ch st,
+  Lemma invalidated_def : forall p p' ch st,
     invalidated p p' ch st = invalidate p p' ch st.
   Proof.
     reflexivity.
@@ -7125,7 +7125,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     eapply discovery_result_support; eauto.
   Qed.
 
-  Lemma frame_post : forall p st s, S.wf p -> inv p st ->
+  Lemma frame_row_ok : forall p st s, S.wf p -> inv p st ->
     (forall x, dom st x -> s x = look st x) ->
     forall r y, In r (S.rows p) -> In y (S.writes p r) -> dom st y ->
       row_ok L.leb s (S.target p r) (S.eval p r s) = true.
@@ -7199,7 +7199,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     exact (DemandPlanProof.demand_certificate p pol roots fuel st st' Hwf Hinv Hrun).
   Qed.
 
-  Lemma region_least_restricted : forall p pol roots fuel st m,
+  Lemma restricted_run_least : forall p pol roots fuel st m,
     S.wf p -> S.monotone p -> Least.widening_free pol -> inv p st -> least_on p st ->
     Sol.run (R.mk p (frozen p roots st) (region p roots st)) pol fuel = Solved m ->
     forall s, S.post_solution p s -> forall x,
@@ -7519,7 +7519,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     - rewrite Hresult; discriminate.
   Qed.
 
-  Lemma discovery_enough : forall p roots fuel st, S.wf p ->
+  Lemma discovery_fuel_enough : forall p roots fuel st, S.wf p ->
     (N.of_nat (length (discover p roots st)) < fuel)%N ->
     discovery p roots fuel st <> None.
   Proof.
@@ -9065,7 +9065,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     In id (infl_at st x ++ cowrite_at st x) -> Pos.size_nat id <= kwidth st.
   Proof.
     intros st x id Hstate Hin; apply in_app_iff in Hin as [Hread|Hwrite].
-    - destruct (infl_snapshot_pin st x id Hstate Hread) as [ss Hsnapshot].
+    - destruct (infl_snapshot_spec st x id Hstate Hread) as [ss Hsnapshot].
       exact (snapshot_id_width st id ss Hstate Hsnapshot).
     - pose proof (Core.core_cowrite_ids st (Core.state_ok_core st Hstate)
         x id Hwrite) as Hsnapshot.
@@ -9523,7 +9523,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
   Proof.
     intros st Hstate; unfold infl_mass.
-    rewrite (cowrite_mass_pin st Hstate).
+    rewrite (cowrite_mass_spec st Hstate).
     change (finite_sum (fun x => infl_deg st x + 1) (stored st) +
       finite_sum (fun x => length (cowrite_at st x)) (stored st) =
       finite_sum (fun x => infl_deg st x + length (cowrite_at st x) + 1)
@@ -9641,8 +9641,8 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
         [|reflexivity].
       exfalso; apply Hnot.
       apply (proj1 (mem_spec x _)); exact Hmem. }
-    rewrite (cowrite_mass_pin st Hstate),
-      (cowrite_mass_pin (edit p p' ch st) Hstate').
+    rewrite (cowrite_mass_spec st Hstate),
+      (cowrite_mass_spec (edit p p' ch st) Hstate').
     change (finite_sum (fun x => length (cowrite_at st x)) (stored st) =
       finite_sum (fun x => length (cowrite_at (edit p p' ch st) x))
         (stored (edit p p' ch st)) +
@@ -11477,7 +11477,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Qed.
 
   (** Reading a value is linear in the key bits. *)
-  Lemma value_bigO : bigO (X := state * S.key) (fun _ => True)
+  Lemma value_complexity : bigO (X := state * S.key) (fun _ => True)
     (fun x => N.of_nat (S.key_bits (snd x))) (fun x => T_value (fst x) (snd x)).
   Proof.
     exists c_inc; intros [st x] _; cbn [fst snd].
@@ -11487,7 +11487,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
 
   (** Demand is linear in the region occurrences times the width, the root bits, the fuel
       bits and the restricted solve. *)
-  Lemma demand_bigO : bigO (X := S.prog * policy L.wparam * list S.key * N * state)
+  Lemma demand_complexity : bigO (X := S.prog * policy L.wparam * list S.key * N * state)
     (fun '(p, _, _, _, st) => S.wf p /\ inv p st)
     (fun '(p, pol, roots, fuel, st) =>
       (N.of_nat ((fold_right Nat.add 0%nat
@@ -11504,7 +11504,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Qed.
 
   (** An edit is linear in the influence mass, the changed rows and the widths. *)
-  Lemma edit_bigO : bigO (X := S.prog * S.prog * list S.row * state)
+  Lemma edit_complexity : bigO (X := S.prog * S.prog * list S.row * state)
     (fun '(p, p', ch, st) => S.wf p /\ S.wf p' /\ state_ok st /\
        forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p'))
     (fun '(p, p', ch, st) => (N.of_nat ((infl_mass st +

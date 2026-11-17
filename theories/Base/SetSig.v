@@ -130,23 +130,23 @@ Module Type SET_TIME (K : KEY_T) (Import S : SET K).
     ((forall acc k, T_f acc k <= c) ->
     T_fold f T_f s a <= c_set * (c + 1) * N.of_nat (nodes s + 1))%N.
   (** Membership is linear in the encoded key length. *)
-  Parameter mem_bigO : bigO (X := K.t * t) (fun _ => True)
+  Parameter mem_complexity : bigO (X := K.t * t) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_mem (fst x) (snd x)).
   (** Adding a member is linear in the encoded key length. *)
-  Parameter add_bigO : bigO (X := K.t * t) (fun _ => True)
+  Parameter add_complexity : bigO (X := K.t * t) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_add (fst x) (snd x)).
   (** Union, intersection and difference visit the shared skeleton only. *)
-  Parameter union_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter union_complexity : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
     (fun x => T_union (fst x) (snd x)).
-  Parameter inter_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter inter_complexity : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
     (fun x => T_inter (fst x) (snd x)).
-  Parameter diff_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter diff_complexity : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
     (fun x => T_diff (fst x) (snd x)).
   (** Inclusion visits the left skeleton only and stops at the first failure. *)
-  Parameter subset_bigO : bigO (X := t * t) (fun _ => True)
+  Parameter subset_complexity : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (nodes (fst x))) (fun x => T_subset (fst x) (snd x)).
 End SET_TIME.
 

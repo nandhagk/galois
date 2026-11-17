@@ -238,7 +238,7 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   Qed.
 
   (** Bottom normalization preserves the meaning of the completed reduction. *)
-  Lemma red_sound : forall x c, gamma x c -> gamma (red x) c.
+  Lemma red_sound_aux : forall x c, gamma x c -> gamma (red x) c.
   Proof.
     intros x c Hgamma. unfold red. apply P.normalize_sound.
     now apply iter_sound.
@@ -255,7 +255,7 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   Qed.
 
   (** Completed reduction refines the original product. *)
-  Lemma red_lower : forall x, leb (red x) x = true.
+  Lemma red_lower_aux : forall x, leb (red x) x = true.
   Proof.
     intro x. destruct (red_components_lower x) as [Ha Hb].
     now apply P.components_below.
@@ -267,7 +267,7 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   Proof.
     intros xs cs Hfacts. induction Hfacts as [|x c xs cs Hhead Htail IH]; cbn [map].
     - constructor.
-    - constructor; [now apply red_sound|exact IH].
+    - constructor; [now apply red_sound_aux|exact IH].
   Qed.
 
   (** Mapping reduction after a positional refinement keeps every result below its input. *)
@@ -277,14 +277,14 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   Proof.
     intros ys xs Hbelow. induction Hbelow as [|y x ys xs Hhead Htail IH]; cbn [map].
     - constructor.
-    - constructor; [|exact IH]. eapply leb_trans; [apply red_lower|exact Hhead].
+    - constructor; [|exact IH]. eapply leb_trans; [apply red_lower_aux|exact Hhead].
   Qed.
 
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
   Proof.
-    intros o xs cs c Hfacts Heval. rewrite forward_agrees. apply red_sound.
+    intros o xs cs c Hfacts Heval. rewrite forward_agrees. apply red_sound_aux.
     exact (P.forward_sound o xs cs c Hfacts Heval).
   Qed.
   (** Backward transfer retains operands consistent with the abstract result. *)
@@ -970,7 +970,7 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   Proof.
     intros a b. exact (red_time_bound (a, b)).
   Qed.
-  Lemma forward_bigO : (bigO (fun _ => True)
+  Lemma forward_complexity : (bigO (fun _ => True)
     (fun ox => N.of_nat (work (fst ox) (snd ox)))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
   Proof.
@@ -979,7 +979,7 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
   Qed.
   (** Backward transfer has the published work-plus-request class. *)
-  Lemma backward_bigO : (bigO (fun _ => True)
+  Lemma backward_complexity : (bigO (fun _ => True)
     (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
     (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
   Proof.
@@ -988,7 +988,7 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
   Qed.
   (** Guard transfer has the published guard-work class. *)
-  Lemma guard_bigO : (bigO (fun _ => True)
+  Lemma guard_complexity : (bigO (fun _ => True)
     (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
     (fun gx => T_guard (fst gx) (snd gx)))%N.
   Proof.
@@ -998,48 +998,48 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   Qed.
 
   Definition k_red : N := 16%N.
-  Lemma F1_red_eq : forall x,
+  Lemma red_def : forall x,
     red x = let result := Nat.iter K.rounds R.reduce x in
       if orb (A.is_bot (fst result)) (B.is_bot (snd result))
       then (A.bot, B.bot) else result.
   Proof.
     reflexivity.
   Qed.
-  Lemma F_is_bot : forall a b,
+  Lemma is_bot_def : forall a b,
     is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
   Proof.
     reflexivity.
   Qed.
-  Lemma F_leb : forall a b,
+  Lemma leb_def : forall a b,
     leb a b = orb (is_bot a) (andb (A.leb (fst a) (fst b)) (B.leb (snd a) (snd b))).
   Proof.
     reflexivity.
   Qed.
-  Lemma F_wunits : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
+  Lemma wunits_def : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
   Proof.
     reflexivity.
   Qed.
-  Lemma F2_gamma : forall a b c,
+  Lemma gamma_def : forall a b c,
     gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
   Proof.
     reflexivity.
   Qed.
-  Lemma F3_red_sound : forall x c, gamma x c -> gamma (red x) c.
+  Lemma red_sound : forall x c, gamma x c -> gamma (red x) c.
   Proof.
-    exact red_sound.
+    exact red_sound_aux.
   Qed.
-  Lemma F4_red_lower : forall a b,
+  Lemma red_lower : forall a b,
     A.leb (fst (red (a, b))) a = true /\ B.leb (snd (red (a, b))) b = true.
   Proof.
     intros a b. exact (red_components_lower (a, b)).
   Qed.
-  Lemma F5_widen : forall p a b,
+  Lemma widen_def : forall p a b,
     widen p a b = if is_bot b then a
       else (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
   Proof.
     reflexivity.
   Qed.
-  Lemma T1_red_steps : forall x,
+  Lemma T_red_split : forall x,
     (T_red x <= k_red *
       (fold_right N.add 0
         (map (fun n => R.T_reduce (Nat.iter n R.reduce x) + 1)

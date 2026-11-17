@@ -81,7 +81,7 @@ Module UntimedConstantPayload := ConstWord WordLanguage.
 Module UntimedConstantTable := ConstWordTable WordLanguage UntimedConstantPayload.
 
 Module ConstantMeaningClient (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L).
-  Definition raw_meaning := W.F_pgamma_const.
+  Definition raw_meaning := W.pgamma_const_def.
 End ConstantMeaningClient.
 
 Module UntimedConstantMeaning := ConstantMeaningClient WordLanguage UntimedConstantPayload.

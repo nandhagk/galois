@@ -81,25 +81,25 @@ Module Type KARR_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
     N.of_nat (((ellB (n a + n b + 1) (ell a + ell b) + 1)^2)%nat))%N.
   (** Inclusion of normal states costs one elimination of both and one cheap check per row. *)
-  Parameter leb_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
+  Parameter leb_complexity : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (fst x) (snd x)))
     (fun x => T_leb (fst x) (snd x)).
   (** Join of normal states is one elimination. *)
-  Parameter join_bigO : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
+  Parameter join_complexity : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (fst x) (snd x)))
     (fun x => T_join (fst x) (snd x)).
   (** Widening is an inclusion test followed by at most one join. *)
-  Parameter widen_bigO : bigO (fun x : wparam * t * t =>
+  Parameter widen_complexity : bigO (fun x : wparam * t * t =>
       normal_s (snd (fst x)) /\ normal_s (snd x))
     (fun x => N.of_nat (elimination_work (snd (fst x)) (snd x)))
     (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
   (** The affine hull is one elimination of the stacked rows. *)
-  Parameter affine_hull_bigO : bigO
+  Parameter affine_hull_complexity : bigO
     (fun x : list (lcons X.t) * list (lcons X.t) => normal (fst x) /\ normal (snd x))
     (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x))))
     (fun x => T_affine_hull (fst x) (snd x)).
   (** Certificate production is one elimination of the premises and the conclusion. *)
-  Parameter entail_cert_bigO : bigO
+  Parameter entail_cert_complexity : bigO
     (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
     (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x :: nil))))
     (fun x => T_entail_cert (fst x) (snd x)).
@@ -127,16 +127,16 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         (C.lsize r + C.cbits P (mults k) + 1)) <=
       k_cert * N.of_nat (elimination_work (Reached P) (Reached (r :: nil))))%N.
   (** Assignment charges row normalization and elimination after linearization. *)
-  Parameter F_assign_work : forall x e s,
+  Parameter assign_work_def : forall x e s,
     (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
       (n s + tsize e + 1)^3 *
       (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
   (** Havoc charges row normalization and elimination of the selected variable. *)
-  Parameter F_havoc_work : forall x s,
+  Parameter havoc_work_def : forall x s,
     havoc_work x s = terms s * (nell s + 1) +
       (n s + 1)^3 * (ellB (n s + 1) (nell s + X.bits x) + 1)^2.
   (** Assumption charges row normalization and elimination with the new rows. *)
-  Parameter F_assume_work : forall g es s,
+  Parameter assume_work_def : forall g es s,
     (N.of_nat (assume_work g es s) = N.of_nat (terms s * (nell s + 1) +
       (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
         (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
@@ -157,7 +157,7 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   (** Assumption normalizes the rows it adds. *)
   Parameter normal_assume : forall g es s, normal_s s -> normal_s (assume g es s).
   (** This widening has no repeated threshold search. *)
-  Parameter F_wunits : forall s, wunits s = 0.
+  Parameter wunits_def : forall s, wunits s = 0.
   Definition in_span (P : list (lcons X.t)) (r : lcons X.t) : Prop :=
     In r P \/
     exists ms s sc, C.combine P ms = Some s /\ lrel s = REq /\ (0 < sc)%Z /\
@@ -171,9 +171,9 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     Forall (fun r => lrel r = REq) P.
 
   (** Rank counts the old equality rows. *)
-  Parameter wrank_rows : forall p P, wrank p (Reached P) = length P.
+  Parameter wrank_def : forall p P, wrank p (Reached P) = length P.
   (** Join emits independent rows. *)
-  Parameter join_independent : forall a b P, join (Reached a) (Reached b) = Reached P ->
+  Parameter join_rows_independent : forall a b P, join (Reached a) (Reached b) = Reached P ->
     forall i r, nth_error P i = Some r -> ~ in_span (firstn i P ++ skipn (S i) P) r.
   (** Certificates decide span inclusion on raw equality systems. *)
   Parameter leb_complete_span : forall a b,
@@ -183,7 +183,7 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter leb_sound_span : forall a b, leb (Reached a) (Reached b) = true ->
     Forall (in_span a) b \/ in_span a false_row.
   (** An infeasible equality system is below every equality system. *)
-  Parameter leb_false : forall a b, in_span a false_row -> leb (Reached a) (Reached b) = true.
+  Parameter leb_false_row_in_span : forall a b, in_span a false_row -> leb (Reached a) (Reached b) = true.
   (** Join rows lie in both input spans. *)
   Parameter join_span : forall a b P, join (Reached a) (Reached b) = Reached P ->
     Forall (in_span a) P /\ Forall (in_span b) P.
@@ -198,18 +198,18 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   (* spec: bareiss_entries input_minors *)
   Parameter bareiss_entries input_minors : list (lcons X.t) -> list Z.
   (** Substitution agrees with a concrete update. *)
-  Parameter subst_sat : forall v x f r, sat v (subst x f r) <->
+  Parameter subst_sat_iff_update : forall v x f r, sat v (subst x f r) <->
     sat (upd X.eqb v x (eval_lin v f)) r.
   (** Echelon systems decide rational inclusion completely. *)
-  Parameter leb_complete_Q : forall a b, echelon a ->
+  Parameter leb_complete_rational : forall a b, echelon a ->
     (forall v : X.t -> Q, Forall (satQ v) a -> Forall (satQ v) b) ->
     leb (Reached a) (Reached b) = true.
   (** Every fraction-free intermediate entry is an input minor. *)
-  Parameter bareiss_minor : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
+  Parameter bareiss_entries_are_minors : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
   (** Widening uses affine hull join. *)
-  Parameter widen_join : forall p a b, widen p a b = if leb b a then a else join a b.
+  Parameter widen_def : forall p a b, widen p a b = if leb b a then a else join a b.
   (** Every successful entailment certificate is accepted. *)
-  Parameter entail_cert_checks : forall P c k,
+  Parameter entail_cert_check_sound : forall P c k,
     entail_cert P c = Some k -> C.check_entails P c k = true.
   (** State size charges all stored numeric data. *)
   Parameter k_karr : N.
@@ -217,25 +217,25 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition lat (m : nat) : nat :=
     (m + 2) * ((m + 1)^3 * (ellB (m + 1) m + 1)^2 + m^2 + 1).
   (** State size is lattice work at twice the state measure. *)
-  Parameter F_size : forall s, size s = lat (2 * mu s).
+  Parameter size_def : forall s, size s = lat (2 * mu s).
   (** Lattice work on two states fits their sizes. *)
   Parameter lat_size : forall a b, lat (mu a + mu b) <= size a + size b.
   (** Leb charges lattice work on both states. *)
-  Parameter T1_leb : forall a b,
+  Parameter T_leb_plan_le : forall a b,
     (T_leb a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
   (** Join charges lattice work on both states. *)
-  Parameter T1_join : forall a b,
+  Parameter T_join_plan_le : forall a b,
     (T_join a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
   (** Widen charges lattice work on both states. *)
-  Parameter T1_widen : forall p a b,
+  Parameter T_widen_plan_le : forall p a b,
     (T_widen p a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
   (** Narrow charges lattice work on both states. *)
-  Parameter T1_narrow : forall a b,
+  Parameter T_narrow_plan_le : forall a b,
     (T_narrow a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
   (** A range endpoint fits its declared work. *)
-  Parameter F_range_bits : forall e s, range_bits e s = range_work e s.
+  Parameter range_bits_def : forall e s, range_bits e s = range_work e s.
   (** Range work charges the numeric query and its linearization. *)
-  Parameter F_range_work : forall e s, (N.of_nat (range_work e s) =
+  Parameter range_work_def : forall e s, (N.of_nat (range_work e s) =
     N.of_nat (terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
       (ellB (n s + tsize e + 1) (nell s + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
 End KARR_PLAN.

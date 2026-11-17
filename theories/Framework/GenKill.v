@@ -986,7 +986,7 @@ Module GenKillMayFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Reading the initial facts is linear in the gen-kill problem size. *)
-  Lemma boundary_bigO : bigO (X := P.t * N.t) (fun _ => True)
+  Lemma boundary_complexity : bigO (X := P.t * N.t) (fun _ => True)
     (fun '(p, _) => N.of_nat (G.gk_work p)) (fun '(p, n) => T_boundary p n).
   Proof.
     apply bigO_intro with (c := c_flow); intros [p n] _.
@@ -996,7 +996,7 @@ Module GenKillMayFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** A transfer is linear in the gen-kill problem and input fact sizes. *)
-  Lemma transfer_bigO : bigO (X := P.t * E.t * L.t) (fun _ => True)
+  Lemma transfer_complexity : bigO (X := P.t * E.t * L.t) (fun _ => True)
     (fun '(p, _, a) => N.of_nat (G.gk_work p + L.size a))
     (fun '(p, e, a) => T_transfer p e a).
   Proof.
@@ -1059,7 +1059,7 @@ Module GenKillMustFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** Reading the initial facts is linear in the gen-kill problem size. *)
-  Lemma boundary_bigO : bigO (X := P.t * N.t) (fun _ => True)
+  Lemma boundary_complexity : bigO (X := P.t * N.t) (fun _ => True)
     (fun '(p, _) => N.of_nat (G.gk_work p)) (fun '(p, n) => T_boundary p n).
   Proof.
     apply bigO_intro with (c := c_flow); intros [p n] _.
@@ -1069,7 +1069,7 @@ Module GenKillMustFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
   Qed.
 
   (** A transfer is linear in the gen-kill problem and input fact sizes. *)
-  Lemma transfer_bigO : bigO (X := P.t * E.t * L.t) (fun _ => True)
+  Lemma transfer_complexity : bigO (X := P.t * E.t * L.t) (fun _ => True)
     (fun '(p, _, a) => N.of_nat (G.gk_work p + L.size a))
     (fun '(p, e, a) => T_transfer p e a).
   Proof.

@@ -140,7 +140,7 @@ Module Type REDUCTION_STEPS_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (N.of_nat (A.size a + B.size (snd (to_right (a, b)))) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
   (** Reduction has the published combined-size asymptotic budget. *)
-  Parameter reduce_bigO : bigO (fun _ => True)
+  Parameter reduce_complexity : bigO (fun _ => True)
     (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
 End REDUCTION_STEPS_TIME.
 
@@ -151,15 +151,15 @@ Module Type REDUCTION_STEPS_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (Import R : REDUCTION_STEPS_T L A B).
   Parameter k_exchange : N.
   (** The two exchange soundness laws compose into reduction soundness. *)
-  Parameter F1_steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
+  Parameter steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_right (to_left (a, b)))) c /\
     B.gamma (snd (to_right (to_left (a, b)))) c.
   (** The two reductive exchange laws compose into componentwise descent. *)
-  Parameter F2_steps_lower : forall a b,
+  Parameter steps_lower : forall a b,
     A.leb (fst (to_right (to_left (a, b)))) a = true /\
     B.leb (snd (to_right (to_left (a, b)))) b = true.
   (** Reduction charges each exchange at the actual intermediate value. *)
-  Parameter T1_steps : forall x, (T_reduce x <= k_exchange *
+  Parameter T_reduce_split : forall x, (T_reduce x <= k_exchange *
     (T_to_left x + T_to_right (to_left x) + 1))%N.
 End REDUCTION_STEPS_PLAN.
 
@@ -205,13 +205,13 @@ Module Type WRAPPED_BITS_PIN (L : WORD_LANGUAGE) (C : TNUM_CONFIG)
     (B : VALUE_DOMAIN BitsLang with Definition t := tagged K.p)
     (R : WRAPPED_BITS A B).
   (** The left exchange meets the arc with the bit hull at the same width. *)
-  Parameter F_to_left : forall w a b, R.to_left (TVal w a, TVal w b) =
+  Parameter to_left_def : forall w a b, R.to_left (TVal w a, TVal w b) =
     (TVal w (W.pmeet w a (bits_hull w b)), TVal w b).
   (** The right exchange meets the bits with the arc's common prefix at the same width. *)
-  Parameter F_to_right : forall w a b, R.to_right (TVal w a, TVal w b) =
+  Parameter to_right_def : forall w a b, R.to_right (TVal w a, TVal w b) =
     (TVal w a, TVal w (K.pmeet w b (arc_prefix w a))).
   (** Pairs of other shapes are left unchanged. *)
-  Parameter F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
+  Parameter reduce_fixes_other_pairs : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
     R.to_left x = x /\ R.to_right x = x.
 End WRAPPED_BITS_PIN.
 
@@ -221,13 +221,13 @@ Module Type INTERVAL_CONGR_PIN (L : WORD_LANGUAGE)
     (B : VALUE_DOMAIN BitsLang with Definition t := tagged G.p)
     (R : INTERVAL_CONGR A B).
   (** The left exchange meets the interval with inward residue rounding at the same width. *)
-  Parameter F_to_left : forall w a b, R.to_left (TVal w a, TVal w b) =
+  Parameter to_left_def : forall w a b, R.to_left (TVal w a, TVal w b) =
     (TVal w (I.pmeet w a (congr_interval w a b)), TVal w b).
   (** The right exchange meets the congruence with the clipped interval's singleton fact. *)
-  Parameter F_to_right : forall w a b, R.to_right (TVal w a, TVal w b) =
+  Parameter to_right_def : forall w a b, R.to_right (TVal w a, TVal w b) =
     (TVal w a, TVal w (G.pmeet w b (interval_congr (interval_word_clip w a)))).
   (** Pairs of other shapes are left unchanged. *)
-  Parameter F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
+  Parameter reduce_fixes_other_pairs : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
     R.to_left x = x /\ R.to_right x = x.
 End INTERVAL_CONGR_PIN.
 
@@ -237,12 +237,12 @@ Module Type INTERVAL_BITS_PIN (L : WORD_LANGUAGE) (C : TNUM_CONFIG)
     (B : VALUE_DOMAIN BitsLang with Definition t := tagged K.p)
     (R : INTERVAL_BITS A B).
   (** The left exchange meets the interval with the known bits' hull at the same width. *)
-  Parameter F_to_left : forall w a b, R.to_left (TVal w a, TVal w b) =
+  Parameter to_left_def : forall w a b, R.to_left (TVal w a, TVal w b) =
     (TVal w (I.pmeet w a (bits_interval w b)), TVal w b).
   (** The right exchange meets the bits with the interval's word-range common prefix. *)
-  Parameter F_to_right : forall w a b, R.to_right (TVal w a, TVal w b) =
+  Parameter to_right_def : forall w a b, R.to_right (TVal w a, TVal w b) =
     (TVal w a, TVal w (K.pmeet w b (interval_prefix w a))).
   (** Pairs of other shapes are left unchanged. *)
-  Parameter F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
+  Parameter reduce_fixes_other_pairs : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
     R.to_left x = x /\ R.to_right x = x.
 End INTERVAL_BITS_PIN.

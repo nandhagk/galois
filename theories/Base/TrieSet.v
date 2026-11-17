@@ -51,7 +51,7 @@ Module TrieSet (K : KEY) <: SET K.
   Lemma elements_trie : forall s, elements s = List.map snd (PTrieCode.elements s).
   Proof.
     intro s. unfold elements, fold.
-    rewrite PTrieT.F9_fold_values, rev_append_rev, app_nil_r.
+    rewrite PTrieT.fold_values_def, rev_append_rev, app_nil_r.
     generalize (PTrieCode.elements s). intro entries.
     assert (Hfold : forall acc,
       fold_left (fun acc kv => snd kv :: acc) entries acc =
@@ -67,7 +67,7 @@ Module TrieSet (K : KEY) <: SET K.
   Lemma elements_length : forall s, length (elements s) <= nodes s.
   Proof.
     intro s. rewrite elements_trie, length_map.
-    apply PTrieT.F4_bindings.
+    apply PTrieT.bindings_le_nodes.
   Qed.
 
   Lemma wf_empty : wf empty.
@@ -183,7 +183,7 @@ Module TrieSet (K : KEY) <: SET K.
     fold f s a = fold_left f (elements s) a.
   Proof.
     intros A f s a. unfold fold.
-    rewrite PTrieT.F9_fold_values, elements_trie.
+    rewrite PTrieT.fold_values_def, elements_trie.
     generalize (PTrieCode.elements s). intro entries.
     revert a. induction entries as [|entry rest IH]; intro a;
       cbn [List.map fold_left]; [reflexivity|apply IH].
@@ -289,7 +289,7 @@ Module TrieSet (K : KEY) <: SET K.
     - revert u. induction n; intros [|other].
       all: try (cbn [PTrieCode.merge_with PTrieCode.merge_ne]; apply Hleft_only).
       all: cbn [PTrieCode.merge_with PTrieCode.merge_ne].
-      all: eapply Nat.le_trans; [apply PTrie.nodes_node_le|].
+      all: eapply Nat.le_trans; [apply PTrie.nodes_node_le_aux|].
       all: cbn [PTrieCode.merge_with] in *.
       all: try pose proof (IHn (PTrieCode.left (Nodes other))) as Hleft.
       all: try pose proof (IHn (PTrieCode.right (Nodes other))) as Hright_child.
@@ -364,7 +364,7 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Proof.
     intros s u. unfold T_union.
     eapply N.le_trans.
-    - apply N.add_le_mono_l. apply PTrieT.T4_merge_with with (c := 1%N)
+    - apply N.add_le_mono_l. apply PTrieT.T_merge_with_le with (c := 1%N)
         (cl := 1%N) (cr := 1%N).
       + intros a b. destruct a; time_cbn; nia.
       + intro tr. time_cbn. nia.
@@ -375,7 +375,7 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Proof.
     intros s u. unfold T_inter.
     eapply N.le_trans.
-    - apply N.add_le_mono_l. apply PTrieT.T4_merge_with with (c := 1%N)
+    - apply N.add_le_mono_l. apply PTrieT.T_merge_with_le with (c := 1%N)
         (cl := 1%N) (cr := 1%N).
       + intros a b. destruct b; time_cbn; nia.
       + intro tr. time_cbn. nia.
@@ -386,7 +386,7 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Proof.
     intros s u. unfold T_diff.
     eapply N.le_trans.
-    - apply N.add_le_mono_l. apply PTrieT.T4_merge_with with (c := 1%N)
+    - apply N.add_le_mono_l. apply PTrieT.T_merge_with_le with (c := 1%N)
         (cl := 1%N) (cr := 1%N).
       + intros a b. destruct b; time_cbn; nia.
       + intro tr. time_cbn. nia.
@@ -400,7 +400,7 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Proof.
     intros s u. unfold T_subset.
     eapply N.le_trans.
-    - apply N.add_le_mono_l. apply PTrieT.T5_forall2 with (c := 1%N).
+    - apply N.add_le_mono_l. apply PTrieT.T_forall2_le with (c := 1%N).
       intros a b. destruct b; time_cbn; nia.
     - unfold nodes. nia.
   Qed.
@@ -420,7 +420,7 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Lemma T_elements_le : forall s, (wf s -> T_elements s <= c_set * N.of_nat (weight s + 1))%N.
   Proof.
     intros s Hwf.
-    pose proof (PTrieT.T9_fold_values K.t (list K.t)
+    pose proof (PTrieT.T_fold_values_le K.t (list K.t)
       (fun acc k => k :: acc) (fun _ _ => 1%N) s nil 1%N
       (fun _ _ => N.le_refl 1)) as Hfold.
     pose proof (List.T_rev_append_le (fold (fun acc k => k :: acc) s nil) nil) as Hreverse.
@@ -437,12 +437,12 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Proof.
     intros A f T_f s a c Hf. unfold T_fold.
     eapply N.le_trans.
-    - apply N.add_le_mono_l. apply PTrieT.T9_fold_values with (c := c). exact Hf.
+    - apply N.add_le_mono_l. apply PTrieT.T_fold_values_le with (c := c). exact Hf.
     - unfold c_set, nodes. nia.
   Qed.
 
   (** Membership costs at most a constant per encoded key bit. *)
-  Lemma mem_bigO : bigO (X := K.t * t) (fun _ => True)
+  Lemma mem_complexity : bigO (X := K.t * t) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_mem (fst x) (snd x)).
   Proof.
     exists c_set. intros [k s] _. cbn [fst snd].
@@ -451,7 +451,7 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
 
   (** Adding a member costs at most a constant per encoded key bit. *)
-  Lemma add_bigO : bigO (X := K.t * t) (fun _ => True)
+  Lemma add_complexity : bigO (X := K.t * t) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_add (fst x) (snd x)).
   Proof.
     exists c_set. intros [k s] _. cbn [fst snd].
@@ -460,7 +460,7 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
 
   (** Union shares one-sided subtrees and visits at most the smaller skeleton. *)
-  Lemma union_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma union_complexity : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
     (fun x => T_union (fst x) (snd x)).
   Proof.
@@ -474,7 +474,7 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
 
   (** Intersection drops one-sided subtrees and visits at most the smaller skeleton. *)
-  Lemma inter_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma inter_complexity : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
     (fun x => T_inter (fst x) (snd x)).
   Proof.
@@ -488,7 +488,7 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
 
   (** Difference shares left-only subtrees and visits at most the smaller skeleton. *)
-  Lemma diff_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma diff_complexity : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
     (fun x => T_diff (fst x) (snd x)).
   Proof.
@@ -502,7 +502,7 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
 
   (** Inclusion visits the left skeleton only. *)
-  Lemma subset_bigO : bigO (X := t * t) (fun _ => True)
+  Lemma subset_complexity : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (nodes (fst x))) (fun x => T_subset (fst x) (snd x)).
   Proof.
     exists (2 * PTrieT.k_check + 1)%N. intros [s u] _. cbn [fst snd].

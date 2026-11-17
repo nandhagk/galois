@@ -70,7 +70,7 @@ Module Type RESTRICT_TIME (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)
        fold_right Nat.add 0
         (map (fun xv => S.key_bits (fst xv) + L.size (snd xv) + 1) fz) + 1)%nat))%N.
   (** Building a restriction is constant time. *)
-  Parameter mk_bigO : bigO (X := S.prog * list (S.key * L.t) * list S.row) (fun _ => True)
+  Parameter mk_complexity : bigO (X := S.prog * list (S.key * L.t) * list S.row) (fun _ => True)
     (fun _ => 0%N) (fun '(p, fz, rs) => T_mk p fz rs).
 End RESTRICT_TIME.
 

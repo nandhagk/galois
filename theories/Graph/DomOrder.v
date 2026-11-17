@@ -6392,7 +6392,7 @@ Lemma dom_order_map_time_sum {A B : Type} (f : A -> B) (T_f : A -> N) rows :
       N.of_nat (length (PTrieCode.elements rows)) +
       fold_right N.add 0 (map (fun ka => T_f (snd ka)) (PTrieCode.elements rows)) + 1))%N.
 Proof.
-  pose proof (@PTrieT.T3_filter_sum A B (fun a => Some (f a))
+  pose proof (@PTrieT.T_filter_map_sum_le A B (fun a => Some (f a))
     (fun a => (1 + T_f a)%N) rows) as Hfilter.
   cbn beta in Hfilter. rewrite dom_order_sum_unit in Hfilter.
   time_unfold @PTrieT.T_map. time_simpl. nia.
@@ -9097,7 +9097,7 @@ Proof.
     change (N.size_nat parent <= width) in Hparent;
     pose proof (dom_lt_key_width parent); lia)).
   change (PTrie.nodes rows <= length order * (width + 1)) in Hnodes.
-  pose proof (PTrieT.F4_bindings (list N) rows) as Hbindings.
+  pose proof (PTrieT.bindings_le_nodes (list N) rows) as Hbindings.
   change (length (PTrieCode.elements rows) <= PTrie.nodes rows) in Hbindings.
   pose proof (dom_order_children_elements_mass parents order) as Hmass. fold rows in Hmass.
   assert (Hrow_predicate : dom_lt_trie_all (Forall (dom_order_merge_operand width positions)) rows).

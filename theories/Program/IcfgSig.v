@@ -50,7 +50,7 @@ Module Type ICFG_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
   (** Edge classification pays for the edge key. *)
   Parameter T_kind_le : forall p e, (T_kind p e <= c_icfg * N.of_nat (E.bits e + 1))%N.
   (** Edge classification is linear in the edge key. *)
-  Parameter kind_bigO : bigO (X := P.t * E.t) (fun _ => True)
+  Parameter kind_complexity : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(_, e) => N.of_nat (E.bits e)) (fun '(p, e) => T_kind p e).
 End ICFG_TIME.
 

@@ -325,7 +325,7 @@ Proof.
 Qed.
 
 (** Linear operator evaluation is linear in metadata widths and raw operand sizes. *)
-Theorem eval_op_linear_bigO : bigO (X := op * list word)
+Theorem eval_op_linear_complexity : bigO (X := op * list word)
   (fun x => linear_op (fst x) = true)
   (fun x => N.of_nat (op_widths (fst x) +
     fold_right Nat.add 0%nat

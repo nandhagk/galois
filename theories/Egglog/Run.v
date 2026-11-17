@@ -4981,7 +4981,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       discriminate.
   Qed.
 
-  Lemma F28_plan_shape : forall p, program_ok p -> check_shape p (plan p) = true.
+  Lemma plan_passes_shape : forall p, program_ok p -> check_shape p (plan p) = true.
   Proof.
     intros [ds rs] Hprogram.
     unfold check_shape, check_shape_with, plan, plan_program.
@@ -5011,7 +5011,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Lemma plan_checked : forall p, program_ok p -> plans_ok p (plan p).
   Proof.
     intros p Hprogram. unfold plans_ok, check_plan.
-    rewrite (proj2 (check_program_spec V.t p) Hprogram), (F28_plan_shape p Hprogram).
+    rewrite (proj2 (check_program_spec V.t p) Hprogram), (plan_passes_shape p Hprogram).
     reflexivity.
   Qed.
 
@@ -5164,7 +5164,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Qed.
 
   (** A checked plan names a rule of its program. *)
-  Lemma F33_plan_rule : forall p cp c, plans_ok p cp -> In c (all_plans cp) ->
+  Lemma job_rule_spec : forall p cp c, plans_ok p cp -> In c (all_plans cp) ->
     nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some (job_rule p c).
   Proof.
     intros p cp c Hplan Hin.
@@ -7994,7 +7994,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       split; [constructor; assumption|exact Hsources_final].
   Qed.
 
-  Lemma F1_plan_match_sound : forall p cp db c b r, plans_ok p cp -> D.wf db ->
+  Lemma plan_match_sound : forall p cp db c b r, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In c (all_plans cp) ->
     nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r ->
     In b (bindings cp c db) -> keep p c (bind_trie c b) = true ->
@@ -8054,7 +8054,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
 
 
 
-  Lemma F2_naive_plans_complete : forall p cp db r s, plans_ok p cp -> D.wf db ->
+  Lemma naive_plans_complete : forall p cp db r s, plans_ok p cp -> D.wf db ->
     loaded p cp db -> D.canonical db -> In r (rules V.t p) ->
     matches V.prim (D.view db) (query V.t r) s ->
     exists c b, In c (naive V.t cp) /\
@@ -8207,7 +8207,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     - now rewrite run_canon_output_sort.
   Qed.
 
-  Lemma F21_put_sorted : forall sorts f k o db, D.wf db -> D.kind_ok db f k o ->
+  Lemma put_preserves_sorted : forall sorts f k o db, D.wf db -> D.kind_ok db f k o ->
     view_sorted sorts (D.view db) -> row_sorted sorts (kind (D.view db)) f k o ->
     view_sorted sorts (D.view (D.put f k o db)).
   Proof.
@@ -8226,7 +8226,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       rewrite Hkind in Holdkind. injection Holdkind as <-. exact Holdsort.
   Qed.
 
-  Lemma F22_make_sorted : forall sorts f k db, D.wf db -> kind (D.view db) f = Some OId ->
+  Lemma make_preserves_sorted : forall sorts f k db, D.wf db -> kind (D.view db) f = Some OId ->
     sorts f = Some (map cell_sort k) -> view_sorted sorts (D.view db) ->
     view_sorted sorts (D.view (snd (D.make f k db))).
   Proof.
@@ -8242,7 +8242,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       + exists OId. split; [now rewrite run_canon_sorts|]. split; [exact Hkind|reflexivity].
   Qed.
 
-  Lemma F23_union_sorted : forall sorts i j db, D.wf db ->
+  Lemma union_preserves_sorted : forall sorts i j db, D.wf db ->
     view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.union i j db)).
   Proof.
     intros sorts i j db Hwf Hsorted f k o Hrow.
@@ -8251,7 +8251,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     exact (Hsorted f k o Hrow).
   Qed.
 
-  Lemma F24_rebuild_sorted : forall sorts db, D.wf db ->
+  Lemma rebuild_preserves_sorted : forall sorts db, D.wf db ->
     view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.rebuild db)).
   Proof.
     intros sorts db Hwf Hsorted f key output Hrow.
@@ -8273,7 +8273,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       rewrite Hkind in Hother. injection Hother as <-. exact Hresult.
   Qed.
 
-  Lemma F25_advance_sorted : forall sorts db, D.wf db ->
+  Lemma advance_preserves_sorted : forall sorts db, D.wf db ->
     view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.advance db)).
   Proof.
     intros sorts db Hwf Hsorted. rewrite (proj1 (proj2 (D.wf_advance db Hwf))).
@@ -8578,7 +8578,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     split; [apply D.wf_make; assumption|]. split.
     - destruct Hloaded as [Hdecls [Hlayout Hsorted]].
       split; [intro g; rewrite Hkinds; apply Hdecls|].
-      split; [now rewrite Hslots|]. apply F22_make_sorted; assumption.
+      split; [now rewrite Hslots|]. apply make_preserves_sorted; assumption.
     - split; [apply run_make_ids; assumption|].
       split; assumption.
   Qed.
@@ -8598,7 +8598,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     split; [apply D.wf_put; assumption|]. split.
     - destruct Hloaded as [Hdecls [Hlayout Hsorted]].
       split; [intro g; rewrite Hkinds; apply Hdecls|]. split; [now rewrite Hslots|].
-      apply F21_put_sorted; try assumption.
+      apply put_preserves_sorted; try assumption.
       destruct Hrow as [out [Hsort [Hkind Hout]]]. exists out.
       split; [exact Hsort|]. split; [rewrite Hdecls; exact Hkind|exact Hout].
     - split; assumption.
@@ -8616,7 +8616,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     split; [apply D.wf_union; assumption|]. split.
     - destruct Hloaded as [Hdecls [Hlayout Hsorted]].
       split; [intro g; rewrite Hkinds; apply Hdecls|]. split; [now rewrite Hslots|].
-      apply F23_union_sorted; assumption.
+      apply union_preserves_sorted; assumption.
     - split; assumption.
   Qed.
 
@@ -8734,7 +8734,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Qed.
 
   (** Applying a rule queues at most one pending entry per action. *)
-  Lemma F34_apply_pending : forall p cp r s db, plans_ok p cp -> D.wf db ->
+  Lemma apply_pending_bound : forall p cp r s db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) ->
     rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
     D.pending (apply (actions V.t r) s db) <= D.pending db + length (actions V.t r).
@@ -8796,7 +8796,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       exact (run_model_term M nu s res (Val v) Hresult).
   Qed.
 
-  Lemma F4a_match_model : forall (M : model (V := V.t)) nu p cp db q s,
+  Lemma matched_atoms_model : forall (M : model (V := V.t)) nu p cp db q s,
     D.wf db -> loaded p cp db -> sat V.merge M nu (D.view db) ->
     matches V.prim (D.view db) q s ->
     Forall (model_atom V.prim M (program_kind p) (fun x => option_map (den nu) (s x))) q.
@@ -9129,7 +9129,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
         * exists nu. split; [intros i Hi; reflexivity|exact Hsat].
   Qed.
 
-  Lemma F4_apply_sat : forall (M : model (V := V.t)) nu p cp r s db,
+  Lemma apply_preserves_sat : forall (M : model (V := V.t)) nu p cp r s db,
     plans_ok p cp -> D.wf db -> loaded p cp db -> env_allocated db s ->
     rule_env (program_sorts p) (program_kind p) r s ->
     valid_sorted V.prim V.merge M p -> In r (rules V.t p) ->
@@ -9480,7 +9480,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       + apply run_env_allocated_set; [exact Hallocated|]. intros i Heq. discriminate.
   Qed.
 
-  Lemma F6_apply_grows : forall p cp r s db, plans_ok p cp -> D.wf db ->
+  Lemma apply_grows : forall p cp r s db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) ->
     rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
     grows_upto db (apply (actions V.t r) s db).
@@ -9516,7 +9516,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       + reflexivity.
   Qed.
 
-  Lemma F6a_rebuild_grows : forall db0 db, D.wf db -> grows_upto db0 db ->
+  Lemma rebuild_grows : forall db0 db, D.wf db -> grows_upto db0 db ->
     grows db0 (D.rebuild db).
   Proof.
     intros db0 db Hwf [Hsame Hrows].
@@ -10136,7 +10136,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
         Hunique Hquiet Hfinal).
   Qed.
 
-  Lemma F5_apply_quiet_present : forall p cp r s db, plans_ok p cp -> D.wf db ->
+  Lemma quiet_apply_present : forall p cp r s db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) -> matches V.prim (D.view db) (query V.t r) s ->
     row_ids_unique (D.view db) ->
     D.changed db = false -> D.changed (apply (actions V.t r) s db) = false ->
@@ -10348,7 +10348,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       eapply run_derivation_action_env; [intro x; apply run_look_empty|exact Haction].
   Qed.
 
-  Lemma F26_bindings_env : forall p cp db c b r, plans_ok p cp -> D.wf db ->
+  Lemma bindings_rule_env : forall p cp db c b r, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In c (all_plans cp) ->
     nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r -> In b (bindings cp c db) ->
     rule_env (program_sorts p) (program_kind p) r (env_of c b) /\ env_allocated db (env_of c b).
@@ -10384,13 +10384,13 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Qed.
 
 
-  Lemma F27_check_plan_split : forall p cp,
+  Lemma check_plan_eq_split : forall p cp,
     check_plan p cp = check_program p && check_shape p cp.
   Proof.
     reflexivity.
   Qed.
 
-  Lemma F29_shape_slots : forall p cp f perm, plans_ok p cp ->
+  Lemma shape_slots_ok : forall p cp f perm, plans_ok p cp ->
     In (f, perm) (Syntax.slots V.t cp) -> exists ss out,
       program_sorts p f = Some ss /\ program_kind p f = Some out /\
       NoDup perm /\ Forall (fun i => i < length ss +
@@ -10411,7 +10411,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
 
   (** The round advances the database before it applies, so its result carries the rows that
       the round changed as new rows. The driver passes that result on without advancing. *)
-  Lemma F21_driver_step : forall p cp lim nv db,
+  Lemma driver_def : forall p cp lim nv db,
     driver p cp lim (nv, db) =
       let next := round p cp nv db in
       if N.ltb (max_ids lim) (D.ids next) then inr (IdLimit, next)
@@ -10422,14 +10422,14 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Qed.
 
   (** The trie of a binding gives the plan's binding environment. *)
-  Lemma F30_bind_trie : forall c b x, trie_get x (bind_trie c b) = env_of c b x.
+  Lemma bind_trie_spec : forall c b x, trie_get x (bind_trie c b) = env_of c b x.
   Proof.
     intros c b x. unfold bind_trie, env_of.
     rewrite bind_cells_get, PTrie.get_empty. reflexivity.
   Qed.
 
   (** A round's jobs are the kept bindings of its plans, plan by plan. *)
-  Lemma F31_jobs : forall p cp nv db,
+  Lemma jobs_def : forall p cp nv db,
     jobs p cp nv db = flat_map (fun c => map (fun b => (c, b))
       (filter (fun b => keep p c (bind_trie c b)) (bindings cp c db)))
       (if nv then naive V.t cp else seminaive V.t cp).
@@ -10448,7 +10448,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
 
   (** A round reads its jobs from the starting database, applies them to its advanced copy
       in order and rebuilds once. *)
-  Lemma F32_round_jobs : forall p cp nv db,
+  Lemma round_eq_jobs : forall p cp nv db,
     round p cp nv db = D.rebuild (apply_jobs p (jobs p cp nv db) (D.advance db)).
   Proof.
     intros p cp nv db. unfold round. rewrite apply_all_jobs. reflexivity.
@@ -10765,7 +10765,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Qed.
 
 
-  Lemma F10_run_loop : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+  Lemma run_unfolds_loop : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     match loopN (driver p cp lim) (max_iter lim) (false, db) with
     | inl (_, db') => run p cp lim db = (IterLimit, D.rebuild db')
     | inr (st, db') => run p cp lim db = (st, D.rebuild db')
@@ -10782,7 +10782,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     In (c, b) (jobs p cp nv db) ->
     In c (all_plans cp) /\ In b (bindings cp c db) /\ keep p c (bind_trie c b) = true.
   Proof.
-    intros p cp nv db c b Hin. rewrite F31_jobs in Hin.
+    intros p cp nv db c b Hin. rewrite jobs_def in Hin.
     apply in_flat_map in Hin as [plan [Hplan Hbinding]].
     apply in_map_iff in Hbinding as [binding [Heq Hkept]].
     inversion Heq; subst plan binding.
@@ -10807,11 +10807,11 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     intros p cp nv db Hchecked Hwf Hloaded. apply Forall_forall.
     intros [c b] Hin. cbn [run_job_facts].
     destruct (run_jobs_member p cp nv db c b Hin) as [Hplan [Hbinding Hkeep]].
-    pose proof (F33_plan_rule p cp c Hchecked Hplan) as Hrule.
-    destruct (F26_bindings_env p cp db c b (job_rule p c) Hchecked Hwf Hloaded
+    pose proof (job_rule_spec p cp c Hchecked Hplan) as Hrule.
+    destruct (bindings_rule_env p cp db c b (job_rule p c) Hchecked Hwf Hloaded
       Hplan Hrule Hbinding) as [Henv Hallocated].
     split; [now apply nth_error_In in Hrule|]. split; [exact Henv|].
-    split; [exact Hallocated|]. eapply F1_plan_match_sound; eassumption.
+    split; [exact Hallocated|]. eapply plan_match_sound; eassumption.
   Qed.
 
   (** The execution trie keeps the job's typing and its original allocated identifiers. *)
@@ -10826,9 +10826,9 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     intros p original db c b Hids [g [Hquery Hsorted]] Hallocated. split.
     - exists g. split; [exact Hquery|]. intros x ty Hbound.
       destruct (Hsorted x ty Hbound) as [cell [Hcell Hsort]].
-      exists cell. rewrite F30_bind_trie. split; assumption.
+      exists cell. rewrite bind_trie_spec. split; assumption.
     - eapply run_env_allocated_mono; [exact Hids|].
-      intros x i Hcell. rewrite F30_bind_trie in Hcell. eapply Hallocated; exact Hcell.
+      intros x i Hcell. rewrite bind_trie_spec in Hcell. eapply Hallocated; exact Hcell.
   Qed.
 
   (** Every kept binding of a naive plan occurs in the naive job list. *)
@@ -10836,7 +10836,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     In c (naive V.t cp) -> In b (bindings cp c db) ->
     keep p c (bind_trie c b) = true -> In (c, b) (jobs p cp true db).
   Proof.
-    intros p cp db c b Hplan Hbinding Hkeep. rewrite F31_jobs.
+    intros p cp db c b Hplan Hbinding Hkeep. rewrite jobs_def.
     apply in_flat_map. exists c. split; [exact Hplan|].
     apply in_map. apply filter_In. split; assumption.
   Qed.
@@ -10901,7 +10901,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
         as [Htyped Hactual_allocated].
       assert (Hactual_matches : matches V.prim (D.view db) (query V.t (job_rule p c))
           (fun x => trie_get x (bind_trie c b))).
-      { eapply run_matches_env; [|exact Hmatches]. intro x. symmetry. apply F30_bind_trie. }
+      { eapply run_matches_env; [|exact Hmatches]. intro x. symmetry. apply bind_trie_spec. }
       pose (next := apply (actions V.t (job_rule p c))
         (fun x => trie_get x (bind_trie c b)) db).
       change (D.changed (apply_jobs p rest next) = false) in Hfinal.
@@ -10921,7 +10921,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       + change (run_view_agrees (D.view db) (D.view (apply_jobs p rest next))).
         eapply run_view_agrees_trans; eassumption.
       + constructor.
-        * eapply F5_apply_quiet_present; eassumption.
+        * eapply quiet_apply_present; eassumption.
         * eapply Forall_impl; [|exact Htail]. intros [plan binding] Hpresent.
           eapply run_view_agrees_present; eassumption.
   Qed.
@@ -10939,7 +10939,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Qed.
 
   (** A quiet naive round has already made every match's actions present. *)
-  Lemma F8_naive_quiet_closed : forall p cp db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+  Lemma naive_quiet_closed : forall p cp db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.canonical db -> D.changed db = false -> D.changed (round p cp true db) = false ->
     closed V.prim V.merge p (D.view db).
   Proof.
@@ -10947,7 +10947,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct (run_advance_state p cp db Hwf Hloaded) as [Hadvanced [Hloadadvanced Hids]].
     destruct (D.wf_advance db Hwf) as [_ [Hview Hdown]].
     assert (Hjobsquiet : D.changed (apply_jobs p (jobs p cp true db) (D.advance db)) = false).
-    { rewrite F32_round_jobs in Hroundquiet.
+    { rewrite round_eq_jobs in Hroundquiet.
       destruct (D.changed (apply_jobs p (jobs p cp true db) (D.advance db))) eqn:Hchanged;
         [|reflexivity].
       pose proof (D.changed_rebuild _ Hchanged) as Hraised. congruence. }
@@ -10959,13 +10959,13 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       (run_job_facts_advance p db _ Hwf Hfacts)) as [_ Hpresent].
     rewrite Hview in Hpresent.
     intros r s Hin Hmatches.
-    destruct (F2_naive_plans_complete p cp db r s Hchecked Hwf Hloaded Hcanonical Hin Hmatches)
+    destruct (naive_plans_complete p cp db r s Hchecked Hwf Hloaded Hcanonical Hin Hmatches)
       as [c [b [Hnaive [Hrule [Hbinding [Hkeep Hagree]]]]]].
     pose proof (run_naive_job_member p cp db c b Hnaive Hbinding Hkeep) as Hjob.
     apply Forall_forall with (x := (c, b)) in Hpresent; [|exact Hjob].
     assert (Hplan : In c (all_plans cp)).
     { unfold all_plans. apply in_or_app. now left. }
-    pose proof (F33_plan_rule p cp c Hchecked Hplan) as Hselected.
+    pose proof (job_rule_spec p cp c Hchecked Hplan) as Hselected.
     assert (Heq : job_rule p c = r) by congruence.
     change (present V.prim V.merge (D.view db) (fun x => trie_get x (bind_trie c b))
       (actions V.t (job_rule p c))) in Hpresent.
@@ -10976,7 +10976,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct Hprogram as [g [Hquery Hacts]].
     pose proof (run_query_context_agrees _ _ _ _ _ _ Hquery Hagree) as Hcontext.
     eapply run_present_agrees; [exact Hacts| |exact Hpresent].
-    intros x ty Hbound. rewrite F30_bind_trie. exact (Hcontext x ty Hbound).
+    intros x ty Hbound. rewrite bind_trie_spec. exact (Hcontext x ty Hbound).
   Qed.
 
   (** Applying saved jobs preserves the loaded state and grows the allocation counter. *)
@@ -11010,7 +11010,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct (D.layout_rebuild db Hwf) as [Hkind [Hslot Hids]].
     split; [apply D.wf_rebuild; exact Hwf|]. split; [|exact Hids].
     split; [intro f; rewrite Hkind; apply Hkinds|].
-    split; [now rewrite Hslot|]. apply F24_rebuild_sorted; assumption.
+    split; [now rewrite Hslot|]. apply rebuild_preserves_sorted; assumption.
   Qed.
 
   (** One round preserves the loaded state and never loses allocated identifiers. *)
@@ -11025,7 +11025,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) (D.advance db) Hchecked
       Hjobs Hadvanced Hloadadvanced Hids) as [Hnext [Hloadnext Hidnext]].
     destruct (run_rebuild_state p cp _ Hnext Hloadnext) as [Hfinal [Hloadfinal Hfinalids]].
-    rewrite F32_round_jobs. split; [exact Hfinal|]. split; [exact Hloadfinal|lia].
+    rewrite round_eq_jobs. split; [exact Hfinal|]. split; [exact Hloadfinal|lia].
   Qed.
 
   (** Canonicalizing a key preserves each cell up to the database's identifier equality. *)
@@ -11065,7 +11065,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct (run_apply_state p cp (job_rule p c)
       (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hrule
       Htyped Hallocated_now) as [Hnext [Hloadnext [Hidnext Hpending]]].
-    pose proof (F6_apply_grows p cp (job_rule p c)
+    pose proof (apply_grows p cp (job_rule p c)
       (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hrule
       Htyped Hallocated_now) as Hstep.
     cbn [apply_jobs]. eapply IH; [exact Hchecked|exact Hrest|exact Hnext
@@ -11099,7 +11099,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     assert (Hids : (D.ids db <= D.ids (D.advance db))%N) by (rewrite Hadvanceids; lia).
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) (D.advance db) Hchecked
       Hjobs Hadvanced Hloadadvanced Hids) as [Hnext Hstate].
-    rewrite F32_round_jobs. apply F6a_rebuild_grows; [exact Hnext|].
+    rewrite round_eq_jobs. apply rebuild_grows; [exact Hnext|].
     eapply run_apply_jobs_grows; [exact Hchecked|exact Hjobs|exact Hadvanced|
       exact Hloadadvanced|exact Hids|]. now apply run_advance_grows.
   Qed.
@@ -11154,14 +11154,14 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
           (model_atom V.prim M (program_kind p)
             (fun x => option_map (den nu) (trie_get x (bind_trie c b))))
           (query V.t (job_rule p c))).
-      { pose proof (F4a_match_model M initial_nu p cp original
+      { pose proof (matched_atoms_model M initial_nu p cp original
           (query V.t (job_rule p c)) (env_of c b) Horiginal Hloadoriginal
           Hsatoriginal Hmatch) as Hinitial.
         eapply Forall_impl; [|exact Hinitial]. intros atom Hatom.
         eapply run_model_atom_agree; [|exact Hatom]. intro x.
-        rewrite F30_bind_trie. symmetry.
+        rewrite bind_trie_spec. symmetry.
         exact (run_env_den_ext M initial_nu nu original (env_of c b) Hext Hallocated x). }
-      destruct (F4_apply_sat M nu p cp (job_rule p c)
+      destruct (apply_preserves_sat M nu p cp (job_rule p c)
         (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hallocated_now
         Htyped Hvalid Hrule Hmodel Hsat) as [next_nu [Hextnext Hsatnext]].
       destruct (run_apply_state p cp (job_rule p c)
@@ -11194,7 +11194,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       Hjobs Hadvanced Hloadadvanced Hids) as [Hnext Hstate].
     exists final_nu. split.
     - intros i Hi. apply Hext. unfold D.allocated in *. now rewrite Hadvanceids.
-    - rewrite F32_round_jobs. apply D.rebuild_sat; assumption.
+    - rewrite round_eq_jobs. apply D.rebuild_sat; assumption.
   Qed.
 
   (** A driver step keeps any database invariant respected by rounds. *)
@@ -11208,7 +11208,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Proof.
     intros p cp lim P Hround nv db Hcurrent.
     pose proof (Hround nv db Hcurrent) as Hnext.
-    rewrite F21_driver_step. cbn zeta.
+    rewrite driver_def. cbn zeta.
     destruct (N.ltb (max_ids lim) (D.ids (round p cp nv db))); [exact Hnext|].
     destruct (andb nv (negb (D.changed (round p cp nv db)))); exact Hnext.
   Qed.
@@ -11224,7 +11224,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) (D.advance db) Hchecked
       (run_jobs_facts p cp nv db Hchecked Hwf Hloaded) Hadvanced Hloadadvanced Hids)
       as [Hnext Hstate].
-    rewrite F32_round_jobs. apply D.rebuild_canonical. exact Hnext.
+    rewrite round_eq_jobs. apply D.rebuild_canonical. exact Hnext.
   Qed.
 
   (** Advancing changes neither the rows nor their representatives. *)
@@ -11249,7 +11249,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     driver p cp lim start = inl next -> run_driver_state p cp next.
   Proof.
     intros p cp lim [nv db] [nv' db'] Hchecked [Hwf [Hloaded Hfrontier]] Hstep.
-    rewrite F21_driver_step in Hstep. cbn zeta in Hstep.
+    rewrite driver_def in Hstep. cbn zeta in Hstep.
     destruct (N.ltb (max_ids lim) (D.ids (round p cp nv db))) eqn:Hlimit;
       [discriminate|].
     destruct (andb nv (negb (D.changed (round p cp nv db)))) eqn:Hquiet;
@@ -11698,7 +11698,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Qed.
 
   (** A changed relational round adds a row absent from its starting view. *)
-  Lemma F9_round_progress : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+  Lemma round_changed_adds_row : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     relational_fragment p = true -> no_ids db ->
     D.changed (round p cp nv db) = true ->
     exists f k, row (D.view (round p cp nv db)) f k None /\ ~ row (D.view db) f k None.
@@ -11718,7 +11718,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       Hchecked Hjobs Hadvanced Hloadadvanced Hids) as [Hnext Hstate].
     pose proof (run_progress_rebuild db (apply_jobs p (jobs p cp nv db) (D.advance db))
       Hnext Hprogress) as [_ [_ Hraised]].
-    rewrite F32_round_jobs in Hchanged |- *. now apply Hraised.
+    rewrite round_eq_jobs in Hchanged |- *. now apply Hraised.
   Qed.
 
   (** A finite driver trace always starts with its supplied state. *)
@@ -11788,7 +11788,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     eapply run_driver_trace_invariant; eassumption.
   Qed.
 
-  Lemma F19_trace_chain : forall p cp lim db,
+  Lemma trace_is_chain : forall p cp lim db,
     hd_error (trace p cp lim db) = Some (false, db) /\
     length (trace p cp lim db) <= N.to_nat (max_iter lim) + 1 /\
     forall n s s', nth_error (trace p cp lim db) n = Some s ->
@@ -11802,7 +11802,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       intros n s s' Hfirst Hsecond. eapply run_driver_trace_chain; eassumption.
   Qed.
 
-  Lemma F18_round_idle : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+  Lemma round_leaves_idle : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.canonical (round p cp nv db) /\ D.pending (round p cp nv db) = 0.
   Proof.
     exact run_round_canonical.
@@ -11848,7 +11848,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     unfold run. destruct (loopN (driver p cp lim) (limits_iter lim) (false, db))
       as [[flag final]|[status final]]; cbn [snd] in *;
       destruct Hloop as [Hfinal [Hloadfinal Hgrowth]];
-      apply F6a_rebuild_grows; assumption.
+      apply rebuild_grows; assumption.
   Qed.
 
   Lemma run_sat : forall p cp lim db (M : model (V := V.t)) nu,
@@ -12118,14 +12118,14 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     closed V.prim V.merge p (D.view (round p cp true db)).
   Proof.
     intros p cp db Hchecked Hwf Hloaded Hcanonical Hquiet Hroundquiet.
-    pose proof (F8_naive_quiet_closed p cp db Hchecked Hwf Hloaded Hcanonical
+    pose proof (naive_quiet_closed p cp db Hchecked Hwf Hloaded Hcanonical
       Hquiet Hroundquiet) as Hclosed.
     pose proof (run_jobs_facts p cp true db Hchecked Hwf Hloaded) as Hjobs.
     destruct (run_advance_state p cp db Hwf Hloaded) as [Hadvanced [Hloadadvanced Hadvanceids]].
     destruct (D.wf_advance db Hwf) as [_ [Hview Hdown]].
     assert (Hids : (D.ids db <= D.ids (D.advance db))%N) by (rewrite Hadvanceids; lia).
     assert (Hjobsquiet : D.changed (apply_jobs p (jobs p cp true db) (D.advance db)) = false).
-    { rewrite F32_round_jobs in Hroundquiet.
+    { rewrite round_eq_jobs in Hroundquiet.
       destruct (D.changed (apply_jobs p (jobs p cp true db) (D.advance db))) eqn:Hchanged;
         [|reflexivity]. pose proof (D.changed_rebuild _ Hchanged) as Hraised. congruence. }
     destruct (run_apply_jobs_state p cp db (jobs p cp true db) (D.advance db) Hchecked Hjobs
@@ -12135,7 +12135,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct (run_apply_jobs_quiet p cp (jobs p cp true db) (D.advance db) Hchecked
       Hadvanced Hloadadvanced Hunique Hdown Hjobsquiet
       (run_job_facts_advance p db _ Hwf Hjobs)) as [Hagree Hpresent].
-    rewrite Hview in Hagree. rewrite F32_round_jobs.
+    rewrite Hview in Hagree. rewrite round_eq_jobs.
     exact (run_quiet_rebuild_closed p cp db (apply_jobs p (jobs p cp true db) (D.advance db))
       Hchecked Hwf Hnext Hcanonical Hagree Hclosed).
   Qed.
@@ -12175,7 +12175,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       - intros start [status result] Hstate Hstep Hstatus. cbn [fst] in Hstatus. subst status.
         eapply run_driver_closed_stop; eassumption.
       - cbn [run_driver_state]. split; [exact Hwf|]. split; [exact Hloaded|]. discriminate. }
-    pose proof (F10_run_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
+    pose proof (run_unfolds_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
     destruct (loopN (driver p cp lim) (max_iter lim) (false, db))
       as [[nv current]|[status current]].
     - rewrite Hrun in Hresult. discriminate.
@@ -12270,7 +12270,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       split; [exact Hterms|]. split; [exact Hvalues|]. split; assumption.
   Qed.
 
-  Lemma F11_derives_least : forall p db w f k, relational_fragment p = true ->
+  Lemma derives_least : forall p db w f k, relational_fragment p = true ->
     no_ids db -> closed V.prim V.merge p w -> includes (D.view db) w ->
     (forall g, kind w g = program_kind p g) -> view_sorted (program_sorts p) w ->
     derives V.prim p (D.view db) f k -> row w f k None.
@@ -12320,7 +12320,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       as [Htyped Hallocated_now].
     assert (Hactual_matches : matches V.prim (D.view original) (query V.t (job_rule p c))
         (fun x => trie_get x (bind_trie c b))).
-    { eapply run_matches_env; [|exact Hmatches]. intro x. symmetry. apply F30_bind_trie. }
+    { eapply run_matches_env; [|exact Hmatches]. intro x. symmetry. apply bind_trie_spec. }
     pose proof (run_matches_derivation_body p initial original _ _ Horiginal_noids
       Horiginal_derived Hactual_matches) as Hbody.
     destruct (run_apply_state p cp (job_rule p c) (fun x => trie_get x (bind_trie c b)) db
@@ -12378,7 +12378,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       Hnoidsadvance Hderivedadvance) as [Hnoidsnext Hderivednext].
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) (D.advance db) Hchecked Hjobs
       Hadvance Hloadadvance Hidbound) as [Hnext Hrest].
-    rewrite F32_round_jobs. now apply run_rebuild_derives.
+    rewrite round_eq_jobs. now apply run_rebuild_derives.
   Qed.
 
   (** A checked relational round does not allocate identifiers. *)
@@ -12414,7 +12414,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
         split; [exact Hnext|]. split; [exact Hloadnext|]. split; assumption.
       - split; [exact Hwf|]. split; [exact Hloaded|]. split; [exact Hnoids|].
         now apply run_derived_initial. }
-    pose proof (F10_run_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
+    pose proof (run_unfolds_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
     destruct (loopN (driver p cp lim) (max_iter lim) (false, db))
       as [[nv current]|[status current]].
     all: rewrite Hrun; cbn [snd].
@@ -12452,7 +12452,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       as [Hnoidsfinal Hderived].
     rewrite Hrun in Hnoidsfinal, Hderived. cbn [snd] in Hnoidsfinal, Hderived.
     intros f k o Hrow. destruct ((proj2 Hnoidsfinal) f k o Hrow) as [-> Hvalues].
-    eapply F11_derives_least; [exact Hfragment|exact Hnoids|exact Hclosed|exact Hinclude|
+    eapply derives_least; [exact Hfragment|exact Hnoids|exact Hclosed|exact Hinclude|
       exact Hkinds|exact Hsorted|]. eapply Hderived. exact Hrow.
   Qed.
 
@@ -12806,7 +12806,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Proof.
     intros p cp nv db Hchecked Hwf Hloaded. apply Forall_forall.
     intros [c b] Hin x v Hcell. cbn [fst snd] in Hcell.
-    rewrite F30_bind_trie in Hcell.
+    rewrite bind_trie_spec in Hcell.
     destruct (run_jobs_member p cp nv db c b Hin) as [Hplan [Hbinding Hkeep]].
     eapply run_plan_bindings_active; eassumption.
   Qed.
@@ -12861,7 +12861,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       Hidbound Hdomainadvance) as Hdomain'.
     destruct (run_apply_jobs_state p cp current (jobs p cp nv current) (D.advance current)
       Hchecked Hjobs Hadvance Hloadadvance Hidbound) as [Hnext Hrest].
-    rewrite F32_round_jobs. now apply run_domain_rebuild.
+    rewrite round_eq_jobs. now apply run_domain_rebuild.
   Qed.
 
   (** Inclusion of active values gives inclusion of the corresponding finite universes. *)
@@ -12941,7 +12941,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     - split; [exact Hinitial|]. split; [exact Hloaded|]. now apply run_domain_initial.
   Qed.
 
-  Lemma F12_herbrand_bound : forall p cp db nv, plans_ok p cp -> D.wf db -> loaded p cp db ->
+  Lemma herbrand_round_le : forall p cp db nv, plans_ok p cp -> D.wf db -> loaded p cp db ->
     relational_fragment p = true -> prim_free p = true -> no_ids db ->
     herbrand p (round p cp nv db) <= herbrand p db.
   Proof.
@@ -12953,7 +12953,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     eapply run_domain_active; eassumption.
   Qed.
 
-  Lemma F14_universe_rows : forall p cp lim db nv current f k o,
+  Lemma new_rows_in_universe : forall p cp lim db nv current f k o,
     plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
     prim_free p = true -> no_ids db ->
     In (nv, current) (trace p cp lim db) -> row (D.view current) f k o ->
@@ -13051,7 +13051,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Proof.
     intros p cp initial nv current seen Hchecked Hinitial Hfragment Hfree
       [Hcurrent [Hloaded [Hdomain [Hinitial_rows [Hnodup [Hinside Hseen]]]]]] Hchanged.
-    destruct (F9_round_progress p cp nv current Hchecked Hcurrent Hloaded Hfragment
+    destruct (round_changed_adds_row p cp nv current Hchecked Hcurrent Hloaded Hfragment
       (proj1 Hdomain) Hchanged) as [f [k [Hrow Hfresh]]].
     destruct (run_round_state p cp nv current Hchecked Hcurrent Hloaded)
       as [Hround [Hloadround Hids]].
@@ -13103,7 +13103,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     { apply N.ltb_ge. rewrite (proj1 Hnoids). lia. }
     pose proof (run_termination_round p cp initial nv current seen Hchecked Hinitial
       Hfragment Hfree Hstate) as Hnext.
-    rewrite F21_driver_step. cbn zeta. rewrite Hlimit.
+    rewrite driver_def. cbn zeta. rewrite Hlimit.
     destruct (D.changed (round p cp nv current)) eqn:Hchanged; cbn [negb andb].
     - rewrite andb_false_r. cbn beta iota.
       destruct (run_termination_fresh p cp initial nv current seen Hchecked Hinitial
@@ -13159,7 +13159,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct (run_termination_loop p cp db lim (max_iter lim) false db []
       Hchecked Hwf Hfragment Hfree (run_termination_initial p cp db Hwf Hloaded Hnoids)
       Hcredit) as [final Hloop].
-    pose proof (F10_run_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
+    pose proof (run_unfolds_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
     rewrite Hloop in Hrun. rewrite Hrun. reflexivity.
   Qed.
 
@@ -13190,7 +13190,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     intros p cp lim db Hchecked Hwf Hloaded Hstatus.
     pose proof (run_loop_state p cp lim (max_iter lim) false db Hchecked Hwf Hloaded)
       as Hstate.
-    pose proof (F10_run_loop p cp lim db Hchecked Hwf Hloaded) as Hresult.
+    pose proof (run_unfolds_loop p cp lim db Hchecked Hwf Hloaded) as Hresult.
     destruct (loopN (driver p cp lim) (max_iter lim) (false, db))
       as [[naive current]|[status current]] eqn:Hloop.
     - rewrite Hresult in Hstatus. discriminate.
@@ -15042,7 +15042,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       Hpre Henv Hallocated)).
   Qed.
 
-  Lemma F3_apply_wf : forall p cp r s db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+  Lemma apply_wf : forall p cp r s db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     In r (rules V.t p) -> rule_env (program_sorts p) (program_kind p) r s ->
     env_allocated db s ->
     D.wf (apply (actions V.t r) s db) /\ loaded p cp (apply (actions V.t r) s db) /\
@@ -15060,7 +15060,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     - intros x i Hcell. rewrite run_look_empty in Hcell. eapply Hallocated. exact Hcell.
   Qed.
 
-  Lemma F7_apply_derives : forall p cp initial db r s,
+  Lemma apply_derives : forall p cp initial db r s,
     plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
     no_ids db -> derived p initial db -> In r (rules V.t p) ->
     rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
@@ -15070,14 +15070,14 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     exact run_apply_derives_checked.
   Qed.
 
-  Lemma F13_herbrand_size : forall p db,
+  Lemma herbrand_universe_length : forall p db,
     relational_fragment p = true -> prim_free p = true ->
     herbrand p db = length (universe p db) /\ NoDup (universe p db).
   Proof.
     intros p db _ _. split; [reflexivity|apply run_universe_nodup].
   Qed.
 
-  Lemma F15_unit_scale : forall (T C P P' : N) (u U : nat), 1 <= u -> u <= U ->
+  Lemma unit_scale : forall (T C P P' : N) (u U : nat), 1 <= u -> u <= U ->
     (T + N.of_nat u * P' <= N.of_nat u * (C + P))%N ->
     (T + N.of_nat U * P' <= N.of_nat U * (C + P))%N.
   Proof.
@@ -15090,7 +15090,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     nia.
   Qed.
 
-  Lemma F16_unit_pos : forall db, 1 <= D.unit db.
+  Lemma unit_pos : forall db, 1 <= D.unit db.
   Proof.
     intro db. unfold D.unit. nia.
   Qed.
@@ -15107,7 +15107,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     destruct Hjob as [Hrule [Henv [Hallocated Hmatch]]].
     destruct (run_job_environment p original db c b Hids Henv Hallocated)
       as [Htyped Hallocated_now].
-    destruct (F3_apply_wf p cp (job_rule p c)
+    destruct (apply_wf p cp (job_rule p c)
       (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hrule
       Htyped Hallocated_now) as [Hnext [Hloadnext [Hidnext Hunit]]].
     cbn [apply_jobs]. eapply Nat.le_trans; [exact Hunit|].
@@ -15115,7 +15115,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     eapply N.le_trans; eassumption.
   Qed.
 
-  Lemma F17_round_mono : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+  Lemma round_monotone : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.wf (round p cp nv db) /\ loaded p cp (round p cp nv db) /\
     (D.ids db <= D.ids (round p cp nv db))%N /\ D.unit db <= D.unit (round p cp nv db).
   Proof.
@@ -15133,12 +15133,12 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     assert (Hunitadvance : D.unit (D.advance db) = D.unit db).
     { unfold D.unit. rewrite Hadvanceids, (proj1 (D.advance_credit 0 db Hwf)).
       reflexivity. }
-    rewrite Hunitadvance in Hunit. rewrite F32_round_jobs.
+    rewrite Hunitadvance in Hunit. rewrite round_eq_jobs.
     eapply Nat.le_trans; [exact Hunit|]. apply D.unit_mono_rebuild. exact Happlied.
   Qed.
 
 
-  Lemma F20_round_work : forall p cp nv db,
+  Lemma round_work_def : forall p cp nv db,
     round_work p cp nv db =
       length (Syntax.slots V.t cp) +
       fold_right Nat.add 0 (map (fun c =>
@@ -15168,7 +15168,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     reflexivity.
   Qed.
 
-  Lemma T4_check_plan_split : forall p cp,
+  Lemma T_check_plan_split : forall p cp,
     (T_check_plan p cp <= T_check_program p + T_check_shape p cp + k_check)%N.
   Proof.
     intros p cp.
@@ -15748,7 +15748,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat (wbits p + 1))%N.
   Proof.
     intros p cp Hshape.
-    pose proof (T4_check_plan_split p cp) as Hsplit.
+    pose proof (T_check_plan_split p cp) as Hsplit.
     pose proof (Sorts.T_check_program_le V.t p) as Hprogram.
     change (T_check_program p <= c_sorts * N.of_nat (size_program p + 1))%N in Hprogram.
     assert (Hcoefficient : (c_sorts + 2 * k_check <= c_run)%N).
@@ -17559,7 +17559,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       clear -HC Hprefix. nia.
   Qed.
 
-  Lemma T5_check_shape_le : forall p cp,
+  Lemma T_check_shape_le : forall p cp,
     (T_check_shape p cp <= k_check * N.of_nat (size_program p + size_compiled cp + 1) *
       N.of_nat (wbits p + 1))%N.
   Proof.
@@ -17573,7 +17573,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     (T_check_plan p cp <= c_run * N.of_nat (size_program p + size_compiled cp + 1) *
       N.of_nat (wbits p + 1))%N.
   Proof.
-    intros p cp. apply run_check_plan_from_shape. apply T5_check_shape_le.
+    intros p cp. apply run_check_plan_from_shape. apply T_check_shape_le.
   Qed.
 
   (** A binding traversal pays for each variable's lookup and optional insertion once. *)
@@ -17608,7 +17608,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** Building the trie of a binding pays for the bits of the plan's variables. *)
-  Lemma T6_bind_trie_le : forall c b,
+  Lemma T_bind_trie_le : forall c b,
     (T_bind_trie c b <= k_driver *
       N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
         (var_of V.t c) + 1))%N.
@@ -17947,7 +17947,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         (map (run_split_plan_weight p cp db)
           (if nv then naive V.t cp else seminaive V.t cp))))%N.
   Proof.
-    intros p cp nv db. rewrite F31_jobs.
+    intros p cp nv db. rewrite jobs_def.
     generalize (if nv then naive V.t cp else seminaive V.t cp) as cs. intro cs.
     induction cs as [|c cs IH]; cbn [flat_map map fold_right]; [reflexivity|].
     rewrite run_split_sum_app, map_map. cbn [fst].
@@ -18078,7 +18078,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
 
   (** A round pays for its joins, its advance, its applications, its rebuild and its
       per-binding work. *)
-  Lemma T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
+  Lemma T_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
     loaded p cp db ->
     (T_round p cp nv db <=
       fold_right N.add 0 (map (fun c =>
@@ -18121,7 +18121,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     unfold k_driver. nia.
   Qed.
 
-  Lemma T3_driver_wrapper : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+  Lemma T_run_split : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     (T_run p cp lim db <=
       T_loopN (driver p cp lim) (T_driver p cp lim) (max_iter lim) (false, db) +
       match loopN (driver p cp lim) (max_iter lim) (false, db) with
@@ -18149,7 +18149,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** A driver call pays for its round, limit test and flag test. *)
-  Lemma T2a_driver_le : forall p cp lim nv db, plans_ok p cp -> D.wf db ->
+  Lemma T_driver_split : forall p cp lim nv db, plans_ok p cp -> D.wf db ->
     loaded p cp db ->
     (T_driver p cp lim (nv, db) <= T_round p cp nv db + k_driver *
       N.of_nat (length (Syntax.slots V.t cp) +
@@ -18205,7 +18205,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** The loop pays for every driver call in the trace prefix and its fuel. *)
-  Lemma T2b_loop_trace : forall p cp lim db,
+  Lemma T_driver_loop_split : forall p cp lim db,
     (T_loopN (driver p cp lim) (T_driver p cp lim) (max_iter lim) (false, db) <=
       fold_right N.add 0 (map (fun st => T_driver p cp lim st + c_loopN)
         (firstn (N.to_nat (max_iter lim)) (trace p cp lim db))) +
@@ -18463,7 +18463,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Proof.
     intros p cp db f k o out Hplans [_ [Hslots _]] Hsort Hkind Hout perm Hin.
     rewrite Hslots in Hin.
-    destruct (F29_shape_slots p cp f perm Hplans Hin)
+    destruct (shape_slots_ok p cp f perm Hplans Hin)
       as [ss [out' [Hss [Hout' [Hnodup Hbound]]]]].
     rewrite Hsort in Hss. inversion Hss; subst ss.
     rewrite Hkind in Hout'. inversion Hout'; subst out'.
@@ -18528,7 +18528,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     destruct (D.layout_put f k o db Hwf) as [Hkinds' [Hslots' _]].
     split.
     - intro x. rewrite Hkinds'. apply Hkinds.
-    - split; [now rewrite Hslots'|]. eapply F21_put_sorted; eauto.
+    - split; [now rewrite Hslots'|]. eapply put_preserves_sorted; eauto.
   Qed.
 
   Lemma run_loaded_make : forall p cp db f k, D.wf db -> loaded p cp db ->
@@ -18539,7 +18539,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     destruct (D.layout_make f k db Hwf) as [Hkinds' [Hslots' _]].
     split.
     - intro x. rewrite Hkinds'. apply Hkinds.
-    - split; [now rewrite Hslots'|]. eapply F22_make_sorted; eauto.
+    - split; [now rewrite Hslots'|]. eapply make_preserves_sorted; eauto.
       rewrite Hkinds. exact Hkind.
   Qed.
 
@@ -18550,7 +18550,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     destruct (D.layout_union i j db Hwf) as [Hkinds' [Hslots' _]].
     split.
     - intro x. rewrite Hkinds'. apply Hkinds.
-    - split; [now rewrite Hslots'|]. eapply F23_union_sorted; eauto.
+    - split; [now rewrite Hslots'|]. eapply union_preserves_sorted; eauto.
   Qed.
 
   (** Every suffix of an action application keeps its typing and monotone budgets. *)
@@ -18877,8 +18877,8 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat U * C + N.of_nat U * D.potential B old)%N.
   Proof.
     intros B U old next T C Hunit Htime.
-    pose proof (F15_unit_scale T C (D.potential B old) (D.potential B next)
-      (D.unit next) U (F16_unit_pos next) Hunit Htime) as Hscaled.
+    pose proof (unit_scale T C (D.potential B old) (D.potential B next)
+      (D.unit next) U (unit_pos next) Hunit Htime) as Hscaled.
     rewrite N.mul_add_distr_l in Hscaled. exact Hscaled.
   Qed.
 
@@ -18939,13 +18939,13 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Proof.
     intro acts. induction acts as [|a acts IH];
       intros p cp g s Ts locals db W B U Hplans Hwf Hloaded Hacts Henv Halloc Hwidth HB HU.
-    - assert (Hunit : 1 <= U) by (pose proof (F16_unit_pos db); cbn [apply_go] in HU; lia).
+    - assert (Hunit : 1 <= U) by (pose proof (unit_pos db); cbn [apply_go] in HU; lia).
       pose proof (run_action_budget_covers B U W Hunit) as Hcover.
       time_unfold T_apply_go.
       cbn [apply_go run_actions_weight run_term_calls flat_map map fold_right action_prim_work].
       lia.
     - assert (Hunit : 1 <= U).
-      { pose proof (F16_unit_pos (apply_go (a :: acts) s locals db)). lia. }
+      { pose proof (unit_pos (apply_go (a :: acts) s locals db)). lia. }
       pose proof (run_action_budget_covers B U W Hunit) as Hcover.
       inversion Hwidth as [|a' acts' Hhead Htail]; subst a' acts'.
       pose proof (run_action_weight_pos cp a) as Hweight_pos.
@@ -19199,7 +19199,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** Applying a rule pays for its actions, referenced bindings and transferred potential. *)
-  Lemma T2c_apply_amort : forall B U p cp r s Ts db, plans_ok p cp -> D.wf db ->
+  Lemma T_apply_amort : forall B U p cp r s Ts db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) ->
     rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
     (D.ids (apply (actions V.t r) s db) <= B)%N ->
@@ -19233,7 +19233,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     rewrite Hprim in Hcost.
     pose proof (run_apply_wrapper_clock (actions V.t r) s Ts db) as Hwrapper.
     pose proof run_apply_factor_le as Hfactor.
-    assert (Hunit : 1 <= U) by (pose proof (F16_unit_pos (apply (actions V.t r) s db)); lia).
+    assert (Hunit : 1 <= U) by (pose proof (unit_pos (apply (actions V.t r) s db)); lia).
     destruct (run_spending_factors U (N.to_nat (N.log2 B) + 1) (wbits p) Hunit ltac:(lia))
       as [Hpositive _].
     assert (Hweight : (1 <= N.of_nat (run_actions_weight cp (actions V.t r) + 1))%N) by lia.
@@ -19559,7 +19559,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     run_filter_cells (bind_trie c b)
       (fold_right (fun value width => Nat.max (cell_bits V.encode value) width) 0 b).
   Proof.
-    intros c b name value Hget. rewrite F30_bind_trie in Hget.
+    intros c b name value Hget. rewrite bind_trie_spec in Hget.
     apply run_filter_max_cell. eapply run_binding_env_member. exact Hget.
   Qed.
 
@@ -19618,7 +19618,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Proof.
     intros p cp c b Hplans Hin.
     pose proof (run_filter_checked_post p cp c Hplans Hin) as Hposts.
-    pose proof (F33_plan_rule p cp c Hplans Hin) as Hrule.
+    pose proof (job_rule_spec p cp c Hplans Hin) as Hrule.
     pose proof (run_program_query_width p) as Hwidth.
     rewrite Forall_forall in Hwidth.
     assert (Hrule_member : In (job_rule p c) (rules V.t p)).
@@ -19630,7 +19630,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       (fun j a Hget => Hget) Hwidth (run_filter_binding_width c b)) as Hfilter.
     rewrite <- Hposts in Hfilter.
     rewrite (run_filter_query_work_agree (query V.t (job_rule p c))
-      (fun name => trie_get name (bind_trie c b)) (env_of c b) (F30_bind_trie c b)) in Hfilter.
+      (fun name => trie_get name (bind_trie c b)) (env_of c b) (bind_trie_spec c b)) in Hfilter.
     change (run_filter_post_work (query V.t (job_rule p c)) (post V.t c))
       with (post_work p c) in Hfilter.
     pose proof (run_filter_keep_split p c (bind_trie c b)) as Hwrapper.
@@ -19646,7 +19646,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   (** The filter of a checked plan pays for finding its rule, for looking up the names of its
       join variables, for its atoms at the widest program word or binding cell, and for the
       primitive work of the query. A checked plan lists each atom at most once. *)
-  Lemma T7_keep_le : forall p cp c b,
+  Lemma T_keep_le : forall p cp c b,
     plans_ok p cp -> In c (naive V.t cp ++ seminaive V.t cp) ->
     (T_keep p c (bind_trie c b) <= k_driver * N.of_nat (post_work p c + 1) *
       N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
@@ -19800,7 +19800,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat U * D.potential B db)%N.
   Proof.
     intros B U p cp c b db Hplans Hwf Hloaded Hr Henv Halloc HB HU.
-    pose proof (T2c_apply_amort B U p cp (job_rule p c)
+    pose proof (T_apply_amort B U p cp (job_rule p c)
       (fun x => trie_get x (bind_trie c b)) (fun x => (1 + T_trie_get x (bind_trie c b))%N)
       db Hplans Hwf Hloaded Hr Henv Halloc HB HU) as Happly.
     pose proof (run_cost_rule_calls p cp (job_rule p c) (bind_trie c b) Hr) as Hcalls.
@@ -19809,10 +19809,10 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       action_prim_work V.prim V.prim_work (program_kind p)
         (actions V.t (job_rule p c)) (env_of c b)).
     { apply run_action_prim_work_agree. intro x. unfold run_value_view.
-      rewrite F30_bind_trie. reflexivity. }
+      rewrite bind_trie_spec. reflexivity. }
     rewrite Hprim in Happly.
     assert (HUpos : 1 <= U).
-    { pose proof (F16_unit_pos (apply (actions V.t (job_rule p c))
+    { pose proof (unit_pos (apply (actions V.t (job_rule p c))
         (fun x => trie_get x (bind_trie c b)) db)); lia. }
     destruct (run_cost_scale_factors B U p HUpos) as [Hscale [Hwidth Hunit]].
     destruct run_cost_constants as [Hconstant Hconstants].
@@ -19865,7 +19865,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         as [Htyped Hallocated].
       set (next := apply (actions V.t (job_rule p c))
         (fun x => trie_get x (bind_trie c b)) db).
-      destruct (F3_apply_wf p cp (job_rule p c)
+      destruct (apply_wf p cp (job_rule p c)
         (fun x => trie_get x (bind_trie c b)) db Hplans Hwf Hloaded Hr Htyped Hallocated)
         as [Hnext [Hloadnext [Hidsnext Hunitnext]]].
       fold next in Hnext, Hloadnext, Hidsnext, Hunitnext.
@@ -19934,10 +19934,10 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Proof.
     intros B U db Hwf HB HU.
     pose proof (D.T_rebuild_amort B db Hwf HB) as Hrebuild.
-    pose proof (F15_unit_scale (D.T_rebuild db)
+    pose proof (unit_scale (D.T_rebuild db)
       (D.c_db * N.of_nat (D.pending db + 1)) (D.potential B db)
       (D.potential B (D.rebuild db)) (D.unit (D.rebuild db)) U
-      (F16_unit_pos _) HU Hrebuild) as Hscaled.
+      (unit_pos _) HU Hrebuild) as Hscaled.
     nia.
   Qed.
 
@@ -20031,7 +20031,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Lemma run_cost_jobs_weight_bound : forall p cp nv db,
     run_cost_jobs_weight p cp (jobs p cp nv db) <= round_work p cp nv db.
   Proof.
-    intros p cp nv db. rewrite F31_jobs, run_cost_round_work.
+    intros p cp nv db. rewrite jobs_def, run_cost_round_work.
     assert (Hbound : forall cs,
       run_cost_jobs_weight p cp
         (flat_map (fun c => map (fun b => (c, b))
@@ -20229,7 +20229,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       8 * k_driver * run_cost_scale B U p * N.of_nat (run_cost_binding_weight p cp c b))%N.
   Proof.
     intros B U p cp db c b Hplans Hwf Hloaded Hplan Hbinding HU HUpos.
-    pose proof (T6_bind_trie_le c b) as Hbind.
+    pose proof (T_bind_trie_le c b) as Hbind.
     pose proof (T7_keep_le_checked p cp c b Hplans Hplan) as Hkeep.
     pose proof (run_cost_binding_cells p cp db c b Hplans Hwf Hloaded Hplan Hbinding)
       as Hcells.
@@ -20383,7 +20383,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     destruct (run_cost_scale_factors B U p HU) as [Hscale Hrest].
     destruct run_cost_constants as [_ [Hdatabase Hconstants]].
     assert (Hslots : length (Syntax.slots V.t cp) <= round_work p cp nv db).
-    { rewrite F20_round_work. lia. }
+    { rewrite round_work_def. lia. }
     eapply N.le_trans; [exact Hadvance|]. rewrite Nat2N.inj_add.
     eapply N.le_trans with
       (m := (k_driver * (N.of_nat (round_work p cp nv db) + 1))%N).
@@ -20417,16 +20417,16 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat U * D.potential B db)%N.
   Proof.
     intros B U p cp nv db Hplans Hwf Hloaded HB HU.
-    destruct (F17_round_mono p cp nv db Hplans Hwf Hloaded)
+    destruct (round_monotone p cp nv db Hplans Hwf Hloaded)
       as [Hroundwf [Hroundloaded [Hroundids Hroundunit]]].
-    assert (HUpos : 1 <= U) by (pose proof (F16_unit_pos (round p cp nv db)); lia).
+    assert (HUpos : 1 <= U) by (pose proof (unit_pos (round p cp nv db)); lia).
     assert (Hstartunit : D.unit db <= U) by lia.
     pose proof (run_jobs_facts p cp nv db Hplans Hwf Hloaded) as Hfacts.
     destruct (run_advance_state p cp db Hwf Hloaded)
       as [Hadvancewf [Hadvanceloaded Hadvanceids]].
     assert (Horigin : (D.ids db <= D.ids (D.advance db))%N) by lia.
     set (applied := apply_jobs p (jobs p cp nv db) (D.advance db)).
-    assert (Hround : round p cp nv db = D.rebuild applied) by apply F32_round_jobs.
+    assert (Hround : round p cp nv db = D.rebuild applied) by apply round_eq_jobs.
     destruct (run_apply_jobs_state p cp db (jobs p cp nv db) (D.advance db)
       Hplans Hfacts Hadvancewf Hadvanceloaded Horigin) as [Hapwf [Haploaded Hapids]].
     change (D.wf applied) in Hapwf. change (loaded p cp applied) in Haploaded.
@@ -20471,7 +20471,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       as Hjoins.
     pose proof (run_round_filters_cost B U p cp nv db Hplans Hwf Hloaded Hstartunit HUpos)
       as Hfilters.
-    pose proof (T1a_round_split p cp nv db Hplans Hwf Hloaded) as Hsplit.
+    pose proof (T_round_split p cp nv db Hplans Hwf Hloaded) as Hsplit.
     pose proof (run_round_advance_cost B U p cp nv db Hloaded HUpos) as Hadvance.
     assert (Hshell : (k_driver * N.of_nat (round_work p cp nv db + 1) *
       N.of_nat (wbits p + 1) <= k_driver * run_cost_scale B U p *
@@ -20508,7 +20508,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** A checked round charges its joins, jobs and rebuild to one amortized budget. *)
-  Lemma T1_round_le : forall B U p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+  Lemma T_round_amort : forall B U p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     (D.ids (round p cp nv db) <= B)%N -> D.unit (round p cp nv db) <= U ->
     (T_round p cp nv db + N.of_nat U * D.potential B (round p cp nv db) <=
       c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
@@ -20604,7 +20604,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         (D.ids db <= D.ids current)%N /\ D.unit db <= D.unit current)
       _ fuel nv db _).
     - intros flag current [Hcurrent [Hloadcurrent [Hids Hunit]]].
-      destruct (F17_round_mono p cp flag current Hchecked Hcurrent Hloadcurrent)
+      destruct (round_monotone p cp flag current Hchecked Hcurrent Hloadcurrent)
         as [Hnext [Hloadnext [Hidsnext Hunitnext]]].
       split; [exact Hnext|]. split; [exact Hloadnext|]. split; lia.
     - split; [exact Hwf|]. split; [exact Hloaded|]. split; reflexivity.
@@ -20634,7 +20634,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     driver p cp lim (nv, db) = inl (next_nv, next) ->
     next = round p cp nv db.
   Proof.
-    intros p cp lim nv db next_nv next Hstep. rewrite F21_driver_step in Hstep.
+    intros p cp lim nv db next_nv next Hstep. rewrite driver_def in Hstep.
     cbn zeta in Hstep.
     destruct (max_ids lim <? D.ids (round p cp nv db))%N; [discriminate|].
     destruct (nv && negb (D.changed (round p cp nv db))); [discriminate|].
@@ -20645,7 +20645,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Lemma run_timing_driver_stop : forall p cp lim nv db status next,
     driver p cp lim (nv, db) = inr (status, next) -> next = round p cp nv db.
   Proof.
-    intros p cp lim nv db status next Hstep. rewrite F21_driver_step in Hstep.
+    intros p cp lim nv db status next Hstep. rewrite driver_def in Hstep.
     cbn zeta in Hstep.
     destruct (max_ids lim <? D.ids (round p cp nv db))%N.
     - now injection Hstep as <- <-.
@@ -20700,12 +20700,12 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat U * D.potential B db)%N.
   Proof.
     intros B U p cp lim nv db Hchecked Hwf Hloaded Hunit Hround.
-    pose proof (T2a_driver_le p cp lim nv db Hchecked Hwf Hloaded) as Hdriver.
+    pose proof (T_driver_split p cp lim nv db Hchecked Hwf Hloaded) as Hdriver.
     pose proof (run_timing_ids_width (round p cp nv db)) as Hbits.
-    assert (HU : 1 <= U) by (pose proof (F16_unit_pos (round p cp nv db)); lia).
+    assert (HU : 1 <= U) by (pose proof (unit_pos (round p cp nv db)); lia).
     destruct (run_timing_factor B U p HU) as [Hfactor Hdb].
     assert (Hslots : length (Syntax.slots V.t cp) <= round_work p cp nv db).
-    { rewrite F20_round_work. lia. }
+    { rewrite round_work_def. lia. }
     destruct run_timing_constants as [_ [Hconstant Hdbconstant]].
     pose proof (run_timing_driver_credit k_driver (N.of_nat U)
       (N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)))
@@ -20743,7 +20743,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     induction fuel as [|fuel IH]; intros nv db Hwf Hloaded.
     - cbn [loop_fuel driver_trace firstn map fold_right fst snd]. intros Hids Hunit.
       pose proof (run_cost_rebuild B U db Hwf Hids Hunit) as Hcost.
-      assert (HU : 1 <= U) by (pose proof (F16_unit_pos (D.rebuild db)); lia).
+      assert (HU : 1 <= U) by (pose proof (unit_pos (D.rebuild db)); lia).
       destruct (run_timing_factor B U p HU) as [Hfactor Hconstant].
       nia.
     - cbn [loop_fuel driver_trace firstn map fold_right fst snd].
@@ -20759,7 +20759,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           Hround_unit (Hround nv db Hwf Hloaded Hround_ids Hround_unit)) as Hstep.
         pose proof (IH next_nv (round p cp nv db) Hnext Hloadnext
           Hids Hunit) as Htail.
-        destruct (F18_round_idle p cp nv db Hchecked Hwf Hloaded) as [Hcanonical Hpending].
+        destruct (round_leaves_idle p cp nv db Hchecked Hwf Hloaded) as [Hcanonical Hpending].
         rewrite Hpending in Htail.
         cbn [N.of_nat] in Htail.
         rewrite !Nat2N.inj_add in Hstep, Htail |- *.
@@ -20768,14 +20768,14 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         subst next. intros Hids Hunit. rewrite firstn_nil. cbn [map fold_right].
         destruct (run_round_state p cp nv db Hchecked Hwf Hloaded)
           as [Hnext [Hloadnext Hidsnext]].
-        destruct (F18_round_idle p cp nv db Hchecked Hwf Hloaded) as [Hcanonical Hpending].
+        destruct (round_leaves_idle p cp nv db Hchecked Hwf Hloaded) as [Hcanonical Hpending].
         pose proof (D.rebuild_idle _ Hnext Hcanonical Hpending) as Hidle.
         rewrite Hidle in Hids, Hunit.
         pose proof (run_timing_driver_amort B U p cp lim nv db Hchecked Hwf Hloaded
           Hunit (Hround nv db Hwf Hloaded Hids Hunit)) as Hstep.
         pose proof (run_timing_idle_rebuild B U _ Hnext Hcanonical Hpending Hids Hunit)
           as Hrebuild.
-        assert (HU : 1 <= U) by (pose proof (F16_unit_pos (round p cp nv db)); lia).
+        assert (HU : 1 <= U) by (pose proof (unit_pos (round p cp nv db)); lia).
         destruct (run_timing_factor B U p HU) as [Hfactor Hconstant].
         rewrite !Nat2N.inj_add in Hstep |- *. nia.
   Qed.
@@ -20800,13 +20800,13 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat U * D.potential B db)%N.
   Proof.
     intros Hround B U p cp lim db Hchecked Hwf Hloaded Hids Hunit.
-    pose proof (T3_driver_wrapper p cp lim db Hchecked Hwf Hloaded) as Hwrapper.
-    pose proof (T2b_loop_trace p cp lim db) as Hloop.
+    pose proof (T_run_split p cp lim db Hchecked Hwf Hloaded) as Hwrapper.
+    pose proof (T_driver_loop_split p cp lim db) as Hloop.
     pose proof (run_timing_fuel_cost B U p cp lim
       (fun nv current Hcurrent Hloadcurrent Hbound Hspending =>
         Hround B U p cp nv current Hchecked Hcurrent Hloadcurrent Hbound Hspending)
       Hchecked (N.to_nat (max_iter lim)) false db Hwf Hloaded) as Hcost.
-    pose proof (F10_run_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
+    pose proof (run_unfolds_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
     rewrite run_timing_loopN_fuel in Hwrapper, Hrun.
     destruct (loop_fuel (driver p cp lim) (N.to_nat (max_iter lim)) (false, db))
       as [[nv final]|[status final]] eqn:Houtcome.
@@ -20859,7 +20859,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
 
   (** Planning is cubic in the program text, because sorting the positions of an atom
       compares unary join indices. *)
-  Lemma plan_bigO : bigO (fun _ => True)
+  Lemma plan_complexity : bigO (fun _ => True)
     (fun p => N.of_nat ((size_program p + 1) * (size_program p + 1) * (size_program p + 1)))
     T_plan.
   Proof.
@@ -20869,7 +20869,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** Loading is linear in its declarations and slots, with the layout work of sorting. *)
-  Lemma load_bigO : bigO (fun _ => True)
+  Lemma load_complexity : bigO (fun _ => True)
     (fun x : program V.t * compiled V.t => load_cost (fst x) (snd x))
     (fun x => T_load (fst x) (snd x)).
   Proof.
@@ -20882,7 +20882,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** Plan checking is linear in the program and plan syntax at their identifier width. *)
-  Lemma check_plan_bigO : bigO (fun _ => True)
+  Lemma check_plan_complexity : bigO (fun _ => True)
     (fun x : program V.t * compiled V.t =>
       N.of_nat ((size_program (fst x) + size_compiled (snd x) + 1) * (wbits (fst x) + 1)))
     (fun x => T_check_plan (fst x) (snd x)).
@@ -20906,7 +20906,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
 
   (** A run costs its trace work at the identifier width, its fuel counter and its scaled
       initial credit. *)
-  Lemma run_bigO : bigO
+  Lemma run_complexity : bigO
     (fun x : N * nat * program V.t * compiled V.t * limits * D.t =>
       let '(B, U, p, cp, lim, db) := x in
       plans_ok p cp /\ D.wf db /\ loaded p cp db /\
@@ -20923,7 +20923,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** A round costs its round work at the identifier width and its scaled initial credit. *)
-  Lemma round_bigO : bigO
+  Lemma round_complexity : bigO
     (fun x : N * nat * program V.t * compiled V.t * bool * D.t =>
       let '(B, U, p, cp, nv, db) := x in
       plans_ok p cp /\ D.wf db /\ loaded p cp db /\
@@ -20933,7 +20933,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Proof.
     apply bigO_intro with (c := (c_run + 1)%N).
     intros [[[[[B U] p] cp] nv] db] [Hplans [Hwf [Hloaded [Hids Hunit]]]].
-    pose proof (T1_round_le B U p cp nv db Hplans Hwf Hloaded Hids Hunit) as Htime.
+    pose proof (T_round_amort B U p cp nv db Hplans Hwf Hloaded Hids Hunit) as Htime.
     cbn beta iota zeta. unfold round_cost. nia.
   Qed.
 End RunT.

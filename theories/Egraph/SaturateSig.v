@@ -195,12 +195,12 @@ Module Type SATURATE_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
         N.of_nat (fold_right (fun e n => (expr_work e + 1 + n)%nat) 1%nat es) +
       E.run_cost B U p cp lim (inputs_db es db0))%N.
   (** Checking is linear in the front-end syntax. *)
-  Parameter check_front_bigO : bigO (fun _ => True)
+  Parameter check_front_complexity : bigO (fun _ => True)
     (fun x : list decl * list (rewrite V.t) * list (rule V.t) * list (fexpr V.t) =>
       let '(ds, rws, ans, es) := x in N.of_nat (front_size ds rws ans es + 1))
     (fun x => let '(ds, rws, ans, es) := x in T_check_front ds rws ans es).
   (** Adding an input costs its nodes at the identifier width, and its scaled credit. *)
-  Parameter add_expr_bigO : bigO
+  Parameter add_expr_complexity : bigO
     (fun x : N * nat * list decl * fexpr V.t * D.t =>
       let '(B, U, ds, e, db) := x in
       D.wf db /\ expr_ok ds db e /\ (D.ids (snd (add_expr e db)) <= B)%N /\
@@ -211,7 +211,7 @@ Module Type SATURATE_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     (fun x => let '(_, _, _, e, db) := x in T_add_expr e db).
   (** Saturation of accepted input costs its check, planning, loading, its inputs and its
       run. *)
-  Parameter saturate_bigO : bigO
+  Parameter saturate_complexity : bigO
     (fun x : N * nat * list decl * list (rewrite V.t) * list (rule V.t) * limits *
         list (fexpr V.t) =>
       let '(B, U, ds, rws, ans, lim, es) := x in
@@ -262,17 +262,17 @@ Module Type SATURATE_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
             (snd (add_node n (node_args n cs) db)))%N
     end.
   (** A well-sorted input adds its nodes in order and returns the class of its root. *)
-  Parameter F10_add_expr_nodes : forall ds e db,
+  Parameter add_expr_nodes : forall ds e db,
     expr_sorted (lookup_sorts ds) (lookup_kind ds) e ->
     snd (add_expr e db) = snd (add_nodes (expr_nodes V.t e) [] db) /\
     nth_error (fst (add_nodes (expr_nodes V.t e) [] db)) (expr_root V.t e) =
       Some (Id (fst (add_expr e db))).
   (** Adding an input pays for its nodes and one step per unit of each child index. *)
-  Parameter T3_add_expr_split : forall e db,
+  Parameter T_add_expr_split : forall e db,
     (T_add_expr e db <= T_add_nodes (expr_nodes V.t e) [] db +
       k_sat * N.of_nat (expr_work e))%N.
   (** Adding a constructor node pays its width at the result's unit and identifier budget. *)
-  Parameter T4_add_node_amort : forall B U node cells db, D.wf db ->
+  Parameter T_add_node_amort : forall B U node cells db, D.wf db ->
     (forall i, In (Id i) cells -> D.allocated db i) ->
     match node with
     | EApp f _ => kind (D.view db) f = Some OId /\ D.slots_fit db f (S (length cells))
@@ -286,7 +286,7 @@ Module Type SATURATE_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
       N.of_nat U * D.potential B db)%N.
   (** Adding a node of declared sorts keeps the invariant, the sorts of rows and the layout,
       and returns an allocated cell of the node's sort. *)
-  Parameter F1_add_expr_step : forall ds node cells db, D.wf db ->
+  Parameter add_expr_step : forall ds node cells db, D.wf db ->
     view_sorted (lookup_sorts ds) (D.view db) ->
     (forall f, kind (D.view db) f = lookup_kind ds f) ->
     (forall i, In (Id i) cells -> D.allocated db i) ->
@@ -305,7 +305,7 @@ Module Type SATURATE_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     (D.ids db <= D.ids (snd (add_node node cells db)))%N /\
     D.unit db <= D.unit (snd (add_node node cells db)).
   (** Adding a well-sorted input keeps the invariant, the sorts of rows and the layout. *)
-  Parameter F2_add_expr_wf : forall ds e db, D.wf db -> expr_ok ds db e ->
+  Parameter add_expr_wf : forall ds e db, D.wf db -> expr_ok ds db e ->
     view_sorted (lookup_sorts ds) (D.view db) ->
     D.wf (snd (add_expr e db)) /\
     view_sorted (lookup_sorts ds) (D.view (snd (add_expr e db))) /\
@@ -315,19 +315,19 @@ Module Type SATURATE_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     (D.ids db <= D.ids (snd (add_expr e db)))%N /\
     D.unit db <= D.unit (snd (add_expr e db)).
   (** Represented cells denote their identifier interpretation or literal value. *)
-  Parameter F3_represents_den : forall (M : model (V := V.t)) nu db c e,
+  Parameter represents_den_spec : forall (M : model (V := V.t)) nu db c e,
     D.wf db -> sat V.merge M nu (D.view db) -> represents (D.view db) c e ->
     denote M e = den nu c.
   (** Accepted inputs give a database that a valuation satisfies in every model whose
       lattice functions are closed under their merges. *)
-  Parameter F4_inputs_sat : forall (M : model (V := V.t)) ds rws ans es,
+  Parameter inputs_sat : forall (M : model (V := V.t)) ds rws ans es,
     front_ok ds rws ans es ->
     (forall f m k a b, lookup_kind ds f = Some (OLat m) ->
       lat M f k a -> lat M f k b -> lat M f k (V.merge m a b)) ->
     let p := C.compile ds rws ans in
     exists nu, sat V.merge M nu (D.view (snd (add_inputs es (E.load p (E.plan p))))).
   (** An accepted call runs the engine with the planned program on the loaded inputs. *)
-  Parameter F5_saturate_run : forall ds rws ans lim es out,
+  Parameter saturate_run : forall ds rws ans lim es out,
     saturate ds rws ans lim es = inr out ->
     let p := C.compile ds rws ans in
     let cp := E.plan p in
@@ -336,7 +336,7 @@ Module Type SATURATE_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
       E.run p cp lim initial = fst out.
   (** Closure under the compiled rules transports a represented left side to the right
       side in the same class. *)
-  Parameter F6_closed_represents : forall ds rws ans db rw g tau c l r,
+  Parameter closed_represents : forall ds rws ans db rw g tau c l r,
     D.wf db -> D.canonical db -> (forall f, kind (D.view db) f = lookup_kind ds f) ->
     view_sorted (lookup_sorts ds) (D.view db) ->
     closed V.prim V.merge (C.compile ds rws ans) (D.view db) ->
@@ -345,21 +345,21 @@ Module Type SATURATE_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     represents (D.view db) (Id c) l -> cond_in_db db tau (cond V.t rw) ->
     represents (D.view db) (Id c) r.
   (** Adding a list of inputs is the ordered fold of [add_expr] and pays its cost. *)
-  Parameter F7_add_inputs : forall es db,
+  Parameter add_inputs_spec : forall es db,
     snd (add_inputs es db) = inputs_db es db /\
     length (fst (add_inputs es db)) = length es /\
     (T_add_inputs es db <= k_sat * T_inputs es db)%N.
   (** The class returned for each input represents it after all inputs are added. *)
-  Parameter F8_inputs_represented : forall ds es db n e c t, D.wf db ->
+  Parameter inputs_represented : forall ds es db n e c t, D.wf db ->
     view_sorted (lookup_sorts ds) (D.view db) -> Forall (expr_ok ds db) es ->
     nth_error es n = Some e -> nth_error (fst (add_inputs es db)) n = Some c ->
     unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->
     represents (D.view (snd (add_inputs es db))) (Id c) t.
   (** The engine's view of a well-formed canonical database is canonical. *)
-  Parameter F9_canonical_view : forall db, D.wf db -> D.canonical db ->
+  Parameter view_canonical : forall db, D.wf db -> D.canonical db ->
     C.canonical_view (D.view db).
   (** Saturation pays for the check and, on accepted input, for each later phase. *)
-  Parameter T1_saturate_split : forall ds rws ans lim es,
+  Parameter T_saturate_split : forall ds rws ans lim es,
     let p := C.compile ds rws ans in
     let cp := E.plan p in
     (T_saturate ds rws ans lim es <= T_check_front ds rws ans es + k_sat +
@@ -370,7 +370,7 @@ Module Type SATURATE_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
           E.T_run p cp lim (snd (add_inputs es (E.load p cp)))
       end)%N.
   (** The plan constant fits under the public constant. *)
-  Parameter T2_k_sat : (k_sat <= c_sat)%N.
+  Parameter k_sat_le_c_sat : (k_sat <= c_sat)%N.
 End SATURATE_PLAN.
 
 Module Type SATURATE_ALL (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)

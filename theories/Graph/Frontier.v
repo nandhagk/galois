@@ -2783,7 +2783,7 @@ Module FrontierT <: FRONTIER_ALL.
     time_unfold T_idf. lia.
   Qed.
 
-  Lemma df_bigO : bigO (fun '(g, t, r) =>
+  Lemma df_complexity : bigO (fun '(g, t, r) =>
       wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
     (fun '(g, t, _) => N.of_nat
       ((graph_n (base g) + graph_e (base g) + df_size g t + 1) *
@@ -2794,7 +2794,7 @@ Module FrontierT <: FRONTIER_ALL.
     rewrite Nat2N.inj_mul. nia.
   Qed.
 
-  Lemma idf_bigO : bigO (fun _ : ptrie (list positive) * list positive => True)
+  Lemma idf_complexity : bigO (fun _ : ptrie (list positive) * list positive => True)
     (fun '(rows, seeds) => N.of_nat
       ((length seeds + idf_work idf rows seeds + 1) *
         (vertex_width (seeds ++ flat_map (frontier_row rows) (seeds ++ idf rows seeds)) + 1)))
@@ -2847,7 +2847,7 @@ Module FrontierT <: FRONTIER_ALL.
   Definition df_columns g t : list (positive * list positive) :=
     map (fun y => (y, df_column g t y)) (nodes g).
 
-  Lemma F1_df_initial : forall g t r y,
+  Lemma df_initial_inv : forall g t r y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y (df_initial g y).
   Proof.
@@ -2859,7 +2859,7 @@ Module FrontierT <: FRONTIER_ALL.
     - intros x Hx. exact (proj1 (proj1 (frontier_preds_member g y x Hprepared) Hx)).
   Qed.
 
-  Lemma F2_df_step : forall g t r y st next,
+  Lemma df_step_inv : forall g t r y st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y st -> df_step g t y st = inl next ->
     df_invariant g t y next /\ (df_potential g t y next < df_potential g t y st)%N.
@@ -2885,7 +2885,7 @@ Module FrontierT <: FRONTIER_ALL.
         Hgraph Hprepared Htree Hvalid Hstep). lia.
   Qed.
 
-  Lemma F3_df_stop : forall g t r y st result,
+  Lemma df_stop_spec : forall g t r y st result,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y st -> df_step g t y st = inr result ->
     df_pending st = [] /\ result = rev (df_column_answer st) /\ result = df_column g t y.
@@ -2901,7 +2901,7 @@ Module FrontierT <: FRONTIER_ALL.
       (df_initial g y) n m st finished' result answer Hreach Hreach' Hstep Hstop').
   Qed.
 
-  Lemma F4_df_driver : forall g t r y,
+  Lemma df_driver_spec : forall g t r y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     loopN (df_step g t y) (df_fuel g y) (df_initial g y) = inr (df_column g t y).
   Proof.
@@ -2912,7 +2912,7 @@ Module FrontierT <: FRONTIER_ALL.
       @inr df_state (list positive) answer) (eq_sym Hcolumn))).
   Qed.
 
-  Lemma F5_df_column : forall g t r y,
+  Lemma df_column_unfold : forall g t r y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     NoDup (df_column g t y) /\ incl (df_column g t y) (nodes g) /\
       forall x, In x (df_column g t y) <-> in_frontier (base g) r x y.
@@ -2920,19 +2920,19 @@ Module FrontierT <: FRONTIER_ALL.
     exact df_column_correct.
   Qed.
 
-  Lemma F6_df_transpose : forall columns x y,
+  Lemma df_transpose_spec : forall columns x y,
     In y (frontier_row (df_transpose columns) x) <->
       exists column, In (y, column) columns /\ In x column.
   Proof.
     exact df_transpose_member.
   Qed.
 
-  Lemma F7_df_equation : forall g t, df g t = df_transpose (df_columns g t).
+  Lemma df_def : forall g t, df g t = df_transpose (df_columns g t).
   Proof.
     reflexivity.
   Qed.
 
-  Lemma F8_df_pairs : forall g t r,
+  Lemma df_pairs : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     fold_right (fun entry n => length (snd entry) + n) 0 (df_columns g t) = df_size g t.
   Proof.
@@ -2952,13 +2952,13 @@ Module FrontierT <: FRONTIER_ALL.
       now split.
   Qed.
 
-  Lemma T1_df_step : forall g t r y st next,
+  Lemma T_df_step_credit : forall g t r y st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y st -> df_step g t y st = inl next ->
     (T_df_step g t y st + df_credit g t y next + c_loopN <= df_credit g t y st)%N.
   Proof.
     intros g t r y st next Hgraph Hprepared Htree Hy Hinv Hstep.
-    pose proof (proj2 (F2_df_step g t r y st next
+    pose proof (proj2 (df_step_inv g t r y st next
       Hgraph Hprepared Htree Hy Hinv Hstep)) as Hdecrease.
     destruct Hinv as [Hreach [Hunique [Hmarks [Hsubset Hpending]]]].
     destruct st as [pending seen answer]. destruct pending as [|x rest];
@@ -2970,7 +2970,7 @@ Module FrontierT <: FRONTIER_ALL.
     unfold df_credit, k_df_step. time_unfold T_df_step. nia.
   Qed.
 
-  Lemma T2_df_stop : forall g t r y st result,
+  Lemma T_df_step_stop_le : forall g t r y st result,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y st -> df_step g t y st = inr result ->
     (T_df_step g t y st <= k_df_stop * N.of_nat (length (df_column g t y) + 1))%N.
@@ -2986,7 +2986,7 @@ Module FrontierT <: FRONTIER_ALL.
     repeat rewrite Nat2N.inj_add in Htime. repeat rewrite Nat2N.inj_add. lia.
   Qed.
 
-  Lemma T3_df_loop : forall g t r y,
+  Lemma T_df_column_le : forall g t r y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     (T_df_column g t y <= k_df_column *
       N.of_nat (length (preds g y) + length (df_column g t y) + 1) *
@@ -2998,7 +2998,7 @@ Module FrontierT <: FRONTIER_ALL.
     lia.
   Qed.
 
-  Lemma T4_df_columns : forall g t r,
+  Lemma T_df_columns_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (fold_right (fun y cost => T_df_column g t y + cost)%N 0%N (nodes g) <=
       k_df_column * N.of_nat
@@ -3009,7 +3009,7 @@ Module FrontierT <: FRONTIER_ALL.
     exact (frontier_df_columns_time g t r Hgraph Hprepared Htree).
   Qed.
 
-  Lemma T5_df_transpose : forall g t r,
+  Lemma T_df_transpose_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_df_transpose (df_columns g t) <= k_df_transpose *
       N.of_nat (graph_n (base g) + df_size g t + 1) *
@@ -3021,7 +3021,7 @@ Module FrontierT <: FRONTIER_ALL.
     unfold k_df_transpose, df_columns, df_column. time_unfold T_df_transpose. lia.
   Qed.
 
-  Lemma T6_df_wrapper : forall g t,
+  Lemma T_df_split : forall g t,
     (T_df g t <= k_df * (N.of_nat (length (nodes g) + 1) +
       fold_right (fun y cost => T_df_column g t y + cost)%N 0%N (nodes g) +
       T_df_transpose (df_columns g t)))%N.
@@ -3031,7 +3031,7 @@ Module FrontierT <: FRONTIER_ALL.
     unfold T_df_column. lia.
   Qed.
 
-  Lemma T7_df_public : forall g t r,
+  Lemma T_df_plan_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_df g t <= c_frontier *
       N.of_nat (graph_n (base g) + graph_e (base g) + df_size g t + 1) *
@@ -3109,14 +3109,14 @@ Module FrontierT <: FRONTIER_ALL.
   Definition idf_loop_credit rows seeds (st : idf_guard rows seeds) : N :=
     (k_idf_walk * idf_credit rows seeds (proj1_sig st))%N.
 
-  Lemma F1_idf_finite : forall rows seeds,
+  Lemma idf_finite : forall rows seeds,
     exists universe, NoDup universe /\ incl seeds universe /\
       forall x y, In y (frontier_row rows x) -> In y universe.
   Proof.
     intros rows seeds. exists (idf_universe rows seeds). apply idf_universe_contains.
   Qed.
 
-  Lemma F2_idf_done : forall rows seeds,
+  Lemma idf_done : forall rows seeds,
     exists n st result,
       Nat.iter n (idf_advance rows) (idf_initial seeds) = st /\
       idf_step rows st = inr result /\ result = idf_walk rows seeds.
@@ -3125,18 +3125,18 @@ Module FrontierT <: FRONTIER_ALL.
     exists n, st, (idf rows seeds). split; [exact Hreach|]. split; [exact Hstop|reflexivity].
   Qed.
 
-  Lemma F3_idf_closure : forall rows seeds y,
+  Lemma idf_closure : forall rows seeds y,
     In y (idf_walk rows seeds) <-> in_row_closure rows seeds y.
   Proof.
     exact idf_rows_correct.
   Qed.
 
-  Lemma F4_idf_equation : forall rows seeds, idf rows seeds = idf_walk rows seeds.
+  Lemma idf_def : forall rows seeds, idf rows seeds = idf_walk rows seeds.
   Proof.
     reflexivity.
   Qed.
 
-  Lemma F5_idf_transport : forall g t r seeds y,
+  Lemma idf_transport : forall g t r seeds y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (in_row_closure (df g t) seeds y <-> in_iterated_frontier (base g) r seeds y).
   Proof.
@@ -3153,7 +3153,7 @@ Module FrontierT <: FRONTIER_ALL.
         now apply (proj2 (df_spec g t r x y Hgraph Hprepared Htree)).
   Qed.
 
-  Lemma F6_idf_initial : forall rows seeds,
+  Lemma idf_initial_inv : forall rows seeds,
     idf_invariant rows seeds (idf_initial seeds).
   Proof.
     intros rows seeds. unfold idf_invariant, idf_reachable, idf_initial.
@@ -3166,7 +3166,7 @@ Module FrontierT <: FRONTIER_ALL.
         destruct Hin as [v [<- Hv]]. exact Hv.
   Qed.
 
-  Lemma F7_idf_step : forall rows seeds st next,
+  Lemma idf_step_inv : forall rows seeds st next,
     idf_invariant rows seeds st -> idf_step rows st = inl next ->
     idf_invariant rows seeds next /\
       (idf_potential rows seeds next < idf_potential rows seeds st)%N.
@@ -3199,13 +3199,13 @@ Module FrontierT <: FRONTIER_ALL.
         { next : idf_guard rows seeds | idf_decreases rows seeds next st } + list positive
     with
     | inl next => fun Hstep =>
-      let Hstep_inv := F7_idf_step rows seeds state next (proj2_sig st) Hstep in
+      let Hstep_inv := idf_step_inv rows seeds state next (proj2_sig st) Hstep in
       inl (exist _ (exist _ next (proj1 Hstep_inv)) (proj2 Hstep_inv))
     | inr result => fun _ => inr result
     end eq_refl.
   TimeFun idf_checked_step.
 
-  Lemma F8_idf_stop : forall rows seeds st result,
+  Lemma idf_stop_spec : forall rows seeds st result,
     idf_invariant rows seeds st -> idf_step rows st = inr result ->
     idf_pending st = [] /\ result = rev (idf_answer st) /\ result = idf rows seeds.
   Proof.
@@ -3217,7 +3217,7 @@ Module FrontierT <: FRONTIER_ALL.
       n m st finished result (idf rows seeds) Hreach Hreach' Hstep Hstop).
   Qed.
 
-  Lemma F8a_idf_checked : forall rows seeds st,
+  Lemma idf_checked_step_spec : forall rows seeds st,
     match idf_checked_step rows seeds st with
     | inl next => inl (proj1_sig (proj1_sig next))
     | inr result => inr result
@@ -3233,7 +3233,7 @@ Module FrontierT <: FRONTIER_ALL.
             idf_decreases rows seeds next (exist _ st Hinv) } + list positive
         with
         | inl next => fun Hstep =>
-          let Hstep_inv := F7_idf_step rows seeds st next Hinv Hstep in
+          let Hstep_inv := idf_step_inv rows seeds st next Hinv Hstep in
           inl (exist _ (exist _ next (proj1 Hstep_inv)) (proj2 Hstep_inv))
         | inr answer => fun _ => inr answer
         end Hresult)
@@ -3245,7 +3245,7 @@ Module FrontierT <: FRONTIER_ALL.
     exact (Hproject _ eq_refl).
   Qed.
 
-  Lemma F8b_idf_accessible : forall rows seeds st,
+  Lemma idf_accessible_spec : forall rows seeds st,
     Acc (idf_decreases rows seeds) st.
   Proof.
     intros rows seeds st.
@@ -3253,32 +3253,32 @@ Module FrontierT <: FRONTIER_ALL.
       (fun state => idf_potential rows seeds (proj1_sig state)) N.lt_wf_0 st).
   Qed.
 
-  Lemma F8c_idf_loop : forall rows seeds,
+  Lemma idf_walk_def : forall rows seeds,
     idf_walk rows seeds = Argent.Loop.loop (idf_decreases rows seeds)
       (idf_checked_step rows seeds)
-      (exist _ (idf_initial seeds) (F6_idf_initial rows seeds))
-      (F8b_idf_accessible rows seeds _).
+      (exist _ (idf_initial seeds) (idf_initial_inv rows seeds))
+      (idf_accessible_spec rows seeds _).
   Proof.
     intros rows seeds. symmetry.
     refine (frontier_loop_invariant (idf_decreases rows seeds) (idf_checked_step rows seeds)
       (fun _ => True) (fun result => result = idf rows seeds) _ _
-      (exist _ (idf_initial seeds) (F6_idf_initial rows seeds))
-      (F8b_idf_accessible rows seeds
-        (exist _ (idf_initial seeds) (F6_idf_initial rows seeds))) I).
+      (exist _ (idf_initial seeds) (idf_initial_inv rows seeds))
+      (idf_accessible_spec rows seeds
+        (exist _ (idf_initial seeds) (idf_initial_inv rows seeds))) I).
     - intros state next Hnext Htrue Hstep. exact I.
     - intros state result Htrue Hstep.
-      pose proof (F8a_idf_checked rows seeds state) as Hraw. rewrite Hstep in Hraw.
-      exact (proj2 (proj2 (F8_idf_stop rows seeds (proj1_sig state) result
+      pose proof (idf_checked_step_spec rows seeds state) as Hraw. rewrite Hstep in Hraw.
+      exact (proj2 (proj2 (idf_stop_spec rows seeds (proj1_sig state) result
         (proj2_sig state) (eq_sym Hraw)))).
   Qed.
 
-  Lemma F9_idf_output : forall rows seeds,
+  Lemma idf_output_le : forall rows seeds,
     length (idf rows seeds) <= idf_work idf rows seeds.
   Proof.
     exact frontier_idf_output_size.
   Qed.
 
-  Lemma F10_idf_credit : forall rows seeds,
+  Lemma idf_potential_initial_le : forall rows seeds,
     (idf_potential rows seeds (idf_initial seeds) <=
       7 * N.of_nat (length seeds + idf_work idf rows seeds + 1))%N.
   Proof.
@@ -3290,7 +3290,7 @@ Module FrontierT <: FRONTIER_ALL.
     apply time_of_nat_le in Hbound. rewrite Nat2N.inj_mul in Hbound. exact Hbound.
   Qed.
 
-  Lemma T1_idf_step : forall rows seeds st next,
+  Lemma T_idf_step_credit : forall rows seeds st next,
     idf_invariant rows seeds st -> idf_step rows st = inl next ->
     (T_idf_step rows st + idf_credit rows seeds next <
       idf_credit rows seeds st)%N.
@@ -3303,7 +3303,7 @@ Module FrontierT <: FRONTIER_ALL.
     time_unfold T_idf_step. lia.
   Qed.
 
-  Lemma T2_idf_stop : forall rows seeds st result,
+  Lemma T_idf_step_stop_le : forall rows seeds st result,
     idf_invariant rows seeds st -> idf_step rows st = inr result ->
     (T_idf_step rows st <= k_idf_stop * N.of_nat (length (idf rows seeds) + 1))%N.
   Proof.
@@ -3327,32 +3327,32 @@ Module FrontierT <: FRONTIER_ALL.
     cbn [idf_guard_state proj1_sig]. lia.
   Qed.
 
-  Lemma T2a_idf_checked_step : forall rows seeds st next Hnext,
+  Lemma T_idf_checked_step_credit : forall rows seeds st next Hnext,
     idf_checked_step rows seeds st = inl (exist _ next Hnext) ->
     (T_idf_checked_step rows seeds st + idf_loop_credit rows seeds next <
       idf_loop_credit rows seeds st)%N.
   Proof.
     intros rows seeds st next Hnext Hstep.
-    pose proof (F8a_idf_checked rows seeds st) as Hraw. rewrite Hstep in Hraw.
+    pose proof (idf_checked_step_spec rows seeds st) as Hraw. rewrite Hstep in Hraw.
     cbn [proj1_sig] in Hraw.
-    pose proof (T1_idf_step rows seeds (proj1_sig st) (proj1_sig next)
+    pose proof (T_idf_step_credit rows seeds (proj1_sig st) (proj1_sig next)
       (proj2_sig st) (eq_sym Hraw)) as Hcredit.
     rewrite idf_guard_clock. unfold idf_loop_credit, k_idf_walk. lia.
   Qed.
 
-  Lemma T2b_idf_checked_stop : forall rows seeds st result,
+  Lemma T_idf_checked_step_stop_le : forall rows seeds st result,
     idf_checked_step rows seeds st = inr result ->
     (T_idf_checked_step rows seeds st <=
       k_idf_walk * (k_idf_stop * N.of_nat (length (idf rows seeds) + 1) + 1))%N.
   Proof.
     intros rows seeds st result Hstep.
-    pose proof (F8a_idf_checked rows seeds st) as Hraw. rewrite Hstep in Hraw.
-    pose proof (T2_idf_stop rows seeds (proj1_sig st) result
+    pose proof (idf_checked_step_spec rows seeds st) as Hraw. rewrite Hstep in Hraw.
+    pose proof (T_idf_step_stop_le rows seeds (proj1_sig st) result
       (proj2_sig st) (eq_sym Hraw)) as Hcost.
     rewrite idf_guard_clock. unfold k_idf_walk. lia.
   Qed.
 
-  Lemma T2c_idf_loop : forall rows seeds st Hacc,
+  Lemma T_idf_loop_le : forall rows seeds st Hacc,
     (Argent.Loop.T_loop (idf_decreases rows seeds) (idf_checked_step rows seeds)
       (T_idf_checked_step rows seeds) st Hacc <= idf_loop_credit rows seeds st +
       k_idf_walk * (k_idf_stop * N.of_nat (length (idf rows seeds) + 1) + 1) + 1)%N.
@@ -3363,12 +3363,12 @@ Module FrontierT <: FRONTIER_ALL.
       (k_idf_walk * (k_idf_stop * N.of_nat (length (idf rows seeds) + 1) + 1))%N
       _ _ st Hacc I).
     - intros state next Hnext Htrue Hstep. split; [exact I|].
-      exact (T2a_idf_checked_step rows seeds state next Hnext Hstep).
+      exact (T_idf_checked_step_credit rows seeds state next Hnext Hstep).
     - intros state result Htrue Hstep.
-      exact (T2b_idf_checked_stop rows seeds state result Hstep).
+      exact (T_idf_checked_step_stop_le rows seeds state result Hstep).
   Qed.
 
-  Lemma T3_idf_walk : forall rows seeds,
+  Lemma T_idf_walk_le : forall rows seeds,
     (T_idf_walk rows seeds <= k_idf_walk *
       (idf_credit rows seeds (idf_initial seeds) +
         k_idf_stop * N.of_nat (length (idf rows seeds) + 1) +
@@ -3381,13 +3381,13 @@ Module FrontierT <: FRONTIER_ALL.
     unfold k_idf_walk, k_idf_stop. time_unfold T_idf_walk. time_unfold T_idf. lia.
   Qed.
 
-  Lemma T4_idf_wrapper : forall rows seeds,
+  Lemma T_idf_split : forall rows seeds,
     (T_idf rows seeds <= k_idf_walk * (T_idf_walk rows seeds + 1))%N.
   Proof.
     intros rows seeds. unfold k_idf_walk. time_unfold T_idf_walk. lia.
   Qed.
 
-  Lemma T5_idf_public : forall rows seeds,
+  Lemma T_idf_plan_le : forall rows seeds,
     (T_idf rows seeds <= c_frontier *
       N.of_nat (length seeds + idf_work idf rows seeds + 1) *
       N.of_nat (idf_width rows seeds + 1))%N.

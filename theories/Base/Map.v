@@ -59,7 +59,7 @@ Module TrieMap (K : KEY) <: MAP K.
     elements m = List.map snd (PTrieCode.elements m).
   Proof.
     intros A m. unfold elements, fold.
-    rewrite PTrieT.F9_fold_values, rev_append_rev, app_nil_r.
+    rewrite PTrieT.fold_values_def, rev_append_rev, app_nil_r.
     generalize (PTrieCode.elements m). intro entries.
     assert (Hfold : forall acc,
       fold_left (fun acc kv => (fst (snd kv), snd (snd kv)) :: acc) entries acc =
@@ -75,14 +75,14 @@ Module TrieMap (K : KEY) <: MAP K.
   Lemma elements_length : forall A (m : t A), length (elements m) <= nodes m.
   Proof.
     intros A m. rewrite elements_trie, length_map.
-    apply PTrieT.F4_bindings.
+    apply PTrieT.bindings_le_nodes.
   Qed.
 
   (** Stored codes count bindings even when the stored client labels are inconsistent. *)
   Lemma codes_length : forall A (m : t A), length (codes m) <= nodes m.
   Proof.
     intros A m. unfold codes. rewrite length_map.
-    apply PTrieT.F4_bindings.
+    apply PTrieT.bindings_le_nodes.
   Qed.
 
   Lemma wf_empty : forall A, wf (@empty A).
@@ -189,7 +189,7 @@ Module TrieMap (K : KEY) <: MAP K.
     fold f m b = fold_left (fun acc ka => f acc (fst ka) (snd ka)) (elements m) b.
   Proof.
     intros A B f m b. unfold fold.
-    rewrite PTrieT.F9_fold_values, elements_trie.
+    rewrite PTrieT.fold_values_def, elements_trie.
     generalize (PTrieCode.elements m). intro entries.
     revert b. induction entries as [|entry rest IH]; intro b;
       cbn [List.map fold_left]; [reflexivity|apply IH].
@@ -512,7 +512,7 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
     unfold T_fold.
     eapply N.le_trans.
     - apply N.add_le_mono_l.
-      apply PTrieT.T9_fold_values with (c := (c + 3)%N).
+      apply PTrieT.T_fold_values_le with (c := (c + 3)%N).
       intros acc [k a]. time_simpl. time_cbn. specialize (Hf acc k a). nia.
     - unfold c_map, nodes. nia.
   Qed.
@@ -520,7 +520,7 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
     (wf m -> T_elements m <= c_map * N.of_nat (weight m + 1))%N.
   Proof.
     intros A m Hwf.
-    pose proof (PTrieT.T9_fold_values (K.t * A) (list (K.t * A))
+    pose proof (PTrieT.T_fold_values_le (K.t * A) (list (K.t * A))
       (fun acc kv => (fst kv, snd kv) :: acc) (fun _ _ => 4%N) m nil 4%N
       (fun _ _ => N.le_refl 4)) as Hfold.
     pose proof (List.T_rev_append_le (fold (fun acc k a => (k, a) :: acc) m nil) nil)
@@ -717,14 +717,14 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
         ltac:(intros acc [p [k a]]; apply Hcallback)
         (PTrieCode.elements m) b 0%N 0%N) as Hwork
     end.
-    pose proof (PTrieT.F4_bindings (K.t * A) m) as Hlength.
+    pose proof (PTrieT.bindings_le_nodes (K.t * A) m) as Hlength.
     rewrite elements_trie, fold_left_map.
     unfold c_map, nodes, PTrieT.bindings in *.
     nia.
   Qed.
 
   (** Lookup is linear in the encoded key width. *)
-  Lemma get_bigO : forall A, bigO (X := K.t * t A) (fun _ => True)
+  Lemma get_complexity : forall A, bigO (X := K.t * t A) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_get (fst x) (snd x)).
   Proof.
     intro A. exists c_map. intros [k m] _. cbn [fst snd].
@@ -733,7 +733,7 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
   Qed.
 
   (** Setting a binding is linear in the encoded key width. *)
-  Lemma set_bigO : forall A, bigO (X := K.t * A * t A) (fun _ => True)
+  Lemma set_complexity : forall A, bigO (X := K.t * A * t A) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst (fst x))))
     (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -743,7 +743,7 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
   Qed.
 
   (** Removing a binding is linear in the encoded key width. *)
-  Lemma remove_bigO : forall A, bigO (X := K.t * t A) (fun _ => True)
+  Lemma remove_complexity : forall A, bigO (X := K.t * t A) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_remove (fst x) (snd x)).
   Proof.
     intro A. exists c_map. intros [k m] _. cbn [fst snd].
@@ -752,7 +752,7 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
   Qed.
 
   (** Merging has linear skeleton cost when callback costs are bounded. *)
-  Lemma merge_bigO : forall A B C,
+  Lemma merge_complexity : forall A B C,
     bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
@@ -766,7 +766,7 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
   Qed.
 
   (** Relational checking has linear skeleton cost when callback costs are bounded. *)
-  Lemma forall2b_bigO : forall A B,
+  Lemma forall2b_complexity : forall A B,
     bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
       t A * t B)
       (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)

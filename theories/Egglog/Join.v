@@ -1621,7 +1621,7 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   Qed.
 
   (** The run clock is linear in charged work, scaled by index width and level scans. *)
-  Lemma run_bigO : bigO (fun x : jplan * list I.t => wf_plan (fst x) (snd x))
+  Lemma run_complexity : bigO (fun x : jplan * list I.t => wf_plan (fst x) (snd x))
     (fun x => N.of_nat ((work (fst x) (snd x) + length (snd x) + 2) *
       (wmax (fst x) (snd x) + 1) * ((nvars (fst x) + 1) * (nvars (fst x) + 1))))
     (fun x => T_run (fst x) (snd x)).

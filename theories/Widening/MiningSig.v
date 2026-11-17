@@ -48,10 +48,10 @@ Module Type MINING_TIME (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
      fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)))%nat) +
      T.T_make (expanded es extra) + 1))%N.
   (** Literal collection is linear in the term size. *)
-  Parameter lits_bigO : bigO (X := term L.op X.t) (fun _ => True)
+  Parameter lits_complexity : bigO (X := term L.op X.t) (fun _ => True)
     (fun e => N.of_nat (tsize e)) (fun e => T_lits e).
   (** Mining is linear in the terms and seeds plus the cost of building the thresholds. *)
-  Parameter mine_bigO : bigO (X := list (term L.op X.t) * list Z) (fun _ => True)
+  Parameter mine_complexity : bigO (X := list (term L.op X.t) * list Z) (fun _ => True)
     (fun '(es, extra) => N.of_nat (fold_right Nat.add 0 (map tsize es) +
         fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)) +
         ((length (expanded es extra) * (Nat.log2 (length (expanded es extra)) + 1) + 1) *
@@ -68,14 +68,14 @@ Module Type MINING_PLAN (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
   Parameter T_lits_acc : term L.op X.t -> list Z -> N.
   Parameter k_mining : N.
   (** Accumulator collection agrees with the literal order. *)
-  Parameter F3_lits_acc : forall e acc, lits_acc e acc = lits e ++ acc.
+  Parameter lits_acc_def : forall e acc, lits_acc e acc = lits e ++ acc.
   (** Accumulator collection traverses each syntax node once. *)
-  Parameter T1_lits_acc : forall e acc,
+  Parameter T_lits_acc_le : forall e acc,
     (T_lits_acc e acc <= k_mining * N.of_nat (tsize e))%N.
   (** Mining constructs the expanded threshold set. *)
-  Parameter F1_mine : forall es extra, mine es extra = T.make (expanded es extra).
+  Parameter mine_def : forall es extra, mine es extra = T.make (expanded es extra).
   (** Expansion contributes three entries for each seed. *)
-  Parameter F2_expanded_length : forall es extra,
+  Parameter expanded_length : forall es extra,
     length (expanded es extra) = 3 * length (seeds es extra).
 End MINING_PLAN.
 

@@ -65,7 +65,7 @@ Module Type SPARSE_LAWS (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   (** Value keys retain the supplied key encoding. *)
   Parameter key_code_spec : key_code = X.encode.
   (** Value equality retains the supplied key test. *)
-  Parameter key_eqb_specification : key_eqb = X.eqb.
+  Parameter key_eqb_def : key_eqb = X.eqb.
   (** On a well-formed presentation, rows retain entry, definition and incoming-operand
       occurrence order. *)
   Parameter rows_spec : forall p, S.wf p -> rows p =
@@ -138,20 +138,20 @@ Module Type SPARSE_TIME (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
         value_bits p + V.size V.top + V.size V.bot + 1))%N
     with Definition kw := sparse_kw.
   (** Listing the rows is linear in their number. *)
-  Parameter rows_bigO : bigO (X := prog) (fun p => wf p)
+  Parameter rows_complexity : bigO (X := prog) (fun p => wf p)
     (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
   (** Starting a row is linear in the row budget at the empty value. *)
-  Parameter start_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter start_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
   (** Listing the dependencies of a row is linear in their number times the key width. *)
-  Parameter deps_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter deps_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_deps p r).
   (** The target of a listed row fits the row budget at the empty value. *)
-  Parameter target_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter target_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
   (** Listing the sides of a row is linear in their number times the key width. *)
-  Parameter sides_bigO : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
+  Parameter sides_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
     (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
     (fun '(p, r) => T_sides p r).
 End SPARSE_TIME.

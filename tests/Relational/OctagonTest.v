@@ -454,7 +454,7 @@ Local Lemma odd_coherent : OctTime.coherent strong_odd_matrix.
 Proof.
   assert (Heq : strong_odd_matrix = OctTime.add_cons positive_y positive_y 0%Z
     (OctTime.add_cons positive_y negative_y 1%Z OctTimeMap.empty)) by (vm_compute; reflexivity).
-  rewrite Heq. repeat apply OctTime.coherent_add_cons. exact OctTime.coh_top.
+  rewrite Heq. repeat apply OctTime.coherent_add_cons. exact OctTime.coherent_top.
 Qed.
 
 (** Only the positive and negative literals of y occur in this matrix. *)

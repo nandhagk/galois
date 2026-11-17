@@ -94,19 +94,19 @@ Module Type NUM_STATE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
        match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
      c_num * N.of_nat (range_bits e s + 1))%N.
   (** Assignment is linear in its stated numeric work. *)
-  Parameter assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+  Parameter assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
   (** Havoc is linear in its stated numeric work. *)
-  Parameter havoc_bigO : bigO (fun _ : X.t * t => True)
+  Parameter havoc_complexity : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x)))
     (fun x => T_havoc (fst x) (snd x)).
   (** Assumption is linear in its stated numeric work. *)
-  Parameter assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+  Parameter assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
   (** A range query is linear in its stated numeric work. *)
-  Parameter range_bigO : bigO (fun _ : term L.op X.t * t => True)
+  Parameter range_complexity : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
     (fun x => T_range (fst x) (snd x)).
 End NUM_STATE_TIME.

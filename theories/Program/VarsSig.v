@@ -59,13 +59,13 @@ Module Type VARS_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
   Parameter T_exits_le : forall p n,
     (T_exits p n <= c_vars * N.of_nat (N.bits n + length (exits p n) + 1))%N.
   (** Edge uses are linear in the edge key and the returned variables. *)
-  Parameter uses_bigO : bigO (X := P.t * E.t) (fun _ => True)
+  Parameter uses_complexity : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(p, e) => N.of_nat (E.bits e + length (uses p e))) (fun '(p, e) => T_uses p e).
   (** Edge definitions are linear in the edge key and the returned variables. *)
-  Parameter defs_bigO : bigO (X := P.t * E.t) (fun _ => True)
+  Parameter defs_complexity : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(p, e) => N.of_nat (E.bits e + length (defs p e))) (fun '(p, e) => T_defs p e).
   (** Exit observations are linear in the node key and the returned variables. *)
-  Parameter exits_bigO : bigO (X := P.t * N.t) (fun _ => True)
+  Parameter exits_complexity : bigO (X := P.t * N.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (N.bits n + length (exits p n))) (fun '(p, n) => T_exits p n).
   Definition universe_work p :=
     (C.T_edges p + C.T_nodes p +
@@ -77,7 +77,7 @@ Module Type VARS_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
   (** Universe preparation charges every reader, encoding and trie traversal. *)
   Parameter T_universe_le : forall p, (T_universe p <= c_vars * universe_work p)%N.
   (** The universe has the aggregate reader and bit-width bound. *)
-  Parameter universe_bigO : bigO (fun _ : P.t => True) universe_work T_universe.
+  Parameter universe_complexity : bigO (fun _ : P.t => True) universe_work T_universe.
 End VARS_TIME.
 
 Module Type VARS_T (P : TYPE) (N : KEY_T) (E : KEY_T)
@@ -87,24 +87,24 @@ Module Type VARS_T (P : TYPE) (N : KEY_T) (E : KEY_T)
 Module Type VARS_PLAN (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (X : KEY_T) (Import V : VARS_T P N E C X).
   (** Flattening syntax preserves exactly the edge and exit occurrences. *)
-  Parameter F1_occurrences : forall p x, In x (occurrences p) <-> occurs p x.
+  Parameter occurrences_iff : forall p x, In x (occurrences p) <-> occurs p x.
   (** Deduplicating the occurrence scan gives the prepared universe. *)
-  Parameter F2_universe : forall p x, In x (universe p) <-> In x (occurrences p).
+  Parameter universe_occurrences_iff : forall p x, In x (universe p) <-> In x (occurrences p).
   Parameter seen : P.t -> ptrie X.t.
   Parameter T_seen : P.t -> N.
   Parameter k_seen k_collect : N.
   (** The deduplicating trie stores each occurrence at its own encoding. *)
-  Parameter F3_seen : forall p,
+  Parameter seen_def : forall p,
     seen p = fold_left (fun s x => PTrieCode.set (X.encode x) x s) (occurrences p)
       PTrieCode.empty.
   (** The deduplicating trie has at most one skeleton node per occurrence key bit. *)
-  Parameter F4_seen_nodes : forall p,
+  Parameter seen_nodes_le : forall p,
     PTrie.nodes (seen p) <= length (occurrences p) * occurrence_width p.
   (** Building the trie pays each reader, encoding and insertion path. *)
-  Parameter T1_seen : forall p,
+  Parameter T_seen_le : forall p,
     (T_seen p <= k_seen * universe_work p)%N.
   (** Collecting values pays one skeleton walk and one reversal. *)
-  Parameter T2_universe : forall p,
+  Parameter T_universe_split : forall p,
     (T_universe p <= k_collect * (T_seen p +
       N.of_nat (length (occurrences p) + 1) * N.of_nat (occurrence_width p + 1)))%N.
 End VARS_PLAN.

@@ -3411,7 +3411,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - pose proof (ell_entry m p q z Hentry). lia.
   Qed.
 
-  Lemma grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
+  Lemma incr_close_growth : forall i j d m m', incr_close i j d m = Reached m' ->
     supp m' <= supp m + 2 /\
     b m' <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j)) /\
     ell m' <= Nat.max (ell m) (Z.size_nat d) + 2.
@@ -3434,12 +3434,12 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Widening units cover the squared support size. *)
-  Lemma F_wunits : forall s, wunits s = (ns s + 1) ^ 2.
+  Lemma wunits_def : forall s, wunits s = (ns s + 1) ^ 2.
   Proof.
     reflexivity.
   Qed.
   (** Assumption work charges incremental closure for every emitted atom. *)
-  Lemma F_assume_work : forall g es s,
+  Lemma assume_work_def : forall g es s,
     (N.of_nat (assume_work g es s) =
       N.of_nat (length (F.atoms_of g es) *
         (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
@@ -3449,7 +3449,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     intros g es s. unfold assume_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
   (** Assignment work pays for linearization and quadratic matrix updates. *)
-  Lemma F_assign_work : forall x e s,
+  Lemma assign_work_def : forall x e s,
     (N.of_nat (assign_work x e s) =
       N.of_nat ((ns s + 1)^2 *
         (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) + skels s +
@@ -3458,12 +3458,12 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof.
     intros x e s. unfold assign_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
-  Lemma F_havoc_work : forall x s,
+  Lemma havoc_work_def : forall x s,
     havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1) + skels s.
   Proof.
     reflexivity.
   Qed.
-  Lemma F_join_entry : forall ma mb i j,
+  Lemma join_entry_spec : forall ma mb i j,
     match join (Reached ma) (Reached mb) with
     | Reached mj => entry mj i j =
         match entry ma i j, entry mb i j with
@@ -3478,7 +3478,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       bound_join (entry ma i j) (entry mb i j)).
     rewrite <- !raw_entry_get. apply raw_entry_join.
   Qed.
-  Lemma fw_round_implied : forall k m v, models m v -> models (fw_round k m) v.
+  Lemma fw_round_models_preserved : forall k m v, models m v -> models (fw_round k m) v.
   Proof.
     exact fw_round_models.
   Qed.
@@ -3658,18 +3658,18 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     exact incr_close_models.
   Qed.
   (** State size charges all stored numeric data. *)
-  Lemma F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
+  Lemma size_def : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
   Proof.
     reflexivity.
   Qed.
   (** Range work charges the numeric query and its linearization. *)
-  Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
+  Lemma range_work_def : forall e s, (N.of_nat (range_work e s) =
     N.of_nat ((tsize e + 1) *
       (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) + F.T_lin_of e)%N.
   Proof.
     intros e s. unfold range_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
-  Lemma F_range_bits : forall e s,
+  Lemma range_bits_def : forall e s,
     range_bits e s = ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
   Proof.
     reflexivity.
@@ -3721,7 +3721,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Each consistent pivot label names a code in the matrix support. *)
-  Lemma keys_support : forall m k, dbm_wf m -> In k (keys m) ->
+  Lemma keys_in_support : forall m k, dbm_wf m -> In k (keys m) ->
     In (K.encode k) (support m).
   Proof.
     intros m k [Houter Hrows] Hkey. unfold keys in Hkey.
@@ -3907,7 +3907,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - rewrite M.find_empty in Hraw. discriminate.
   Qed.
 
-  Lemma bits_fw_trace_le : forall ks m k a, dbm_wf m ->
+  Lemma fw_trace_bits_le : forall ks m k a, dbm_wf m ->
     In (k, a) (fw_trace ks m) ->
     ell a <= ell m + Nat.log2 (supp m) + 1.
   Proof.
@@ -3918,7 +3918,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     destruct (wf_raw_entry_keys a p q d Hawf Hraw) as [i [j [Hi [Hj Hentry]]]].
     exact (path_invariant_entry_bits m (entry a) ps Hpath i j d Hentry).
   Qed.
-  Lemma supp_fw_round : forall k m,
+  Lemma fw_round_support_kept : forall k m,
     supp (fw_round k m) = supp m /\ b (fw_round k m) = b m.
   Proof.
     intros k m. apply support_sizes, support_round.
@@ -4049,7 +4049,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     injection Hclose as <-.
     rewrite <- (app_nil_r (rev (keys m))).
     eapply close_pivots_path_invariant; [|apply RelationalPathBounds.invariant_initial|exact Hrun].
-    intros k Hkey. now apply keys_support.
+    intros k Hkey. now apply keys_in_support.
   Qed.
 
   (** A closed lower relation prevents a supported Floyd round from crossing its bounds. *)
@@ -4118,7 +4118,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof.
     intros m u Hwf Hclosed Hbelow Hzero.
     destruct (close_pivots_above_closed (keys m) m u
-      (fun k Hkey => keys_support m k Hwf Hkey) Hzero Hclosed Hbelow)
+      (fun k Hkey => keys_in_support m k Hwf Hkey) Hzero Hclosed Hbelow)
       as [final [Hrun Hfinal]].
     exists final. split; [|exact Hfinal].
     unfold close. rewrite pivot_keys_eq_keys, Hrun.
@@ -4461,7 +4461,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       apply RelationalPathBounds.edge_extension_zero;
         [apply closed_at_every_key; exact Hbase|exact Hcycle|].
       apply (proj1 Hbase). assert (Hsupport : In (K.encode k) (support seed)).
-      { now apply keys_support. }
+      { now apply keys_in_support. }
       unfold seed in Hsupport. rewrite support_add_cons in Hsupport.
       destruct Hsupport as [Hcode|[Hcode|Hcode]].
       - apply K.encode_inj in Hcode. subst k.
@@ -4641,7 +4641,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       apply RelationalPathBounds.edge_extension_zero;
         [apply closed_at_every_key; exact Hbase|exact Hcycle|].
       apply (proj1 Hbase). assert (Hsupport : In (K.encode k) (support direct)).
-      { now apply keys_support. }
+      { now apply keys_in_support. }
       unfold direct in Hsupport. rewrite support_add_cons in Hsupport.
       destruct Hsupport as [Hcode|[Hcode|Hcode]].
       - apply K.encode_inj in Hcode. subst k.
@@ -4998,13 +4998,13 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** A consistent matrix has no more pivot keys than codes in its support. *)
-  Lemma keys_le : forall m, dbm_wf m -> length (keys m) <= supp m.
+  Lemma keys_length_le : forall m, dbm_wf m -> length (keys m) <= supp m.
   Proof.
     intros m Hwf. unfold supp.
     rewrite <- (length_map K.encode (keys m)). apply NoDup_incl_length.
     - apply encoded_keys_nodup, keys_nodup.
     - intros p Hin. apply in_map_iff in Hin. destruct Hin as [k [Hcode Hkey]].
-      subst p. now apply keys_support.
+      subst p. now apply keys_in_support.
   Qed.
   (** A missing value contributes no stored weight. *)
   Definition option_weight {A : Type} (w : A -> nat) (a : option A) : nat :=
@@ -6402,7 +6402,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** A consistent pivot round satisfies the promised quadratic timing bound. *)
-  Lemma T1_fw_round : forall k m, dbm_wf m ->
+  Lemma T_fw_round_le : forall k m, dbm_wf m ->
     (T_fw_round k m <= k_zone * N.of_nat
       ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
   Proof.
@@ -6887,9 +6887,9 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
   Proof.
     intros m Hwf. eapply N.le_trans; [apply (scan_budget_bound (keys m) (b m))|].
-    - intros k Hin. unfold K.bits. apply support_bits. now apply keys_support.
+    - intros k Hin. unfold K.bits. apply support_bits. now apply keys_in_support.
     - apply N.mul_le_mono_l, time_of_nat_le.
-      pose proof (keys_le m Hwf) as Hlength. cbn [Nat.pow]. nia.
+      pose proof (keys_length_le m Hwf) as Hlength. cbn [Nat.pow]. nia.
   Qed.
 
   (** Collecting and deduplicating pivot labels fits the initial quadratic key budget. *)
@@ -7029,7 +7029,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Closure pays for collecting pivots, its exact round trace, and diagonal scans. *)
-  Lemma T2_close : forall m, dbm_wf m ->
+  Lemma T_close_split : forall m, dbm_wf m ->
     (T_close m <= k_zone * (N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
       fold_right N.add 0%N (map (fun km => T_fw_round (fst km) (snd km))
         (fw_trace (keys m) m))))%N.
@@ -7068,7 +7068,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       + injection Heq as Hkey Hstate. subst k a. split; [now left|]. now split.
       + destruct (nonnegative p (fw_round p m)); [|contradiction].
         destruct (IH (fw_round p m) k a Hin) as [Hkey [Hsupport Hbits]].
-        destruct (supp_fw_round p m) as [Hround_support Hround_bits].
+        destruct (fw_round_support_kept p m) as [Hround_support Hround_bits].
         split; [now right|]. split; congruence.
   Qed.
 
@@ -7093,8 +7093,8 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     intros m k a Hwf Hin.
     destruct (fw_trace_resources (keys m) m k a Hin) as [Hkey [Hsupport Hbits]].
     assert (Hkey_bits : K.bits k <= b m).
-    { unfold K.bits. apply support_bits. now apply keys_support. }
-    pose proof (bits_fw_trace_le (keys m) m k a Hwf Hin) as Hell.
+    { unfold K.bits. apply support_bits. now apply keys_in_support. }
+    pose proof (fw_trace_bits_le (keys m) m k a Hwf Hin) as Hell.
     eapply N.le_trans; [apply T_fw_round_raw|].
     replace (2 * k_zone * N.of_nat
       ((supp m + 1)^2 * (b m + ell m + Nat.log2 (supp m) + 1)))%N with
@@ -7138,7 +7138,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
         rewrite N.mul_1_r. now apply Hpoint. }
       specialize (Hbound Hcallback). now rewrite sum_weight_one in Hbound. }
     assert (Hlength : length xs <= supp m).
-    { unfold xs. eapply Nat.le_trans; [apply fw_trace_length|]. now apply keys_le. }
+    { unfold xs. eapply Nat.le_trans; [apply fw_trace_length|]. now apply keys_length_le. }
     assert (Hunits : units * length xs <=
       (supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)).
     { unfold units. apply quadratic_cubic_budget. lia. }
@@ -7457,7 +7457,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     intros i j d [|m]; [cbn [refine ns bs ells]; repeat split; lia|].
     unfold refine. destruct (incr_close i j d m) as [|next] eqn:Hnext.
     - cbn [ns bs ells]. repeat split; lia.
-    - cbn [ns bs ells]. exact (grow_incr_close i j d m next Hnext).
+    - cbn [ns bs ells]. exact (incr_close_growth i j d m next Hnext).
   Qed.
 
   (** Refinement adds only its state dispatch to the incremental closure clock. *)
@@ -7550,7 +7550,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - set (work := (N.of_nat ((tsize e + 1)%nat) * range_unit e m)%N).
       assert (Hwork : N.of_nat (range_work e (Reached m) + 1) =
         (work + F.T_lin_of e + 1)%N).
-      { rewrite Nat2N.inj_add, F_range_work. cbn [bs ells].
+      { rewrite Nat2N.inj_add, range_work_def. cbn [bs ells].
         unfold work, range_unit, range_payload. rewrite Nat2N.inj_mul.
         reflexivity. }
       assert (Hunit_work : (range_unit e m <= work)%N).
@@ -9669,7 +9669,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       time_unfold (@T_assign). time_simpl. cbn beta iota zeta. lia.
     - pose proof (T_assign_fast_le x e m) as Htime.
       pose proof (assign_fast_unit_le x e m) as Hwork.
-      rewrite Nat2N.inj_add, F_assign_work. cbn [ns bs ells skels].
+      rewrite Nat2N.inj_add, assign_work_def. cbn [ns bs ells skels].
       change (T_assign x e (Reached m) <=
         c_num * (assign_unit x e m + F.T_lin_of e + 1))%N.
       eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_l. lia.
@@ -10056,7 +10056,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Assignment is linear in the public numeric work measure. *)
-  Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+  Lemma assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -10066,7 +10066,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Forgetting a variable is linear in the public numeric work measure. *)
-  Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
+  Lemma havoc_complexity : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x)))
     (fun x => T_havoc (fst x) (snd x)).
   Proof.
@@ -10076,7 +10076,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Assumption is linear in the public numeric work measure. *)
-  Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
+  Lemma assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
@@ -10086,7 +10086,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Range queries are linear in the public numeric work measure. *)
-  Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
+  Lemma range_complexity : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
     (fun x => T_range (fst x) (snd x)).
   Proof.
@@ -10096,7 +10096,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Closure is cubic in the support of a well-formed matrix. *)
-  Lemma close_bigO : bigO (fun m : dbm => dbm_wf m)
+  Lemma close_complexity : bigO (fun m : dbm => dbm_wf m)
     (fun m => N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
     (fun m => T_close m).
   Proof.
@@ -10106,7 +10106,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Incremental closure is quadratic in the original support. *)
-  Lemma incr_close_bigO : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
+  Lemma incr_close_complexity : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
     (fun x => N.of_nat ((supp (snd x) + 1)^2 *
       (b (snd x) + K.bits (fst (fst (fst x))) + K.bits (snd (fst (fst x))) +
         ell (snd x) + Z.size_nat (snd (fst x)) + 1)))
@@ -10118,7 +10118,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Inclusion scans the sparse skeletons and stored entries at their bit costs. *)
-  Lemma leb_bigO : bigO (fun _ : t * t => True)
+  Lemma leb_complexity : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
     (fun x => T_leb (fst x) (snd x)).
@@ -10144,7 +10144,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Join scans the sparse skeletons and stored entries at their bit costs. *)
-  Lemma join_bigO : bigO (fun _ : t * t => True)
+  Lemma join_complexity : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
     (fun x => T_join (fst x) (snd x)).
@@ -10170,13 +10170,13 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Widening pays for inclusion and at most one sparse merge. *)
-  Lemma widen_bigO : bigO (fun _ : wparam * t * t => True)
+  Lemma widen_complexity : bigO (fun _ : wparam * t * t => True)
     (fun x => N.of_nat ((skels (snd (fst x)) + skels (snd x) +
         entries (snd (fst x)) + entries (snd x) + 1) *
       (bs (snd (fst x)) + bs (snd x) + ells (snd (fst x)) + ells (snd x) + 1)))
     (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
   Proof.
-    destruct leb_bigO as [compare_factor Hcompare].
+    destruct leb_complexity as [compare_factor Hcompare].
     apply (bigO_intro _ _ _ (compare_factor + matrix_time_factor + 8)%N).
     intros [[p a] b] _. cbn [fst snd].
     specialize (Hcompare (b, a) I). cbn [fst snd] in Hcompare.
@@ -10203,7 +10203,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       + specialize (Hmerge ma mb eq_refl eq_refl). nia.
   Qed.
 
-  Lemma assign_fast_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+  Lemma assign_fast_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => (N.of_nat (skels (snd x) +
       (ns (snd x) + 1) * (bs (snd x) + ells (snd x) + X.bits (fst (fst x)) +
         F.bits_e (snd (fst x)) + lin_bits (snd (fst x)) + 1) +

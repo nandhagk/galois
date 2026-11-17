@@ -61,11 +61,11 @@ Module Type LINEARIZE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_atoms_of g es <= c_linearize * N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
       N.of_nat ((bits_es g es + 1)%nat))%N.
   (** Linearization of a term is linear in its size and bit measure. *)
-  Parameter lin_of_bigO : bigO (fun _ : term L.op X.t => True)
+  Parameter lin_of_complexity : bigO (fun _ : term L.op X.t => True)
     (fun e => N.of_nat ((tsize e * (bits_e e + 1))%nat))
     (fun e => T_lin_of e).
   (** Guard linearization is linear in the operand sizes and bit measure. *)
-  Parameter atoms_of_bigO : bigO (fun _ : L.guard * list (term L.op X.t) => True)
+  Parameter atoms_of_complexity : bigO (fun _ : L.guard * list (term L.op X.t) => True)
     (fun x => N.of_nat (((fold_right Nat.add 0 (map tsize (snd x)) + 1) *
       (bits_es (fst x) (snd x) + 1))%nat))
     (fun x => T_atoms_of (fst x) (snd x)).

@@ -94,12 +94,12 @@ Module Type POLY_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         (n P + length (lhs c)) (length P + 1)
         (ell P + C.row_bits c + C.row_key_bits c)))%N.
   (** One elimination is quadratic in the rows. *)
-  Parameter fm_elim_bigO : bigO (fun x : X.t * list (lcons X.t) => normal (snd x))
+  Parameter fm_elim_complexity : bigO (fun x : X.t * list (lcons X.t) => normal (snd x))
     (fun x => N.of_nat (((length (snd x) + 1)^2 * (n (snd x) + length (snd x) + 1) *
       (ell (snd x) + 1)^2)%nat))
     (fun x => T_fm_elim (fst x) (snd x)).
   (** Certificate production follows the Fourier-Motzkin recurrence. *)
-  Parameter entail_cert_bigO : bigO
+  Parameter entail_cert_complexity : bigO
     (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
     (fun x => N.of_nat (fmcost (n (fst x) + length (lhs (snd x))) (length (fst x) + 1)
       (n (fst x) + length (lhs (snd x))) (length (fst x) + 1)
@@ -119,18 +119,18 @@ Module Type POLY_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     fold_right Nat.add 0 (map (fun r => length (lhs r)) (prows s)).
   Definition nell (s : t) : nat := ell (prows s) + Nat.log2 (terms s) + 1.
   (** Assignment charges row normalization, one elimination and the check of every output row. *)
-  Parameter F_assign_work : forall x e s,
+  Parameter assign_work_def : forall x e s,
     (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
       (length (prows s) + 3)^2 *
       (n (prows s) + terms s + tsize e + length (prows s) + 3) *
       (nell s + X.bits x + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
   (** Havoc charges row normalization, one elimination and the check of every output row. *)
-  Parameter F_havoc_work : forall x s,
+  Parameter havoc_work_def : forall x s,
     havoc_work x s = terms s * (nell s + 1) +
       (length (prows s) + 1)^2 * (n (prows s) + terms s + length (prows s) + 1) *
       (nell s + X.bits x + 1)^2.
   (** Assumption charges every emitted atom and the bits of its merged coefficients. *)
-  Parameter F_assume_work : forall g es s,
+  Parameter assume_work_def : forall g es s,
     (N.of_nat (assume_work g es s) =
       N.of_nat ((length (prows s) + 1) * (length (F.atoms_of g es) + 1) *
         (fold_right Nat.add 0%nat (map tsize es) + 1) *
@@ -173,21 +173,21 @@ Module Type POLY_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   (** Assumption normalizes the rows it adds. *)
   Parameter normal_assume : forall g es s, normal_s s -> normal_s (assume g es s).
   (** This widening has no repeated threshold search. *)
-  Parameter F_wunits : forall s, wunits s = 0.
+  Parameter wunits_def : forall s, wunits s = 0.
   (** Every produced row equals its tracked linear combination. *)
   Parameter fm_step_mults : forall P x r, In r (fm_elim x P) ->
     exists s, C.combine P (mults_of r) = Some s /\ lrel s = lrel (row_of r) /\
       rhs s = rhs (row_of r) /\
       forall v : X.t -> Z, eval_coef v (lhs s) = eval_coef v (lhs (row_of r)).
   (** Successful certificates pass the independent checker. *)
-  Parameter entail_cert_checks : forall P c k,
+  Parameter entail_cert_check_sound : forall P c k,
     entail_cert P c = Some k -> C.check_entails P c k = true.
   (** Generated entailment certificates use rationally valid combinations. *)
   Parameter entail_cert_nocut : forall P c k, entail_cert P c = Some k -> cut k = false.
   (** Elimination keeps rows free of repeated keys. *)
   Parameter normal_fm_elim : forall x P, normal P -> normal (map row_of (fm_elim x P)).
   (** Failure to find an entailment certificate yields a rational countermodel. *)
-  Parameter fm_complete_Q : forall P c, lrel c = RLe -> entail_cert P c = None ->
+  Parameter fm_complete_rational : forall P c, lrel c = RLe -> entail_cert P c = None ->
     exists v : X.t -> Q, Forall (satQ v) P /\ ~ satQ v c.
   (** Elimination keeps at most all opposite-sign pairs and the zero rows. *)
   Parameter fm_rows_le : forall x P, length (fm_elim x P) <= (length P)^2 / 4 + length P.
@@ -195,20 +195,20 @@ Module Type POLY_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter ell_fm_le : forall x P, normal P ->
     ell (map row_of (fm_elim x P)) <= 2 * ell P + 1.
   (** Substitution agrees with updating the interpreted variable. *)
-  Parameter subst_sat : forall v x f r, sat v (subst x f r) <->
+  Parameter subst_sat_iff_update : forall v x f r, sat v (subst x f r) <->
     sat (upd X.eqb v x (eval_lin v f)) r.
   (** Widening rank counts the constraints that can still be dropped. *)
-  Parameter wrank_rows : forall p P, wrank p (Reached P) = length P.
+  Parameter wrank_def : forall p P, wrank p (Reached P) = length P.
   Parameter keep : list (lcons X.t) -> lcons X.t -> bool.
   Definition entails (P : list (lcons X.t)) (r : lcons X.t) : bool :=
     match entail_cert P r with Some k => C.check_entails P r k | None => false end.
   (** Inclusion and widening use the same certified keep test. *)
-  Parameter F_leb_keep : forall a b, leb (Reached b) (Reached a) = forallb (keep b) a.
+  Parameter leb_keep_spec : forall a b, leb (Reached b) (Reached a) = forallb (keep b) a.
   (** Widening filters old constraints without adding thresholds or duplicates. *)
-  Parameter F_widen_keep : forall p a b,
+  Parameter widen_filter_spec : forall p a b,
     widen p (Reached a) (Reached b) = Reached (filter (keep b) a).
   (** Equality inclusion checks the two inequality directions. *)
-  Parameter F_leb_split : forall a b, leb (Reached a) (Reached b) =
+  Parameter leb_entails_rows_spec : forall a b, leb (Reached a) (Reached b) =
     forallb (fun r => match lrel r with
       | RLe => entails a r
       | REq => andb (entails a (LCons _ (lhs r) RLe (rhs r)))
@@ -221,37 +221,37 @@ Module Type POLY_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition lat (m : nat) : nat :=
     2 * (m + 1) * (fmcost m (m + 1) m (m + 1) (m + 1) + m^2 + 1).
   (** State size is lattice work at twice the state measure. *)
-  Parameter F_size : forall s, size s = lat (2 * mu s).
+  Parameter size_def : forall s, size s = lat (2 * mu s).
   (** Lattice work on two states fits their sizes. *)
   Parameter lat_size : forall a b, lat (mu a + mu b) <= size a + size b.
   (** Leb charges lattice work on both states. *)
-  Parameter T1_leb : forall a b,
+  Parameter T_leb_plan_le : forall a b,
     (T_leb a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   (** Join charges lattice work on both states. *)
-  Parameter T1_join : forall a b,
+  Parameter T_join_plan_le : forall a b,
     (T_join a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   (** Widen charges lattice work on both states. *)
-  Parameter T1_widen : forall p a b,
+  Parameter T_widen_plan_le : forall p a b,
     (T_widen p a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   (** Narrow charges lattice work on both states. *)
-  Parameter T1_narrow : forall a b,
+  Parameter T_narrow_plan_le : forall a b,
     (T_narrow a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   (** Inclusion is one certified check per conclusion. *)
-  Parameter leb_bigO : bigO (fun _ : t * t => True)
+  Parameter leb_complexity : bigO (fun _ : t * t => True)
     (fun x => N.of_nat (lat (mu (fst x) + mu (snd x))))
     (fun x => T_leb (fst x) (snd x)).
   (** Join is two filters of certified checks. *)
-  Parameter join_bigO : bigO (fun _ : t * t => True)
+  Parameter join_complexity : bigO (fun _ : t * t => True)
     (fun x => N.of_nat (lat (mu (fst x) + mu (snd x))))
     (fun x => T_join (fst x) (snd x)).
   (** Widening is one filter of certified checks. *)
-  Parameter widen_bigO : bigO (fun _ : wparam * t * t => True)
+  Parameter widen_complexity : bigO (fun _ : wparam * t * t => True)
     (fun x => N.of_nat (lat (mu (snd (fst x)) + mu (snd x))))
     (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
   (** A range endpoint fits its declared work. *)
-  Parameter F_range_bits : forall e s, range_bits e s = range_work e s.
+  Parameter range_bits_def : forall e s, range_bits e s = range_work e s.
   (** Range work charges the numeric query and its linearization. *)
-  Parameter F_range_work : forall e s, (N.of_nat (range_work e s) =
+  Parameter range_work_def : forall e s, (N.of_nat (range_work e s) =
     N.of_nat (terms s * (nell s + 1) +
       fmcost (n (prows s) + tsize e) (length (prows s) + 2) (n (prows s) + tsize e)
         (length (prows s) + 2) (nell s + F.bits_e e + 1)) + F.T_lin_of e)%N.

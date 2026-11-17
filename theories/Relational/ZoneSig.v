@@ -110,27 +110,27 @@ Module Type ZONE_TIME (X : KEY_T) (K : KEY_T with Definition t := option X.t
     c_zone * N.of_nat (((supp m + 1)^2)%nat) *
       N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat))%N.
   (** Closure is cubic in the support. *)
-  Parameter close_bigO : bigO (fun m : dbm => dbm_wf m)
+  Parameter close_complexity : bigO (fun m : dbm => dbm_wf m)
     (fun m => N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
     (fun m => T_close m).
   (** Incremental closure is quadratic in the support. *)
-  Parameter incr_close_bigO : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
+  Parameter incr_close_complexity : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
     (fun x => N.of_nat ((supp (snd x) + 1)^2 *
       (b (snd x) + K.bits (fst (fst (fst x))) + K.bits (snd (fst (fst x))) +
         ell (snd x) + Z.size_nat (snd (fst x)) + 1)))
     (fun x => T_incr_close (fst (fst (fst x))) (snd (fst (fst x))) (snd (fst x)) (snd x)).
   (** Inclusion walks the skeletons and stored entries of both matrices. *)
-  Parameter leb_bigO : bigO (fun _ : t * t => True)
+  Parameter leb_complexity : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
     (fun x => T_leb (fst x) (snd x)).
   (** Join merges the skeletons and stored entries of both matrices. *)
-  Parameter join_bigO : bigO (fun _ : t * t => True)
+  Parameter join_complexity : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
     (fun x => T_join (fst x) (snd x)).
   (** Widening is an inclusion test followed by one merge. *)
-  Parameter widen_bigO : bigO (fun _ : wparam * t * t => True)
+  Parameter widen_complexity : bigO (fun _ : wparam * t * t => True)
     (fun x => N.of_nat ((skels (snd (fst x)) + skels (snd x) +
         entries (snd (fst x)) + entries (snd x) + 1) *
       (bs (snd (fst x)) + bs (snd x) + ells (snd (fst x)) + ells (snd x) + 1)))
@@ -169,7 +169,7 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
   (** The codes of a matrix cover its skeleton. *)
   Parameter skel_le : forall m, skel m <= (supp m + 1)^2 * (b m + 1).
   (** Incremental closure adds at most two keys and two bits. *)
-  Parameter grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
+  Parameter incr_close_growth : forall i j d m m', incr_close i j d m = Reached m' ->
     supp m' <= supp m + 2 /\
     b m' <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j)) /\
     ell m' <= Nat.max (ell m) (Z.size_nat d) + 2.
@@ -183,25 +183,25 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
     | None => 0
     end.
   (** Widening units cover the squared support size. *)
-  Parameter F_wunits : forall s, wunits s = (ns s + 1) ^ 2.
+  Parameter wunits_def : forall s, wunits s = (ns s + 1) ^ 2.
   (** Assumption work charges incremental closure for every emitted atom. *)
-  Parameter F_assume_work : forall g es s,
+  Parameter assume_work_def : forall g es s,
     (N.of_nat (assume_work g es s) =
       N.of_nat (length (F.atoms_of g es) *
         (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
         (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1)) +
       F.T_atoms_of g es)%N.
   (** Assignment work pays for linearization and quadratic matrix updates. *)
-  Parameter F_assign_work : forall x e s,
+  Parameter assign_work_def : forall x e s,
     (N.of_nat (assign_work x e s) =
       N.of_nat ((ns s + 1)^2 *
         (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) + skels s +
         (tsize e + 1) * (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) + F.T_lin_of e)%N.
   (** Havoc visits the affected row and column. *)
-  Parameter F_havoc_work : forall x s,
+  Parameter havoc_work_def : forall x s,
     havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1) + skels s.
   (** Join takes entrywise maxima without closing its arguments. *)
-  Parameter F_join_entry : forall ma mb i j,
+  Parameter join_entry_spec : forall ma mb i j,
     match join (Reached ma) (Reached mb) with
     | Reached mj => entry mj i j =
         match entry ma i j, entry mb i j with
@@ -211,7 +211,7 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
     | Unreached => False
     end.
   (** A Floyd-Warshall round adds only implied constraints. *)
-  Parameter fw_round_implied : forall k m v, models m v -> models (fw_round k m) v.
+  Parameter fw_round_models_preserved : forall k m v, models m v -> models (fw_round k m) v.
   (** A round keeps consistent matrices consistent. *)
   Parameter wf_fw_round : forall k m, dbm_wf m -> dbm_wf (fw_round k m).
   (** Inserting a constraint keeps a well-formed matrix well formed. *)
@@ -235,23 +235,23 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Parameter incr_close_eq : forall m i j d, dbm_wf m -> closed m ->
     same_entries (incr_close i j d m) (close (add_cons i j d m)).
   (** Each Floyd-Warshall round charges quadratic entry updates. *)
-  Parameter T1_fw_round : forall k m, dbm_wf m ->
+  Parameter T_fw_round_le : forall k m, dbm_wf m ->
     (T_fw_round k m <= k_zone * N.of_nat
       ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
   (** Early negative-diagonal exit limits finite entry growth. *)
   Parameter bits_close_le : forall m m', dbm_wf m -> close m = Reached m' ->
     ell m' <= ell m + Nat.log2 (supp m) + 1.
   (** State size charges all stored numeric data. *)
-  Parameter F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
+  Parameter size_def : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
   (** Range work charges the numeric query and its linearization. *)
-  Parameter F_range_work : forall e s, (N.of_nat (range_work e s) =
+  Parameter range_work_def : forall e s, (N.of_nat (range_work e s) =
     N.of_nat ((tsize e + 1) *
       (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) + F.T_lin_of e)%N.
   (** A range endpoint is a sum of coefficient-entry products. *)
-  Parameter F_range_bits : forall e s,
+  Parameter range_bits_def : forall e s,
     range_bits e s = ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
   (** Assignment copies a row and a column, so it is linear in the support. *)
-  Parameter assign_fast_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
+  Parameter assign_fast_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => (N.of_nat (skels (snd x) +
       (ns (snd x) + 1) * (bs (snd x) + ells (snd x) + X.bits (fst (fst x)) +
         F.bits_e (snd (fst x)) + lin_bits (snd (fst x)) + 1) +
@@ -271,21 +271,21 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
     end.
   TimeFun fw_trace.
   (** A pivot key of a consistent matrix has its code in the support. *)
-  Parameter keys_support : forall m k, dbm_wf m -> In k (keys m) ->
+  Parameter keys_in_support : forall m k, dbm_wf m -> In k (keys m) ->
     In (K.encode k) (support m).
   (** One round adds at most one bit. *)
   Parameter bits_fw_round_step : forall k m, ell (fw_round k m) <= ell m + 1.
   (** Every traced round reads a matrix within the entry-growth bound. *)
-  Parameter bits_fw_trace_le : forall ks m k a, dbm_wf m ->
+  Parameter fw_trace_bits_le : forall ks m k a, dbm_wf m ->
     In (k, a) (fw_trace ks m) ->
     ell a <= ell m + Nat.log2 (supp m) + 1.
   (** A round keeps the support and its key bits. *)
-  Parameter supp_fw_round : forall k m,
+  Parameter fw_round_support_kept : forall k m,
     supp (fw_round k m) = supp m /\ b (fw_round k m) = b m.
   (** A consistent matrix has no more pivot keys than codes in its support. *)
-  Parameter keys_le : forall m, dbm_wf m -> length (keys m) <= supp m.
+  Parameter keys_length_le : forall m, dbm_wf m -> length (keys m) <= supp m.
   (** Closure pays its pivot list, the performed rounds and the final diagonal. *)
-  Parameter T2_close : forall m, dbm_wf m ->
+  Parameter T_close_split : forall m, dbm_wf m ->
     (T_close m <= k_zone * (N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
       fold_right N.add 0%N (map (fun km => T_fw_round (fst km) (snd km))
         (fw_trace (keys m) m))))%N.
