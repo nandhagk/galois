@@ -183,6 +183,39 @@ Definition df_step (g : prepared) (t : domtree) (y : positive) (st : df_state) :
   end.
 TimeFun df_step.
 
+(** A column shares its target's immediate parent across all runner steps. *)
+Definition df_step_at (g : prepared) (t : domtree) (iy : option positive) (st : df_state) :
+    df_state + list positive :=
+  match st with
+  | DfState [] _ answer => inr (rev_append answer [])
+  | DfState (x :: rest) seen answer =>
+    match trie_get x (pre t), trie_get x seen with
+    | Some _, None =>
+      match iy with
+      | Some parent =>
+        if Pos.eqb x parent then inl (DfState rest seen answer)
+        else match trie_get x (idom t) with
+          | Some next => inl (DfState (next :: rest) (PTrieCode.set x tt seen) (x :: answer))
+          | None => inl (DfState rest (PTrieCode.set x tt seen) (x :: answer))
+          end
+      | None =>
+        match trie_get x (idom t) with
+        | Some next => inl (DfState (next :: rest) (PTrieCode.set x tt seen) (x :: answer))
+        | None => inl (DfState rest (PTrieCode.set x tt seen) (x :: answer))
+        end
+      end
+    | _, _ => inl (DfState rest seen answer)
+    end
+  end.
+TimeFun df_step_at.
+
+(** Supplying the target's parent preserves each original state transition. *)
+Lemma df_step_at_agrees : forall g t y st,
+  df_step_at g t (trie_get y (idom t)) st = df_step g t y st.
+Proof.
+  reflexivity.
+Qed.
+
 (** A runner pushes its immediate parent when one is present. *)
 Definition df_follow (t : domtree) (x : positive) (rest : list positive) : list positive :=
   match trie_get x (idom t) with Some q => q :: rest | None => rest end.
@@ -348,13 +381,28 @@ Proof.
 Qed.
 
 
-Definition df_column (g : prepared) (t : domtree) (y : positive) : list positive :=
+Definition df_column_spec (g : prepared) (t : domtree) (y : positive) : list positive :=
   let initial := DfState (preds g y) Empty [] in
   match loopN (df_step g t y) (4 * (nv g + N.of_nat (length (preds g y)) + 1))%N initial with
   | inl st => rev_append (df_column_answer st) []
   | inr answer => answer
   end.
+
+Definition df_column (g : prepared) (t : domtree) (y : positive) : list positive :=
+  let iy := trie_get y (idom t) in
+  let initial := DfState (preds g y) Empty [] in
+  match loopN (df_step_at g t iy) (4 * (nv g + N.of_nat (length (preds g y)) + 1))%N initial with
+  | inl st => rev_append (df_column_answer st) []
+  | inr answer => answer
+  end.
 TimeFun df_column.
+
+(** Caching the target's parent keeps the complete column, including its order. *)
+Lemma df_column_eq : df_column = df_column_spec.
+Proof.
+  cbv beta zeta delta [df_column df_column_spec df_step_at df_step].
+  reflexivity.
+Qed.
 
 Definition df_transpose (columns : list (positive * list positive)) : ptrie (list positive) :=
   fst (fold_left (fun state entry =>
@@ -578,7 +626,7 @@ Proof.
     (DfState (preds g y) Empty []) Hinitial) as Hresult.
   rewrite Hrun in Hresult. destruct Hresult as [st [Hvalid Hstop]].
   exists st, result. split; [exact Hvalid|]. split; [exact Hstop|]. split; [exact Hrun|].
-  unfold df_column. now rewrite Hrun.
+  rewrite df_column_eq. unfold df_column_spec. now rewrite Hrun.
 Qed.
 
 Lemma df_column_correct : forall g t r y,
@@ -1804,6 +1852,20 @@ Proof.
   - destruct (trie_get x (idom t)); nia.
 Qed.
 
+(** A cached-parent step drops a lookup and never costs more than the original step. *)
+Lemma frontier_df_step_at_time : forall g t y st,
+  (T_df_step_at g t (trie_get y (idom t)) st <= T_df_step g t y st)%N.
+Proof.
+  intros g t y [pending seen answer]. destruct pending as [|x rest].
+  - time_unfold T_df_step_at. time_unfold T_df_step. lia.
+  - time_unfold T_df_step_at. time_unfold T_df_step.
+    destruct (trie_get x (pre t)); [|lia].
+    destruct (trie_get x seen); [lia|].
+    destruct (trie_get y (idom t)) as [parent|].
+    + destruct (Pos.eqb x parent); [lia|]. destruct (trie_get x (idom t)); lia.
+    + destruct (trie_get x (idom t)); lia.
+Qed.
+
 Lemma frontier_df_stop_time : forall g t y seen answer,
   (T_df_step g t y (DfState [] seen answer) + 1 <= N.of_nat (length answer + 3))%N.
 Proof.
@@ -1880,6 +1942,47 @@ Proof.
   - now apply df_valid_initial.
 Qed.
 
+(** The shared-parent runner uses the original column potential with smaller step costs. *)
+Lemma frontier_df_loop_at_time : forall g t r y fuel,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
+  (T_loopN (df_step g t y) (fun st => T_df_step_at g t (trie_get y (idom t)) st) fuel
+      (DfState (preds g y) Empty []) <=
+    c_loopN *
+      ((frontier_step_cost * N.of_nat (graph_width (base g) + 1) + 1) *
+        N.of_nat (2 * length (df_column g t y) + length (preds g y)) +
+       16 * N.of_nat (length (df_column g t y) + 1) +
+       N.of_nat (N.size_nat fuel) + 1))%N.
+Proof.
+  intros g t r y fuel Hgraph Hprepared Htree Hy.
+  pose proof (dom_listed_key_width g y Hy) as Hywidth.
+  pose proof (T_loopN_le df_state (list positive) (df_step g t y)
+    (fun st => T_df_step_at g t (trie_get y (idom t)) st) (df_valid g t y)
+    (fun st => ((frontier_step_cost * N.of_nat (graph_width (base g) + 1) + 1) *
+      N.of_nat (df_column_progress g t y st))%N)
+    (16 * N.of_nat (length (df_column g t y) + 1))%N fuel
+    (DfState (preds g y) Empty [])) as Hloop.
+  cbn beta in Hloop. rewrite df_column_progress_initial in Hloop. apply Hloop.
+  - intros [pending seen answer] next Hvalid Hstep.
+    split; [eapply df_valid_step; eassumption|].
+    pose proof (df_column_progress_step g t r y _ next Hgraph Hprepared Htree Hvalid Hstep)
+      as Hprogress.
+    destruct pending as [|x rest]; [discriminate Hstep|].
+    pose proof (dom_listed_key_width g x
+      (df_valid_pending_nodes _ _ _ _ Hvalid x (or_introl eq_refl))) as Hxwidth.
+    pose proof (frontier_df_step_time g t y x rest seen answer _ Hxwidth Hywidth) as Htime.
+    pose proof (frontier_df_step_at_time g t y (DfState (x :: rest) seen answer)) as Hsaved.
+    nia.
+  - intros [pending seen answer] result Hvalid Hstep.
+    destruct (df_step_stopping g t y _ result Hstep) as [Hpending Hanswer].
+    cbn [df_pending] in Hpending. subst pending.
+    pose proof (NoDup_incl_length (df_valid_unique _ _ _ _ Hvalid)
+      (df_valid_answer_subset g t r y _ Hgraph Hprepared Htree Hvalid)) as Hlength.
+    pose proof (frontier_df_stop_time g t y seen answer) as Htime.
+    pose proof (frontier_df_step_at_time g t y (DfState [] seen answer)) as Hsaved.
+    cbn [df_column_answer] in Hlength. rewrite !Nat2N.inj_add in Htime |- *. lia.
+  - now apply df_valid_initial.
+Qed.
+
 (** Separate the numeric loop estimate from its executable clock expression. *)
 Lemma frontier_column_arithmetic : forall overhead scale width degree output,
   (1 <= scale -> 1 <= width ->
@@ -1925,7 +2028,7 @@ Proof.
   pose proof (N.T_add_le (nv g) (N.of_nat (length (preds g y)))) as Hsum.
   pose proof (N.T_add_le (nv g + N.of_nat (length (preds g y))) 1) as Hlast.
   pose proof (frontier_four_time (nv g + N.of_nat (length (preds g y)) + 1)) as Hfour.
-  pose proof (frontier_df_loop_time g t r y
+  pose proof (frontier_df_loop_at_time g t r y
     (4 * (nv g + N.of_nat (length (preds g y)) + 1))%N
     Hgraph Hprepared Htree Hy) as Hloop.
   destruct (df_column_finished g t r y Hgraph Hprepared Htree)
@@ -1940,7 +2043,9 @@ Proof.
   repeat rewrite Nat2N.inj_add.
   repeat rewrite Nat2N.inj_mul in Hloop.
   time_unfold T_df_column.
-  rewrite Hrun. time_unfold T_nv.
+  change (df_step_at g t (trie_get y (idom t))) with (df_step g t y).
+  rewrite Hrun. time_unfold T_nv. time_unfold T_idom.
+  pose proof (PTrieT.T_trie_get_le positive y (idom t)) as Hget.
   unfold frontier_column_cost, frontier_step_cost, frontier_unit_cost in Hloop |- *.
   clear Hgraph Hprepared Htree Hy Hvalid Hstop Hrun Hcolumn.
   remember (N.of_nat (graph_width (base g))) as width eqn:Hwidth in *.

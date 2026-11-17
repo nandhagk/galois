@@ -26,6 +26,14 @@ Example loop_frontiers :
     [[]; [4]; [4]; [4]].
 Proof. vm_compute. reflexivity. Qed.
 
+(** Nested columns share their target parent through repeated climbs and a root return. *)
+Example nested_loop_frontiers :
+  map (frontier_row (fixture_frontiers NestedLoop.graph)) [1; 2; 3; 4] =
+    [[1]; [2; 1]; [2; 1]; [1]].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example line_frontiers :
   map (frontier_row (fixture_frontiers Line.graph)) [1; 2; 3; 4] = [[]; []; []; []].
 Proof. vm_compute. reflexivity. Qed.
