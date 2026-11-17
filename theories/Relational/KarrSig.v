@@ -2,15 +2,38 @@
 
     Karr states represent affine equalities and check producer results with certificates.
     For example, havoc removes the equalities that constrain its selected variable.
+
+    Main results
+    - [leb_complexity] Inclusion of normal states costs one elimination of both and one cheap
+      check per row.
+    - [join_complexity] Join of normal states is one elimination.
+    - [widen_complexity] Widening is an inclusion test followed by at most one join.
+    - [affine_hull_complexity] The affine hull is one elimination of the stacked rows.
+    - [entail_cert_complexity] Certificate production is one elimination of the premises and
+      the conclusion.
+
+    Glossary
+    - [n] The number of rows plus the number of distinct variables of a state.
+    - [ell] The largest bit length of a coefficient or constant plus the largest bit length of a
+      variable key, over the rows of a state.
+    - [ellB] A bound on the bits of every fraction-free elimination entry, for the given number of
+      rows of numbers with the given bits.
+    - [terms] The number of coefficients stored in all rows of a state.
+    - [nell] ell plus the bit length of the term count.
+    - [mu] The measure of a state, the sum of its terms, n and nell.
+    - [lat] The lattice work for a total measure, which bounds one inclusion, join, widening or
+      narrowing of two states.
+
     Builds on: EnvSig, NumStateSig and LinCertSig. *)
 
 From Stdlib Require Import List ZArith QArith.
-From Argent Require Import Std BigO.
+From Argent Require Import Std Complexity.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig LinCertSig.
+Import ComplexityNotations.
 
 Local Open Scope nat_scope.
 
@@ -81,28 +104,23 @@ Module Type KARR_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
     N.of_nat (((ellB (n a + n b + 1) (ell a + ell b) + 1)^2)%nat))%N.
   (** Inclusion of normal states costs one elimination of both and one cheap check per row. *)
-  Parameter leb_complexity : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
-    (fun x => N.of_nat (elimination_work (fst x) (snd x)))
-    (fun x => T_leb (fst x) (snd x)).
+  Parameter leb_complexity :
+    T_leb s1 s2 ∈ 𝑂(N.of_nat (elimination_work s1 s2)) for (s1, s2) | normal_s s1 /\ normal_s s2.
   (** Join of normal states is one elimination. *)
-  Parameter join_complexity : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
-    (fun x => N.of_nat (elimination_work (fst x) (snd x)))
-    (fun x => T_join (fst x) (snd x)).
+  Parameter join_complexity :
+    T_join s1 s2 ∈ 𝑂(N.of_nat (elimination_work s1 s2)) for (s1, s2) | normal_s s1 /\ normal_s s2.
   (** Widening is an inclusion test followed by at most one join. *)
-  Parameter widen_complexity : bigO (fun x : wparam * t * t =>
-      normal_s (snd (fst x)) /\ normal_s (snd x))
-    (fun x => N.of_nat (elimination_work (snd (fst x)) (snd x)))
-    (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter widen_complexity :
+    T_widen w s1 s2 ∈ 𝑂(N.of_nat (elimination_work s1 s2))
+      for (w, s1, s2) | normal_s s1 /\ normal_s s2.
   (** The affine hull is one elimination of the stacked rows. *)
-  Parameter affine_hull_complexity : bigO
-    (fun x : list (lcons X.t) * list (lcons X.t) => normal (fst x) /\ normal (snd x))
-    (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x))))
-    (fun x => T_affine_hull (fst x) (snd x)).
+  Parameter affine_hull_complexity :
+    T_affine_hull P Q ∈ 𝑂(N.of_nat (elimination_work (Reached P) (Reached Q)))
+      for (P, Q) | normal P /\ normal Q.
   (** Certificate production is one elimination of the premises and the conclusion. *)
-  Parameter entail_cert_complexity : bigO
-    (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
-    (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x :: nil))))
-    (fun x => T_entail_cert (fst x) (snd x)).
+  Parameter entail_cert_complexity :
+    T_entail_cert P c ∈ 𝑂(N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))
+      for (P, c) | normal P /\ normal (c :: nil).
 End KARR_TIME.
 
 Module Type KARR_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)

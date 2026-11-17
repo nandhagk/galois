@@ -2,15 +2,23 @@
 
     Relational environments intersect a numeric state with a value state.
     For example, a relational upper bound refines the interval returned by evaluation.
+
+    Main results
+    - [eval_complexity] Evaluation is linear in the work of both components.
+    - [assign_complexity] Assignment is linear in the work of both components.
+    - [havoc_complexity] Havoc is linear in the work of both components.
+    - [assume_complexity] Assumption is linear in the work of both components.
+
     Builds on: NumStateSig, StateSig and ValueSig. *)
 
 From Stdlib Require Import NArith List ZArith.
-From Argent Require Import Std BigO.
+From Argent Require Import Std Complexity.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
 From Galois.Relational Require Import LinearizeSig NumStateSig.
+Import ComplexityNotations.
 
 Module Type REL_RANGE_REFINE_OPS (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L).
   Parameter refine_range : bnd -> bnd -> V.t -> V.t.
@@ -96,19 +104,17 @@ Module Type REL_ENV_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DO
   (** The shared lattice measures a pair by its two components. *)
   Parameter size_pair : forall a, P.size a = R.size (fst a) + E.size (snd a).
   (** Evaluation is linear in the work of both components. *)
-  Parameter eval_complexity : bigO (fun _ : term L.op X.t * t => True)
-    (fun x => N.of_nat (eval_work (fst x) (snd x))) (fun x => T_eval (fst x) (snd x)).
+  Parameter eval_complexity :
+    T_eval e s ∈ 𝑂(N.of_nat (eval_work e s)) for (e, s).
   (** Assignment is linear in the work of both components. *)
-  Parameter assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
-    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter assign_complexity :
+    T_assign x e s ∈ 𝑂(N.of_nat (assign_work x e s)) for (x, e, s).
   (** Havoc is linear in the work of both components. *)
-  Parameter havoc_complexity : bigO (fun _ : X.t * t => True)
-    (fun x => N.of_nat (havoc_work (fst x) (snd x))) (fun x => T_havoc (fst x) (snd x)).
+  Parameter havoc_complexity :
+    T_havoc x s ∈ 𝑂(N.of_nat (havoc_work x s)) for (x, s).
   (** Assumption is linear in the work of both components. *)
-  Parameter assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
-    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter assume_complexity :
+    T_assume g es s ∈ 𝑂(N.of_nat (assume_work g es s)) for (g, es, s).
 End REL_ENV_TIME.
 
 Module Type REL_ENV_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)

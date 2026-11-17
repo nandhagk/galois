@@ -2,14 +2,26 @@
 
     Numeric states describe integer views of concrete stores.
     For example, a zone can describe a bound on the difference of two variables.
+
+    Main results
+    - [assign_sound] Assignment retains every successful concrete numeric update.
+    - [havoc_sound] Havoc admits any concrete value for its variable.
+    - [assume_sound] Assuming a satisfied guard retains the numeric store.
+    - [range_sound] Queried ranges cover successful concrete results.
+    - [assign_complexity] Assignment is linear in its stated numeric work.
+    - [havoc_complexity] Havoc is linear in its stated numeric work.
+    - [assume_complexity] Assumption is linear in its stated numeric work.
+    - [range_complexity] A range query is linear in its stated numeric work.
+
     Builds on: LatticeSig, LinearizeSig and ValueSig. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import Std BigO.
+From Argent Require Import Std Complexity.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.Relational Require Import LinearizeSig.
+Import ComplexityNotations.
 
 Module Type NUM_STATE_OPS (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L).
   Include ALATTICE_OPS.
@@ -94,21 +106,17 @@ Module Type NUM_STATE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
        match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
      c_num * N.of_nat (range_bits e s + 1))%N.
   (** Assignment is linear in its stated numeric work. *)
-  Parameter assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
-    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter assign_complexity :
+    T_assign x e s ∈ 𝑂(N.of_nat (assign_work x e s)) for (x, e, s).
   (** Havoc is linear in its stated numeric work. *)
-  Parameter havoc_complexity : bigO (fun _ : X.t * t => True)
-    (fun x => N.of_nat (havoc_work (fst x) (snd x)))
-    (fun x => T_havoc (fst x) (snd x)).
+  Parameter havoc_complexity :
+    T_havoc x s ∈ 𝑂(N.of_nat (havoc_work x s)) for (x, s).
   (** Assumption is linear in its stated numeric work. *)
-  Parameter assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
-    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter assume_complexity :
+    T_assume g es s ∈ 𝑂(N.of_nat (assume_work g es s)) for (g, es, s).
   (** A range query is linear in its stated numeric work. *)
-  Parameter range_complexity : bigO (fun _ : term L.op X.t * t => True)
-    (fun x => N.of_nat (range_work (fst x) (snd x)))
-    (fun x => T_range (fst x) (snd x)).
+  Parameter range_complexity :
+    T_range e s ∈ 𝑂(N.of_nat (range_work e s)) for (e, s).
 End NUM_STATE_TIME.
 
 Module Type NUM_STATE_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)

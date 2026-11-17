@@ -2,15 +2,27 @@
 
     Sparse matrices store finite bounds and interpret missing entries as infinity.
     For example, a zero-to-variable entry bounds that variable from above.
+
+    Main results
+    - [entry_spec] Matrix entries use row lookup followed by column lookup.
+    - [close_complexity] Closure is cubic in the support.
+    - [incr_close_complexity] Incremental closure is quadratic in the support.
+    - [leb_complexity] Inclusion walks the skeletons and stored entries of both matrices.
+    - [join_complexity] Join merges the skeletons and stored entries of both matrices.
+    - [widen_complexity] Widening is an inclusion test followed by one merge.
+    - [assign_fast_complexity] Assignment copies a row and a column, so it is linear in the
+      support.
+
     Builds on: ZoneSig and keyed map operations. *)
 
 From Stdlib Require Import List Bool NArith ZArith Lia ArithRing.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import KeySig MapSig Code.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig ZoneSig.
+Import ComplexityNotations.
 Local Open Scope nat_scope.
 
 (** Finite interval endpoints add; an absent endpoint remains unbounded. *)
@@ -10056,9 +10068,8 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Assignment is linear in the public numeric work measure. *)
-  Lemma assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
-    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assign_complexity :
+    T_assign x e s ∈ 𝑂(N.of_nat (assign_work x e s)) for (x, e, s).
   Proof.
     apply (bigO_intro _ _ _ c_num). intros [[x e] s] _.
     pose proof (T_assign_le x e s) as Htime.
@@ -10066,9 +10077,8 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Forgetting a variable is linear in the public numeric work measure. *)
-  Lemma havoc_complexity : bigO (fun _ : X.t * t => True)
-    (fun x => N.of_nat (havoc_work (fst x) (snd x)))
-    (fun x => T_havoc (fst x) (snd x)).
+  Lemma havoc_complexity :
+    T_havoc x s ∈ 𝑂(N.of_nat (havoc_work x s)) for (x, s).
   Proof.
     apply (bigO_intro _ _ _ c_num). intros [x s] _.
     pose proof (T_havoc_le x s) as Htime.
@@ -10076,9 +10086,8 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Assumption is linear in the public numeric work measure. *)
-  Lemma assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
-    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assume_complexity :
+    T_assume g es s ∈ 𝑂(N.of_nat (assume_work g es s)) for (g, es, s).
   Proof.
     apply (bigO_intro _ _ _ c_num). intros [[g es] s] _.
     pose proof (T_assume_le g es s) as Htime.
@@ -10086,9 +10095,8 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Range queries are linear in the public numeric work measure. *)
-  Lemma range_complexity : bigO (fun _ : term L.op X.t * t => True)
-    (fun x => N.of_nat (range_work (fst x) (snd x)))
-    (fun x => T_range (fst x) (snd x)).
+  Lemma range_complexity :
+    T_range e s ∈ 𝑂(N.of_nat (range_work e s)) for (e, s).
   Proof.
     apply (bigO_intro _ _ _ c_num). intros [e s] _.
     pose proof (T_range_le e s) as Htime.
@@ -10096,9 +10104,9 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Closure is cubic in the support of a well-formed matrix. *)
-  Lemma close_complexity : bigO (fun m : dbm => dbm_wf m)
-    (fun m => N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
-    (fun m => T_close m).
+  Lemma close_complexity :
+    T_close m ∈ 𝑂(N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
+      for m | dbm_wf m.
   Proof.
     apply (bigO_intro _ _ _ c_zone). intros m Hwf.
     pose proof (T_close_le m Hwf) as Htime.
@@ -10106,11 +10114,10 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Incremental closure is quadratic in the original support. *)
-  Lemma incr_close_complexity : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
-    (fun x => N.of_nat ((supp (snd x) + 1)^2 *
-      (b (snd x) + K.bits (fst (fst (fst x))) + K.bits (snd (fst (fst x))) +
-        ell (snd x) + Z.size_nat (snd (fst x)) + 1)))
-    (fun x => T_incr_close (fst (fst (fst x))) (snd (fst (fst x))) (snd (fst x)) (snd x)).
+  Lemma incr_close_complexity :
+    T_incr_close i j d m ∈ 𝑂(N.of_nat ((supp m + 1)^2 *
+      (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)))
+      for (i, j, d, m) | dbm_wf m.
   Proof.
     apply (bigO_intro _ _ _ c_zone). intros [[[i j] d] m] _.
     pose proof (T_incr_close_le i j d m) as Htime.
@@ -10118,10 +10125,9 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Inclusion scans the sparse skeletons and stored entries at their bit costs. *)
-  Lemma leb_complexity : bigO (fun _ : t * t => True)
-    (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) + 1) *
-      (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
-    (fun x => T_leb (fst x) (snd x)).
+  Lemma leb_complexity :
+    T_leb p q ∈ 𝑂(N.of_nat ((skels p + skels q + entries p + entries q + 1) *
+      (bs p + bs q + ells p + ells q + 1))) for (p, q).
   Proof.
     apply (bigO_intro _ _ _ matrix_time_factor). intros [a b] _.
     cbn [fst snd].
@@ -10144,10 +10150,9 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Join scans the sparse skeletons and stored entries at their bit costs. *)
-  Lemma join_complexity : bigO (fun _ : t * t => True)
-    (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) + 1) *
-      (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
-    (fun x => T_join (fst x) (snd x)).
+  Lemma join_complexity :
+    T_join p q ∈ 𝑂(N.of_nat ((skels p + skels q + entries p + entries q + 1) *
+      (bs p + bs q + ells p + ells q + 1))) for (p, q).
   Proof.
     apply (bigO_intro _ _ _ matrix_time_factor). intros [a b] _.
     cbn [fst snd].
@@ -10170,11 +10175,10 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
 
   (** Widening pays for inclusion and at most one sparse merge. *)
-  Lemma widen_complexity : bigO (fun _ : wparam * t * t => True)
-    (fun x => N.of_nat ((skels (snd (fst x)) + skels (snd x) +
-        entries (snd (fst x)) + entries (snd x) + 1) *
-      (bs (snd (fst x)) + bs (snd x) + ells (snd (fst x)) + ells (snd x) + 1)))
-    (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma widen_complexity :
+    T_widen w p q ∈ 𝑂(N.of_nat ((skels p + skels q +
+        entries p + entries q + 1) *
+      (bs p + bs q + ells p + ells q + 1))) for (w, p, q).
   Proof.
     destruct leb_complexity as [compare_factor Hcompare].
     apply (bigO_intro _ _ _ (compare_factor + matrix_time_factor + 8)%N).
@@ -10203,13 +10207,11 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       + specialize (Hmerge ma mb eq_refl eq_refl). nia.
   Qed.
 
-  Lemma assign_fast_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
-    (fun x => (N.of_nat (skels (snd x) +
-      (ns (snd x) + 1) * (bs (snd x) + ells (snd x) + X.bits (fst (fst x)) +
-        F.bits_e (snd (fst x)) + lin_bits (snd (fst x)) + 1) +
-      (tsize (snd (fst x)) + 1) * (bs (snd x) + ells (snd x) + F.bits_e (snd (fst x)) +
-        Nat.log2 (tsize (snd (fst x))) + 1)^2) + F.T_lin_of (snd (fst x)))%N)
-    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assign_fast_complexity :
+    T_assign x e s ∈ 𝑂((N.of_nat (skels s +
+      (ns s + 1) * (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) +
+      (tsize e + 1) * (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) +
+      F.T_lin_of e)%N) for (x, e, s).
   Proof.
     apply (bigO_intro _ _ _ c_num). intros [[x e] [|m]] _.
     - cbn [fst snd].

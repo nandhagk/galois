@@ -2,15 +2,23 @@
 
     Relational environments combine a numeric state with a value state.
     For example, a numeric range query can refine an interval value.
+
+    Main results
+    - [eval_complexity] Evaluation is linear in the work of both components.
+    - [assign_complexity] Assignment is linear in the work of both components.
+    - [havoc_complexity] Havoc is linear in the work of both components.
+    - [assume_complexity] Assumption is linear in the work of both components.
+
     Builds on: RelEnvSig, NumStateSig, StateSig and ValueSig. *)
 
 From Stdlib Require Import NArith List Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig Product.
 From Galois.States Require Import StateSig.
 From Galois.Relational Require Import LinearizeSig NumStateSig RelEnvSig.
+Import ComplexityNotations.
 
 Module RelEnvCode (X : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L)
     (F : LINEARIZE_OPS X L) (R : NUM_STATE_OPS X L F) (E : STATE_DOMAIN_OPS X L V)
@@ -544,8 +552,8 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
   Lemma size_pair : forall a, P.size a = R.size (fst a) + E.size (snd a).
   Proof. reflexivity. Qed.
   (** Evaluation is linear in the work of both components. *)
-  Lemma eval_complexity : bigO (fun _ : term L.op X.t * t => True)
-    (fun x => N.of_nat (eval_work (fst x) (snd x))) (fun x => T_eval (fst x) (snd x)).
+  Lemma eval_complexity :
+    T_eval e s ∈ 𝑂(N.of_nat (eval_work e s)) for (e, s).
   Proof.
     apply bigO_intro with (c := c_state).
     intros [e s] _. cbn [fst snd].
@@ -553,9 +561,8 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Assignment is linear in the work of both components. *)
-  Lemma assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
-    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assign_complexity :
+    T_assign x e s ∈ 𝑂(N.of_nat (assign_work x e s)) for (x, e, s).
   Proof.
     apply bigO_intro with (c := c_state).
     intros [[x e] s] _. cbn [fst snd].
@@ -563,8 +570,8 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Havoc is linear in the work of both components. *)
-  Lemma havoc_complexity : bigO (fun _ : X.t * t => True)
-    (fun x => N.of_nat (havoc_work (fst x) (snd x))) (fun x => T_havoc (fst x) (snd x)).
+  Lemma havoc_complexity :
+    T_havoc x s ∈ 𝑂(N.of_nat (havoc_work x s)) for (x, s).
   Proof.
     apply bigO_intro with (c := c_state).
     intros [x s] _. cbn [fst snd].
@@ -572,9 +579,8 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Htime. nia.
   Qed.
   (** Assumption is linear in the work of both components. *)
-  Lemma assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
-    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assume_complexity :
+    T_assume g es s ∈ 𝑂(N.of_nat (assume_work g es s)) for (g, es, s).
   Proof.
     apply bigO_intro with (c := c_state).
     intros [[g es] s] _. cbn [fst snd].
