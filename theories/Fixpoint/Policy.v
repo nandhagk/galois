@@ -243,5 +243,13 @@ Module PolicyT (L : WLATTICE_T) <: POLICY_T L.
     (fun '(pol, x, cnt, a, b) => N.of_nat (Pos.size_nat x + L.size a + L.size b +
         N.size_nat cnt + (L.wunits a + L.wunits b + 1) * L.wsize (wp pol)))
     (fun '(pol, x, cnt, a, b) => T_update pol x cnt a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := (c_pol * (L.c_lat + 1))%N).
+    intros [[[[pol x] cnt] a] b] _; cbn [fst snd].
+    pose proof (T_update_le pol x cnt a b) as Hupdate.
+    rewrite !Nat2N.inj_add in *.
+    destruct (L.leb b a).
+    - nia.
+    - destruct (trie_get x (heads pol)); nia.
+  Qed.
 End PolicyT.
