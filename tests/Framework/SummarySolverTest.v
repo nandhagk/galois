@@ -4,9 +4,10 @@
     For example, a caller of a recursive pair receives the pair's local effect.
 
     Groups:
-    - Recursive: a recursive pair and its callers give their local effects, and bottom is rejected.
-    - Chain: a chain of calls with two sites gives its ordinary, site-sensitive results.
-    - Schedules: two policies give checked post-solutions and the same joined lookups.
+    - [RecursiveTests] A recursive pair and its callers give their local effects, and bottom is
+      rejected.
+    - [ChainTests] A chain of calls with two sites gives its ordinary, site-sensitive results.
+    - [ScheduleTests] Two policies give checked post-solutions and the same joined lookups.
 
     Builds on: Framework.Summary and Fixpoint.Certified. *)
 
