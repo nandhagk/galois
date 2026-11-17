@@ -12217,22 +12217,36 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
     rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. nia.
   Qed.
 
+  (** A range query is linear in the numeric work charged by its contract. *)
   Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
     (fun x => T_range (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [e s] _.
+    cbn [fst snd]. pose proof (T_range_le e s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. nia.
+  Qed.
 
+  (** Tight closure is cubic in the support with a linear bit-width factor. *)
   Lemma tclose_bigO : bigO (fun m : dbm => dbm_wf m)
     (fun m => N.of_nat ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))
     (fun m => T_tclose m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_octagon). intros m Hwf.
+    pose proof (T_tclose_le m Hwf) as Htime. rewrite Nat2N.inj_mul. nia.
+  Qed.
 
+  (** Incremental closure is quadratic in the support and also scans the outer labels. *)
   Lemma incr_close_bigO : bigO (fun x : K.t * K.t * Z * dbm => dbm_wf (snd x))
     (fun x => N.of_nat ((supp (snd x) + 1)^2 *
       (b (snd x) + K.bits (fst (fst (fst x))) + K.bits (snd (fst (fst x))) +
         ell (snd x) + Z.size_nat (snd (fst x)) + 1) + M.weight (snd x)))
     (fun x => T_incr_close (fst (fst (fst x))) (snd (fst (fst x))) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_octagon). intros [[[i j] d] m] _.
+    cbn [fst snd]. pose proof (T_incr_close_le i j d m) as Htime.
+    rewrite Nat2N.inj_add, Nat2N.inj_mul. nia.
+  Qed.
 
   Lemma leb_bigO : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
