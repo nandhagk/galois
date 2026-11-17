@@ -254,6 +254,13 @@ Proof.
   reflexivity.
 Qed.
 
+(** The zero constant has the supplied zero mask and no known one bits. *)
+Lemma tnum_const_m_zero : forall mask, tnum_const_m mask 0 = Tnum mask 0.
+Proof.
+  intro mask. unfold tnum_const_m, tnum_wnot_m, tnum_wrap_m.
+  now rewrite Z.lnot_0, Z.land_m1_l, Z.land_0_l.
+Qed.
+
 Definition tnum_min_m (mask : Z) (a : tnum) : Z := tnum_wrap_m mask (ones a).
 TimeFun tnum_min_m.
 
@@ -351,6 +358,25 @@ Proof.
   reflexivity.
 Qed.
 
+(** Mask the two resulting XOR facts once after combining their raw conjunctions. *)
+Definition tnum_xor_flat_m (mask : Z) (a b : tnum) : tnum :=
+  Tnum (tnum_wrap_m mask (Z.lor (Z.land (zeros a) (zeros b))
+      (Z.land (ones a) (ones b))))
+    (tnum_wrap_m mask (Z.lor (Z.land (zeros a) (ones b))
+      (Z.land (ones a) (zeros b)))).
+TimeFun tnum_xor_flat_m.
+
+(** Distributing the shared mask preserves both XOR facts exactly. *)
+Lemma tnum_xor_flat_m_agrees : forall mask a b,
+  tnum_xor_flat_m mask a b = tnum_xor_m mask a b.
+Proof.
+  intros mask a b. unfold tnum_xor_flat_m, tnum_xor_m, tnum_wor_m, tnum_wand_m,
+    tnum_wrap_m. f_equal; apply Z.bits_inj'; intros i Hi.
+  all: rewrite !Z.land_spec, !Z.lor_spec, !Z.land_spec.
+  all: destruct (Z.testbit mask i); rewrite ?Bool.andb_true_r, ?Bool.andb_false_r;
+    reflexivity.
+Qed.
+
 Definition tnum_adc_uncertain_m (mask : Z) (a b : tnum) (initial : bool) : Z :=
   Z.lor (Z.lxor (tnum_min_m mask a + tnum_min_m mask b + Z.b2z initial)
       (tnum_max_m mask a + tnum_max_m mask b + Z.b2z initial))
@@ -405,6 +431,27 @@ Lemma tnum_neg_m_eq : forall w a,
   tnum_neg_m (Z.ones (Zpos w)) a = tnum_neg w a.
 Proof.
   reflexivity.
+Qed.
+
+(** The prepared mask already supplies the zero constant used by negation. *)
+Definition tnum_neg_fast_m (mask : Z) (a : tnum) : tnum :=
+  tnum_sub_m mask (Tnum mask 0) a.
+TimeFun tnum_neg_fast_m.
+
+(** Reusing the prepared zero constant leaves negation unchanged. *)
+Lemma tnum_neg_fast_m_agrees : forall mask a,
+  tnum_neg_fast_m mask a = tnum_neg_m mask a.
+Proof.
+  intros mask a. unfold tnum_neg_fast_m, tnum_neg_m.
+  now rewrite tnum_const_m_zero.
+Qed.
+
+(** Reusing zero removes its construction cost from the negation clock. *)
+Lemma tnum_neg_fast_m_time_le : forall mask a,
+  (T_tnum_neg_fast_m mask a <= T_tnum_neg_m mask a)%N.
+Proof.
+  intros mask a. time_unfold T_tnum_neg_fast_m. time_unfold T_tnum_neg_m.
+  time_cbn. rewrite tnum_const_m_zero. lia.
 Qed.
 
 (** A supplied mask removes the repeated all-ones construction from wrapping. *)
@@ -5252,6 +5299,16 @@ Proof.
 Qed.
 TimeBound tnum_neg_m_bound.
 
+(** Reusing zero retains negation's published linear budget. *)
+Lemma tnum_neg_fast_m_bound : forall w a,
+  (T_tnum_neg_fast_m (Z.ones (Zpos w)) a <=
+    131072 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. eapply N.le_trans;
+    [apply tnum_neg_fast_m_time_le|apply tnum_neg_m_bound].
+Qed.
+TimeBound tnum_neg_fast_m_bound.
+
 (** Conjunction reads both stored masks linearly. *)
 Lemma tnum_and_time : forall w a b,
   (T_tnum_and w a b <=
@@ -5313,6 +5370,25 @@ Proof.
   intros w a b. eapply N.le_trans; [apply tnum_xor_m_time|apply tnum_xor_time].
 Qed.
 TimeBound tnum_xor_m_bound.
+
+(** Combining raw XOR facts before masking retains the published linear storage budget. *)
+Lemma tnum_xor_flat_m_bound : forall w a b,
+  (T_tnum_xor_flat_m (Z.ones (Zpos w)) a b <=
+    2048 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b.
+  pose proof (tnum_land_bits (zeros a) (zeros b)).
+  pose proof (tnum_land_bits (ones a) (ones b)).
+  pose proof (tnum_land_bits (zeros a) (ones b)).
+  pose proof (tnum_land_bits (ones a) (zeros b)).
+  pose proof (tnum_lor_bits (Z.land (zeros a) (zeros b))
+    (Z.land (ones a) (ones b))).
+  pose proof (tnum_lor_bits (Z.land (zeros a) (ones b))
+    (Z.land (ones a) (zeros b))).
+  time_unfold T_tnum_xor_flat_m. time_cbn. time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_xor_flat_m_bound.
 
 (** The nonrotation cutoff uses no more bits than the width itself. *)
 Lemma tnum_shift_cutoff_size : forall w,

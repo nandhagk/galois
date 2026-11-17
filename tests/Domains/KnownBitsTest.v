@@ -305,3 +305,42 @@ Proof.
   repeat (apply Forall_cons; [vm_compute; reflexivity|]).
   apply Forall_nil.
 Qed.
+
+
+(** Flattened XOR keeps both low-byte facts and normalized full-width constants. *)
+Example tnum_flat_xor_constants :
+  tnum_xor_flat_m (Z.ones 1) (Tnum 0 1) (Tnum 0 1) = Tnum 1 0 /\
+  tnum_xor_flat_m (Z.ones 8) (Tnum 240 15) (Tnum 170 85) = Tnum 165 90 /\
+  tnum_xor_flat_m (Z.ones 64) (Tnum 240 15) (Tnum 170 85) = Tnum 165 90 /\
+  tnum_xor_flat_m (Z.ones 64) (Tnum (2 ^ 64 - 16) 15) (Tnum (2 ^ 64 - 86) 85) =
+    Tnum (2 ^ 64 - 91) 90.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Flattened XOR still clips oversized masks and retains unknown or contradictory facts. *)
+Example tnum_flat_xor_boundaries :
+  tnum_xor_flat_m (Z.ones 8) (Tnum (-16) 257) (Tnum 240 15) = Tnum 241 0 /\
+  tnum_xor_flat_m (Z.ones 8) (Tnum 240 15) (Tnum 0 0) = Tnum 0 0 /\
+  tnum_xor_flat_m (Z.ones 8) (Tnum 7 7) (Tnum 240 15) = Tnum 7 7.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Reusing zero leaves negation's carries and the unit-width wrap unchanged. *)
+Example tnum_fast_neg_constants :
+  tnum_neg_fast_m (Z.ones 1) (Tnum 0 1) = Tnum 0 1 /\
+  tnum_neg_fast_m (Z.ones 8) (Tnum 240 15) = Tnum 14 241 /\
+  tnum_neg_fast_m (Z.ones 64) (Tnum 240 15) = Tnum 14 241 /\
+  tnum_neg_fast_m (Z.ones 64) (Tnum (2 ^ 64 - 16) 15) = Tnum 14 (2 ^ 64 - 15).
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Negation normalizes raw masks and preserves complete uncertainty. *)
+Example tnum_fast_neg_boundaries :
+  tnum_neg_fast_m (Z.ones 8) (Tnum (-16) 257) = Tnum 0 241 /\
+  tnum_neg_fast_m (Z.ones 8) (Tnum 0 0) = Tnum 0 0.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
