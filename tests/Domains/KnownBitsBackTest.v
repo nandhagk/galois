@@ -105,6 +105,91 @@ Proof.
   vm_compute. repeat split; reflexivity.
 Qed.
 
+(** Inverse variable shifts retain the common copied bits and the arithmetic sign bit. *)
+Example backward_fast_variable_shifts :
+  Table.wbwd bvshl 8%positive (tnum_const 8%positive 128)
+    [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
+      Some [Tnum 15 0; Tnum 252 0] /\
+  Table.wbwd bvlshr 8%positive (tnum_const 8%positive 128)
+    [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
+      Some [Tnum 120 0; Tnum 252 0] /\
+  Table.wbwd bvashr 8%positive (tnum_const 8%positive 128)
+    [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
+      Some [Tnum 120 128; Tnum 252 0].
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** A possible shift by the width erases copied bits but keeps arithmetic sign information. *)
+Example backward_fast_oversized_shift :
+  Table.wbwd bvlshr 8%positive (tnum_const 8%positive 15)
+    [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
+      Some [tnum_top; Tnum 247 0] /\
+  Table.wbwd bvashr 8%positive (tnum_const 8%positive 15)
+    [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
+      Some [Tnum 128 0; Tnum 247 0].
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** A zero rotation stride preserves the projected constant in both directions. *)
+Example backward_fast_rotation_stop :
+  Table.wbwd bvrotl 8%positive (tnum_const 8%positive 15)
+    [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
+      Some [tnum_const 8%positive 15; Tnum 247 0] /\
+  Table.wbwd bvrotr 8%positive (tnum_const 8%positive 15)
+    [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
+      Some [tnum_const 8%positive 15; Tnum 247 0].
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** At width one, only arithmetic shifts and rotations retain the known result bit. *)
+Example backward_fast_width_one :
+  Table.wbwd bvshl 1%positive (tnum_const 1%positive 1)
+    [(1%positive, tnum_top); (1%positive, tnum_top)] = Some [tnum_top; tnum_top] /\
+  Table.wbwd bvashr 1%positive (tnum_const 1%positive 1)
+    [(1%positive, tnum_top); (1%positive, tnum_top)] = Some [Tnum 0 1; tnum_top] /\
+  Table.wbwd bvrotl 1%positive (tnum_const 1%positive 1)
+    [(1%positive, tnum_top); (1%positive, tnum_top)] = Some [Tnum 0 1; tnum_top].
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** A non-power-of-two width keeps every required rotation stage. *)
+Example backward_fast_rotation_nonpower_width :
+  Table.wbwd bvrotl 5%positive (tnum_const 5%positive 1)
+    [(5%positive, tnum_top); (5%positive, Tnum 15 0)] = Some [Tnum 14 0; Tnum 15 0] /\
+  Table.wbwd bvrotr 5%positive (tnum_const 5%positive 1)
+    [(5%positive, tnum_top); (5%positive, Tnum 15 0)] = Some [Tnum 28 0; Tnum 15 0].
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** Unknown rotations preserve an all-one 64-bit result through both inverse projections. *)
+Example backward_fast_rotation_width_64 :
+  Table.wbwd bvrotl 64%positive (Tnum 0 18446744073709551615)
+    [(64%positive, tnum_top); (64%positive, tnum_top)] =
+      Some [Tnum 0 18446744073709551615; tnum_top] /\
+  Table.wbwd bvrotr 64%positive (Tnum 0 18446744073709551615)
+    [(64%positive, tnum_top); (64%positive, tnum_top)] =
+      Some [Tnum 0 18446744073709551615; tnum_top].
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** Fast projection keeps the original observations on oversized and inconsistent masks. *)
+Example backward_fast_raw_masks :
+  Table.wbwd bvshl 8%positive (Tnum 511 256)
+    [(8%positive, tnum_top); (8%positive, Tnum 256 0)] = Some [tnum_top; tnum_top] /\
+  Table.wbwd bvashr 8%positive (Tnum 511 256)
+    [(8%positive, tnum_top); (8%positive, Tnum 256 0)] = Some [Tnum 128 0; tnum_top] /\
+  Table.wbwd bvlshr 8%positive (Tnum 7 7)
+    [(8%positive, Tnum 7 7); (8%positive, Tnum 252 0)] = Some [Tnum 7 7; Tnum 252 0].
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
 (** Rejected offsets have the same genuine clock, however large the offset is. *)
 Example rejected_extraction_clock_constant : forall lo, (1 <= lo)%nat ->
   Table.T_wfwd (bvextract 0 lo) 1%positive [(1%positive, tnum_top)] =

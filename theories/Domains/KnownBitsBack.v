@@ -264,55 +264,75 @@ Proof.
 Qed.
 TimeBound tnum_back_sext_m_time.
 
-Definition tnum_lower_m (mask : Z) (w : width) (l : Z) : tnum :=
-  tnum_not_m mask (tnum_upper w (tnum_wnot_m mask l)).
+Definition tnum_upper_m (mask h : Z) : tnum :=
+  Tnum (tnum_wnot_m mask (Z.ones (tnum_bitlen h))) 0.
+TimeFun tnum_upper_m.
+
+(** Sharing the width mask preserves the upper-endpoint approximation. *)
+Lemma tnum_upper_m_eq : forall w h,
+  tnum_upper_m (Z.ones (Zpos w)) h = tnum_upper w h.
+Proof.
+  reflexivity.
+Qed.
+
+(** A supplied mask cannot increase upper-endpoint work. *)
+Lemma tnum_upper_m_time : forall w h,
+  (T_tnum_upper_m (Z.ones (Zpos w)) h <= T_tnum_upper w h)%N.
+Proof.
+  intros w h. time_unfold T_tnum_upper_m. time_unfold T_tnum_upper. time_cbn.
+  time_pose. lia.
+Qed.
+TimeBound tnum_upper_m_time.
+
+Definition tnum_lower_m (mask l : Z) : tnum :=
+  tnum_not_m mask (tnum_upper_m mask (tnum_wnot_m mask l)).
 TimeFun tnum_lower_m.
 
 (** Sharing the width mask preserves the lower-endpoint approximation. *)
 Lemma tnum_lower_m_eq : forall w l,
-  tnum_lower_m (Z.ones (Zpos w)) w l = tnum_lower w l.
+  tnum_lower_m (Z.ones (Zpos w)) l = tnum_lower w l.
 Proof.
   reflexivity.
 Qed.
 
 (** A supplied mask cannot increase lower-endpoint work. *)
 Lemma tnum_lower_m_time : forall w l,
-  (T_tnum_lower_m (Z.ones (Zpos w)) w l <= T_tnum_lower w l)%N.
+  (T_tnum_lower_m (Z.ones (Zpos w)) l <= T_tnum_lower w l)%N.
 Proof.
   intros w l. time_unfold T_tnum_lower_m. time_unfold T_tnum_lower. time_cbn.
-  rewrite ?tnum_wnot_m_eq.
+  rewrite ?tnum_wnot_m_eq, ?tnum_upper_m_eq.
   time_unfold T_tnum_not_m. time_unfold T_tnum_not. time_cbn.
   time_unfold T_tnum_wnot_m. time_unfold T_tnum_wnot. time_cbn.
-  time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn. lia.
+  time_unfold T_tnum_wrap_m. time_unfold T_tnum_wrap. time_cbn. time_pose. lia.
 Qed.
 TimeBound tnum_lower_m_time.
 
-Definition tnum_order_back_m (mask : Z) (strict : bool) (w : width) (q a b : tnum)
+Definition tnum_order_back_m (mask : Z) (strict : bool) (q a b : tnum)
     : tnum * tnum :=
   let d := if strict then 1 else 0 in
   if Z.testbit (ones q) 0 then
-    (tnum_upper w (tnum_max_m mask b - d), tnum_lower_m mask w (tnum_min_m mask a + d))
+    (tnum_upper_m mask (tnum_max_m mask b - d), tnum_lower_m mask (tnum_min_m mask a + d))
   else if Z.testbit (zeros q) 0 then
-    (tnum_lower_m mask w (tnum_min_m mask b + (1 - d)),
-      tnum_upper w (tnum_max_m mask a - (1 - d)))
+    (tnum_lower_m mask (tnum_min_m mask b + (1 - d)),
+      tnum_upper_m mask (tnum_max_m mask a - (1 - d)))
   else (tnum_top, tnum_top).
 TimeFun tnum_order_back_m.
 
 (** Sharing the width mask preserves backward order refinement. *)
 Lemma tnum_order_back_m_eq : forall strict w q a b,
-  tnum_order_back_m (Z.ones (Zpos w)) strict w q a b = tnum_order_back strict w q a b.
+  tnum_order_back_m (Z.ones (Zpos w)) strict q a b = tnum_order_back strict w q a b.
 Proof.
   reflexivity.
 Qed.
 
 (** A supplied mask cannot increase backward order-refinement work. *)
 Lemma tnum_order_back_m_time : forall strict w q a b,
-  (T_tnum_order_back_m (Z.ones (Zpos w)) strict w q a b <=
+  (T_tnum_order_back_m (Z.ones (Zpos w)) strict q a b <=
     T_tnum_order_back strict w q a b)%N.
 Proof.
   intros strict w q a b. time_unfold T_tnum_order_back_m.
   time_unfold T_tnum_order_back. time_cbn.
-  rewrite ?tnum_min_m_eq, ?tnum_max_m_eq, ?tnum_lower_m_eq.
+  rewrite ?tnum_min_m_eq, ?tnum_max_m_eq, ?tnum_lower_m_eq, ?tnum_upper_m_eq.
   destruct (Z.odd (ones q)), (Z.odd (zeros q)); time_cbn;
     try solve [lia].
   all: time_unfold T_tnum_min_m; time_unfold T_tnum_min;
@@ -355,6 +375,78 @@ Proof.
 Qed.
 TimeBound tnum_back_variable_shift_m_time.
 
+Definition tnum_project_variable_fast (o : op) (w : width) (b q : tnum) : tnum :=
+  let inv := tnum_inverse_shift o in
+  let zero := tnum_variable_raw_fast inv w (Tnum 0 (zeros q)) b in
+  let one := tnum_variable_raw_fast inv w (Tnum 0 (ones q)) b in
+  Tnum (ones zero) (ones one).
+TimeFun tnum_project_variable_fast.
+
+(** Faster shift and rotation expansion preserves both backward projected masks. *)
+Lemma tnum_project_variable_fast_agrees : forall o w b q,
+  tnum_project_variable_fast o w b q = tnum_project_variable o w b q.
+Proof.
+  intros o w b q. unfold tnum_project_variable_fast, tnum_project_variable.
+  now rewrite !tnum_variable_raw_fast_agrees.
+Qed.
+
+(** Selecting the opposite shift or rotation inspects one operator constructor. *)
+Lemma back_inverse_time : forall o, (T_tnum_inverse_shift o <= 16)%N.
+Proof. intros o. destruct o; time_unfold T_tnum_inverse_shift; time_cbn; lia. Qed.
+TimeBound back_inverse_time.
+
+(** Two fast raw transfers retain the existing variable-projection budget. *)
+Lemma back_project_variable_fast_time : forall o w b q,
+  (T_tnum_project_variable_fast o w b q <= 67108864 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + tnum_bits b + tnum_bits q))%N.
+Proof.
+  intros o w b q. set (inv := tnum_inverse_shift o).
+  pose proof (tnum_variable_raw_fast_general_time inv w (Tnum 0 (zeros q)) b) as Hzero.
+  pose proof (tnum_variable_raw_fast_general_time inv w (Tnum 0 (ones q)) b) as Hone.
+  pose proof (WordTime.time_square_floor 1 (Pos.to_nat w + 1)
+    ltac:(lia) ltac:(lia)) as Hpositive.
+  time_unfold T_tnum_project_variable_fast; cbn beta iota zeta. fold inv.
+  time_pose. unfold tnum_bits in *; cbn [zeros ones] in *.
+  try change (Z.size_nat 0) with 0%nat in *.
+  rewrite ?Nat2N.inj_add in *.
+  set (square := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  clearbody inv square.
+  try change (N.of_nat 1) with 1%N in *.
+  lia.
+Qed.
+TimeBound back_project_variable_fast_time.
+
+Definition tnum_back_variable_shift_fast (mask : Z) (o : op) (w : width)
+    (b q : tnum) : tnum :=
+  let copied := tnum_project_variable_fast o w b q in
+  match o with
+  | bvashr => tnum_meet_m mask copied
+      (tnum_sign_project_m mask w (Z.max 0 (Zpos w - 1 - tnum_min_m mask b)) q)
+  | _ => copied
+  end.
+TimeFun tnum_back_variable_shift_fast.
+
+(** Fast variable projection preserves backward shifts with the shared width mask. *)
+Lemma tnum_back_variable_shift_fast_agrees : forall o w b q,
+  tnum_back_variable_shift_fast (Z.ones (Zpos w)) o w b q =
+    tnum_back_variable_shift o w b q.
+Proof.
+  intros o w b q. unfold tnum_back_variable_shift_fast, tnum_back_variable_shift.
+  rewrite tnum_project_variable_fast_agrees. reflexivity.
+Qed.
+
+(** Only the new projection cost is needed beyond the shared-mask inverse-shift clock. *)
+Lemma tnum_back_variable_shift_fast_time : forall mask o w b q,
+  (T_tnum_back_variable_shift_fast mask o w b q <=
+    T_tnum_back_variable_shift_m mask o w b q + T_tnum_project_variable_fast o w b q)%N.
+Proof.
+  intros mask o w b q. destruct o;
+    time_unfold T_tnum_back_variable_shift_fast;
+    time_unfold T_tnum_back_variable_shift_m; time_cbn;
+    rewrite ?tnum_project_variable_fast_agrees; lia.
+Qed.
+TimeBound tnum_back_variable_shift_fast_time.
+
 Definition tnum_backward_raw_fast (o : op) (wps : list (width * tnum))
     (rw : width) (q : tnum) : list tnum :=
   match o, wps with
@@ -380,13 +472,13 @@ Definition tnum_backward_raw_fast (o : op) (wps : list (width * tnum))
     let mask := Z.ones (Zpos w) in
     match tnum_constant_m (Z.ones (Zpos v)) b with
     | Some k => [tnum_back_shift_m mask o w k q; b]
-    | None => [tnum_back_variable_shift_m mask o w b q; b]
+    | None => [tnum_back_variable_shift_fast mask o w b q; b]
     end
   | bveq, [(_, a); (_, b)] => if Z.testbit (ones q) 0 then [b; a] else [a; b]
   | bvult, [(w, a); (_, b)] =>
-    let p := tnum_order_back_m (Z.ones (Zpos w)) true w q a b in [fst p; snd p]
+    let p := tnum_order_back_m (Z.ones (Zpos w)) true q a b in [fst p; snd p]
   | bvule, [(w, a); (_, b)] =>
-    let p := tnum_order_back_m (Z.ones (Zpos w)) false w q a b in [fst p; snd p]
+    let p := tnum_order_back_m (Z.ones (Zpos w)) false q a b in [fst p; snd p]
   | bvconcat, [(w, _); (v, _)] =>
     let rm := Z.ones (Zpos rw) in
     [tnum_project_m (Z.ones (Zpos w)) rm (fun m => Z.shiftr m (Zpos v)) q;
@@ -395,11 +487,15 @@ Definition tnum_backward_raw_fast (o : op) (wps : list (width * tnum))
   end.
 TimeFun tnum_backward_raw_fast.
 
-(** Shared masks preserve every raw backward result, including unchecked shapes. *)
+(** Faster helpers preserve every raw backward result, including unchecked shapes. *)
 Lemma tnum_backward_raw_fast_agrees : forall o wps rw q,
   tnum_backward_raw_fast o wps rw q = tnum_backward_raw o wps rw q.
 Proof.
-  reflexivity.
+  intros o xs rw q. destruct o;
+    destruct xs as [|[w a] [|[v b] [|wp rest]]];
+    cbn [tnum_backward_raw_fast tnum_backward_raw]; try reflexivity.
+  all: rewrite tnum_constant_m_eq; destruct (tnum_constant v b);
+    [reflexivity|rewrite tnum_back_variable_shift_fast_agrees; reflexivity].
 Qed.
 
 Fixpoint tnum_refine_fast (wps : list (width * tnum)) (qs : list tnum) : list tnum :=
@@ -431,31 +527,61 @@ Proof.
 Qed.
 TimeBound tnum_refine_fast_time.
 
-(** Raw dispatch adds at most one shared mask per relevant width to the old helper budget. *)
+(** Raw dispatch fits the old helper budget plus shared masks and one fast projection. *)
 Lemma tnum_backward_raw_fast_time : forall o rw q xs,
   (T_tnum_backward_raw_fast o xs rw q <= T_tnum_backward_raw o xs rw q +
     64 * N.of_nat (Pos.to_nat rw +
-      fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) + 1))%N.
+      fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) + 1) +
+    67108864 * N.of_nat
+      ((Pos.to_nat rw + fold_right Nat.add 0%nat
+        (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 + tnum_bits q +
+        fold_right Nat.add 0%nat (map (fun x => tnum_bits (snd x)) xs)))%N.
 Proof.
   intros o rw q xs.
   pose proof (tnum_ones_time (Zpos rw) ltac:(lia)) as Hrw.
+  set (payload := N.of_nat
+    ((Pos.to_nat rw + fold_right Nat.add 0%nat
+      (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 + tnum_bits q +
+      fold_right Nat.add 0%nat (map (fun x => tnum_bits (snd x)) xs))).
   destruct xs as [|[w a] [|[v b] [|wp rest]]];
-    cbn [map fold_right fst].
-  - destruct o; time_unfold T_tnum_backward_raw_fast;
+    cbn [map fold_right fst snd] in payload |- *; rewrite ?Nat.add_0_r in payload |- *.
+  - clearbody payload. destruct o; time_unfold T_tnum_backward_raw_fast;
       time_unfold T_tnum_backward_raw; time_cbn; lia.
   - pose proof (tnum_ones_time (Zpos w) ltac:(lia)) as Hw.
+    clearbody payload.
     destruct o; time_unfold T_tnum_backward_raw_fast;
       time_unfold T_tnum_backward_raw; time_cbn;
-      time_pose; cbn [Z.to_nat] in *; rewrite ?Nat2N.inj_add in *; nia.
+      time_pose; cbn [Z.to_nat] in *; rewrite ?Nat2N.inj_add in *; lia.
   - pose proof (tnum_ones_time (Zpos w) ltac:(lia)) as Hw.
     pose proof (tnum_ones_time (Zpos v) ltac:(lia)) as Hv.
+    assert (Hpayload : (N.of_nat ((Pos.to_nat w + 1) ^ 2 +
+      tnum_bits b + tnum_bits q) <= payload)%N).
+    { unfold payload. apply time_of_nat_le.
+      rewrite !Nat.add_0_r.
+      assert (Hsquare : ((Pos.to_nat w + 1) ^ 2 <=
+        (Pos.to_nat rw + (Pos.to_nat w + Pos.to_nat v) + 1) ^ 2)%nat).
+      { apply Nat.pow_le_mono_l. lia. }
+      lia. }
+    clearbody payload.
     destruct o; time_unfold T_tnum_backward_raw_fast;
       time_unfold T_tnum_backward_raw; time_cbn;
-      rewrite ?tnum_constant_m_eq;
-      try (destruct (tnum_constant v b));
-      time_pose; cbn [Z.to_nat] in *; rewrite ?Nat2N.inj_add in *; nia.
-  - destruct o; time_unfold T_tnum_backward_raw_fast;
-      time_unfold T_tnum_backward_raw; time_cbn; lia.
+      try rewrite (tnum_constant_m_eq v b) at 1;
+      try match goal with
+      | |- context [tnum_constant v b] => destruct (tnum_constant v b)
+      end;
+      try match goal with
+      | |- context [T_tnum_back_variable_shift_fast _ ?shift _ _ _] =>
+        pose proof (tnum_back_variable_shift_fast_time (Z.ones (Zpos w)) shift w b q)
+          as Hfast;
+        pose proof (tnum_back_variable_shift_m_time shift w b q) as Hshared;
+        pose proof (back_project_variable_fast_time shift w b q) as Hproject
+      end;
+      time_pose; cbn [Z.to_nat] in *; rewrite ?Nat2N.inj_add in *; lia.
+  - assert (Hsame :
+      T_tnum_backward_raw_fast o ((w, a) :: (v, b) :: wp :: rest) rw q =
+      T_tnum_backward_raw o ((w, a) :: (v, b) :: wp :: rest) rw q).
+    { destruct o; reflexivity. }
+    rewrite Hsame, <- N.add_assoc. apply N.le_add_r.
 Qed.
 TimeBound tnum_backward_raw_fast_time.
 
@@ -1155,7 +1281,7 @@ Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
     pose proof (result_width_arity o (map fst xs) rw Hwidth) as Harity.
     rewrite length_map in Harity. unfold wbwd.
     rewrite Harity, Nat.eqb_refl, (tnum_table_bounded_width o xs rw Hwidth).
-    reflexivity.
+    now rewrite tnum_refine_fast_agrees, tnum_backward_raw_fast_agrees.
   Qed.
   Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
@@ -1636,11 +1762,6 @@ Proof.
   rewrite ?Nat2N.inj_add in *. lia.
 Qed.
 TimeBound back_sext_time.
-
-(** Selecting the opposite shift or rotation inspects one operator constructor. *)
-Lemma back_inverse_time : forall o, (T_tnum_inverse_shift o <= 16)%N.
-Proof. intros o. destruct o; time_unfold T_tnum_inverse_shift; time_cbn; lia. Qed.
-TimeBound back_inverse_time.
 
 (** A recognized shift count pays through its width, with raw result masks linear. *)
 Lemma back_shift_time : forall o w v k q, is_word v k ->
@@ -2232,7 +2353,8 @@ Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BI
     { eapply N.le_trans; [apply tnum_refine_fast_time|exact Hrefine]. }
     pose proof (tnum_backward_raw_fast_time o rw q xs) as Hsharedraw.
     change (T_tnum_backward_raw_fast o xs rw q <= T_tnum_backward_raw o xs rw q +
-      64 * N.of_nat (Pos.to_nat rw + widths + 1))%N in Hsharedraw.
+      64 * N.of_nat (Pos.to_nat rw + widths + 1) + 67108864 * N.of_nat
+        ((Pos.to_nat rw + widths + 1) ^ 2 + tnum_bits q + bits))%N in Hsharedraw.
     pose proof (back_arity_time o) as Harity.
     time_unfold T_wbwd; cbn beta iota zeta.
     rewrite tnum_backward_raw_fast_agrees. fold raw.
