@@ -2,10 +2,17 @@
 
     Mining traverses terms once to collect literals before expanding their neighbors.
     For example, the literal four contributes three, four and five to the threshold tree.
+
+    Main results
+    - [lits_complexity] Literal collection is linear in the term size.
+    - [mine_complexity] Mining is linear in the terms and seeds plus the cost of building the
+      thresholds.
+
     Builds on: MiningSig and ThresholdsSig. *)
 
 From Stdlib Require Import List NArith ZArith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ThresholdsSig.
 From Galois.Widening Require Import MiningSig.
@@ -179,7 +186,7 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
   (** Mining combines syntax traversal, seed arithmetic and threshold construction. *)
   Lemma T_mine_le : forall es extra,
     (T_mine es extra <= c_mining *
-      (N.of_nat ((fold_right Nat.add 0 (map tsize es) +
+      (N.of_nat ((fold_right Nat.add 0%nat (map tsize es) +
         fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)))%nat) +
       T.T_make (expanded es extra) + 1))%N.
   Proof.
@@ -190,20 +197,20 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
   Qed.
 
   (** Literal collection is linear in the term size. *)
-  Lemma lits_complexity : bigO (X := term L.op X.t) (fun _ => True)
-    (fun e => N.of_nat (tsize e)) (fun e => T_lits e).
+  Lemma lits_complexity :
+    T_lits e ∈ 𝑂(N.of_nat (tsize e)) for e.
   Proof.
     eapply bigO_intro with (c := c_mining). intros e _.
     pose proof (T_lits_le e) as Hbound. nia.
   Qed.
 
   (** Mining is linear in the terms and seeds plus the cost of building the thresholds. *)
-  Lemma mine_complexity : bigO (X := list (term L.op X.t) * list Z) (fun _ => True)
-    (fun '(es, extra) => N.of_nat (fold_right Nat.add 0 (map tsize es) +
-        fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)) +
+  Lemma mine_complexity :
+    T_mine es extra ∈ 𝑂(N.of_nat (fold_right Nat.add 0%nat (map tsize es) +
+        fold_right Nat.add 0%nat (map (fun z => (Z.size_nat z + 1)%nat) (seeds es extra)) +
         ((length (expanded es extra) * (Nat.log2 (length (expanded es extra)) + 1) + 1) *
           (T.zb (expanded es extra) + 1))))
-    (fun '(es, extra) => T_mine es extra).
+    for (es, extra).
   Proof.
     eapply bigO_intro with (c := (c_mining * (T.c_thresholds + 1))%N).
     intros [es extra] _. cbn beta iota zeta.
