@@ -11153,6 +11153,168 @@ Definition shift_column_work (target : K.t) (d : Z) (row : M.t Z) : nat :=
     clearbody work. clear - Hfirst Hsecond Hopp Hbudget Hwork. lia.
   Qed.
 
+  (** Raw optional insertion changes exactly the supplied target code. *)
+  Lemma find_put_bound_raw : forall target bound row p,
+    M.find p (put_bound target bound row) =
+      if Pos.eqb p (K.encode target) then bound else M.find p row.
+  Proof.
+    intros target [z|] row p; unfold put_bound.
+    - apply M.find_set.
+    - apply M.find_remove.
+  Qed.
+
+  Local Definition copy_column_matrix (target source : K.t) (d : Z) (m : dbm) : dbm :=
+    M.merge (copy_column_row target source d) m M.empty.
+
+  (** Copying a column retains the source matrix's outer rows. *)
+  Lemma find_copy_column_matrix : forall target source d m p,
+    M.find p (copy_column_matrix target source d m) =
+      match M.find p m with
+      | Some row => Some (put_bound target (edge_prefix d (M.get source row)) row)
+      | None => None
+      end.
+  Proof.
+    intros target source d m p. unfold copy_column_matrix.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m); reflexivity.
+  Qed.
+
+  (** Every copied column entry comes from its source column and offset. *)
+  Lemma raw_copy_column_matrix : forall target source d m p q,
+    raw_entry (copy_column_matrix target source d m) p q =
+      if Pos.eqb q (K.encode target) then
+        edge_prefix d (raw_entry m p (K.encode source))
+      else raw_entry m p q.
+  Proof.
+    intros target source d m p q. unfold raw_entry at 1.
+    rewrite find_copy_column_matrix. unfold raw_entry.
+    destruct (M.find p m) as [row|]; cbn [row_of].
+    - rewrite find_put_bound_raw, M.get_find. reflexivity.
+    - rewrite !M.find_empty. destruct (Pos.eqb q (K.encode target)); reflexivity.
+  Qed.
+
+  (** Copying a column introduces no code other than the target. *)
+  Lemma support_copy_column_matrix : forall target source d m p,
+    In p (support (copy_column_matrix target source d m)) ->
+      p = K.encode target \/ In p (support m).
+  Proof.
+    intros target source d m p Hp. apply support_find in Hp.
+    destruct Hp as [Hrow|[q Hentry]].
+    - right. apply support_find. left. rewrite find_copy_column_matrix in Hrow.
+      destruct (M.find p m); congruence.
+    - rewrite raw_copy_column_matrix in Hentry.
+      destruct (Pos.eqb p (K.encode target)) eqn:Htarget.
+      + left. now apply Pos.eqb_eq.
+      + right. apply support_find. right. now exists q.
+  Qed.
+
+  (** Column copying adds at most the target's signed endpoint allowance. *)
+  Lemma copy_column_matrix_sizes : forall target source d m,
+    supp (copy_column_matrix target source d m) <= supp m + 4 /\
+    b (copy_column_matrix target source d m) <= b m + K.bits target + 1.
+  Proof.
+    intros target source d m.
+    assert (Hsupport : forall p, In p (support (copy_column_matrix target source d m)) ->
+      p = K.encode target \/ p = K.encode target \/ p = K.encode (flip target) \/
+        p = K.encode (flip target) \/ In p (support m)).
+    { intros p Hp. pose proof (support_copy_column_matrix target source d m p Hp). tauto. }
+    destruct (support_signed_endpoints target target _ m Hsupport) as [Hcount Hbits].
+    split; [exact Hcount|]. rewrite Nat.max_id in Hbits.
+    eapply Nat.le_trans; [exact Hbits|]. apply Nat.max_lub; lia.
+  Qed.
+
+  (** A copied column adds one offset and one carry bit to the payload bound. *)
+  Lemma ell_copy_column_matrix : forall target source d m,
+    ell (copy_column_matrix target source d m) <= ell m + Z.size_nat d + 1.
+  Proof.
+    intros target source d m. apply ell_bound. intros p q z Hentry.
+    rewrite raw_copy_column_matrix in Hentry.
+    destruct (Pos.eqb q (K.encode target)).
+    - destruct (raw_entry m p (K.encode source)) as [a|] eqn:Hsource; [|discriminate].
+      cbn [edge_prefix] in Hentry. injection Hentry as <-.
+      pose proof (ell_entry m p (K.encode source) a Hsource).
+      pose proof (zbits_add_sum a d). lia.
+    - pose proof (ell_entry m p q z Hentry). lia.
+  Qed.
+
+  (** The new target row is the shifted source row after the column copy. *)
+  Lemma raw_copy_literal : forall target source d m p q,
+    raw_entry (copy_literal target source d m) p q =
+      if Pos.eqb p (K.encode target) then
+        option_map (fun z => (z - d)%Z)
+          (raw_entry (copy_column_matrix target source d m) (K.encode source) q)
+      else raw_entry (copy_column_matrix target source d m) p q.
+  Proof.
+    intros target source d m p q. unfold copy_literal.
+    fold (copy_column_matrix target source d m). unfold raw_entry at 1.
+    rewrite M.find_set. destruct (Pos.eqb p (K.encode target)); [|reflexivity].
+    cbn [row_of]. rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    unfold raw_entry. rewrite M.get_find.
+    destruct (M.find q (row_of (M.find (K.encode source)
+      (copy_column_matrix target source d m)))); reflexivity.
+  Qed.
+
+  (** The target row is the only new outer row of a literal copy. *)
+  Lemma find_copy_literal_presence : forall target source d m p,
+    M.find p (copy_literal target source d m) <> None <->
+      p = K.encode target \/ M.find p m <> None.
+  Proof.
+    intros target source d m p. unfold copy_literal.
+    fold (copy_column_matrix target source d m). rewrite M.find_set.
+    destruct (Pos.eqb p (K.encode target)) eqn:Htarget.
+    - apply Pos.eqb_eq in Htarget. split; [intros; now left|intros; discriminate].
+    - apply Pos.eqb_neq in Htarget. rewrite find_copy_column_matrix.
+      destruct (M.find p m); split; intuition congruence.
+  Qed.
+
+  (** Literal copying introduces no supported code except its target. *)
+  Lemma support_copy_literal : forall target source d m p,
+    In p (support (copy_literal target source d m)) ->
+      p = K.encode target \/ In p (support m).
+  Proof.
+    intros target source d m p Hp. apply support_find in Hp.
+    destruct Hp as [Hrow|[q Hentry]].
+    - apply find_copy_literal_presence in Hrow. destruct Hrow as [Htarget|Hrow].
+      + now left.
+      + right. apply support_find. now left.
+    - rewrite raw_copy_literal in Hentry.
+      apply (support_copy_column_matrix target source d m p).
+      apply support_find. right.
+      destruct (Pos.eqb q (K.encode target)).
+      + apply shift_option_presence in Hentry. now exists (K.encode source).
+      + now exists q.
+  Qed.
+
+  (** One literal copy has bounded support and key-width growth. *)
+  Lemma copy_literal_sizes : forall target source d m,
+    supp (copy_literal target source d m) <= supp m + 4 /\
+    b (copy_literal target source d m) <= b m + K.bits target + 1.
+  Proof.
+    intros target source d m.
+    assert (Hsupport : forall p, In p (support (copy_literal target source d m)) ->
+      p = K.encode target \/ p = K.encode target \/ p = K.encode (flip target) \/
+        p = K.encode (flip target) \/ In p (support m)).
+    { intros p Hp. pose proof (support_copy_literal target source d m p Hp). tauto. }
+    destruct (support_signed_endpoints target target _ m Hsupport) as [Hcount Hbits].
+    split; [exact Hcount|]. rewrite Nat.max_id in Hbits.
+    eapply Nat.le_trans; [exact Hbits|]. apply Nat.max_lub; lia.
+  Qed.
+
+  (** A literal copy adds at most two offset allowances to every finite entry. *)
+  Lemma ell_copy_literal : forall target source d m,
+    ell (copy_literal target source d m) <= ell m + 2 * Z.size_nat d + 2.
+  Proof.
+    intros target source d m.
+    pose proof (ell_copy_column_matrix target source d m) as Hell.
+    apply ell_bound. intros p q z Hentry. rewrite raw_copy_literal in Hentry.
+    destruct (Pos.eqb p (K.encode target)).
+    - destruct (raw_entry (copy_column_matrix target source d m) (K.encode source) q)
+        as [a|] eqn:Hsource; [|discriminate].
+      cbn [option_map] in Hentry. injection Hentry as <-.
+      pose proof (ell_entry _ _ _ a Hsource). pose proof (zbits_sub_sum a d). lia.
+    - pose proof (ell_entry _ _ _ z Hentry). lia.
+  Qed.
+
   Lemma T_signed_unit_le : forall x a,
     (T_signed_unit x a <= 16 * N.of_nat (Z.size_nat a + 1))%N.
   Proof. intros x a. time_step. Qed.
