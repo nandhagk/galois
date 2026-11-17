@@ -9,8 +9,7 @@
     - [UpdateTests] Adding and removing keys.
     - [EnumerationTests] The order and the content of the elements of a map.
     - [ComparisonTests] Equality of a map with itself.
-    - [CollisionTests] Maps whose keys share one encoded code, or whose storage is malformed.
-    - [RawTests] A map over a unit key, read back through its raw code. *)
+    - [CollisionTests] Maps whose keys share one encoded code, or whose storage is malformed. *)
 
 From Stdlib Require Import List NArith.
 From Galois.Base Require Import Key Map Trie.
@@ -149,11 +148,3 @@ Module CollisionTests.
   Qed.
 
 End CollisionTests.
-
-(* BaseMapTest.map_remove_last expresses is_empty through elements above.
-   map_costed_combination and map_costed_comparison
-   keep their value coordinates in map_combination and map_costed_comparison_value.
-   Their tick comparisons and map_reference_ticks retire with Cost.ticks.
-   raw_set_client and malformed_storage_control are symbolic law clients.
-   colliding_keys_update_client uses a constant encoder through the operations
-   layer, which requires no injectivity proof. *)
