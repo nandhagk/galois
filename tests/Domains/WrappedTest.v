@@ -56,6 +56,48 @@ Proof. vm_compute. reflexivity. Qed.
 Example wrapped_mul_both_poles : wrapped_mul w8 (WItv 100 50) (WItv 2 2) = WItv 0 254.
 Proof. vm_compute. reflexivity. Qed.
 
+Example wrapped_mul_shared_products :
+  W.wrapped_mul w8 (WItv 2 5) (WItv 3 4) = WItv 6 20.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mul_shared_points :
+  W.wrapped_mul w8 (WItv 2 2) (WItv 3 3) = WItv 6 6.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mul_shared_cross_zero :
+  W.wrapped_mul w8 (WItv 250 3) (WItv 2 2) = WItv 244 6.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mul_shared_bottom :
+  W.wrapped_mul w8 WBot (WItv 2 5) = WBot.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mul_shared_full :
+  W.wrapped_mul w8 WFull (WItv 2 2) = WItv 0 254.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mul_shared_products_64 :
+  W.wrapped_mul 64%positive (WItv 2 5) (WItv 3 4) = WItv 6 20.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mul_shared_cross_zero_64 :
+  W.wrapped_mul 64%positive (WItv 250 3) (WItv 2 2) = WItv 0 (2 ^ 64 - 2).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Module WF := Wrapped WordLanguage.
 Example wrapped_rank_progress :
   Nat.ltb (WF.pwrank tt w8 (WItv 8 13)) (WF.pwrank tt w8 (WItv 10 11)) = true.

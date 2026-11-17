@@ -84,6 +84,18 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example wrapped_port_mul_shared_products :
+  fwd bvmul [(w8, WItv 2 5); (w8, WItv 3 4)] w8 = WItv 6 20.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_port_mul_shared_cross_zero :
+  fwd bvmul [(w8, WItv 250 3); (w8, WItv 2 2)] w8 = WItv 244 6.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example wrapped_unsigned_zero_divisor :
   fwd bvudiv [(w8, WItv 1 3); (w8, WItv 0 0)] w8 = WItv 255 255.
 Proof.

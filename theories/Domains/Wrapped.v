@@ -189,9 +189,13 @@ Definition wrapped_mul_piece (w : width) (a b : itv) : wrapped :=
   match a, b with
   | IBot, _ | _, IBot => WBot
   | I (Fin lo) (Fin hi), I (Fin lo') (Fin hi') =>
+    let p1 := lo * lo' in
+    let p2 := lo * hi' in
+    let p3 := hi * lo' in
+    let p4 := hi * hi' in
     wrapped_range w
-      (Z.min (Z.min (lo * lo') (lo * hi')) (Z.min (hi * lo') (hi * hi')))
-      (Z.max (Z.max (lo * lo') (lo * hi')) (Z.max (hi * lo') (hi * hi')))
+      (Z.min (Z.min p1 p2) (Z.min p3 p4))
+      (Z.max (Z.max p1 p2) (Z.max p3 p4))
   | _, _ => WFull
   end.
 TimeFun wrapped_mul_piece.
