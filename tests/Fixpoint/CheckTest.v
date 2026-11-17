@@ -2,6 +2,12 @@
 
     A cycle exercises repeated rows, repeated side contributions and absent bindings.
     For example, the seed row rejects the empty assignment through its true side value.
+
+    Groups:
+    - Fixtures: a Boolean lattice, a cycle system and two assignments.
+    - Full: the checker accepts or rejects a complete assignment.
+    - Lookup: a lookup returns the stored value of a bound key and false for a missing key.
+
     Builds on: Fixpoint.Check and Base.Key. *)
 
 From Stdlib Require Import List Bool Arith.
@@ -9,6 +15,8 @@ From Galois.Base Require Import Key Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig Check.
 Import List.ListNotations.
+
+(** * Fixtures *)
 
 Module BoolOps <: WLATTICE_OPS.
   Definition t := bool.
@@ -21,6 +29,7 @@ Module BoolOps <: WLATTICE_OPS.
   Definition narrow := andb.
 End BoolOps.
 
+(** A cycle of rows 0 and 1, and a seed row 2 that writes row 0 twice. *)
 Module Cycle <: SYSTEM_OPS BoolOps.
   Definition prog := bool.
   Definition key := nat.
@@ -45,31 +54,51 @@ End Cycle.
 
 Module C := CheckCode BoolOps Cycle.
 
+(** An assignment that binds keys 0 and 1 to true. *)
 Definition cycle_values := PTrieCode.set (Cycle.key_code 1) (1, true)
   (PTrieCode.set (Cycle.key_code 0) (0, true) PTrieCode.empty).
 
-(** The seeded cycle accepts its complete assignment. *)
-Example full_accept : C.check true cycle_values = true.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+(** An assignment that binds only key 0, to true. *)
+Definition only_zero_bound := PTrieCode.set (Cycle.key_code 0) (0, true) PTrieCode.empty.
 
-(** The empty assignment fails the seed row's side contribution. *)
-Example full_reject : C.check true PTrieCode.empty = false.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+(** * Full *)
 
-(** A system with no rows accepts the empty assignment. *)
-Example full_empty : C.check false PTrieCode.empty = true.
-Proof.
-  vm_compute; reflexivity.
-Qed.
+Module FullTests.
 
-(** Lookup retains the present and missing values of the old lookup fixture. *)
-Example assignment_lookup_present_missing :
-  let m := PTrieCode.set (Cycle.key_code 0) (0, true) PTrieCode.empty in
-  (C.look m 0, C.look m 1) = (true, false).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+  (** The seeded cycle accepts its complete assignment. *)
+  Example seeded_cycle_accepts_full_assignment : C.check true cycle_values = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The empty assignment fails the seed row's side contribution. *)
+  Example empty_assignment_fails_seed_side : C.check true PTrieCode.empty = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A system with no rows accepts the empty assignment. *)
+  Example empty_system_accepts_empty_assignment : C.check false PTrieCode.empty = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End FullTests.
+
+(** * Lookup *)
+
+Module LookupTests.
+
+  (** A bound key returns its stored Boolean value. *)
+  Example bound_key_looks_up_true : C.look only_zero_bound 0 = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** A key with no binding looks up as false. *)
+  Example missing_key_looks_up_false : C.look only_zero_bound 1 = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End LookupTests.

@@ -2,6 +2,12 @@
 
     A row that writes its own input must return to the queue.
     For example, the final empty queue probe consumes one unit of fuel.
+
+    Groups:
+    - Fixtures: a system whose only row reads and writes itself.
+    - Step: one step of the worklist requeues the popped row.
+    - Run: the fuel that the final empty queue probe needs.
+
     Builds on: Fixpoint.Worklist and Fixpoint.WorklistTest. *)
 
 From Stdlib Require Import List PArith NArith.
@@ -10,6 +16,9 @@ From Galois.Fixpoint Require Import Query SystemSig SolverSig WorklistSig Workli
 From Galois.Tests.Fixpoint Require Import WorklistTest.
 Import List.ListNotations.
 
+(** * Fixtures *)
+
+(** A system whose row 1 writes its own input through a side contribution. *)
 Module Self <: SYSTEM_OPS BoolOps.
   Definition prog := unit.
   Definition key := positive.
@@ -27,24 +36,48 @@ Module Self <: SYSTEM_OPS BoolOps.
 End Self.
 Module WSelf := WorklistCode BoolOps Self P HeapCode.
 
-Example self_change_requeues_popped_row :
-  match WSelf.step tt flat (WSelf.prepare tt flat) with
-  | inl s => (trie_get 1%positive (ws_live s), trie_get 1%positive (ws_store s))
-  | inr _ => (None, None)
-  end = (Some tt, Some (1%positive, true)).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+(** * Step *)
 
-Example final_probe_is_required :
-  (match WSelf.run tt flat 2%N with Solved _ => true | _ => false end,
-   match WSelf.run tt flat 3%N with Solved _ => true | _ => false end) = (false, true).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+Module StepTests.
 
-(* self_change_requeues_popped_row had (true, 1, true), including an evaluation
-   counter. The new state exposes the queued occurrence and its stored value
-   above. worklist_state has no evaluation-count field.
-   final_probe_is_required had None at fuel two and Some [true; false; false;
-   false] at fuel three. The Boolean solved projections above retain that boundary. *)
+  (** A changed self row is queued again, and its new value is stored. *)
+  Example self_change_requeues_row :
+    match WSelf.step tt flat (WSelf.prepare tt flat) with
+    | inl s => trie_get 1%positive (ws_live s)
+    | inr _ => None
+    end = Some tt.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The step stores the new value of the popped self row. *)
+  Example self_change_stores_new_value :
+    match WSelf.step tt flat (WSelf.prepare tt flat) with
+    | inl s => trie_get 1%positive (ws_store s)
+    | inr _ => None
+    end = Some (1%positive, true).
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End StepTests.
+
+(** * Run *)
+
+Module RunTests.
+
+  (** Two units of fuel do not reach a solved result. *)
+  Example two_units_are_not_solved :
+    match WSelf.run tt flat 2%N with Solved _ => true | _ => false end = false.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** Three units of fuel reach a solved result, because the final probe is paid for. *)
+  Example three_units_are_solved :
+    match WSelf.run tt flat 3%N with Solved _ => true | _ => false end = true.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End RunTests.
