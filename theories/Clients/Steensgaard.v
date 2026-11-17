@@ -73,11 +73,13 @@ Module SteensgaardCode (V : VALUE_OPS with Definition t := positive)
   Definition compile (_ : pointer_input) : program V.t := steensgaard_program.
   Definition seed_put (db : D.t) (entry : positive * (positive * positive)) : D.t :=
     D.put (fst entry) [Val (fst (snd entry)); Val (snd (snd entry))] None db.
-  Definition seed (q : pointer_input) : D.t :=
+  (** The prepared rule plan supplies the slots used when seeding the input. *)
+  Definition seed_at (cp : compiled V.t) (q : pointer_input) : D.t :=
     fold_left seed_put (pointer_seed_entries 1 q)
-      (D.init (decls V.t (compile q)) (pointer_plan_slots (R.plan (compile q)))).
+      (D.init (decls V.t (compile q)) (pointer_plan_slots cp)).
+  Definition seed (q : pointer_input) : D.t := seed_at (R.plan (compile q)) q.
   Definition solve (q : pointer_input) (lim : limits) : stop * D.t :=
-    let p := compile q in R.run p (R.plan p) lim (seed q).
+    let p := compile q in let cp := R.plan p in R.run p cp lim (seed_at cp q).
   Definition lookup_id (f : positive) (key : list (cell V.t)) (db : D.t) : option positive :=
     match fst (D.lookup f key db) with
     | Some (Some (Id i)) => Some i
@@ -671,6 +673,7 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Module SeedTime := PointerSeedTime V I J D R.
   TimeFun compile.
   TimeFun seed_put.
+  TimeFun seed_at.
   TimeFun seed.
   TimeFun solve.
   TimeFun lookup_id.
@@ -793,7 +796,7 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     { clear - q; pose proof (SeedTime.unit_positive (seed q)); lia. }
     rewrite (proj1 (proj2 (proj2 (seed_invariant q)))); cbn [N.log2 N.to_nat].
     rewrite N.mul_1_r.
-    time_unfold T_seed; time_simpl.
+    time_unfold T_seed; time_unfold T_seed_at; time_simpl.
     change (pointer_plan_slots (R.plan (compile q))) with
       (Syntax.slots V.t (R.plan (compile q))).
     rewrite (Nat2N.inj_add (length (constraints q) + length (initial_pointers q)) 1)
@@ -850,7 +853,9 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + c_steensgaard)%N.
   Proof.
-    intros q lim; time_unfold T_solve; time_simpl; unfold c_steensgaard, k_wrap; lia.
+    intros q lim; time_unfold T_solve; time_unfold T_seed; time_simpl.
+    change (seed_at (R.plan (compile q)) q) with (seed q).
+    unfold c_steensgaard, k_wrap; lia.
   Qed.
 
   (** Seeding is linear in the input count at the final database's unit and identifier width. *)
@@ -977,7 +982,9 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
   Proof.
-    intros q lim; time_unfold T_solve; time_simpl; unfold k_wrap; lia.
+    intros q lim; time_unfold T_solve; time_unfold T_seed; time_simpl.
+    change (seed_at (R.plan (compile q)) q) with (seed q).
+    unfold k_wrap; lia.
   Qed.
 
 End SteensgaardT.
