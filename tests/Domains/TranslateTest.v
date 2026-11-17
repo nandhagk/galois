@@ -2,11 +2,10 @@
 
     A language morphism lets a value abstraction run under a source language.
     For example, renaming a value abstraction keeps its operator result.
-    Builds on: Translate and ValueOpenTest. *)
+    Builds on: Translate and ValueOpenTest.
 
-(* Groups:
-   - Fixtures: a source language, a unit target language and a morphism between them.
-   - Renaming: the translated value abstraction keeps the forward result. *)
+    Groups:
+    - [RenamingTests] The translated value abstraction keeps the forward result. *)
 
 From Stdlib Require Import List Bool Arith ZArith.
 From Galois.Domains Require Import Translate.
@@ -57,19 +56,3 @@ Module RenamingTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End RenamingTests.
-
-(* The old rename-law client awaits conversion to module laws.
-Example renamed_laws :
-  value_laws
-    (ValueAbs.rename (fun _ : bool => Cost.ret tt) (fun _ : nat => Cost.ret tt) reach_values)
-    {| ValueSem.eval := fun _ _ => Some tt; ValueSem.holds := fun _ _ => True |}
-    bool_gamma.
-Proof.
-  apply rename_laws with (M := unit_sem).
-  - exact reach_value_laws.
-  - intros. reflexivity.
-  - intros. exact I.
-Qed.
-
-
-*)
