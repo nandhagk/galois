@@ -100,6 +100,24 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** A shared row appears once while a distinct weaker row remains in the join. *)
+Example join_drops_shared_row :
+  FixturePoly.join
+    (Reached [upper_x 3; LCons _ [(2%positive, 1)] RLe 4])
+    (Reached [upper_x 3; LCons _ [(2%positive, 1)] RLe 6]) =
+    Reached [upper_x 3; LCons _ [(2%positive, 1)] RLe 6].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Deduplication preserves the order and multiplicity of the retained left rows. *)
+Example join_keeps_left_occurrences :
+  FixturePoly.join (Reached [upper_x 3; upper_x 3]) (Reached [upper_x 3]) =
+    Reached [upper_x 3; upper_x 3].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Widening drops the old bound that the candidate violates. *)
 Example widening_drops_old_bound :
   FixturePoly.widen tt (Reached [upper_x 1]) (Reached [upper_x 2]) = Reached [].

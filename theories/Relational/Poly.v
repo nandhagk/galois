@@ -1343,11 +1343,42 @@ Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     | Reached P, Reached Q => forallb (keep_row P) Q
     end.
 
-  Definition join (a b : t) : t :=
+  Definition poly_join_term_eqb (p q : X.t * Z) : bool :=
+    if X.eqb (fst p) (fst q) then Z.eqb (snd p) (snd q) else false.
+
+  Fixpoint poly_join_coef_eqb (xs ys : list (X.t * Z)) : bool :=
+    match xs, ys with
+    | nil, nil => true
+    | p :: xs, q :: ys =>
+      if poly_join_term_eqb p q then poly_join_coef_eqb xs ys else false
+    | _, _ => false
+    end.
+
+  Definition poly_row_eqb (r s : lcons X.t) : bool :=
+    match lrel r, lrel s with
+    | REq, REq | RLe, RLe =>
+      if Z.eqb (rhs r) (rhs s) then poly_join_coef_eqb (lhs r) (lhs s) else false
+    | _, _ => false
+    end.
+
+  Definition poly_join_keep (P retained : list (lcons X.t)) (r : lcons X.t) : bool :=
+    if existsb (poly_row_eqb r) retained then false else keep_row P r.
+
+  (** The original weak join specifies the retained constraints, including duplicates. *)
+  Definition join_spec (a b : t) : t :=
     match a, b with
     | Unreached, _ => b
     | _, Unreached => a
     | Reached P, Reached Q => Reached (filter (keep_row Q) P ++ filter (keep_row P) Q)
+    end.
+
+  Definition join (a b : t) : t :=
+    match a, b with
+    | Unreached, _ => b
+    | _, Unreached => a
+    | Reached P, Reached Q =>
+      let retained := filter (keep_row Q) P in
+      Reached (retained ++ filter (poly_join_keep P retained) Q)
     end.
 
   Definition top : t := Reached nil.
@@ -4276,10 +4307,89 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     intros a b Hbot. apply leb_complete_Q. intros v Hmodels.
     exfalso. exact (is_bot_sound_Q a v Hbot Hmodels).
   Qed.
+
+  (** A successful term comparison identifies both the key and its coefficient. *)
+  Lemma poly_join_term_eqb_sound : forall p q,
+    poly_join_term_eqb p q = true -> p = q.
+  Proof.
+    intros [x a] [y b]. unfold poly_join_term_eqb. cbn [fst snd].
+    destruct (X.eqb_spec x y) as [Hkey|Hkey]; [|discriminate].
+    intro Hcoef. apply Z.eqb_eq in Hcoef. now subst y b.
+  Qed.
+
+  (** Every stored term compares equal to itself. *)
+  Lemma poly_join_term_eqb_refl : forall p, poly_join_term_eqb p p = true.
+  Proof.
+    intros [x a]. unfold poly_join_term_eqb. cbn [fst snd].
+    now rewrite poly_key_eqb_refl, Z.eqb_refl.
+  Qed.
+
+  (** Coefficient comparison preserves order, multiplicity and every coefficient. *)
+  Lemma poly_join_coef_eqb_correct : forall xs ys,
+    poly_join_coef_eqb xs ys = true <-> xs = ys.
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros [|q ys];
+      cbn [poly_join_coef_eqb]; try (split; intro H; discriminate).
+    - split; intro H; reflexivity.
+    - destruct (poly_join_term_eqb p q) eqn:Hterm.
+      + apply poly_join_term_eqb_sound in Hterm. subst q. rewrite IH.
+        split; intro H; [now subst ys|now injection H].
+      + split; intro H; [discriminate|].
+        injection H as Hterm_same Htail. subst q ys.
+        rewrite poly_join_term_eqb_refl in Hterm. discriminate.
+  Qed.
+
+  (** Raw row comparison decides exact structural equality. *)
+  Lemma poly_row_eqb_correct : forall r s, poly_row_eqb r s = true <-> r = s.
+  Proof.
+    intros [xs relation b] [ys other d]. unfold poly_row_eqb. cbn [lhs lrel rhs].
+    destruct relation, other; try (split; intro H; discriminate);
+      destruct (Z.eqb b d) eqn:Hright.
+    - apply Z.eqb_eq in Hright. subst d. rewrite poly_join_coef_eqb_correct.
+      split; intro H; [now subst ys|now injection H].
+    - split; intro H; [discriminate|]. injection H as Hleft Heq.
+      subst d. rewrite Z.eqb_refl in Hright. discriminate.
+    - apply Z.eqb_eq in Hright. subst d. rewrite poly_join_coef_eqb_correct.
+      split; intro H; [now subst ys|now injection H].
+    - split; intro H; [discriminate|]. injection H as Hleft Heq.
+      subst d. rewrite Z.eqb_refl in Hright. discriminate.
+  Qed.
+
+  (** Removing right rows already retained on the left preserves row membership. *)
+  Lemma poly_join_rows_members : forall P retained Q r,
+    In r (retained ++ filter (poly_join_keep P retained) Q) <->
+    In r (retained ++ filter (keep_row P) Q).
+  Proof.
+    intros P retained Q r. rewrite !in_app_iff. split.
+    - intros [Hleft|Hright]; [now left|]. right.
+      apply filter_In in Hright as [Hin Hkeep]. apply filter_In. split; [exact Hin|].
+      unfold poly_join_keep in Hkeep.
+      destruct (existsb (poly_row_eqb r) retained); [discriminate|exact Hkeep].
+    - intros [Hleft|Hright]; [now left|].
+      apply filter_In in Hright as [Hin Hkeep].
+      destruct (existsb (poly_row_eqb r) retained) eqn:Hpresent.
+      + left. apply existsb_exists in Hpresent as [s [Hs Hequal]].
+        apply poly_row_eqb_correct in Hequal. now subst s.
+      + right. apply filter_In. split; [exact Hin|].
+        unfold poly_join_keep. now rewrite Hpresent.
+  Qed.
+
+  (** Deduplicating the join leaves its rational models exactly unchanged. *)
+  Lemma join_models_Q : forall a b v,
+    poly_models_Q (join a b) v <-> poly_models_Q (join_spec a b) v.
+  Proof.
+    intros [|P] [|Q] v; cbn [join join_spec poly_models_Q]; try reflexivity.
+    rewrite !Forall_forall. split; intros Hmodels r Hin; apply Hmodels.
+    - now apply (proj2 (poly_join_rows_members P (filter (keep_row Q) P) Q r)).
+    - now apply (proj1 (poly_join_rows_members P (filter (keep_row Q) P) Q r)).
+  Qed.
+
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
-    intros [|P] [|Q]; apply leb_complete_Q; intros v Hmodels;
-      cbn [poly_models_Q join] in *; try contradiction; try exact Hmodels.
+    intros a b. apply leb_complete_Q. intros v Hmodels.
+    apply (proj2 (join_models_Q a b v)).
+    destruct a as [|P], b as [|Q];
+      cbn [poly_models_Q join_spec] in *; try contradiction; try exact Hmodels.
     apply Forall_app. split; apply Forall_forall; intros r Hin;
       apply filter_In in Hin as [Hin Hkeep].
     - exact (proj1 (Forall_forall _ _) Hmodels r Hin).
@@ -4287,8 +4397,10 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
   Proof.
-    intros [|P] [|Q]; apply leb_complete_Q; intros v Hmodels;
-      cbn [poly_models_Q join] in *; try contradiction; try exact Hmodels.
+    intros a b. apply leb_complete_Q. intros v Hmodels.
+    apply (proj2 (join_models_Q a b v)).
+    destruct a as [|P], b as [|Q];
+      cbn [poly_models_Q join_spec] in *; try contradiction; try exact Hmodels.
     apply Forall_app. split; apply Forall_forall; intros r Hin;
       apply filter_In in Hin as [Hin Hkeep].
     - now apply keep_row_sound_Q with (P := Q).
@@ -5263,6 +5375,11 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun bot.
   TimeFun is_bot.
   TimeFun leb.
+  TimeFun poly_join_term_eqb.
+  TimeFun poly_join_coef_eqb.
+  TimeFun poly_row_eqb.
+  TimeFun poly_join_keep.
+  TimeFun join_spec.
   TimeFun join.
   TimeFun top.
   TimeFun meet.
@@ -10436,6 +10553,15 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     unfold poly_lattice_budget. lia.
   Qed.
 
+  (** Even the terminal recurrence pays a cubic raw comparison scan. *)
+  Lemma poly_lattice_budget_cube : forall m, (m + 1)^3 <= poly_lattice_budget m.
+  Proof.
+    intro m.
+    pose proof (poly_fmcost_fuel_mono 0 m (Nat.le_0_l m)
+      m (m + 1) (m + 1) (m + 1)) as Hterminal.
+    cbn [fmcost] in Hterminal. unfold poly_lattice_budget. cbn [Nat.pow]. nia.
+  Qed.
+
   Lemma poly_lattice_mu_positive : forall s, 1 <= mu s.
   Proof. intro s. unfold mu, nell. lia. Qed.
 
@@ -10709,6 +10835,161 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite <- N.mul_assoc. apply N.mul_le_mono_l. apply poly_lattice_lat_charge.
   Qed.
 
+  (** An existential scan needs clock bounds only on entries of its input list. *)
+  Lemma poly_join_T_existsb_members : forall A (f : A -> bool) (T_f : A -> N) k xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (List.T_existsb f T_f xs <= (k + 2) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A f T_f k xs. induction xs as [|x xs IH]; intro Hcallback.
+    - time_unfold List.T_existsb. cbn [length]. lia.
+    - pose proof (Hcallback x (or_introl eq_refl)) as Hhead.
+      specialize (IH (fun y Hy => Hcallback y (or_intror Hy))).
+      time_unfold List.T_existsb. cbn [length]. time_simpl. nia.
+  Qed.
+
+  (** Term comparison stops before its coefficient check when keys differ. *)
+  Lemma T_poly_join_term_eqb_bounded : forall p q m,
+    X.bits (fst p) <= m -> Z.size_nat (snd p) <= m ->
+    (T_poly_join_term_eqb p q <= (X.c_key + 16) * N.of_nat (m + 1))%N.
+  Proof.
+    intros p q m Hkey Hbits.
+    pose proof (X.T_eqb_le (fst p) (fst q)) as Hkeytime.
+    pose proof (Z.T_eqb_le (snd p) (snd q)) as Hbittime.
+    assert (HkeyN : (N.of_nat (X.bits (fst p) + 1) <= N.of_nat (m + 1))%N) by lia.
+    assert (HbitsN : (N.of_nat (Z.size_nat (snd p)) + 1 <= N.of_nat (m + 1))%N)
+      by (rewrite Nat2N.inj_add; cbn [N.of_nat]; lia).
+    assert (Hpositive : (1 <= N.of_nat (m + 1))%N) by lia.
+    time_unfold T_poly_join_term_eqb.
+    destruct (X.eqb (fst p) (fst q)); time_simpl;
+      clear -Hkeytime Hbittime HkeyN HbitsN Hpositive; nia.
+  Qed.
+
+  (** Coefficient comparison charges at most the first coefficient list. *)
+  Lemma T_poly_join_coef_eqb_bounded : forall xs ys m,
+    Forall (fun p => X.bits (fst p) <= m /\ Z.size_nat (snd p) <= m) xs ->
+    (T_poly_join_coef_eqb xs ys <=
+      (X.c_key + 24) * N.of_nat (length xs + 1) * N.of_nat (m + 1))%N.
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros ys m Hsizes;
+      assert (Hpositive : (1 <= N.of_nat (m + 1))%N) by lia;
+      destruct ys as [|q ys].
+    - time_unfold T_poly_join_coef_eqb. cbn [length]. nia.
+    - time_unfold T_poly_join_coef_eqb. cbn [length]. nia.
+    - time_unfold T_poly_join_coef_eqb. cbn [length]. nia.
+    - destruct (Forall_inv Hsizes) as [Hkey Hbits].
+      pose proof (T_poly_join_term_eqb_bounded p q m Hkey Hbits) as Hhead.
+      specialize (IH ys m (Forall_inv_tail Hsizes)).
+      time_unfold T_poly_join_coef_eqb.
+      destruct (poly_join_term_eqb p q); time_simpl; cbn [length];
+        rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; cbn [N.of_nat] in *;
+        clear -Hhead IH Hpositive; nia.
+  Qed.
+
+  (** Raw row comparison is bounded by the first row's length and numeric widths. *)
+  Lemma T_poly_row_eqb_bounded : forall c r m,
+    length (lhs c) <= m -> C.row_key_bits c <= m -> C.row_bits c <= m ->
+    (T_poly_row_eqb c r <= (X.c_key + 64) * N.of_nat ((m + 1)^2))%N.
+  Proof.
+    intros c r m Hlength Hkeys Hbits.
+    assert (Hentries : Forall (fun p => X.bits (fst p) <= m /\
+      Z.size_nat (snd p) <= m) (lhs c)).
+    { apply Forall_forall. intros p Hp.
+      pose proof (poly_row_key_member c p Hp) as Hkey.
+      pose proof (poly_row_entry_bits c p Hp) as Hbit. unfold X.bits. split; lia. }
+    pose proof (T_poly_join_coef_eqb_bounded (lhs c) (lhs r) m Hentries) as Hlist.
+    pose proof (Z.T_eqb_le (rhs c) (rhs r)) as Hright.
+    pose proof (poly_row_rhs_bits c) as Hright_bits.
+    assert (HlengthN : (N.of_nat (length (lhs c) + 1) <= N.of_nat (m + 1))%N) by lia.
+    assert (HrightN : (N.of_nat (Z.size_nat (rhs c)) + 1 <= N.of_nat (m + 1))%N)
+      by (rewrite Nat2N.inj_add; cbn [N.of_nat]; lia).
+    assert (Hpositive : (1 <= N.of_nat (m + 1))%N) by lia.
+    rewrite Nat2N.inj_pow, N.pow_2_r. time_unfold T_poly_row_eqb.
+    destruct (lrel c), (lrel r); time_simpl;
+      destruct (Z.eqb (rhs c) (rhs r)); time_simpl;
+      clear -Hlist Hright HlengthN HrightN Hpositive; nia.
+  Qed.
+
+  (** Searching retained rows fits one row's full lattice budget. *)
+  Lemma T_poly_join_row_search : forall retained r m,
+    length retained <= m -> length (lhs r) <= m ->
+    C.row_key_bits r <= m -> C.row_bits r <= m ->
+    (List.T_existsb (poly_row_eqb r) (T_poly_row_eqb r) retained <=
+      (X.c_key + 128) * N.of_nat (poly_lattice_budget m))%N.
+  Proof.
+    intros retained r m Hcount Hlength Hkeys Hbits.
+    pose proof (poly_join_T_existsb_members (lcons X.t) (poly_row_eqb r)
+      (T_poly_row_eqb r) ((X.c_key + 64) * N.of_nat ((m + 1)^2))%N retained
+      ltac:(intros q _; now apply T_poly_row_eqb_bounded)) as Hscan.
+    pose proof (poly_lattice_budget_cube m) as Hcube.
+    assert (Hproduct : (N.of_nat ((m + 1)^2) * N.of_nat (length retained) <=
+      N.of_nat (poly_lattice_budget m))%N).
+    { rewrite <- Nat2N.inj_mul.
+      assert (Hnat : (m + 1)^2 * length retained <= (m + 1)^3)
+        by (cbn [Nat.pow]; nia).
+      lia. }
+    assert (HcountN : (N.of_nat (length retained) <=
+      N.of_nat (poly_lattice_budget m))%N).
+    { assert (Hnat : m <= (m + 1)^3) by (cbn [Nat.pow]; nia). lia. }
+    assert (Hpositive : (1 <= N.of_nat (poly_lattice_budget m))%N)
+      by (pose proof (poly_lattice_budget_positive m); lia).
+    set (work := N.of_nat (poly_lattice_budget m)) in *.
+    clear -Hscan Hproduct HcountN Hpositive. clearbody work. nia.
+  Qed.
+
+  Definition poly_join_keep_factor : N := (poly_lattice_keep_factor + X.c_key + 132)%N.
+
+  (** A right-row test pays its duplicate scan and at most one entailment call. *)
+  Lemma T_poly_join_keep_member : forall P Q r, In r Q ->
+    (T_poly_join_keep P (filter (keep_row Q) P) r <= poly_join_keep_factor *
+      N.of_nat (poly_lattice_budget (mu (Reached P) + mu (Reached Q))))%N.
+  Proof.
+    intros P Q r Hr. set (m := mu (Reached P) + mu (Reached Q)).
+    destruct (poly_lattice_member_inputs P Q r Hr) as [_ [Hlength Hbits]].
+    assert (Hkeys : C.row_key_bits r <= m).
+    { pose proof (poly_max_member _ C.row_key_bits 0 Q r Hr) as Hkey.
+      unfold m, mu, nell, ell. cbn [prows]. lia. }
+    assert (Hcount : length (filter (keep_row Q) P) <= m).
+    { pose proof (filter_length_le (keep_row Q) P) as Hfilter.
+      pose proof (poly_lattice_rows_bound (Reached P)) as Hrows.
+      cbn [prows] in Hrows. unfold m. lia. }
+    pose proof (T_poly_join_row_search (filter (keep_row Q) P) r m
+      Hcount Hlength Hkeys Hbits) as Hscan.
+    pose proof (T_poly_lattice_keep_member P Q r Hr) as Hkeep. fold m in Hkeep.
+    assert (Hpositive : (1 <= N.of_nat (poly_lattice_budget m))%N)
+      by (pose proof (poly_lattice_budget_positive m); lia).
+    set (work := N.of_nat (poly_lattice_budget m)) in *.
+    time_unfold T_poly_join_keep. time_simpl.
+    change (fun q : lcons X.t => T_poly_row_eqb r q) with (T_poly_row_eqb r).
+    destruct (existsb (poly_row_eqb r) (filter (keep_row Q) P)); time_simpl;
+      unfold poly_join_keep_factor; clear -Hscan Hkeep Hpositive; clearbody work; nia.
+  Qed.
+
+  Definition poly_join_scan_factor : N := (poly_join_keep_factor + 4)%N.
+
+  (** The filtered right rows fit the shared lattice budget, including duplicate tests. *)
+  Lemma T_poly_join_filter_lat : forall P Q,
+    (List.T_filter (poly_join_keep P (filter (keep_row Q) P))
+      (T_poly_join_keep P (filter (keep_row Q) P)) Q <= poly_join_scan_factor *
+      N.of_nat (lat (mu (Reached P) + mu (Reached Q))))%N.
+  Proof.
+    intros P Q. set (m := mu (Reached P) + mu (Reached Q)).
+    set (work := N.of_nat (poly_lattice_budget m)).
+    pose proof (poly_T_filter_members _ (poly_join_keep P (filter (keep_row Q) P))
+      (T_poly_join_keep P (filter (keep_row Q) P)) (poly_join_keep_factor * work)%N
+      Q (T_poly_join_keep_member P Q)) as Hscan.
+    assert (Hcount : (N.of_nat (length Q + 1) <= N.of_nat (m + 1))%N).
+    { pose proof (poly_lattice_rows_bound (Reached Q)) as Hrows.
+      cbn [prows] in Hrows. unfold m. lia. }
+    assert (Hpositive : (1 <= work)%N)
+      by (unfold work; pose proof (poly_lattice_budget_positive m); lia).
+    pose proof (poly_clock_linear_count_bound poly_join_keep_factor 1
+      (N.of_nat (length Q)) (N.of_nat (m + 1)) work ltac:(lia) Hpositive) as Hlinear.
+    eapply N.le_trans; [exact Hscan|]. eapply N.le_trans; [exact Hlinear|].
+    eapply N.le_trans with (m := (poly_join_scan_factor * N.of_nat (m + 1) * work)%N).
+    - repeat apply N.mul_le_mono_r. unfold poly_join_scan_factor. lia.
+    - rewrite <- N.mul_assoc. apply N.mul_le_mono_l. apply poly_lattice_lat_charge.
+  Qed.
+
   Lemma T_poly_lattice_is_bot_lat : forall s m, mu s + 1 <= m ->
     (T_is_bot s <= poly_lattice_bottom_factor * N.of_nat (lat m))%N.
   Proof.
@@ -10717,7 +10998,8 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   Definition poly_lattice_factor : N :=
-    (2 * poly_lattice_scan_factor + 2 * poly_lattice_bottom_factor + 16)%N.
+    (2 * poly_lattice_scan_factor + poly_join_scan_factor +
+      2 * poly_lattice_bottom_factor + 16)%N.
 
   Lemma poly_lattice_factor_positive : (1 <= poly_lattice_factor)%N.
   Proof. unfold poly_lattice_factor. lia. Qed.
@@ -10751,13 +11033,13 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       unfold poly_lattice_factor. clear -Hscan Hpositive. clearbody work. nia.
   Qed.
 
-  (** Appending the retained left rows costs no more than the shared lattice budget. *)
-  Lemma T_poly_lattice_join_append : forall P Q,
-    (Datatypes.T_app (filter (keep_row Q) P) (filter (keep_row P) Q) <=
+  (** Appending retained rows charges only the retained left prefix. *)
+  Lemma T_poly_join_append_lat : forall P Q rows,
+    (Datatypes.T_app (filter (keep_row Q) P) rows <=
       N.of_nat (lat (mu (Reached P) + mu (Reached Q))))%N.
   Proof.
-    intros P Q. pose proof (Datatypes.T_app_le
-      (filter (keep_row Q) P) (filter (keep_row P) Q)) as Happ.
+    intros P Q rows. pose proof (Datatypes.T_app_le
+      (filter (keep_row Q) P) rows) as Happ.
     pose proof (filter_length_le (keep_row Q) P) as Hlength.
     pose proof (poly_lattice_rows_bound (Reached P)) as Hrows. cbn [prows] in Hrows.
     set (m := mu (Reached P) + mu (Reached Q)).
@@ -10768,7 +11050,15 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply N.mul_le_mono_l. pose proof (poly_lattice_budget_positive m). lia.
   Qed.
 
-  (** Joining scans both raw states and concatenates the retained rows. *)
+  (** The original append bound remains valid for the specification's second filter. *)
+  Lemma T_poly_lattice_join_append : forall P Q,
+    (Datatypes.T_app (filter (keep_row Q) P) (filter (keep_row P) Q) <=
+      N.of_nat (lat (mu (Reached P) + mu (Reached Q))))%N.
+  Proof.
+    intros P Q. apply T_poly_join_append_lat.
+  Qed.
+
+  (** Joining checks the left rows, skips shared right rows and appends the remainder. *)
   Lemma T_poly_join_lattice : forall a b,
     (T_join a b <= poly_lattice_factor * N.of_nat (lat (mu a + mu b)))%N.
   Proof.
@@ -10778,13 +11068,15 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - time_unfold T_join. time_simpl. apply poly_lattice_unit_bound.
     - pose proof (T_poly_lattice_filter_lat Q P) as Hleft.
       rewrite (Nat.add_comm (mu (Reached Q)) (mu (Reached P))) in Hleft.
-      pose proof (T_poly_lattice_filter_lat P Q) as Hright.
-      pose proof (T_poly_lattice_join_append P Q) as Happ.
+      pose proof (T_poly_join_filter_lat P Q) as Hright.
+      pose proof (T_poly_join_append_lat P Q
+        (filter (poly_join_keep P (filter (keep_row Q) P)) Q)) as Happ.
       pose proof (poly_lattice_lat_positive (mu (Reached P) + mu (Reached Q))) as Hpositive.
       set (work := N.of_nat (lat (mu (Reached P) + mu (Reached Q)))) in *.
       time_unfold T_join. time_simpl.
       change (fun r : lcons X.t => T_keep_row Q r) with (T_keep_row Q).
-      change (fun r : lcons X.t => T_keep_row P r) with (T_keep_row P).
+      change (fun r : lcons X.t => T_poly_join_keep P (filter (keep_row Q) P) r)
+        with (T_poly_join_keep P (filter (keep_row Q) P)).
       unfold poly_lattice_factor. clear -Hleft Hright Happ Hpositive.
       clearbody work. nia.
   Qed.
