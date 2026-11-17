@@ -301,3 +301,31 @@ Example congruence_remainder_zero :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Negative residues take the original Euclidean remainder branch. *)
+Example congruence_negative_residue_normalization :
+  Payload.congr_norm 8%positive (C (-6) (-1)) = C 6 5.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Shifting a normalized negative raw residue agrees with gcd and remainder. *)
+Example congruence_negative_residue_shift :
+  Payload.congr_shl 8%positive (C (-6) (-1)) (C 0 1) = C 4 2.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A zero shift preserves this already word-folded class. *)
+Example congruence_zero_shift :
+  Payload.congr_shl 8%positive (C 4 1) (C 0 0) = C 4 1.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A shift equal to the word width yields the exact zero class. *)
+Example congruence_width_shift :
+  Payload.congr_shl 8%positive (C 4 1) (C 0 8) = C 0 0.
+Proof.
+  vm_compute. reflexivity.
+Qed.
