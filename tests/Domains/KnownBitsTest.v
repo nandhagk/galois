@@ -4,8 +4,9 @@
     For example, seven or fifteen plus one exposes uncertainty in the fourth and fifth bits.
     Builds on: DomainsTnum and DomainsTnumArith. *)
 
-From Stdlib Require Import ZArith Bool.
+From Stdlib Require Import ZArith Bool List.
 From Galois.Domains Require Import KnownBitsSig KnownBits BitsLang.
+Import List.ListNotations.
 
 Local Open Scope Z_scope.
 
@@ -171,4 +172,136 @@ Example tnum_fast_rotation_boundaries :
   MaskCode.tnum_variable Op.bvrotr 7%positive (Tnum 112 15) (Tnum 0 0) = Tnum 0 0.
 Proof.
   vm_compute. repeat split; reflexivity.
+Qed.
+(** Raw fixtures include narrow words, unknown facts, contradictions and oversized masks. *)
+Definition shared_mask_fixtures : list (positive * tnum * tnum) :=
+  [(1%positive, Tnum 240 15, Tnum 0 0);
+   (1%positive, Tnum 7 7, Tnum 257 258);
+   (8%positive, Tnum 240 15, Tnum 252 1);
+   (8%positive, Tnum 0 0, Tnum 7 7);
+   (8%positive, Tnum (-16) 257, Tnum 65280 255);
+   (64%positive, Tnum 61680 3855, Tnum 65280 255);
+   (64%positive, Tnum 0 0, Tnum 7 7)].
+
+Example shared_mask_normalise_specification :
+  Forall (fun '(w, a, b) => MaskCode.tnum_normalise w a = tnum_normalise w a)
+    shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_not_specification :
+  Forall (fun '(w, a, b) => MaskCode.tnum_not w a = tnum_not w a)
+    shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_neg_specification :
+  Forall (fun '(w, a, b) => MaskCode.tnum_neg w a = tnum_neg w a)
+    shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_add_specification :
+  Forall (fun '(w, a, b) => MaskCode.tnum_add w a b = tnum_add w a b)
+    shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_sub_specification :
+  Forall (fun '(w, a, b) => MaskCode.tnum_sub w a b = tnum_sub w a b)
+    shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_and_specification :
+  Forall (fun '(w, a, b) => MaskCode.tnum_and w a b = tnum_and w a b)
+    shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_or_specification :
+  Forall (fun '(w, a, b) => MaskCode.tnum_or w a b = tnum_or w a b)
+    shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_xor_specification :
+  Forall (fun '(w, a, b) => MaskCode.tnum_xor w a b = tnum_xor w a b)
+    shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_pjoin_specification :
+  Forall (fun '(w, a, b) =>
+    MaskCode.pjoin w a b = tnum_join w a b) shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_pmeet_specification :
+  Forall (fun '(w, a, b) =>
+    MaskCode.pmeet w a b = tnum_meet w a b) shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_pis_bot_specification :
+  Forall (fun '(w, a, b) =>
+    MaskCode.pis_bot w a = tnum_empty w a) shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_pconst_specification :
+  Forall (fun '(w, a, b) =>
+    MaskCode.pconst w (ones a) = tnum_const w (ones a)) shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_ppoint_specification :
+  Forall (fun '(w, a, b) =>
+    MaskCode.ppoint w a = tnum_constant w a) shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_pleb_specification :
+  Forall (fun '(w, a, b) =>
+    MaskCode.pleb w a b = tnum_empty w a || (tnum_subset w (zeros b) (zeros a) && tnum_subset w (ones b) (ones a))) shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
+Qed.
+
+Example shared_mask_pwiden_specification :
+  Forall (fun '(w, a, b) =>
+    MaskCode.pwiden tt w a b =
+      if tnum_empty w b || (tnum_subset w (zeros a) (zeros b) &&
+        tnum_subset w (ones a) (ones b)) then a else tnum_join w a b)
+    shared_mask_fixtures.
+Proof.
+  repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+  apply Forall_nil.
 Qed.

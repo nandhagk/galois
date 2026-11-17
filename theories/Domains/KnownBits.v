@@ -961,27 +961,29 @@ Qed.
 
 Module KnownBitsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG) <: KNOWN_BITS_OPS L C.
   Definition p := tnum.
-  Definition pleb w a b := tnum_empty w a ||
-    (tnum_subset w (zeros b) (zeros a) &&
-    tnum_subset w (ones b) (ones a)).
-  Definition pjoin := tnum_join.
-  Definition pmeet := tnum_meet.
+  Definition pleb w a b :=
+    let mask := Z.ones (Zpos w) in
+    if tnum_empty_m mask a then true
+    else if tnum_subset_m mask (zeros b) (zeros a)
+      then tnum_subset_m mask (ones b) (ones a) else false.
+  Definition pjoin w a b := tnum_join_m (Z.ones (Zpos w)) a b.
+  Definition pmeet w a b := tnum_meet_m (Z.ones (Zpos w)) a b.
   Definition pbot := tnum_bot.
   Definition ptop (_ : positive) := tnum_top.
-  Definition pis_bot := tnum_empty.
-  Definition pconst := tnum_const.
-  Definition ppoint := tnum_constant.
+  Definition pis_bot w a := tnum_empty_m (Z.ones (Zpos w)) a.
+  Definition pconst w z := tnum_const_m (Z.ones (Zpos w)) z.
+  Definition ppoint w a := tnum_constant_m (Z.ones (Zpos w)) a.
   Definition pwparam := unit.
   Definition pwiden (_ : unit) w a b := if pleb w b a then a else pjoin w a b.
   Definition pnarrow (_ : positive) (a _ : p) := a.
-  Definition tnum_normalise := tnum_normalise.
-  Definition tnum_not := tnum_not.
-  Definition tnum_neg := tnum_neg.
-  Definition tnum_add := tnum_add.
-  Definition tnum_sub := tnum_sub.
-  Definition tnum_and := tnum_and.
-  Definition tnum_or := tnum_or.
-  Definition tnum_xor := tnum_xor.
+  Definition tnum_normalise w a := tnum_normalise_m (Z.ones (Zpos w)) a.
+  Definition tnum_not w a := tnum_not_m (Z.ones (Zpos w)) a.
+  Definition tnum_neg w a := tnum_neg_m (Z.ones (Zpos w)) a.
+  Definition tnum_add w a b := tnum_add_m (Z.ones (Zpos w)) a b.
+  Definition tnum_sub w a b := tnum_sub_m (Z.ones (Zpos w)) a b.
+  Definition tnum_and w a b := tnum_and_m (Z.ones (Zpos w)) a b.
+  Definition tnum_or w a b := tnum_or_m (Z.ones (Zpos w)) a b.
+  Definition tnum_xor w a b := tnum_xor_m (Z.ones (Zpos w)) a b.
   Definition tnum_mul_with := tnum_mul_with_fast.
   Definition tnum_mul := tnum_mul_with C.multiplier.
   Definition tnum_variable := tnum_variable_fast.
@@ -4028,6 +4030,15 @@ Proof.
   time_unfold Word.Z.T_ones. rewrite Nat2N.inj_add. nia.
 Qed.
 
+(** Constructing one width mask has a linear derived clock. *)
+Lemma tnum_width_mask_time : forall w,
+  (Word.Z.T_ones (Zpos w) <= 16 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intro w. exact (tnum_ones_time (Zpos w) ltac:(lia)).
+Qed.
+TimeBound tnum_width_mask_time.
+
+
 (** Masked normalization is linear in width and raw integer bits. *)
 Lemma tnum_wrap_time : forall w z,
   (T_tnum_wrap w z <= 32 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
@@ -6813,8 +6824,11 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_pleb w a b <=
       1024 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
   Proof.
-    intros w a b. time_unfold T_pleb. time_cbn. time_pose.
-    unfold tnum_bits in *. rewrite !Nat2N.inj_add in *. nia.
+    intros w a b. time_unfold T_pleb. cbn beta iota zeta.
+    destruct (tnum_empty_m (Z.ones (Zpos w)) a);
+      [|destruct (tnum_subset_m (Z.ones (Zpos w)) (zeros b) (zeros a))];
+      cbn beta iota zeta; time_pose;
+      unfold tnum_bits in *; rewrite ?Nat2N.inj_add in *; lia.
   Qed.
 
   Definition c_payload : N := 2 * 1024.
@@ -6835,14 +6849,14 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
   Proof.
     intro w. pose proof (tnum_top_bits w) as Hbits.
-    unfold c_payload, psize, ptop, pbot, pconst. cbn [Nat.pow].
+    unfold c_payload, psize, ptop, pbot, pconst. rewrite ?tnum_const_m_eq. cbn [Nat.pow].
     rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *. nia.
   Qed.
   Lemma pbot_size : forall w,
     (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
   Proof.
     intro w. pose proof (tnum_bot_bits w) as Hbits.
-    unfold c_payload, psize, ptop, pbot, pconst. cbn [Nat.pow].
+    unfold c_payload, psize, ptop, pbot, pconst. rewrite ?tnum_const_m_eq. cbn [Nat.pow].
     rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *. nia.
   Qed.
   Lemma pconst_size : forall w z,
@@ -6850,7 +6864,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
       c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
   Proof.
     intros w z. pose proof (tnum_const_bits w z) as Hbits.
-    unfold c_payload, psize, ptop, pbot, pconst. cbn [Nat.pow].
+    unfold c_payload, psize, ptop, pbot, pconst. rewrite ?tnum_const_m_eq. cbn [Nat.pow].
     rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *. nia.
   Qed.
   Lemma pjoin_size : forall w a b,
@@ -6858,14 +6872,14 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
       N.of_nat (psize w a + psize w b + 1))%N.
   Proof.
     intros w a b. pose proof (tnum_join_bits_bound w a b) as Hbits.
-    unfold c_payload, psize, pjoin, pmeet. rewrite !Nat2N.inj_add in *. nia.
+    unfold c_payload, psize, pjoin, pmeet. rewrite ?tnum_join_m_eq, ?tnum_meet_m_eq. rewrite !Nat2N.inj_add in *. nia.
   Qed.
   Lemma pmeet_size : forall w a b,
     (N.of_nat (psize w (pmeet w a b)) <= c_payload *
       N.of_nat (psize w a + psize w b + 1))%N.
   Proof.
     intros w a b. pose proof (tnum_meet_bits w a b) as Hbits.
-    unfold c_payload, psize, pjoin, pmeet. rewrite !Nat2N.inj_add in *. nia.
+    unfold c_payload, psize, pjoin, pmeet. rewrite ?tnum_join_m_eq, ?tnum_meet_m_eq. rewrite !Nat2N.inj_add in *. nia.
   Qed.
   Lemma pwiden_size : forall q w a b,
     (N.of_nat (psize w (pwiden q w a b)) <= c_payload *
@@ -6874,7 +6888,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     intros q w a b. unfold pwiden. destruct (pleb w b a).
     - unfold c_payload, psize, pwsize. rewrite !Nat2N.inj_add. nia.
     - pose proof (tnum_join_bits_bound w a b) as Hbits.
-      unfold c_payload, psize, pwsize, pjoin. rewrite !Nat2N.inj_add in *. nia.
+      unfold c_payload, psize, pwsize, pjoin. rewrite ?tnum_join_m_eq. rewrite !Nat2N.inj_add in *. nia.
   Qed.
   Lemma pnarrow_size : forall w a b,
     (N.of_nat (psize w (pnarrow w a b)) <= c_payload *
@@ -6938,25 +6952,24 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Lemma T_tnum_normalise_le : forall w a,
     (T_tnum_normalise w a <= c_tnum * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
   Proof.
-    intros w a. pose proof (tnum_normalise_time w a) as Htime.
-    pose proof (WordTime.time_square_floor (Pos.to_nat w + tnum_bits a + 1)
-      (Pos.to_nat w + tnum_bits a + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+    intros w a. pose proof (tnum_normalise_m_bound w a) as Htime.
+    pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_normalise. cbn beta iota zeta. unfold c_tnum.
-    rewrite ?Nat2N.inj_add in *.
-    set (budget := N.of_nat ((Pos.to_nat w + tnum_bits a + 1) ^ 2)) in *.
-    clearbody budget. lia.
+    rewrite ?Nat2N.inj_add in *. lia.
   Qed.
   Lemma T_tnum_not_le : forall w a,
     (T_tnum_not w a <= c_tnum * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
   Proof.
-    intros w a. pose proof (tnum_not_time w a) as Htime.
+    intros w a. pose proof (tnum_not_m_bound w a) as Htime.
+    pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_not. cbn beta iota zeta. unfold c_tnum.
     rewrite ?Nat2N.inj_add in *. lia.
   Qed.
   Lemma T_tnum_neg_le : forall w a,
     (T_tnum_neg w a <= c_tnum * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
   Proof.
-    intros w a. pose proof (tnum_neg_time w a) as Htime.
+    intros w a. pose proof (tnum_neg_m_bound w a) as Htime.
+    pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_neg. cbn beta iota zeta. unfold c_tnum.
     rewrite ?Nat2N.inj_add in *. lia.
   Qed.
@@ -6964,7 +6977,8 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_tnum_add w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
   Proof.
-    intros w a b. pose proof (tnum_add_time w a b) as Htime.
+    intros w a b. pose proof (tnum_add_m_bound w a b) as Htime.
+    pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_add. cbn beta iota zeta. unfold c_tnum.
     rewrite ?Nat2N.inj_add in *. lia.
   Qed.
@@ -6972,7 +6986,8 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_tnum_sub w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
   Proof.
-    intros w a b. pose proof (tnum_sub_time w a b) as Htime.
+    intros w a b. pose proof (tnum_sub_m_bound w a b) as Htime.
+    pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_sub. cbn beta iota zeta. unfold c_tnum.
     rewrite ?Nat2N.inj_add in *. lia.
   Qed.
@@ -6980,7 +6995,8 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_tnum_and w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
   Proof.
-    intros w a b. pose proof (tnum_and_time w a b) as Htime.
+    intros w a b. pose proof (tnum_and_m_bound w a b) as Htime.
+    pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_and. cbn beta iota zeta. unfold c_tnum.
     rewrite ?Nat2N.inj_add in *. lia.
   Qed.
@@ -6988,7 +7004,8 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_tnum_or w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
   Proof.
-    intros w a b. pose proof (tnum_or_time w a b) as Htime.
+    intros w a b. pose proof (tnum_or_m_bound w a b) as Htime.
+    pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_or. cbn beta iota zeta. unfold c_tnum.
     rewrite ?Nat2N.inj_add in *. lia.
   Qed.
@@ -6996,7 +7013,8 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_tnum_xor w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
   Proof.
-    intros w a b. pose proof (tnum_xor_time w a b) as Htime.
+    intros w a b. pose proof (tnum_xor_m_bound w a b) as Htime.
+    pose proof (tnum_width_mask_time w) as Hmask.
     time_unfold T_tnum_xor. cbn beta iota zeta. unfold c_tnum.
     rewrite ?Nat2N.inj_add in *. lia.
   Qed.
