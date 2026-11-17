@@ -5252,7 +5252,8 @@ Module SccT <: SCC_ALL.
     In u (nodes g) /\ In v (nodes g) /\ mutually_reachable (base g) u v.
   Proof. exact comp_spec. Qed.
 
-  Lemma T_tarjan_pop_amort : forall w root index pending low active owners members tail low' active' owners',
+  Lemma T_tarjan_pop_amort : forall w root index pending low active owners members tail low'
+      active' owners',
     Forall (fun v => Pos.size_nat v <= w) pending ->
     Pos.size_nat root <= w -> Pos.size_nat index <= w + 1 ->
     tarjan_pop root index pending low active owners = (members, tail, low', active', owners') ->

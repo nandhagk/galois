@@ -212,7 +212,8 @@ Module Type SCC_PLAN (Import S : SCC_T).
     width_domain (graph_width (base g)) (prefix_state prefix).
 
   (** Popping consumes an ordered prefix and updates every consumed owner once. *)
-  Parameter pop_spec : forall root index pending low active owners members tail low' active' owners',
+  Parameter pop_spec : forall root index pending low active owners members tail low'
+      active' owners',
     tarjan_pop root index pending low active owners = (members, tail, low', active', owners') ->
     pending = members ++ tail /\
     (forall v, In v members -> trie_get v low' = None /\
