@@ -521,7 +521,10 @@ Module RestrictT (L : LATTICE_T) (S : LOCAL_SYSTEM_T L).
     (** Building a restriction is constant time. *)
     Lemma mk_bigO : bigO (X := S.prog * list (S.key * L.t) * list S.row) (fun _ => True)
       (fun _ => 0%N) (fun '(p, fz, rs) => T_mk p fz rs).
-    Proof. Admitted. (* STUB *)
+    Proof.
+      exists 1%N; intros [[p fz] rs] _.
+      time_unfold @T_mk; reflexivity.
+    Qed.
 
     (** Restricted post-solutions accept every primary and side write of a selected row. *)
     Lemma restrict_writes : forall p fz rs s r, RS.post_solution (mk p fz rs) s ->

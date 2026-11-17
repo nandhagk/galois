@@ -654,6 +654,99 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+(** Encoded reads distinguish absence, stored bottom and mismatched key payloads. *)
+Example shared_code_value_and_missing_observations :
+  (IncWitness.value_code 1%positive tt IncWitness.init,
+   IncWitness.value_code 1%positive tt one_false,
+   IncWitness.missing_code 1%positive tt IncWitness.init,
+   IncWitness.missing_code 1%positive tt one_false,
+   IncGraph.value_code (IncGraphSystem.key_code 0) 0 graph_malformed_value,
+   IncGraph.missing_code (IncGraphSystem.key_code 0) 0 graph_malformed_value) =
+    (None, Some false, true, false, None, true).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** A visit queues an absent key once and freezes an explicitly stored bottom. *)
+Example shared_code_visit_observations :
+  let absent := IncWitness.discovery_visit IncWitness.init tt IncWitness.empty_discovery in
+  let stored := IncWitness.discovery_visit one_false tt IncWitness.empty_discovery in
+  (discovery_pending absent, discovery_missing absent, discovery_frozen absent,
+   discovery_pending stored, discovery_missing stored, discovery_frozen stored) =
+    ([tt], [tt], [], [], [], [(tt, false)]).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Supplying an encoded key visits the same missing or stored key as the public wrapper. *)
+Example shared_code_visit_helper_observations :
+  (IncWitness.discovery_visit_code 1%positive IncWitness.init tt IncWitness.empty_discovery,
+   IncWitness.discovery_visit_code 1%positive one_false tt IncWitness.empty_discovery) =
+    (IncWitness.discovery_visit IncWitness.init tt IncWitness.empty_discovery,
+     IncWitness.discovery_visit one_false tt IncWitness.empty_discovery).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Repeated visits and roots leave the first missing-key discovery unchanged. *)
+Example shared_code_repeated_visit_and_seed :
+  let first := IncWitness.discovery_visit IncWitness.init tt IncWitness.empty_discovery in
+  (IncWitness.discovery_visit IncWitness.init tt first,
+   IncWitness.discovery_seed_one IncWitness.init first tt,
+   IncWitness.discovery_seed_one one_false IncWitness.empty_discovery tt) =
+    (first, first, IncWitness.empty_discovery).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** A mismatched stored payload still behaves as an absent key during discovery. *)
+Example shared_code_visit_rejects_malformed_payload :
+  let result := IncGraph.discovery_visit graph_malformed_value 0 IncGraph.empty_discovery in
+  (discovery_pending result, discovery_missing result, discovery_frozen result) = ([0], [0], []).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Visiting a stored key below several trie branches freezes its existing nonbottom value. *)
+Example shared_code_visit_stored_graph_key :
+  let result := IncGraph.discovery_visit (snd graph_loaded) 2 IncGraph.empty_discovery in
+  (discovery_pending result, discovery_missing result, discovery_frozen result) =
+    ([], [], [(2, true)]).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Duplicate roots discover an absent key without introducing duplicate output keys. *)
+Example shared_code_discovery_duplicate_root :
+  IncGraph.discovery graph_original [99; 99] 4%N IncGraph.init = Some ([99], [], []).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Filling overwrites requested keys from raw candidates and retains other base bindings. *)
+Example shared_code_fill_candidate_observations :
+  let base := PTrieCode.set (IncGraphSystem.key_code 7) (7, true)
+    (PTrieCode.set (IncGraphSystem.key_code 9) (9, true) PTrieCode.empty) in
+  let filled := IncGraph.fill_local [0; 7] (inc_values graph_malformed_value) base in
+  (PTrieCode.get (IncGraphSystem.key_code 0) filled,
+   PTrieCode.get (IncGraphSystem.key_code 7) filled,
+   PTrieCode.get (IncGraphSystem.key_code 9) filled) =
+    (Some (0, true), Some (7, false), Some (9, true)).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Merging discovered values leaves existing metadata available to the finishing pass. *)
+Example shared_code_merge_preserves_metadata :
+  let merged := IncGraph.merge_discovered graph_hidden_buckets [0; 7]
+    (inc_values graph_malformed_value) in
+  (IncGraph.value merged 0, IncGraph.value merged 7,
+   graph_bucket (inc_influence merged) 99, graph_bucket (inc_cowrites merged) 99) =
+    (Some true, Some false, Some [1000%positive], Some [2000%positive]).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 (** An importing client can apply the complete timed functor under its released parameters. *)
 Module IncrementalContractClient (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L)
     (S : LOCAL_SYSTEM_T L)
