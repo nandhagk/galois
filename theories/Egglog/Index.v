@@ -3427,38 +3427,6 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
       time_unfold @T_node_degree. time_cbn. lia.
   Qed.
 
-  Lemma insert_bigO : bigO
-    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
-    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
-      (width (snd x) (snd (fst x)) + 1)))
-    (fun x => T_insert (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
-
-  Lemma remove_bigO : bigO
-    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
-    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
-      (width (snd x) (snd (fst x)) + 1)))
-    (fun x => T_remove (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
-
-  Lemma child_bigO : bigO (fun _ => True)
-    (fun x : t * positive * cell V.t =>
-      N.of_nat (width (fst (fst x)) [snd x] + 1))
-    (fun x => T_child (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
-
-  Lemma children_bigO : bigO
-    (fun x : nat * t * positive => wf (fst (fst x)) (snd (fst x)))
-    (fun x => N.of_nat ((N.to_nat (degree (snd (fst x)) (snd x)) + 1) *
-      (width (snd (fst x)) [] + 1)))
-    (fun x => T_children (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
-
-  Lemma degree_bigO : bigO (fun _ => True)
-    (fun x : t * positive => N.of_nat (width (fst x) [] + 1))
-    (fun x => T_degree (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
-
   (** Increasing a positive bound never decreases its binary width. *)
   Lemma positive_bits_mono : forall p q, (p <= q)%positive ->
     Pos.size_nat p <= Pos.size_nat q.
@@ -4284,6 +4252,66 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     eapply N.le_trans; [apply T_remove_total_budget; exact Hvalid |].
     unfold c_ix. apply N.mul_le_mono_r. apply N.mul_le_mono_r.
     apply N.mul_le_mono_r. lia.
+  Qed.
+
+  (** Insertion is linear in the tuple length and the stored bit width. *)
+  Lemma insert_bigO : bigO
+    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
+    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
+      (width (snd x) (snd (fst x)) + 1)))
+    (fun x => T_insert (snd (fst x)) (snd x)).
+  Proof.
+    apply bigO_intro with (c := c_ix).
+    intros [[a r] ix] Hwf. cbn [fst snd] in *.
+    rewrite Nat2N.inj_mul, N.mul_assoc.
+    eapply N.le_trans; [exact (T_insert_le a r ix Hwf) | apply N.le_add_r].
+  Qed.
+
+  (** Removal is linear in the tuple length and the stored bit width. *)
+  Lemma remove_bigO : bigO
+    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
+    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
+      (width (snd x) (snd (fst x)) + 1)))
+    (fun x => T_remove (snd (fst x)) (snd x)).
+  Proof.
+    apply bigO_intro with (c := c_ix).
+    intros [[a r] ix] Hwf. cbn [fst snd] in *.
+    rewrite Nat2N.inj_mul, N.mul_assoc.
+    eapply N.le_trans; [exact (T_remove_le a r ix Hwf) | apply N.le_add_r].
+  Qed.
+
+  (** Child lookup is linear in the bit width of one edge. *)
+  Lemma child_bigO : bigO (fun _ => True)
+    (fun x : t * positive * cell V.t =>
+      N.of_nat (width (fst (fst x)) [snd x] + 1))
+    (fun x => T_child (fst (fst x)) (snd (fst x)) (snd x)).
+  Proof.
+    apply bigO_intro with (c := c_ix).
+    intros [[ix n] c] _. cbn [fst snd].
+    eapply N.le_trans; [exact (T_child_le ix n c) | apply N.le_add_r].
+  Qed.
+
+  (** Child enumeration is linear in the degree and the bit width of a node. *)
+  Lemma children_bigO : bigO
+    (fun x : nat * t * positive => wf (fst (fst x)) (snd (fst x)))
+    (fun x => N.of_nat ((N.to_nat (degree (snd (fst x)) (snd x)) + 1) *
+      (width (snd (fst x)) [] + 1)))
+    (fun x => T_children (snd (fst x)) (snd x)).
+  Proof.
+    apply bigO_intro with (c := c_ix).
+    intros [[a ix] n] Hwf. cbn [fst snd] in *.
+    rewrite Nat2N.inj_mul, N.mul_assoc.
+    eapply N.le_trans; [exact (T_children_le a ix n Hwf) | apply N.le_add_r].
+  Qed.
+
+  (** Degree lookup is linear in the bit width of a node. *)
+  Lemma degree_bigO : bigO (fun _ => True)
+    (fun x : t * positive => N.of_nat (width (fst x) [] + 1))
+    (fun x => T_degree (fst x) (snd x)).
+  Proof.
+    apply bigO_intro with (c := c_ix).
+    intros [ix n] _. cbn [fst snd].
+    eapply N.le_trans; [exact (T_degree_le ix n) | apply N.le_add_r].
   Qed.
 
 End IndexT.
