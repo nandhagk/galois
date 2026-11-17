@@ -3,12 +3,20 @@
     An indexed depth-first producer breaks cycles with a temporary. Its independent checker
     compares the original source of every affected variable after symbolic execution.
     For example, a swap saves one source before either parallel destination is overwritten.
+
+    Main results
+    - [check_moves_sound] Accepted sequences agree with simultaneous assignment outside the
+      fresh temporary.
+    - [seq_complexity] Sequentialisation is linear in the moves times the identifier width.
+    - [check_moves_complexity] Checking is linear in both sequences times the identifier width.
+
     Builds on: ParMoveSig and the canonical binary trie. *)
 
 From Stdlib Require Import List PArith NArith Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Ssa Require Import ParMoveSig.
+Import ComplexityNotations.
 
 Import List.ListNotations.
 
@@ -933,9 +941,8 @@ Module ParMoveT <: PARMOVE_ALL.
   Qed.
 
   (** Sequentialisation is linear in the moves times the identifier width. *)
-  Lemma seq_complexity : bigO (X := moves * positive) (fun _ => True)
-    (fun '(par, _) => N.of_nat ((length par + 1) * (bits_of par + 1)))
-    (fun '(par, tmp) => T_seq par tmp).
+  Lemma seq_complexity :
+    T_seq par tmp ∈ 𝑂(N.of_nat ((length par + 1) * (bits_of par + 1))) for (par, tmp).
   Proof.
     apply bigO_intro with (c := c_pm).
     intros [par tmp] _. cbn beta iota zeta.
@@ -944,9 +951,9 @@ Module ParMoveT <: PARMOVE_ALL.
   Qed.
 
   (** Checking is linear in both sequences times the identifier width. *)
-  Lemma check_moves_complexity : bigO (X := moves * positive * moves) (fun _ => True)
-    (fun '(par, _, sq) => N.of_nat ((length par + length sq + 1) * (bits_of (par ++ sq) + 1)))
-    (fun '(par, tmp, sq) => T_check_moves par tmp sq).
+  Lemma check_moves_complexity :
+    T_check_moves par tmp sq ∈ 𝑂(N.of_nat ((length par + length sq + 1) *
+      (bits_of (par ++ sq) + 1))) for (par, tmp, sq).
   Proof.
     apply bigO_intro with (c := c_pm).
     intros [[par tmp] sq] _. cbn beta iota zeta.
