@@ -2,10 +2,27 @@
 
     Maps store client keys and values in a canonical trie.
     For example, enumeration returns the client key stored by insertion.
+
+    Main results
+    - [elements_spec] Consistent maps enumerate precisely their bindings.
+    - [fold_spec] Folding follows enumeration order.
+    - [forall2b_spec] When the callback accepts two absences, checking accepts exactly when
+      the callback accepts the bindings at every key.
+    - [existsb_spec] Checking finds a stored value exactly when some stored value satisfies
+      the predicate.
+    - [codes_spec] The codes are exactly the keys that have a binding.
+    - [get_complexity] Lookup is linear in the encoded key length.
+    - [set_complexity] Insertion is linear in the encoded key length.
+    - [remove_complexity] Removal is linear in the encoded key length.
+    - [merge_complexity] Merging is linear in both skeletons for bounded callbacks.
+    - [forall2b_complexity] Relational checking is linear in both skeletons for bounded
+      callbacks.
+
     Builds on: KeySig, TrieSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool NArith PeanoNat Lia Sorting.Sorted.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig TrieSig MapSig.
 From Galois.Base Require Import Trie.
 
@@ -724,8 +741,8 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
   Qed.
 
   (** Lookup is linear in the encoded key width. *)
-  Lemma get_complexity : forall A, bigO (X := K.t * t A) (fun _ => True)
-    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_get (fst x) (snd x)).
+  Lemma get_complexity : forall A,
+    T_get (A := A) k m ∈ 𝑂(N.of_nat (K.bits k)) for (k, m).
   Proof.
     intro A. exists c_map. intros [k m] _. cbn [fst snd].
     pose proof (T_get_le A k m) as Hget.
@@ -733,9 +750,8 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
   Qed.
 
   (** Setting a binding is linear in the encoded key width. *)
-  Lemma set_complexity : forall A, bigO (X := K.t * A * t A) (fun _ => True)
-    (fun x => N.of_nat (K.bits (fst (fst x))))
-    (fun x => T_set (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma set_complexity : forall A,
+    T_set (A := A) k a m ∈ 𝑂(N.of_nat (K.bits k)) for (k, a, m).
   Proof.
     intro A. exists c_map. intros [[k a] m] _. cbn [fst snd].
     pose proof (T_set_le A k a m) as Hset.
@@ -743,8 +759,8 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
   Qed.
 
   (** Removing a binding is linear in the encoded key width. *)
-  Lemma remove_complexity : forall A, bigO (X := K.t * t A) (fun _ => True)
-    (fun x => N.of_nat (K.bits (fst x))) (fun x => T_remove (fst x) (snd x)).
+  Lemma remove_complexity : forall A,
+    T_remove (A := A) k m ∈ 𝑂(N.of_nat (K.bits k)) for (k, m).
   Proof.
     intro A. exists c_map. intros [k m] _. cbn [fst snd].
     pose proof (T_remove_le A k m) as Hremove.
@@ -753,11 +769,9 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
 
   (** Merging has linear skeleton cost when callback costs are bounded. *)
   Lemma merge_complexity : forall A B C,
-    bigO (X := (option A -> option B -> option C) * (option A -> option B -> N) * N *
-      t A * t B)
-      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
-      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
-      (fun '(f, T_f, _, m1, m2) => T_merge f T_f m1 m2).
+    T_merge (A := A) (B := B) (C := C) f T_f m1 m2
+      ∈ 𝑂(((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      for (f, T_f, k, m1, m2) | forall a b, (T_f a b <= k)%N.
   Proof.
     intros A B C. exists c_map. intros [[[[f T_f] k] m1] m2] Hbound.
     cbn [fst snd] in Hbound |- *.
@@ -767,11 +781,9 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
 
   (** Relational checking has linear skeleton cost when callback costs are bounded. *)
   Lemma forall2b_complexity : forall A B,
-    bigO (X := (option A -> option B -> bool) * (option A -> option B -> N) * N *
-      t A * t B)
-      (fun '(_, T_f, k, _, _) => forall a b, (T_f a b <= k)%N)
-      (fun '(_, _, k, m1, m2) => ((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
-      (fun '(f, T_f, _, m1, m2) => T_forall2b f T_f m1 m2).
+    T_forall2b (A := A) (B := B) f T_f m1 m2
+      ∈ 𝑂(((k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N)
+      for (f, T_f, k, m1, m2) | forall a b, (T_f a b <= k)%N.
   Proof.
     intros A B. exists c_map. intros [[[[f T_f] k] m1] m2] Hbound.
     cbn [fst snd] in Hbound |- *.
