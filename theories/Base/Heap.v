@@ -2,10 +2,16 @@
 
     A binomial forest indexes a live map and retains obsolete entries after decreases.
     For example, pushing priorities five and two for one key leaves priority two live.
+
+    Main results
+    - [push_complexity] Push has the worst-case logarithmic comparison cost of bounded width.
+    - [pop_complexity] Pop pays one unit budget plus one for each stale entry it discards.
+
     Builds on: HeapSig, MapSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool NArith PArith PeanoNat Lia Sorting.Permutation.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import HeapSig KeySig MapSig Trie Loop.
 Import List.ListNotations.
 
@@ -1744,11 +1750,10 @@ Module HeapT <: PQ_ALL.
   Qed.
 
   (** Pushing fits the logarithmic comparison budget at bounded key and priority widths. *)
-  Lemma push_complexity : bigO (X := nat * nat * N * positive * t)
-    (fun '(P, w, p, x, q) => wf q /\ fits w q /\ (pending q < P)%nat /\
-      (Pos.size_nat x + N.size_nat p <= w)%nat)
-    (fun '(P, w, _, _, _) => N.of_nat (unit_pq P w))
-    (fun '(_, _, p, x, q) => T_push p x q).
+  Lemma push_complexity :
+    T_push p x q ∈ 𝑂(N.of_nat (unit_pq P w))
+      for (P, w, p, x, q) | wf q /\ fits w q /\ (pending q < P)%nat /\
+        (Pos.size_nat x + N.size_nat p <= w)%nat.
   Proof.
     exists (k_insert + k_step)%N.
     intros [[[[P w] p] x] q] [Hwf [Hfits [Hpending Hwidth]]].
@@ -1809,11 +1814,9 @@ Module HeapT <: PQ_ALL.
   Qed.
 
   (** Popping pays one comparison budget and the credit of discarded stale entries. *)
-  Lemma pop_complexity : bigO (X := nat * nat * t)
-    (fun '(P, w, q) => wf q /\ fits w q /\ (pending q <= P)%nat)
-    (fun '(P, w, q) =>
-      N.of_nat (unit_pq P w * (pending q - N.to_nat (size q) + 1)))
-    (fun '(_, _, q) => T_pop q).
+  Lemma pop_complexity :
+    T_pop q ∈ 𝑂(N.of_nat (unit_pq P w * (pending q - N.to_nat (size q) + 1)))
+      for (P, w, q) | wf q /\ fits w q /\ (pending q <= P)%nat.
   Proof.
     exists (c_pq + k_credit)%N.
     intros [[P w] q] [Hwf [Hfits Hpending]]. cbn [fst snd].
