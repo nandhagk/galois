@@ -28,6 +28,7 @@ Module State := Env BoolKey Vars ZLang Values.
 (** A partition cap of two live parts, with its proof that the cap is positive. *)
 Module Cap.
   Definition k := 2%nat.
+  (** The cap is positive. *)
   Lemma k_pos : (0 < k)%nat.
   Proof.
     unfold k; lia.
@@ -140,35 +141,42 @@ Module BigOTests.
     Definition assume (_ : ZLangT.guard) (_ : list (term ZLangT.op BoolKeyT.t)) (a : t) := a.
     Definition eval (_ : term ZLangT.op BoolKeyT.t) (_ : t) := TimedValues.top.
 
+    (** The concretization is monotone in the order. *)
     Lemma gamma_mono : forall a b st, leb a b = true -> gamma a st -> gamma b st.
     Proof.
       intros [] [] st; cbn [leb Bool.implb gamma]; congruence.
     Qed.
+    (** The bottom value has no concretization. *)
     Lemma gamma_bot : forall st, ~ gamma bot st.
     Proof.
       intros st; discriminate.
     Qed.
+    (** The top value describes every state. *)
     Lemma gamma_top : forall st, gamma top st.
     Proof.
       reflexivity.
     Qed.
+    (** Assignment is sound. *)
     Lemma assign_sound : forall x e s st c,
       gamma s st -> eval_term ZLangT.eval st e = Some c ->
       gamma (assign x e s) (upd BoolKeyT.eqb st x c).
     Proof.
       intros x e s st c Hs _; exact Hs.
     Qed.
+    (** Havoc is sound. *)
     Lemma havoc_sound : forall x s st c,
       gamma s st -> gamma (havoc x s) (upd BoolKeyT.eqb st x c).
     Proof.
       intros x s st c Hs; exact Hs.
     Qed.
+    (** Assumption is sound. *)
     Lemma assume_sound : forall g es s st cs,
       gamma s st -> eval_terms ZLangT.eval st es = Some cs -> ZLangT.holds g cs ->
       gamma (assume g es s) st.
     Proof.
       intros g es s st cs Hs _ _; exact Hs.
     Qed.
+    (** Evaluation is sound. *)
     Lemma eval_sound : forall e s st c,
       gamma s st -> eval_term ZLangT.eval st e = Some c -> TimedValues.gamma (eval e s) c.
     Proof.
@@ -185,21 +193,25 @@ Module BigOTests.
     TimeFun assume.
     TimeFun eval.
     Definition c_state := 16%N.
+    (** The assignment time is within its work measure. *)
     Lemma T_assign_le : forall x e a,
       (T_assign x e a <= c_state * N.of_nat (assign_work x e a + 1))%N.
     Proof.
       intros; unfold c_state, assign_work; time_step.
     Qed.
+    (** The havoc time is within its work measure. *)
     Lemma T_havoc_le : forall x a,
       (T_havoc x a <= c_state * N.of_nat (havoc_work x a + 1))%N.
     Proof.
       intros; unfold c_state, havoc_work; time_step.
     Qed.
+    (** The assumption time is within its work measure. *)
     Lemma T_assume_le : forall g es a,
       (T_assume g es a <= c_state * N.of_nat (assume_work g es a + 1))%N.
     Proof.
       intros; unfold c_state, assume_work; time_step.
     Qed.
+    (** The evaluation time is within its work measure. *)
     Lemma T_eval_le : forall e a,
       (T_eval e a <= c_state * N.of_nat (eval_work e a + 1))%N.
     Proof.
@@ -208,6 +220,7 @@ Module BigOTests.
   End LiveStateT.
 
   Module LiveJoinSize <: JOIN_SIZE LiveStateT.
+    (** A join of two live states has a constant size. *)
     Lemma join_size : forall a b,
       (N.of_nat (LiveStateT.size (LiveStateT.join a b)) <=
         LiveStateT.c_lat * N.of_nat (LiveStateT.size a + LiveStateT.size b + 1))%N.
@@ -217,6 +230,7 @@ Module BigOTests.
   End LiveJoinSize.
 
   Module LiveJoinUnits <: JOIN_UNITS BoolKeyT ZLangT TimedValues LiveStateT.
+    (** A join of two live states has a constant number of widening units. *)
     Lemma join_wunits : forall a b,
       (N.of_nat (LiveStateT.wunits (LiveStateT.join a b)) <= LiveStateT.c_lat *
         N.of_nat (LiveStateT.wunits a + LiveStateT.wunits b + 1))%N.
@@ -298,14 +312,18 @@ Module BigOTests.
 
   Definition timed_alternatives := TimedShared.clip [false; true].
 
-  (** The disjunction widening bound includes the component parameter cost. *)
-  Example disjunction_widen_within_work_bound :
-    (TimedDisjunction.T_widen tt TimedDisjunction.bot timed_alternatives <=
-      TimedDisjunction.c_lat * (N.of_nat
+  (** The widening budget of the disjunction, in the measure of its big-O field. *)
+  Definition disjunction_widen_budget : N :=
+    (TimedDisjunction.c_lat * (N.of_nat
         ((TimedDisjunction.wunits TimedDisjunction.bot +
           TimedDisjunction.wunits timed_alternatives) * TimedDisjunction.wsize tt +
           (TimedDisjunction.size TimedDisjunction.bot + TimedDisjunction.size timed_alternatives +
             TimedDisjunction.wsize tt)) + 1))%N.
+
+  (** The disjunction widening bound includes the component parameter cost. *)
+  Example disjunction_widen_within_work_bound :
+    (TimedDisjunction.T_widen tt TimedDisjunction.bot timed_alternatives <=
+      disjunction_widen_budget)%N.
   Proof.
     vm_compute; discriminate.
   Qed.
