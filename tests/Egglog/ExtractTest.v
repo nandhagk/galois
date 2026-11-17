@@ -14,8 +14,7 @@
     - [IndexPathTests] Index paths of stored tuples.
     - [RowTests] The constructor rows of a database.
     - [CandidateTests] An extraction candidate is checked against its budget and root.
-    - [CodedTests] The coded extraction state of a row.
-    - Probes: the index interface and the timed queue and database observations. *)
+    - [CodedTests] The coded extraction state of a row. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia.
 From Argent Require Import Time.
@@ -194,13 +193,19 @@ End BestRowsTests.
 
 Module InventoryTests.
 
+  (** Declarations of two constructors, two relations and a lattice, one constructor twice. *)
+  Definition mixed_declarations :=
+    [Decl 3%positive [SId; SVal] OId; Decl 4%positive [] ORel;
+     Decl 3%positive [] ORel; Decl 5%positive [] OId; Decl 6%positive [] (OLat 1%positive)].
+
+  (** Slot layouts for the declarations, with partial, repeated and undeclared entries. *)
+  Definition mixed_layout :=
+    [(3%positive, [0; 2; 1]); (4%positive, []); (3%positive, [0; 1; 2]);
+     (5%positive, [0]); (3%positive, [0; 1; 2]); (99%positive, [0])].
+
   (** Only the full constructor slots of the declared arity enter the inventory. *)
   Example keeps_only_full_slots :
-    InventoryExtract.inventory
-      [Decl 3%positive [SId; SVal] OId; Decl 4%positive [] ORel;
-       Decl 3%positive [] ORel; Decl 5%positive [] OId; Decl 6%positive [] (OLat 1%positive)]
-      [(3%positive, [0; 2; 1]); (4%positive, []); (3%positive, [0; 1; 2]);
-       (5%positive, [0]); (3%positive, [0; 1; 2]); (99%positive, [0])] =
+    InventoryExtract.inventory mixed_declarations mixed_layout =
       [(3%positive, (2%N, 2)); (5%positive, (3%N, 0))].
   Proof.
     vm_compute. reflexivity.
@@ -236,13 +241,16 @@ Module UnfoldTests.
 
   Local Open Scope positive_scope.
 
+  (** A DAG whose entry 2 has the entry 1 as its child twice. *)
+  Definition shared_dag := [(1, (10, [Val 7])); (2, (20, [Id 1; Id 1]))].
+
+  (** The tree of entry 2, which holds a copy of the tree of entry 1 for each occurrence. *)
+  Definition shared_tree :=
+    Model.EApp 20 [Model.EApp 10 [Model.ELit 7]; Model.EApp 10 [Model.ELit 7]].
+
   (** A shared child unfolds into a copy of its tree at each occurrence. *)
   Example shared_children_unfold_each_occurrence :
-    dag_unfold [(1, (10, [Val 7]));
-      (2, (20, [Id 1; Id 1]))] 2 =
-      Some (Model.EApp 20
-        [Model.EApp 10 [Model.ELit 7];
-         Model.EApp 10 [Model.ELit 7]]).
+    dag_unfold shared_dag 2 = Some shared_tree.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -482,26 +490,29 @@ Module CodedTests.
   Definition coded_observer_state : extraction_state positive unit unit :=
     ExtractionState tt coded_source_rows 3 Empty Empty Empty tt [].
 
+  (** The coded form of a row, with positive numbers as their own codes. *)
+  Definition coded_row := extraction_row_code (fun p : positive => p).
+
+  (** The first source row, which repeats the child 2 and has one literal child. *)
+  Definition repeated_child_row : search_row positive :=
+    (3%positive, [Id 2%positive; Val 7%positive; Id 2%positive; Id 5%positive], 9%positive).
+
   (** Row children keep each child identifier, including repeated ones. *)
   Example children_keep_repeated_identifiers :
-    extraction_row_children (extraction_row_code (fun p : positive => p)
-      (3%positive, [Id 2%positive; Val 7%positive; Id 2%positive; Id 5%positive], 9%positive)) =
-      [2%positive; 2%positive; 5%positive].
+    extraction_row_children (coded_row repeated_child_row) = [2%positive; 2%positive; 5%positive].
   Proof. vm_compute. reflexivity. Qed.
 
   (** The counter counts each unfinished child occurrence of a row. *)
   Example counter_counts_unfinished_occurrences :
-    extraction_row_counter coded_observer_state (extraction_row_code (fun p : positive => p)
-      (3%positive, [Id 2%positive; Val 7%positive; Id 2%positive; Id 5%positive], 9%positive)) = 3.
+    extraction_row_counter coded_observer_state (coded_row repeated_child_row) = 3.
   Proof. vm_compute. reflexivity. Qed.
 
   (** Rows with literal or nullary children are ready with their costs. *)
   Example ready_rows_include_literal_and_nullary :
     extraction_ready_rows (fun p : positive => p) InventoryCost.fn_cost InventoryCost.val_cost
       coded_observer_state =
-      [(extraction_row_code (fun p : positive => p) (4%positive, [Val 7%positive], 10%positive),
-         2%N);
-       (extraction_row_code (fun p : positive => p) (6%positive, [], 11%positive), 1%N)].
+      [(coded_row (4%positive, [Val 7%positive], 10%positive), 2%N);
+       (coded_row (6%positive, [], 11%positive), 1%N)].
   Proof. vm_compute. reflexivity. Qed.
 
 End CodedTests.
