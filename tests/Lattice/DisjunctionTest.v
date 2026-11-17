@@ -4,9 +4,9 @@
     For example, cap one collapses incomparable values to top.
     Builds on: Disjunction, Flat and Key. *)
 
-From Stdlib Require Import List Bool.
+From Stdlib Require Import List Bool NArith.
 From Galois.Base Require Import Key.
-From Galois.Lattice Require Import Disjunction Flat Simple.
+From Galois.Lattice Require Import LatticeSig Disjunction Flat Simple.
 Import List.ListNotations.
 
 Module FlatBool := FlatCode BoolKeyCode.
@@ -17,6 +17,18 @@ Module D0 := DisjunctionCode FlatBool Cap0.
 Module D1 := DisjunctionCode FlatBool Cap1.
 Module D2 := DisjunctionCode FlatBool Cap2.
 Module BoolDisjunction := DisjunctionCode BoolLatCode Cap1.
+
+Module BoolJoinSize <: JOIN_SIZE BoolLatT.
+  (** Boolean joins keep the constant component size. *)
+  Lemma join_size : forall a b,
+    (N.of_nat (BoolLatT.size (BoolLatT.join a b)) <=
+      BoolLatT.c_lat * N.of_nat (BoolLatT.size a + BoolLatT.size b + 1))%N.
+  Proof.
+    intros a b. apply N.leb_le. vm_compute. reflexivity.
+  Qed.
+End BoolJoinSize.
+
+Module TimedDisjunction := DisjunctionT BoolLatT BoolJoinSize Cap1.
 
 Example disjunction_cap_one :
   proj1_sig (D1.join (D1.clip [FVal false]) (D1.clip [FVal true; FBot])) = [FTop].
@@ -47,6 +59,44 @@ Proof. vm_compute. reflexivity. Qed.
 Example disjunction_bottom_test : (D1.is_bot D1.bot, D1.is_bot (D1.clip [FBot])) =
   (true, false).
 Proof. vm_compute. reflexivity. Qed.
+
+(** Inclusion uses the sum of the two public sizes as its big-O measure. *)
+Example disjunction_inclusion_bigO_bound :
+  let a := TimedDisjunction.clip [false] in
+  let b := TimedDisjunction.clip [true] in
+  (TimedDisjunction.T_leb a b <= TimedDisjunction.c_lat *
+    (N.of_nat (TimedDisjunction.size a + TimedDisjunction.size b) + 1))%N.
+Proof.
+  apply N.leb_le. vm_compute. reflexivity.
+Qed.
+
+(** Joining singleton alternatives exercises clipping at cap one. *)
+Example disjunction_join_bigO_bound :
+  let a := TimedDisjunction.clip [false] in
+  let b := TimedDisjunction.clip [true] in
+  (TimedDisjunction.T_join a b <= TimedDisjunction.c_lat *
+    (N.of_nat (TimedDisjunction.size a + TimedDisjunction.size b) + 1))%N.
+Proof.
+  apply N.leb_le. vm_compute. reflexivity.
+Qed.
+
+(** Bottom testing is bounded by the size of one alternative. *)
+Example disjunction_bottom_bigO_bound :
+  let a := TimedDisjunction.clip [false] in
+  (TimedDisjunction.T_is_bot a <=
+    TimedDisjunction.c_lat * (N.of_nat (TimedDisjunction.size a) + 1))%N.
+Proof.
+  apply N.leb_le. vm_compute. reflexivity.
+Qed.
+
+(** Two alternatives reach the clipping theorem's twice-cap boundary. *)
+Example disjunction_clip_bigO_bound :
+  let xs := [false; true] in
+  (TimedDisjunction.T_clip xs <= TimedDisjunction.c_lat *
+    (N.of_nat (length xs + fold_right (fun a n => (BoolLatT.size a + n)%nat) 0%nat xs) + 1))%N.
+Proof.
+  apply N.leb_le. vm_compute. reflexivity.
+Qed.
 
 (* At cap zero the old raw join [FVal false] [] returned [FVal false].
    That input is outside the bounded carrier, and clipping it now returns [].
