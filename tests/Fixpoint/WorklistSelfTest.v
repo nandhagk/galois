@@ -4,9 +4,8 @@
     For example, the final empty queue probe consumes one unit of fuel.
 
     Groups:
-    - Fixtures: a system whose only row reads and writes itself.
-    - Step: one step of the worklist requeues the popped row.
-    - Run: the fuel that the final empty queue probe needs.
+    - [StepTests] One step of the worklist requeues the popped row.
+    - [RunTests] The fuel that the final empty queue probe needs.
 
     Builds on: Fixpoint.Worklist and Fixpoint.WorklistTest. *)
 
