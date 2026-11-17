@@ -14050,6 +14050,7 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
     unfold lattice_work in Htime. lia.
   Qed.
 
+  (** Fast assignment is linear in matrix support plus source interval arithmetic. *)
   Lemma assign_fast_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => (N.of_nat (skels (snd x) +
       (ns (snd x) + 1) * (bs (snd x) + ells (snd x) + X.bits (fst (fst x)) +
@@ -14058,5 +14059,17 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
         Nat.log2 (tsize (snd (fst x))) + 1)^2 + labs (snd x)) +
       F.T_lin_of (snd (fst x)))%N)
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [[x e] [|m]] _.
+    - cbn [fst snd].
+      assert (Hpositive : (1 <= c_num)%N) by (unfold c_num; nia).
+      time_unfold (@T_assign). time_simpl. cbn beta iota zeta. nia.
+    - cbn [fst snd skels labs ns bs ells].
+      assert (Hwork : N.of_nat (skel m +
+        (supp m + 1) * (b m + ell m + X.bits x + F.bits_e e + lin_bits e + 1) +
+        (tsize e + 1) * (b m + ell m + F.bits_e e + Nat.log2 (tsize e) + 1)^2 +
+        M.weight m) = fast_assign_unit x e m).
+      { unfold fast_assign_unit, range_payload. f_equal. lia. }
+      rewrite Hwork. pose proof (T_assign_fast_bound x e m) as Htime. nia.
+  Qed.
 End OctagonT.
