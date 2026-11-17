@@ -5,16 +5,15 @@
     Builds on: KnownBitsBack, Tagged and Harness.
 
     Groups:
-    - Fixtures: the low and staged multiplier modules, the harness and the forward helpers.
-    - Forward: forward transfers of operations, with their widths and conflicts.
-    - Assume: backward transfers that narrow the operands of each operation.
-    - Singletons: singleton operands and counts that the shared harness evaluates exactly.
-    - Malformed: operand lists of the wrong arity, and the harness's answer for them.
-    - Bridges: rotation, extraction and refinement at the boundaries of the word operations.
-    - Multiplier: the default multiplier against the low multiplier on the same inputs.
-    - Payload: the direct payload computations of the low and staged modules.
-    - Symbolic: the extraction and rotation facts for every width and value.
-    - Tables: the public table of the harness on shifted concatenation. *)
+    - [ForwardTests] Forward transfers of operations, with their widths and conflicts.
+    - [AssumeTests] Backward transfers that narrow the operands of each operation.
+    - [SingletonTests] Singleton operands and counts that the shared harness evaluates exactly.
+    - [MalformedTests] Operand lists of the wrong arity, and the harness's answer for them.
+    - [BridgeTests] Rotation, extraction and refinement at the boundaries of the word operations.
+    - [MultiplierTests] The staged multiplier against the low multiplier on the same inputs.
+    - [PayloadTests] The direct payload computations of the low and staged modules.
+    - [SymbolicTests] The extraction and rotation facts for every width and value.
+    - [TableTests] The public table of the harness on shifted concatenation. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
 From Galois.Bits Require Import Word Op Fun.
@@ -89,49 +88,49 @@ Module LowOps := KnownBitsOpsFastCode WordLanguageCode Low W.
 
 Module ForwardTests.
 
-  (** Adding a conflicting mask to a constant gives top at width eight. *)
+  (** Adding a mask with conflicting bits to a constant conflicts in every bit at width eight. *)
   Example conflicting_masks_add :
     kb_forward bvadd [(8%positive, Tnum 1 1); (8%positive, tnum_const 8%positive 1)]
       8%positive = Tnum 255 255.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A left shift by a conflicting amount gives top at width eight. *)
+  (** A left shift by an amount with conflicting bits conflicts in every bit at width eight. *)
   Example shift_conflicting_amount :
     kb_forward bvshl [(8%positive, tnum_top); (8%positive, Tnum 1 1)]
       8%positive = Tnum 255 255.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A left shift of the constant one by the mask 252 0 gives the mask 240 0. *)
+  (** A left shift of the constant one by zero to three bits keeps the high four bits zero. *)
   Example variable_logical_shift :
     kb_forward bvshl [(8%positive, tnum_const 8%positive 1); (8%positive, Tnum 252 0)]
       8%positive = Tnum 240 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A logical right shift of 128 by the mask 247 0 gives the mask 127 0. *)
+  (** A logical right shift of 128 by zero or eight bits leaves only the top bit possible. *)
   Example variable_oversized_shift :
     kb_forward bvlshr [(8%positive, tnum_const 8%positive 128); (8%positive, Tnum 247 0)]
       8%positive = Tnum 127 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** An arithmetic right shift of 128 by the mask 252 0 keeps the sign bit. *)
+  (** An arithmetic right shift of 128 by zero to three bits keeps the sign bit one. *)
   Example variable_arithmetic_shift :
     kb_forward bvashr [(8%positive, tnum_const 8%positive 128); (8%positive, Tnum 252 0)]
       8%positive = Tnum 15 128.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** An arithmetic right shift of 128 by the mask 247 0 gives the mask 0 128. *)
+  (** An arithmetic right shift of 128 by zero or eight bits keeps the sign bit one. *)
   Example variable_arithmetic_oversized :
     kb_forward bvashr [(8%positive, tnum_const 8%positive 128); (8%positive, Tnum 247 0)]
       8%positive = Tnum 0 128.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A left shift of top by the constant 255 gives the mask 255 0 at width eight. *)
+  (** A left shift by the constant 255 is a shift past the width and gives zero at width eight. *)
   Example oversized_base_left :
     kb_forward bvshl [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 255)]
       8%positive = Tnum 255 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** An arithmetic right shift of the mask 128 0 by the constant 255 gives the mask 255 0. *)
+  (** An arithmetic right shift of a non-negative value by 255 gives zero. *)
   Example oversized_base_arithmetic :
     kb_forward bvashr [(8%positive, Tnum 128 0); (8%positive, tnum_const 8%positive 255)]
       8%positive = Tnum 255 0.
@@ -143,67 +142,67 @@ Module ForwardTests.
       8%positive = Tnum 15 128.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A left rotation of the constant one by the mask 15 0 at width five gives 28 0. *)
+  (** Rotating a one left by zero or sixteen at width five leaves bits 0 and 1 unknown. *)
   Example rotation_nonpower_left :
     kb_forward bvrotl [(5%positive, tnum_const 5%positive 1); (5%positive, Tnum 15 0)]
       5%positive = Tnum 28 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A right rotation of the constant one by the mask 15 0 at width five gives 14 0. *)
+  (** Rotating a one right by zero or sixteen at width five leaves bits 0 and 4 unknown. *)
   Example rotation_nonpower_right :
     kb_forward bvrotr [(5%positive, tnum_const 5%positive 1); (5%positive, Tnum 15 0)]
       5%positive = Tnum 14 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A left rotation at width one of the constant one gives the mask 0 1. *)
+  (** A left rotation at width one of the constant one gives the constant one. *)
   Example rotation_width_one_left :
     kb_forward bvrotl [(1%positive, tnum_const 1%positive 1); (1%positive, tnum_top)]
       1%positive = Tnum 0 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A right rotation at width one of the constant one gives the mask 0 1. *)
+  (** A right rotation at width one of the constant one gives the constant one. *)
   Example rotation_width_one_right :
     kb_forward bvrotr [(1%positive, tnum_const 1%positive 1); (1%positive, tnum_top)]
       1%positive = Tnum 0 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A left shift at width one of the constant one gives the empty mask. *)
+  (** A left shift at width one of the constant one by an unknown amount is unknown. *)
   Example shift_width_one :
     kb_forward bvshl [(1%positive, tnum_const 1%positive 1); (1%positive, tnum_top)]
       1%positive = Tnum 0 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Unsigned division of the mask 240 0 by the constant zero gives top. *)
+  (** Unsigned division of a value below sixteen by the constant zero is unknown. *)
   Example udiv_by_zero_is_top :
     kb_forward bvudiv [(8%positive, Tnum 240 0); (8%positive, tnum_const 8%positive 0)]
       8%positive = tnum_top.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Unsigned division of the mask 240 0 by the mask 0 1 gives the mask 240 0. *)
+  (** Unsigned division of a value below sixteen by an odd divisor gives a value below sixteen. *)
   Example udiv_by_one_bit_mask :
     kb_forward bvudiv [(8%positive, Tnum 240 0); (8%positive, Tnum 0 1)]
       8%positive = Tnum 240 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** The unsigned remainder of the mask 240 0 by the constant zero keeps the mask 240 0. *)
+  (** The unsigned remainder of a value below sixteen by zero stays below sixteen. *)
   Example urem_by_zero_keeps_dividend :
     kb_forward bvurem [(8%positive, Tnum 240 0); (8%positive, tnum_const 8%positive 0)]
       8%positive = Tnum 240 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Unsigned less-than of the mask 128 0 and the constant 128 gives the mask 0 1. *)
+  (** A value below 128 is known to be unsigned-less than the constant 128. *)
   Example comparison_unsigned :
     kb_forward bvult [(8%positive, Tnum 128 0); (8%positive, tnum_const 8%positive 128)]
       1%positive = Tnum 0 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Signed less-than of the masks 0 128 and 128 0 gives the mask 0 1. *)
+  (** A negative value is known to be signed-less than a non-negative value. *)
   Example comparison_signed :
     kb_forward bvslt [(8%positive, Tnum 0 128); (8%positive, Tnum 128 0)]
       1%positive = Tnum 0 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Equality of the masks 1 0 and 0 1 gives the mask 1 0. *)
+  (** Values that differ in a known bit are known to be unequal. *)
   Example comparison_equal :
     kb_forward bveq [(8%positive, Tnum 1 0); (8%positive, Tnum 0 1)]
       1%positive = Tnum 1 0.
@@ -215,22 +214,22 @@ Module ForwardTests.
       (8%positive, tnum_top)] 8%positive = Tnum 15 128.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Zero extension of the mask 8 1 from width four to width eight gives 248 1. *)
+  (** Zero extension from width four to eight makes the new high bits known zero. *)
   Example width_zext :
     kb_forward (bvzext 4%positive) [(4%positive, Tnum 8 1)] 8%positive = Tnum 248 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Sign extension of the mask 0 8 from width four to width eight gives 0 248. *)
+  (** Sign extension of a negative four-bit value makes the new high bits known one. *)
   Example width_sext :
     kb_forward (bvsext 4%positive) [(4%positive, Tnum 0 8)] 8%positive = Tnum 0 248.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Truncation of the mask 128 1 from width eight to width four gives 0 1. *)
+  (** Truncation to width four keeps the known low bit and drops the high bits. *)
   Example width_trunc :
     kb_forward (bvtrunc 4%positive) [(8%positive, Tnum 128 1)] 4%positive = Tnum 0 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Extracting bits two to five of the mask 24 4 gives the mask 6 1. *)
+  (** Extracting bits two to five of a byte moves them to the low end of a nibble. *)
   Example width_extract :
     kb_forward (bvextract 5 2) [(8%positive, Tnum 24 4)] 4%positive = Tnum 6 1.
   Proof. vm_compute. reflexivity. Qed.
@@ -246,12 +245,12 @@ Module ForwardTests.
     kb_forward (bvextract 3 0) [(4%positive, Tnum 8 1)] 4%positive = Tnum 8 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Extracting bits four to seven of a known byte gives the high nibble. *)
+  (** Extracting bits four to seven of the byte constant 15 gives the zero nibble. *)
   Example extract_high_known_nibble :
     kb_forward (bvextract 7 4) [(8%positive, Tnum 240 15)] 4%positive = Tnum 15 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Extracting bits zero to three of a known byte gives the low nibble with its mask. *)
+  (** Extracting bits zero to three of the byte constant 15 gives the one nibble. *)
   Example extract_low_nibble_of_byte :
     kb_forward (bvextract 3 0) [(8%positive, Tnum 240 15)] 4%positive = Tnum 0 15.
   Proof. vm_compute. reflexivity. Qed.
@@ -367,24 +366,24 @@ End AssumeTests.
 
 Module SingletonTests.
 
-  (** Signed division of the constants 7 and 2 gives the exact mask 252 3. *)
+  (** Signed division of the constants 7 and 2 gives the constant 3. *)
   Example signed_division_of_constants :
     kb_forward bvsdiv [(8%positive, tnum_const 8%positive 7);
       (8%positive, tnum_const 8%positive 2)] 8%positive = Tnum 252 3.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** The leading-zero count of the constant zero at width five is the exact mask 26 5. *)
+  (** The leading-zero count of the constant zero at width five is the constant 5. *)
   Example leading_zero_count_of_constant :
     kb_forward bvclz [(5%positive, tnum_const 5%positive 0)] 5%positive = Tnum 26 5.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** The signed remainder of the mask 128 0 keeps the sign bit even with an unknown divisor. *)
+  (** The signed remainder of a non-negative value stays non-negative for any divisor. *)
   Example signed_remainder_keeps_sign :
     kb_forward bvsrem [(8%positive, Tnum 128 0); (8%positive, tnum_top)]
       8%positive = Tnum 128 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** The population count of top keeps the bound 240 0 at width eight. *)
+  (** The population count of an unknown byte is below sixteen. *)
   Example population_count_of_top :
     kb_forward bvpopcnt [(8%positive, tnum_top)] 8%positive = Tnum 240 0.
   Proof. vm_compute. reflexivity. Qed.
@@ -395,7 +394,7 @@ End SingletonTests.
 
 Module MalformedTests.
 
-  (** The shared harness gives top for addition of operands of different widths. *)
+  (** The shared harness gives the unknown value for addition of operands of different widths. *)
   Example mixed_width_operands_are_top :
     D.forward (BOp bvadd) [TVal 8%positive tnum_top; TVal 4%positive tnum_top] = TAny.
   Proof. vm_compute. reflexivity. Qed.
@@ -409,11 +408,6 @@ Module MalformedTests.
   Example nullary_multiplication_is_bottom :
     D.forward (BOp bvmul) [] = TBot.
   Proof. vm_compute. reflexivity. Qed.
-
-  (* The old malformed fallback normalized the one-operand output to [Tnum 28 1]
-     and the three-operand output to [Tnum 28 1; Tnum 6 0; Tnum 1 1].
-     The shared harness keeps [Tnum (-4) 33] and
-     [Tnum (-4) 33; Tnum (-2) 8; Tnum 3 3] respectively. *)
 
   (** Assuming addition with no operands gives no backward masks. *)
   Example backward_empty_inputs :
@@ -529,19 +523,33 @@ Module BridgeTests.
       5%positive = Tnum 26 0.
   Proof. vm_compute. reflexivity. Qed.
 
+  (** The shift and rotation operators whose cutoffs are checked. *)
+  Definition cutoff_ops : list op := [bvshl; bvlshr; bvashr; bvrotl; bvrotr].
+
+  (** The masks of the shifted value at width five. *)
+  Definition cutoff_values : list tnum :=
+    [tnum_const 5%positive 1; tnum_const 5%positive 16; Tnum 16 0].
+
+  (** The masks of the shift amount at width five. *)
+  Definition cutoff_amounts : list tnum := [Tnum 24 3; Tnum 26 4; Tnum 23 0; Tnum 16 7].
+
+  (** The concrete words of width five that a mask contains. *)
+  Definition cutoff_members (a : tnum) : list Z :=
+    filter (kb_test_contains 5%positive a) kb_test_width_five_words.
+
+  (** Whether the forward mask of an operator over two masks contains every concrete result. *)
+  Definition cutoff_sound (o : op) (a b : tnum) : bool :=
+    forallb (fun x => forallb (fun k =>
+      match eval_op o [(5%positive, x); (5%positive, k)] with
+      | Some (_, z) => kb_test_contains 5%positive
+          (kb_forward o [(5%positive, a); (5%positive, b)] 5%positive) z
+      | None => false
+      end) (cutoff_members b)) (cutoff_members a).
+
   (** Every variable shift and rotation at width five contains each concrete result. *)
   Example width_five_cutoffs_are_sound :
-    forallb (fun o => forallb (fun a => forallb (fun b =>
-      forallb (fun x => forallb (fun k =>
-        match eval_op o [(5%positive, x); (5%positive, k)] with
-        | Some (_, z) => kb_test_contains 5%positive
-            (kb_forward o [(5%positive, a); (5%positive, b)] 5%positive) z
-        | None => false
-        end) (filter (kb_test_contains 5%positive b) kb_test_width_five_words))
-        (filter (kb_test_contains 5%positive a) kb_test_width_five_words))
-      [Tnum 24 3; Tnum 26 4; Tnum 23 0; Tnum 16 7])
-      [tnum_const 5%positive 1; tnum_const 5%positive 16; Tnum 16 0])
-      [bvshl; bvlshr; bvashr; bvrotl; bvrotr] = true.
+    forallb (fun o => forallb (fun a => forallb (cutoff_sound o a) cutoff_amounts)
+      cutoff_values) cutoff_ops = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -592,14 +600,14 @@ End BridgeTests.
 
 Module MultiplierTests.
 
-  (** The default multiplier gives the mask 251 0 for four times 254 0 at width eight. *)
+  (** The staged multiplier leaves only bit two of four times zero or one unknown. *)
   Example default_multiplier_staged :
     StagesOps.tnum_forward_raw bvmul
       [(8%positive, tnum_const 8%positive 4); (8%positive, Tnum 254 0)]
       8%positive = Tnum 251 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** The harness multiplier gives the mask 3 0 for four times 254 0 at width eight. *)
+  (** The harness multiplier knows only bits 0 and 1 of four times zero or one. *)
   Example default_multiplier_harness :
     kb_forward bvmul
       [(8%positive, tnum_const 8%positive 4); (8%positive, Tnum 254 0)]
@@ -620,19 +628,33 @@ Module MultiplierTests.
     LowOps.tnum_forward_raw bvmul [(8%positive, tnum_top)] 8%positive.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Each requested result width gives the same masks on both multipliers. *)
-  Example result_width_on_both_multipliers :
-    let check := fun forward =>
-      forward bvnot [(4%positive, tnum_const 4%positive 0)] 3%positive = Tnum 0 7 /\
-      forward bvnot [(4%positive, tnum_const 4%positive 0)] 5%positive = Tnum 0 15 /\
-      forward bvadd [(4%positive, tnum_const 4%positive 15);
-        (4%positive, tnum_const 4%positive 1)] 3%positive = Tnum 7 0 /\
-      forward (bvzext 1%positive) [(4%positive, tnum_const 4%positive 15)]
-        3%positive = Tnum 0 7 /\
-      forward bvconcat [(4%positive, tnum_const 4%positive 2);
-        (4%positive, tnum_const 4%positive 3)] 3%positive = Tnum 220 35 in
-    check LowOps.tnum_forward_raw /\ check StagesOps.tnum_forward_raw.
-  Proof. vm_compute. repeat split; reflexivity. Qed.
+  (** Cases of the requested result width: operator, operands, result width and expected mask. *)
+  Definition result_width_cases : list (op * list (width * tnum) * width * tnum) :=
+    [(bvnot, [(4%positive, tnum_const 4%positive 0)], 3%positive, Tnum 0 7);
+     (bvnot, [(4%positive, tnum_const 4%positive 0)], 5%positive, Tnum 0 15);
+     (bvadd, [(4%positive, tnum_const 4%positive 15); (4%positive, tnum_const 4%positive 1)],
+       3%positive, Tnum 7 0);
+     (bvzext 1%positive, [(4%positive, tnum_const 4%positive 15)], 3%positive, Tnum 0 7);
+     (bvconcat, [(4%positive, tnum_const 4%positive 2); (4%positive, tnum_const 4%positive 3)],
+       3%positive, Tnum 220 35)].
+
+  (** The low multiplier gives the expected mask for each requested result width. *)
+  Example result_width_on_low_multiplier :
+    Forall (fun '(o, xs, rw, expected) => LowOps.tnum_forward_raw o xs rw = expected)
+      result_width_cases.
+  Proof.
+    repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+    apply Forall_nil.
+  Qed.
+
+  (** The staged multiplier gives the expected mask for each requested result width. *)
+  Example result_width_on_staged_multiplier :
+    Forall (fun '(o, xs, rw, expected) => StagesOps.tnum_forward_raw o xs rw = expected)
+      result_width_cases.
+  Proof.
+    repeat (apply Forall_cons; [vm_compute; reflexivity|]).
+    apply Forall_nil.
+  Qed.
 
 End MultiplierTests.
 
@@ -644,13 +666,13 @@ Module PayloadTests.
   Definition kb_payload_assume (o : op) (xs : list (width * tnum)) (rw : width) (q : tnum) :=
     tnum_refine xs (tnum_backward_raw o xs rw q).
 
-  (** The low payload gives the singleton signed division of 7 by 2 as the mask 0 0. *)
+  (** The low payload does not evaluate the signed division of 7 by 2 and gives top. *)
   Example singleton_signed_division :
     LowOps.tnum_forward_raw bvsdiv [(8%positive, tnum_const 8%positive 7);
       (8%positive, tnum_const 8%positive 2)] 8%positive = Tnum 0 0.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** The low payload gives the leading-zero count of the constant zero as the mask 24 0. *)
+  (** The low payload bounds the leading-zero count of the constant zero below eight. *)
   Example singleton_leading_zero_count :
     LowOps.tnum_forward_raw bvclz [(5%positive, tnum_const 5%positive 0)]
       5%positive = Tnum 24 0.
@@ -671,7 +693,7 @@ Module PayloadTests.
     kb_payload_assume bvadd [] 5%positive tnum_top = [].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** The payload backward computation with one operand gives the mask 28 1. *)
+  (** The payload backward computation with one operand normalizes its mask to width five. *)
   Example backward_one_input :
     kb_payload_assume bvadd [(5%positive, Tnum (-4) 33)] 5%positive tnum_top = [Tnum 28 1].
   Proof. vm_compute. reflexivity. Qed.
@@ -713,70 +735,10 @@ End SymbolicTests.
 
 Module TableTests.
 
-  (** The public table gives the shifted concatenation of two byte masks as 61692 3841. *)
+  (** The public table concatenates two byte masks with the first as the high byte. *)
   Example shifted_concat_from_public_table :
     kb_forward bvconcat [(8%positive, Tnum 240 15); (8%positive, Tnum 252 1)]
       16%positive = Tnum 61692 3841.
   Proof. vm_compute. reflexivity. Qed.
 
 End TableTests.
-
-(** The source observations below are kept for reference and check nothing. *)
-
-(* The old tagged domain returned TBot for this malformed input. *)
-(* The landed payload-level source observations were:
-Example kb_signed_remainder_sign :
-  kb_forward bvsrem [(8%positive, Tnum 128 0); (8%positive, tnum_top)]
-    8%positive = Tnum 128 0 /\
-  kb_forward bvsdiv [(8%positive, tnum_const 8%positive 7);
-  (8%positive, tnum_const 8%positive 2)] 8%positive = tnum_top.
-Proof. vm_compute. auto. Qed.
-
-Example kb_zero_counts :
-  eval_op bvclz [(1%positive, 0)] = Some (1%positive, 1) /\
-  eval_op bvctz [(1%positive, 0)] = Some (1%positive, 1) /\
-  kb_forward bvclz [(5%positive, tnum_const 5%positive 0)]
-    5%positive = Tnum 24 0 /\
-  kb_forward bvpopcnt [(8%positive, tnum_top)] 8%positive = Tnum 240 0.
-Proof. vm_compute. auto. Qed.
-*)
-
-(* The old malformed fallback normalized the one-operand output to [Tnum 28 1]
-   and the three-operand output to [Tnum 28 1; Tnum 6 0; Tnum 1 1].
-   The shared harness keeps [Tnum (-4) 33] and
-   [Tnum (-4) 33; Tnum (-2) 8; Tnum 3 3] respectively. *)
-(* The landed observation was:
-Example kb_backward_malformed_arity_observations :
-  kb_assume bvadd [] 5%positive tnum_top = [] /\
-  kb_assume bvadd [(5%positive, Tnum (-4) 33)] 5%positive tnum_top = [Tnum 28 1] /\
-  kb_assume bvadd kb_test_malformed_inputs 5%positive tnum_top =
-    [Tnum 28 1; Tnum 6 0; Tnum 1 1].
-Proof. vm_compute. repeat split; reflexivity. Qed.
-*)
-
-(* Original payload-level and tagged malformed observations:
-Example kb_nullary_legacy_choices :
-  pforward known_bits_classic_domain bvadd [] 8%positive = tnum_top /\
-  pforward known_bits_domain bvmul [] 4%positive = tnum_top.
-Proof. vm_compute. auto. Qed.
-Example kb_malformed_width :
-  forward (tagged_domain known_bits_classic_domain) bvadd
-    [TVal 8%positive tnum_top; TVal 4%positive tnum_top] = TBot.
-Proof. vm_compute. reflexivity. Qed.
-*)
-
-(* The charged Cost interface was removed. These source clock claims are deferred to
-   timing and are not executable tests of generated clocks.
-Example kb_variable_expansion_cost :
-  Cost.ticks (tnum_variable_c bvshl 8%positive (tnum_const 8%positive 1) (Tnum 252 0)) =
-    2%N /\
-  Cost.ticks (tnum_back_variable_shift_c bvshl 8%positive (Tnum 252 0) (Tnum 0 1)) =
-    4%N.
-Proof. vm_compute. auto. Qed.
-Example kb_nonempty_builder_charge_control :
-  pforward_c (known_bits_word_domain known_bits_default_options) bvadd
-    [(8%positive, Tnum 240 7); (8%positive, tnum_const 8%positive 1)] 8%positive =
-  pforward_c (known_bits_word_builder known_bits_default_options) bvadd
-    [(8%positive, Tnum 240 7); (8%positive, tnum_const 8%positive 1)] 8%positive.
-Proof. vm_compute. reflexivity. Qed.
-*)
