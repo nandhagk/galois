@@ -4,7 +4,7 @@
     For example, removing all facts rejects the old hand candidate.
 
     Groups:
-    - May: the may-analysis accepts a hand candidate and rejects one with missing uses.
+    - [MayTests] The may-analysis accepts a hand candidate and rejects one with missing uses.
 
     Builds on: Framework.GenKill and Fixpoint.Query. *)
 
