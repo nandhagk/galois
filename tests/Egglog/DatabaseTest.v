@@ -717,3 +717,22 @@ Example rebuild_stale_losers_preserves_row :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Value-only insertion preserves row and index results without allocating row identity. *)
+Example put_value_only_row_skips_identity :
+  let initial := FixtureDatabase.init [Decl 2%positive [SVal; SVal; SVal] ORel]
+    [(2%positive, [0; 1; 2]); (2%positive, [1; 2; 0]);
+     (2%positive, [2; 0; 1]); (2%positive, [2; 1; 0])] in
+  let key := [Val 5%positive; Val 7%positive; Val 9%positive] in
+  let result := FixtureDatabase.put 2%positive key None initial in
+  let index := FixtureDatabase.index 0%N false result in
+  let fresh := FixtureDatabase.index 1%N true result in
+  (FixtureDatabase.row_get 2%positive key result,
+   FixtureIndex.children index (FixtureIndex.root index),
+   FixtureIndex.children fresh (FixtureIndex.root fresh),
+   row_fresh (db_row_store result), row_history (db_row_store result),
+   db_nuses result) =
+    (Some None, [Val 5%positive], [Val 7%positive], 1%positive, PTrieCode.empty, 0%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.

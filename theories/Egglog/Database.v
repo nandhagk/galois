@@ -2733,22 +2733,26 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
       PTrieCode.get (row_root depth r store) (row_keys store)
     end.
 
-  (** A replacement registers every identifier occurrence in its written tuple. *)
+  (** Rows without identifier occurrences need no historical identity. *)
   Definition register_row_uses (f : positive) (k : list (cell V.t))
       (o : option (cell V.t)) (db : t) : t :=
-    let entries := id_occurrences f k (k ++ option_list o) in
-    let identified := ensure_row_identity f k db in
-    let store := db_row_store identified in
-    let updated := {|
-      row_history := row_history store;
-      row_links := row_links store;
-      row_weights := row_weights store;
-      row_keys := row_keys store;
-      row_fresh := row_fresh store;
-      row_uses := DatabaseUses.register entries (row_uses store)
-    |} in
-    database_set_nuses (db_nuses identified + N.of_nat (length entries))
-      (database_set_row_store updated identified).
+    match id_occurrences f k (k ++ option_list o) with
+    | [] => db
+    | entry :: rest =>
+      let entries := entry :: rest in
+      let identified := ensure_row_identity f k db in
+      let store := db_row_store identified in
+      let updated := {|
+        row_history := row_history store;
+        row_links := row_links store;
+        row_weights := row_weights store;
+        row_keys := row_keys store;
+        row_fresh := row_fresh store;
+        row_uses := DatabaseUses.register entries (row_uses store)
+      |} in
+      database_set_nuses (db_nuses identified + N.of_nat (length entries))
+        (database_set_row_store updated identified)
+    end.
 
   Definition row_replace (f : positive) (k : list (cell V.t))
       (previous : option (option (cell V.t))) (o : option (cell V.t)) (db : t) : t :=
@@ -2982,6 +2986,24 @@ End DatabaseCode.
 Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Include DatabaseCode V I.
   Include DATABASE_SPEC V I.
+
+  (** Every identifier occurrence makes its registration list nonempty. *)
+  Lemma id_occurrences_nonempty : forall f k cells i,
+    In (Id i) cells -> id_occurrences f k cells <> [].
+  Proof.
+    intros f k cells i Hin Hnil.
+    pose proof (proj2 (id_occurrences_member f k cells i f k)
+      (conj eq_refl (conj eq_refl Hin))) as Hentry.
+    rewrite Hnil in Hentry. contradiction.
+  Qed.
+
+  (** A row without identifier occurrences leaves the use store untouched. *)
+  Lemma register_row_uses_nil : forall db f k o,
+    id_occurrences f k (k ++ option_list o) = [] -> register_row_uses f k o db = db.
+  Proof.
+    intros db f k o Hnil. unfold register_row_uses. now rewrite Hnil.
+  Qed.
+
   (** Shared preprocessing stores the same runtime group table as the original traversal. *)
   Lemma init_function_groups : forall ds sl,
     runtime_function_slots (db_runtime (init ds sl)) =
@@ -4115,56 +4137,75 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         split; [lia |]. split; [lia | now left].
   Qed.
 
+  (** Registration with identifiers retains each lookup of its allocated row history. *)
   Lemma register_row_uses_history : forall db f k o g args,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     PTrieCode.get (db_row_code g args)
       (row_history (db_row_store (register_row_uses f k o db))) =
     PTrieCode.get (db_row_code g args)
       (row_history (db_row_store (ensure_row_identity f k db))).
   Proof.
-    intros db f k o g args.
-    unfold register_row_uses.
-    reflexivity.
+    intros db f k o g args Hnonempty. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction | reflexivity].
   Qed.
 
+  (** Registration with identifiers retains the fresh counter after identity allocation. *)
   Lemma register_row_uses_fresh : forall db f k o,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     row_fresh (db_row_store (register_row_uses f k o db)) =
       row_fresh (db_row_store (ensure_row_identity f k db)).
   Proof.
-    reflexivity.
+    intros db f k o Hnonempty. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction | reflexivity].
   Qed.
 
+  (** Registration with identifiers retains the history map after identity allocation. *)
   Lemma register_row_uses_history_map : forall db f k o,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     row_history (db_row_store (register_row_uses f k o db)) =
       row_history (db_row_store (ensure_row_identity f k db)).
   Proof.
-    reflexivity.
+    intros db f k o Hnonempty. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction | reflexivity].
   Qed.
 
   Lemma register_row_uses_links : forall db f k o,
     row_links (db_row_store (register_row_uses f k o db)) =
       row_links (db_row_store (ensure_row_identity f k db)).
   Proof.
-    reflexivity.
+    intros db f k o. unfold register_row_uses, ensure_row_identity.
+    destruct (id_occurrences f k (k ++ option_list o));
+      destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
   Qed.
 
+  (** Registration with identifiers retains the row weights after identity allocation. *)
   Lemma register_row_uses_weights : forall db f k o,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     row_weights (db_row_store (register_row_uses f k o db)) =
       row_weights (db_row_store (ensure_row_identity f k db)).
   Proof.
-    reflexivity.
+    intros db f k o Hnonempty. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction | reflexivity].
   Qed.
 
+  (** Registration with identifiers retains the current keys after identity allocation. *)
   Lemma register_row_uses_keys : forall db f k o,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     row_keys (db_row_store (register_row_uses f k o db)) =
       row_keys (db_row_store (ensure_row_identity f k db)).
   Proof.
-    reflexivity.
+    intros db f k o Hnonempty. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction | reflexivity].
   Qed.
 
   Lemma register_row_uses_ids : forall db f k o,
     ids (register_row_uses f k o db) = ids (ensure_row_identity f k db).
   Proof.
-    reflexivity.
+    intros db f k o. unfold register_row_uses, ensure_row_identity.
+    destruct (id_occurrences f k (k ++ option_list o));
+      destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
   Qed.
 
   Lemma register_row_uses_history_range : forall db f k o,
@@ -4175,8 +4216,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (r < row_fresh (db_row_store (register_row_uses f k o db)))%positive.
   Proof.
     intros db f k o Hstore g args key r Hget.
-    rewrite register_row_uses_history in Hget.
-    rewrite register_row_uses_fresh.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_history_range db Hstore g args key r Hget). }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    rewrite register_row_uses_history in Hget by exact Hnonempty.
+    rewrite register_row_uses_fresh by exact Hnonempty.
     now apply (ensure_row_identity_history_range db f k Hstore g args key r).
   Qed.
 
@@ -4192,7 +4238,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       In (row_fresh store) (db_index_counters (register_row_uses f k o db)).
   Proof.
     intros db f k o Hstore g args key r Hget.
-    unfold register_row_uses in Hget |- *.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_history_counter db Hstore g args key r Hget). }
+    unfold register_row_uses in Hget |- *. rewrite Hentries in Hget |- *.
     cbn [database_set_nuses database_set_row_store db_row_store row_history
       row_links row_fresh db_index_counters] in Hget |- *.
     exact (ensure_row_identity_history_counter db f k Hstore g args key r Hget).
@@ -4205,17 +4254,24 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (row_history (db_row_store (register_row_uses f k o db))) = Some (key, r).
   Proof.
     intros db f k o g args key r Hget.
-    rewrite register_row_uses_history.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact Hget. }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    rewrite register_row_uses_history by exact Hnonempty.
     now apply ensure_row_identity_history_old.
   Qed.
 
+  (** A row with identifier occurrences receives a historical row identifier. *)
   Lemma register_row_uses_history_new : forall db f k o,
     database_row_store_ok db ->
+    id_occurrences f k (k ++ option_list o) <> [] ->
     exists r, PTrieCode.get (db_row_code f k)
       (row_history (db_row_store (register_row_uses f k o db))) = Some ((f, k), r).
   Proof.
-    intros db f k o Hstore.
-    rewrite register_row_uses_history.
+    intros db f k o Hstore Hnonempty.
+    rewrite register_row_uses_history by exact Hnonempty.
     now apply ensure_row_identity_history_new.
   Qed.
 
@@ -4227,7 +4283,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       key = (g, args).
   Proof.
     intros db f k o Hstore g args key r Hget.
-    rewrite register_row_uses_history in Hget.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_labels db Hstore g args key r Hget). }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    rewrite register_row_uses_history in Hget by exact Hnonempty.
     now apply (ensure_row_identity_labels db f k Hstore g args key r).
   Qed.
 
@@ -4257,7 +4318,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (p < row_fresh (db_row_store (register_row_uses f k o db)))%positive.
   Proof.
     intros db f k o Hstore r p Hlink.
-    unfold register_row_uses in *.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_link_range db Hstore r p Hlink). }
+    unfold register_row_uses in *. rewrite Hentries in *.
     cbn [database_set_nuses database_set_row_store db_row_store row_fresh row_links]
       in Hlink |- *.
     exact (ensure_row_identity_link_range db f k Hstore r p Hlink).
@@ -4286,7 +4350,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       PTrieCode.get r (row_links (db_row_store (register_row_uses f k o db))) = None.
   Proof.
     intros db f k o Hstore r Hfuture.
-    unfold register_row_uses in *.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_future_links db Hstore r Hfuture). }
+    unfold register_row_uses in *. rewrite Hentries in *.
     cbn [database_set_nuses database_set_row_store db_row_store row_fresh row_links]
       in Hfuture |- *.
     exact (ensure_row_identity_future_links db f k Hstore r Hfuture).
@@ -5739,7 +5806,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma metadata_register_row_uses : forall db f k o, metadata_ok db ->
     metadata_ok (register_row_uses f k o db).
   Proof.
-    intros db f k o Hmetadata. unfold register_row_uses.
+    intros db f k o Hmetadata.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hmetadata). }
+    unfold register_row_uses. rewrite Hentries.
     eapply metadata_snapshot_ok; [reflexivity |].
     apply metadata_ensure_row_identity. exact Hmetadata.
   Qed.
@@ -6006,7 +6077,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma register_row_uses_runtime : forall f k o db,
     db_runtime (register_row_uses f k o db) = db_runtime db.
   Proof.
-    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    intros f k o db.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (eq_refl). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       reflexivity.
   Qed.
@@ -6156,7 +6231,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     slots (register_row_uses f k o db) = slots db /\
     db_forest (register_row_uses f k o db) = db_forest db.
   Proof.
-    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    intros f k o db.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (conj eq_refl (conj eq_refl (conj eq_refl eq_refl))). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       repeat split; reflexivity.
   Qed.
@@ -6165,7 +6244,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma register_row_uses_written_cells : forall f k o db,
     db_written_cells (register_row_uses f k o db) = db_written_cells db.
   Proof.
-    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    intros f k o db.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (eq_refl). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       reflexivity.
   Qed.
@@ -6548,7 +6631,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma register_row_uses_npending : forall f k o db,
     db_npending (register_row_uses f k o db) = db_npending db.
   Proof.
-    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    intros f k o db.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (eq_refl). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       reflexivity.
   Qed.
@@ -11062,8 +11149,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       length (uses_entries (register_row_uses f k o db)).
   Proof.
     intros db f k o Hmap Hcount.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact Hcount. }
     rewrite (uses_entries_facts db Hmap) in Hcount.
-    unfold register_row_uses, ensure_row_identity.
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       cbn [database_set_nuses database_set_row_store database_set_index_counters
         db_nuses db_row_store row_uses];
@@ -11074,7 +11164,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     DatabaseUseMap.wf (row_uses (db_row_store db)) ->
     DatabaseUseMap.wf (row_uses (db_row_store (register_row_uses f k o db))).
   Proof.
-    intros db f k o Hmap. unfold register_row_uses, ensure_row_identity.
+    intros db f k o Hmap.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hmap). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       cbn [database_set_nuses database_set_row_store database_set_index_counters
         db_row_store row_uses]; apply DatabaseUsesFacts.wf_register; exact Hmap.
@@ -11086,9 +11180,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       In (x, (g, key)) (id_occurrences f k (k ++ option_list o))).
   Proof.
     intros db f k o x g key Hmap.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      cbn [In]. tauto. }
     rewrite (uses_entries_facts db Hmap).
     rewrite uses_entries_facts by (apply register_row_uses_map_wf; exact Hmap).
-    unfold register_row_uses, ensure_row_identity.
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       cbn [database_set_nuses database_set_row_store database_set_index_counters
         db_row_store row_uses];
@@ -11115,8 +11212,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       apply (proj1 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap)) in Hold.
       destruct (database_row_store_uses_history db Hstore x g args Hold) as [r Hr].
       exists r. now apply register_row_uses_history_old.
-    - apply id_occurrences_member in Hnew as [-> [-> _]].
-      now apply register_row_uses_history_new.
+    - assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> []).
+      { intro Hnil. rewrite Hnil in Hnew. contradiction. }
+      apply id_occurrences_member in Hnew as [-> [-> _]].
+      apply register_row_uses_history_new; assumption.
   Qed.
   Lemma register_row_uses_written_coverage : forall db f k o,
     DatabaseUseMap.wf (row_uses (db_row_store db)) ->
@@ -11199,7 +11298,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma slot_rank_ok_register_row_uses : forall db f k o,
     slot_rank_ok db -> slot_rank_ok (register_row_uses f k o db).
   Proof.
-    intros db f k o Hrank. unfold register_row_uses, ensure_row_identity.
+    intros db f k o Hrank.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hrank). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       eapply slot_rank_ok_frame with (db := db); try reflexivity; exact Hrank.
   Qed.
@@ -11363,18 +11466,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     exact Hcount.
   Qed.
 
+  (** Registration with identifiers resolves histories as identity allocation does. *)
   Lemma register_row_uses_locate : forall db f k o g args,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     db_locate g args (register_row_uses f k o db) =
       db_locate g args (ensure_row_identity f k db).
   Proof.
-    intros db f k o g args. unfold db_locate.
-    rewrite register_row_uses_history_map.
+    intros db f k o g args Hnonempty. unfold db_locate.
+    rewrite register_row_uses_history_map by exact Hnonempty.
     pose proof (register_row_uses_ids db f k o) as Hids.
     unfold ids in Hids. rewrite Hids.
     destruct (PTrieCode.get (db_row_code g args)
       (row_history (db_row_store (ensure_row_identity f k db))))
       as [[key r] |]; [| reflexivity].
-    rewrite register_row_uses_keys.
+    rewrite register_row_uses_keys by exact Hnonempty.
     f_equal. apply row_root_same_links. apply register_row_uses_links.
   Qed.
 
@@ -13709,9 +13814,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_row_weights_positive (register_row_uses f k o db).
   Proof.
     intros db f k o Hpositive.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hpositive). }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
     eapply database_row_weights_positive_transport with
       (db := ensure_row_identity f k db).
-    - apply register_row_uses_weights.
+    - apply register_row_uses_weights. exact Hnonempty.
     - apply database_row_weights_positive_ensure. exact Hpositive.
   Qed.
 
@@ -13925,7 +14035,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_history_root_owner (register_row_uses f k o db).
   Proof.
     intros db f k o Hstore Howner.
-    unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Howner). }
+    unfold register_row_uses. rewrite Hentries.
     set (identified := ensure_row_identity f k db).
     eapply database_history_root_owner_transport with (db := identified);
       try reflexivity.
@@ -13937,7 +14050,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_history_key_shape (register_row_uses f k o db).
   Proof.
     intros db f k o Hstore Hshape.
-    unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hshape). }
+    unfold register_row_uses. rewrite Hentries.
     set (identified := ensure_row_identity f k db).
     eapply database_history_key_shape_transport with (db := identified);
       try reflexivity.
@@ -13949,7 +14065,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_history_codes_valid (register_row_uses f k o db).
   Proof.
     intros db f k o Hvalid.
-    unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hvalid). }
+    unfold register_row_uses. rewrite Hentries.
     set (identified := ensure_row_identity f k db).
     eapply database_history_codes_valid_transport with (db := identified);
       [reflexivity |].
@@ -13962,7 +14081,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_history_key_ids_bounded (register_row_uses f k o db).
   Proof.
     intros db f k o Hbounded Hinput.
-    unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hbounded). }
+    unfold register_row_uses. rewrite Hentries.
     set (identified := ensure_row_identity f k db).
     eapply database_history_key_ids_bounded_transport with (db := identified).
     - reflexivity.
@@ -13976,7 +14098,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_row_weight_conserved (register_row_uses f k o db).
   Proof.
     intros db f k o Hstore Hconserved.
-    unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hconserved). }
+    unfold register_row_uses. rewrite Hentries.
     set (identified := ensure_row_identity f k db).
     eapply database_row_weight_conserved_transport with (db := identified);
       try reflexivity.
@@ -14312,13 +14437,18 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
             (row_keys (db_row_store (register_row_uses f k o db))).
   Proof.
     intros db f k o Hstore g args key r Hget.
-    rewrite register_row_uses_history_map in Hget.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_depth db Hstore g args key r Hget). }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    rewrite register_row_uses_history_map in Hget by exact Hnonempty.
     pose proof (database_row_store_ok_ensure db f k Hstore) as Hidentified.
     destruct (database_row_store_depth _ Hidentified g args key r Hget)
       as [d [Hbound [Hroot Hcurrent]]].
     exists d. rewrite register_row_uses_ids. split; [exact Hbound |].
     rewrite register_row_uses_links. split; [exact Hroot |].
-    rewrite register_row_uses_locate, register_row_uses_keys.
+    rewrite register_row_uses_locate, register_row_uses_keys by exact Hnonempty.
     exact Hcurrent.
   Qed.
 
@@ -14342,9 +14472,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
        (ids (register_row_uses f k o db) + 1) ^ N.of_nat (length args))%N.
   Proof.
     intros db f k o Hstore g args key r d Hget Hroot.
-    rewrite register_row_uses_history_map in Hget.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_size db Hstore g args key r d Hget Hroot). }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    rewrite register_row_uses_history_map in Hget by exact Hnonempty.
     rewrite register_row_uses_links in Hroot |- *.
-    rewrite register_row_uses_weights, register_row_uses_ids.
+    rewrite register_row_uses_weights, register_row_uses_ids by exact Hnonempty.
     apply (database_row_store_size _ (database_row_store_ok_ensure db f k Hstore)
       g args key r d Hget Hroot).
   Qed.
@@ -14355,6 +14490,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_row_store_ok (register_row_uses f k o db).
   Proof.
     intros db f k o Hstore Hkey.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact Hstore. }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
     pose proof (database_row_store_ok_ensure db f k Hstore) as Hidentified.
     pose proof Hstore as Hbase.
     unfold database_row_store_ok in Hbase.
@@ -14362,7 +14502,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold database_row_store_ok.
     split.
     - rewrite register_row_uses_history_map, register_row_uses_links,
-        register_row_uses_weights.
+        register_row_uses_weights by exact Hnonempty.
       exact (proj1 Hidentified).
     - split; [apply register_row_uses_history_coverage; exact Hstore |].
       split.
@@ -14449,12 +14589,37 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (fun all new counts state => eq_refl) f k previous o db).
   Qed.
 
+  (** A replacement without identifiers preserves the row store. *)
+  Lemma row_replace_nil_store : forall db f k previous o,
+    id_occurrences f k (k ++ option_list o) = [] ->
+    db_row_store (row_replace f k previous o db) = db_row_store db.
+  Proof.
+    intros db f k [before |] o Hnil; unfold row_replace;
+      rewrite register_row_uses_nil by exact Hnil;
+      rewrite row_write_row_store, !slots_update_row_store; reflexivity.
+  Qed.
+
+  (** Skipping registration leaves every historical resolution unchanged. *)
+  Lemma row_replace_nil_locate : forall db f k previous o g args,
+    id_occurrences f k (k ++ option_list o) = [] ->
+    db_locate g args (row_replace f k previous o db) = db_locate g args db.
+  Proof.
+    intros db f k previous o g args Hnil. apply db_locate_same_store_ids.
+    - apply row_replace_nil_store. exact Hnil.
+    - apply row_replace_ids.
+  Qed.
+
   Lemma row_replace_old_locate : forall db f k previous o g args key r,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) = Some (key, r) ->
     db_locate g args (row_replace f k previous o db) = db_locate g args db.
   Proof.
-    intros db f k [before |] o g args key r Hstore Hget; unfold row_replace.
+    intros db f k previous o g args key r Hstore Hget.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { apply row_replace_nil_locate. exact Hentries. }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    destruct previous as [before |]; unfold row_replace.
     - set (prepared := row_write f k o
         (slots_update true f (k ++ option_list o)
           (slots_update false f (k ++ option_list before) db))).
@@ -14465,7 +14630,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       { subst prepared. now rewrite row_write_row_store, !slots_update_row_store. }
       assert (Hids : ids prepared = ids db).
       { subst prepared. now rewrite row_write_ids, !slots_update_ids. }
-      rewrite register_row_uses_locate.
+      rewrite register_row_uses_locate by exact Hnonempty.
       rewrite (ensure_row_identity_old_locate prepared f k g args key r Hstore')
         by (rewrite Hsame; exact Hget).
       apply db_locate_same_store_ids; assumption.
@@ -14477,7 +14642,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       { subst prepared. now rewrite row_write_row_store, slots_update_row_store. }
       assert (Hids : ids prepared = ids db).
       { subst prepared. now rewrite row_write_ids, slots_update_ids. }
-      rewrite register_row_uses_locate.
+      rewrite register_row_uses_locate by exact Hnonempty.
       rewrite (ensure_row_identity_old_locate prepared f k g args key r Hstore')
         by (rewrite Hsame; exact Hget).
       apply db_locate_same_store_ids; assumption.
@@ -14489,11 +14654,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (row_history (db_row_store (row_replace f k previous o db))) =
     PTrieCode.get (db_row_code g args) (row_history (db_row_store db)).
   Proof.
-    intros db f k [before |] o g args Hother; unfold row_replace.
-    - rewrite register_row_uses_history_map.
+    intros db f k previous o g args Hother.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { now rewrite row_replace_nil_store by exact Hentries. }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    destruct previous as [before |]; unfold row_replace.
+    - rewrite register_row_uses_history_map by exact Hnonempty.
       rewrite ensure_row_identity_history_other by exact Hother.
       now rewrite row_write_row_store, !slots_update_row_store.
-    - rewrite register_row_uses_history_map.
+    - rewrite register_row_uses_history_map by exact Hnonempty.
       rewrite ensure_row_identity_history_other by exact Hother.
       now rewrite row_write_row_store, slots_update_row_store.
   Qed.
@@ -14503,19 +14673,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     PTrieCode.get code
       (row_history (db_row_store (row_replace f k previous o db))) = Some (key, r).
   Proof.
-    intros db f k [before |] o code key r Hentry; unfold row_replace;
-      rewrite register_row_uses_history_map;
+    intros db f k previous o code key r Hentry.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite row_replace_nil_store by exact Hentries. exact Hentry. }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    destruct previous as [before |]; unfold row_replace;
+      rewrite register_row_uses_history_map by exact Hnonempty;
       apply ensure_row_identity_raw_history_old.
     - now rewrite row_write_row_store, !slots_update_row_store.
     - now rewrite row_write_row_store, slots_update_row_store.
   Qed.
 
+  (** An identified replacement creates self-location for a previously absent history. *)
   Lemma row_replace_new_locate : forall db f k previous o,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
+    id_occurrences f k (k ++ option_list o) <> [] ->
     db_locate f k (row_replace f k previous o db) = Some k.
   Proof.
-    intros db f k [before |] o Hstore Hnone; unfold row_replace.
+    intros db f k [before |] o Hstore Hnone Hnonempty; unfold row_replace.
     - set (prepared := row_write f k o
         (slots_update true f (k ++ option_list o)
           (slots_update false f (k ++ option_list before) db))).
@@ -14524,7 +14701,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         apply slots_update_row_store_ok, slots_update_row_store_ok. exact Hstore. }
       assert (Hsame : db_row_store prepared = db_row_store db).
       { subst prepared. now rewrite row_write_row_store, !slots_update_row_store. }
-      rewrite register_row_uses_locate.
+      rewrite register_row_uses_locate by exact Hnonempty.
       apply ensure_row_identity_new_locate; [exact Hstore' |].
       now rewrite Hsame.
     - set (prepared := row_write f k o (slots_update true f (k ++ option_list o) db)).
@@ -14533,25 +14710,49 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         exact Hstore. }
       assert (Hsame : db_row_store prepared = db_row_store db).
       { subst prepared. now rewrite row_write_row_store, slots_update_row_store. }
-      rewrite register_row_uses_locate.
+      rewrite register_row_uses_locate by exact Hnonempty.
       apply ensure_row_identity_new_locate; [exact Hstore' |].
       now rewrite Hsame.
   Qed.
 
+  (** Replacing a row with identifier occurrences leaves a history for its key. *)
+  Lemma row_replace_history_new : forall db f k previous o,
+    database_row_store_ok db ->
+    id_occurrences f k (k ++ option_list o) <> [] ->
+    exists r, PTrieCode.get (db_row_code f k)
+      (row_history (db_row_store (row_replace f k previous o db))) =
+        Some ((f, k), r).
+  Proof.
+    intros db f k [before |] o Hstore Hnonempty; unfold row_replace;
+      apply register_row_uses_history_new; try exact Hnonempty;
+      apply row_write_row_store_ok, slots_update_row_store_ok.
+    - apply slots_update_row_store_ok. exact Hstore.
+    - exact Hstore.
+  Qed.
+
+  (** An identified replacement resolves to its own key when its old history agrees. *)
   Lemma row_replace_new_locate_from_alignment : forall db f k previous o,
     database_row_store_ok db ->
     (forall key r,
       PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = Some (key, r) ->
       db_locate f k db = Some k) ->
+    (exists key r, PTrieCode.get (db_row_code f k)
+      (row_history (db_row_store (row_replace f k previous o db))) = Some (key, r)) ->
     db_locate f k (row_replace f k previous o db) = Some k.
   Proof.
-    intros db f k previous o Hstore Haligned.
-    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
-      as [[key r] |] eqn:Hprior.
-    - specialize (Haligned key r eq_refl).
-      rewrite (row_replace_old_locate db f k previous o f k key r Hstore Hprior).
-      exact Haligned.
-    - exact (row_replace_new_locate db f k previous o Hstore Hprior).
+    intros db f k previous o Hstore Haligned Hhistory.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    - destruct Hhistory as [key [r Hentry]].
+      rewrite row_replace_nil_store in Hentry by exact Hentries.
+      rewrite row_replace_nil_locate by exact Hentries.
+      exact (Haligned key r Hentry).
+    - assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+      destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+        as [[key r] |] eqn:Hprior.
+      + rewrite (row_replace_old_locate db f k previous o f k key r Hstore Hprior).
+        exact (Haligned key r eq_refl).
+      + exact (row_replace_new_locate db f k previous o Hstore Hprior Hnonempty).
   Qed.
 
   Lemma database_history_alignment_row_replace : forall db f k previous o,
@@ -14565,10 +14766,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k))
       as [Hsame | Hother].
     - apply RowKeys.encode_inj in Hsame. injection Hsame as -> ->.
-      apply row_replace_new_locate_from_alignment; [exact Hstore |].
-      intros old_key old_id Hold.
-      exact (database_history_alignment_entry db Halign f k old_key old_id
-        Hold Hcanonical_old).
+      apply row_replace_new_locate_from_alignment; [exact Hstore | |].
+      + intros old_key old_id Hold.
+        exact (database_history_alignment_entry db Halign f k old_key old_id
+          Hold Hcanonical_old).
+      + exists key, r. exact Hentry.
     - assert (Hkeys : (g, args) <> (f, k)).
       { intro Heq. inversion Heq; subst. apply Hother. reflexivity. }
       rewrite (row_replace_history_other db f k previous o g args Hkeys) in Hentry.
@@ -14589,9 +14791,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k))
       as [Hsame | Hother].
     - apply RowKeys.encode_inj in Hsame. injection Hsame as -> ->.
-      apply row_replace_new_locate_from_alignment; [exact Hstore |].
-      intros old_key old_id Hold.
-      exact (Hself old_key old_id Hold).
+      apply row_replace_new_locate_from_alignment; [exact Hstore | |].
+      + intros old_key old_id Hold.
+        exact (Hself old_key old_id Hold).
+      + exists key, r. exact Hentry.
     - assert (Hdifferent : (g, args) <> (f, k)).
       { intro Heq. inversion Heq; subst. apply Hother. reflexivity. }
       change (row (view (row_replace f k previous o db)) g args output) in Hrow.
@@ -15181,9 +15384,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       split; [apply row_replace_uses_new; assumption |].
       split.
       + unfold located, locate. apply row_replace_new_locate_from_alignment;
-          [exact Hstore |].
-        intros key r Hentry. apply (Halign f k key r Hentry).
-        intros j Hin. apply Hcanonical. apply in_or_app. now left.
+          [exact Hstore | |].
+        * intros key r Hentry. apply (Halign f k key r Hentry).
+          intros j Hin. apply Hcanonical. apply in_or_app. now left.
+        * destruct (row_replace_history_new db f k previous o Hstore
+            (id_occurrences_nonempty f k (k ++ option_list o) i Hid)) as [r Hentry].
+          exists (f, k), r. exact Hentry.
       + left. symmetry. exact Hfixed.
   Qed.
 
@@ -15205,13 +15411,21 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     assert (Hmap : RowMap.wf
       (runtime_rows (db_runtime (row_replace f k previous o db)))).
     { rewrite row_replace_map. apply RowMap.wf_set. exact (wf_row_map db Hbase). }
-    assert (Hnew : located (row_replace f k previous o db) f k = Some k).
-    { unfold located, locate. apply row_replace_new_locate_from_alignment;
-        [exact Hstore |].
-      intros key r Hentry. apply (Halign f k key r Hentry).
-      intros i Hin. apply Hcanonical. apply in_or_app. now left. }
     destruct (RowKeys.eqb_spec (g, k0) (f, k)) as [Hsame | Hother].
-    - injection Hsame as -> ->. rewrite Hnew in Hlocated.
+    - injection Hsame as -> ->.
+      assert (Hhistory : exists key r, PTrieCode.get (db_row_code f k)
+        (row_history (db_row_store (row_replace f k previous o db))) = Some (key, r)).
+      { unfold located, locate, db_locate in Hlocated.
+        destruct (PTrieCode.get (db_row_code f k)
+          (row_history (db_row_store (row_replace f k previous o db))))
+          as [[key r] |] eqn:Hentry; [| discriminate Hlocated].
+        exists key, r. reflexivity. }
+      assert (Hnew : located (row_replace f k previous o db) f k = Some k).
+      { unfold located, locate. apply row_replace_new_locate_from_alignment;
+          [exact Hstore | | exact Hhistory].
+        intros key r Hentry. apply (Halign f k key r Hentry).
+        intros i Hin. apply Hcanonical. apply in_or_app. now left. }
+      rewrite Hnew in Hlocated.
       injection Hlocated as <-. exists o. split.
       + unfold rows. rewrite <- RowMap.elements_trie.
         apply row_elements_member; [exact Hmap |].
@@ -15846,10 +16060,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct previous as [before |].
     - destruct (output_eqb before updated).
       + exact Hnext_loc.
-      + intros key r _. apply row_replace_new_locate_from_alignment;
-          [exact Hnext_store | exact Hnext_loc].
-    - intros key r _. apply row_replace_new_locate_from_alignment;
-        [exact Hnext_store | exact Hnext_loc].
+      + intros key r Hentry. apply row_replace_new_locate_from_alignment;
+          [exact Hnext_store | exact Hnext_loc | exists key, r; exact Hentry].
+    - intros key r Hentry. apply row_replace_new_locate_from_alignment;
+        [exact Hnext_store | exact Hnext_loc | exists key, r; exact Hentry].
   Qed.
 
   Lemma database_active_history_coherent_put : forall db f k o,
@@ -18276,7 +18490,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_row_store_ok db -> database_history_complete db ->
     database_history_complete (register_row_uses f k o db).
   Proof.
-    intros db f k o Hstore Hcomplete. unfold register_row_uses.
+    intros db f k o Hstore Hcomplete.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hcomplete). }
+    unfold register_row_uses. rewrite Hentries.
     eapply database_history_complete_transport with (db := ensure_row_identity f k db);
       try reflexivity.
     apply database_history_complete_ensure; assumption.
@@ -18556,33 +18774,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - unfold next. rewrite move_row_identity_history. exact Htarget.
   Qed.
 
-  Lemma row_replace_history_new : forall db f k previous o,
-    database_row_store_ok db ->
-    exists r, PTrieCode.get (db_row_code f k)
-      (row_history (db_row_store (row_replace f k previous o db))) =
-        Some ((f, k), r).
-  Proof.
-    intros db f k [before |] o Hstore; unfold row_replace;
-      apply register_row_uses_history_new;
-      apply row_write_row_store_ok, slots_update_row_store_ok.
-    - apply slots_update_row_store_ok. exact Hstore.
-    - exact Hstore.
-  Qed.
 
+
+  (** Insertion retains a target history when its normalized key contains an identifier. *)
   Lemma put_target_history : forall db f k o,
     database_row_store_ok db ->
+    (exists i, In (Id i) (normal_key db k)) ->
     (forall before, row_get f (normal_key db k) db = Some before ->
       exists r, PTrieCode.get (db_row_code f (normal_key db k))
         (row_history (db_row_store db)) = Some ((f, normal_key db k), r)) ->
     exists r, PTrieCode.get (db_row_code f (normal_key db k))
       (row_history (db_row_store (put f k o db))) = Some ((f, normal_key db k), r).
   Proof.
-    intros db f k o Hstore Hexisting.
+    intros db f k o Hstore [i Hid] Hexisting.
     destruct (row_get f (normal_key db k) db) as [before |] eqn:Hprevious.
     - destruct (Hexisting before eq_refl) as [r Hentry].
       exists r. apply put_history_old. exact Hentry.
     - unfold put. rewrite Hprevious.
-      apply row_replace_history_new. exact Hstore.
+      apply row_replace_history_new; [exact Hstore |].
+      apply (id_occurrences_nonempty f (normal_key db k) _ i).
+      apply in_or_app. now left.
   Qed.
 
   Lemma normal_key_has_id_or_equal : forall db k,
@@ -18664,8 +18875,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         destruct (database_row_with_id_history db work f (normal_key db current)
           before i Hinv Hcomplete Hbefore_old Hid) as [r Hentry].
         exists r. unfold deleted. now rewrite row_delete_row_store. }
+      assert (Htarget_ids : exists j,
+        In (Id j) (normal_key deleted (normal_key db current))).
+      { rewrite Hnormal. exists i. exact Hin. }
       destruct (put_target_history deleted f (normal_key db current)
-        (option_map (normal_cell db) output) Hdeleted_store Hexisting)
+        (option_map (normal_cell db) output) Hdeleted_store Htarget_ids Hexisting)
         as [s Htarget].
       rewrite Hnormal in Htarget. exists s.
       unfold repair_current. rewrite Hrow, Hkey_test.
@@ -18829,8 +19043,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_uses_allocated (register_row_uses f k o db).
   Proof.
     intros db f k o Hallocated Hinput x e Hin.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hallocated x e Hin). }
     unfold allocated. rewrite (proj1 (register_row_uses_control f k o db)).
-    unfold register_row_uses in Hin.
+    unfold register_row_uses in Hin. rewrite Hentries in Hin.
     cbn [database_set_nuses database_set_row_store db_row_store row_uses] in Hin.
     rewrite ensure_row_identity_uses in Hin.
     eapply database_bucket_owners_register with
@@ -18840,7 +19057,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - intros y [g args] Hentry.
       apply id_occurrences_member in Hentry as [_ [_ Hcell]].
       exact (Hinput y Hcell).
-    - exact Hin.
+    - rewrite Hentries. exact Hin.
   Qed.
 
   Lemma database_uses_allocated_row_replace : forall db f k previous o,
@@ -25536,6 +25753,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (wmark db <= wmark (register_row_uses f k o db))%N.
   Proof.
     intros f k o db. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries];
+      [reflexivity |].
     eapply N.le_trans; [apply wmark_ensure_row_identity |].
     set (identified := ensure_row_identity f k db).
     unfold wmark.
@@ -25544,7 +25763,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply fold_max_base_mono.
     change (N.max (db_nuses identified) (ids identified) <=
       N.max (db_nuses identified +
-        N.of_nat (length (id_occurrences f k (k ++ option_list o))))
+        N.of_nat (length (entry :: entries)))
         (ids identified))%N.
     apply N.max_lub.
     -
@@ -25695,7 +25914,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma register_row_uses_counters_incl : forall f k o db,
     incl (db_index_counters db) (db_index_counters (register_row_uses f k o db)).
   Proof.
-    intros f k o db p Hin. unfold register_row_uses, ensure_row_identity.
+    intros f k o db p Hin. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [exact Hin |].
+    unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       cbn [database_set_nuses database_set_row_store database_set_index_counters
         db_index_counters]; [exact Hin | now right].
@@ -28373,9 +28594,38 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros db f k o. cbn beta zeta.
     time_unfold T_register_row_uses.
-    time_unfold @T_database_set_nuses. time_unfold @T_database_set_row_store.
-    time_unfold @T_option_list. time_simpl.
-    destruct o; cbn beta iota zeta; lia.
+    destruct (id_occurrences f k (k ++ option_list o)).
+    - time_unfold @T_option_list. time_simpl.
+      destruct o; cbn beta iota zeta; lia.
+    - time_unfold @T_database_set_nuses. time_unfold @T_database_set_row_store.
+      time_unfold @T_option_list. time_simpl.
+      destruct o; cbn beta iota zeta; lia.
+  Qed.
+
+  (** Identifier-free registration pays only for constructing and scanning its tuple. *)
+  Lemma T_register_row_uses_nil_parts : forall db f k o,
+    id_occurrences f k (k ++ option_list o) = [] ->
+    (T_register_row_uses f k o db <=
+      64 + Datatypes.T_app k (option_list o) +
+      T_id_occurrences f k (k ++ option_list o))%N.
+  Proof.
+    intros db f k o Hentries.
+    time_unfold T_register_row_uses. time_unfold @T_option_list.
+    rewrite Hentries. destruct o; cbn beta iota zeta; lia.
+  Qed.
+
+  (** Skipped registration is linear in arity without a fresh-identifier width premise. *)
+  Lemma T_register_row_uses_nil_width : forall db f k o,
+    id_occurrences f k (k ++ option_list o) = [] ->
+    (T_register_row_uses f k o db <= 64 * N.of_nat (length k + 2))%N.
+  Proof.
+    intros db f k o Hentries.
+    pose proof (T_register_row_uses_nil_parts db f k o Hentries) as Hparts.
+    pose proof (Datatypes.T_app_le k (option_list o)) as Happ.
+    pose proof (T_id_occurrences_length f k (k ++ option_list o)) as Hwalk.
+    assert (Hlength : length (k ++ option_list o) <= length k + 1).
+    { rewrite length_app. destruct o; cbn [option_list length]; lia. }
+    lia.
   Qed.
 
   (** A tuple with bounded cells has bounded identifier owners in its occurrence list. *)
@@ -28456,6 +28706,26 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       by (unfold budget; ring).
     clear - Hparts Hpositive Happ_budget Hoccurrences_budget Hidentity_budget
       Hregister_budget Hlength_budget Hconvert_budget Hadd_budget. lia.
+  Qed.
+
+  (** Only nonempty registration needs to bound the fresh identity counter. *)
+  Lemma T_register_row_uses_guarded_width : forall db f k o bits,
+    Pos.size_nat f <= bits ->
+    (forall c, In c (k ++ option_list o) -> cell_bits V.encode c <= bits) ->
+    (id_occurrences f k (k ++ option_list o) <> [] ->
+      Pos.size_nat (row_fresh (db_row_store db)) <= bits) ->
+    N.size_nat (db_nuses db) <= bits ->
+    N.size_nat (N.of_nat (length (k ++ option_list o))) <= bits ->
+    (T_register_row_uses f k o db <=
+      1024 * (PTrieT.c_trie + V.c_key + DatabaseUseMap.c_map + 1) *
+        N.of_nat (length k + 2) * N.of_nat (bits + 1))%N.
+  Proof.
+    intros db f k o bits Hname Hcells Hfresh Hcount Hlength.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    - eapply N.le_trans; [apply T_register_row_uses_nil_width; exact Hentries |].
+      clear - k bits. nia.
+    - apply T_register_row_uses_width; try assumption.
+      apply Hfresh. congruence.
   Qed.
 
   Lemma T_slots_update_parts_width : forall db b f u, slots_ok db ->
@@ -29120,9 +29390,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Occurrence registration retains the watermark produced by identity allocation. *)
   Lemma register_row_uses_identity_wmark : forall db f k o,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     (wmark (ensure_row_identity f k db) <= wmark (register_row_uses f k o db))%N.
   Proof.
-    intros db f k o. unfold register_row_uses.
+    intros db f k o Hentries. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction |].
     set (identified := ensure_row_identity f k db).
     unfold wmark.
     cbn [database_set_nuses database_set_row_store db_nuses ids
@@ -29173,8 +29445,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     assert (Hwithout_mark : (wmark without <= wmark result)%N).
     { eapply N.le_trans; [unfold inserted in Hinserted_mark; apply wmark_slots_update |
         exact Hinserted_mark]. }
-    assert (Hidentified_mark : (wmark identified <= wmark result)%N).
-    { rewrite Hresult. apply register_row_uses_identity_wmark. }
+    assert (Hidentified_mark : id_occurrences f k (k ++ option_list o) <> [] ->
+      (wmark identified <= wmark result)%N).
+    { intro Hentries. rewrite Hresult.
+      apply register_row_uses_identity_wmark. exact Hentries. }
     assert (Hinserted_width : N.size_nat (wmark inserted) <= bits).
     { eapply Nat.le_trans; [apply N_width_mono; exact Hinserted_mark | exact Hwidth]. }
     assert (Hwithout_width : N.size_nat (wmark without) <= bits).
@@ -29185,9 +29459,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
          exact Hinserted_width]. }
     assert (Hkey : forall c, In c k -> cell_bits V.encode c <= bits).
     { intros c Hin. apply Hcells. apply in_or_app. now left. }
-    assert (Hfresh : Pos.size_nat (row_fresh (db_row_store written)) <= bits).
-    { eapply Nat.le_trans; [apply ensure_row_identity_fresh_width; exact Hwritten_store |].
-      eapply Nat.le_trans; [apply N_width_mono; exact Hidentified_mark | exact Hwidth]. }
+    assert (Hfresh : id_occurrences f k (k ++ option_list o) <> [] ->
+      Pos.size_nat (row_fresh (db_row_store written)) <= bits).
+    { intro Hentries. eapply Nat.le_trans;
+        [apply ensure_row_identity_fresh_width; exact Hwritten_store |].
+      eapply Nat.le_trans;
+        [apply N_width_mono; exact (Hidentified_mark Hentries) | exact Hwidth]. }
     assert (Hnuses : N.size_nat (db_nuses written) <= bits).
     { eapply Nat.le_trans; [apply N_width_mono, wmark_nuses |].
       eapply Nat.le_trans; [apply N_width_mono; exact Hwritten_mark | exact Hwidth]. }
@@ -29202,7 +29479,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       Hwithout_ok Hnew_fit_without Hname Hinserted_width) as Hinsert.
     rewrite Hwithout_count in Hinsert.
     pose proof (T_row_write_width inserted f k o bits Hname Hkey) as Hwrite.
-    pose proof (T_register_row_uses_width written f k o bits Hname Hcells Hfresh
+    pose proof (T_register_row_uses_guarded_width written f k o bits Hname Hcells Hfresh
       Hnuses Htuple_length) as Hregister.
     pose proof (Datatypes.T_app_le k (option_list o)) as Happ.
     assert (Hnew_length : length (k ++ option_list o) <= length k + 1).
@@ -29859,15 +30136,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     db_nuses (row_write f k o db) = db_nuses db.
   Proof. reflexivity. Qed.
 
+  (** Registration adds exactly its occurrences, including zero for a skipped row. *)
+  Lemma register_row_uses_nuses : forall db f k o,
+    db_nuses (register_row_uses f k o db) =
+      (db_nuses db + N.of_nat (length (id_occurrences f k (k ++ option_list o))))%N.
+  Proof.
+    intros db f k o. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)).
+    - cbn [length N.of_nat]. now rewrite N.add_0_r.
+    - cbn [database_set_nuses db_nuses]. now rewrite ensure_row_identity_nuses.
+  Qed.
+
   (** A row replacement adds exactly its newly registered identifier occurrences. *)
   Lemma row_replace_nuses : forall db f k previous o,
     db_nuses (row_replace f k previous o db) =
       (db_nuses db + N.of_nat (length (id_occurrences f k (k ++ option_list o))))%N.
   Proof.
-    intros db f k [before |] o; unfold row_replace, register_row_uses;
-      cbn [database_set_nuses db_nuses];
-      rewrite ensure_row_identity_nuses, row_write_nuses, !slots_update_nuses;
-      reflexivity.
+    intros db f k [before |] o; unfold row_replace;
+      rewrite register_row_uses_nuses, row_write_nuses, !slots_update_nuses; reflexivity.
   Qed.
 
   (** Union's queue maintenance leaves the occurrence inventory count unchanged. *)
@@ -32109,7 +32395,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     row_uses (db_row_store (register_row_uses f k o db)) =
       DatabaseUses.register (id_occurrences f k (k ++ option_list o)) (row_uses (db_row_store db)).
   Proof.
-    intros db f k o. unfold register_row_uses, ensure_row_identity.
+    intros db f k o. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [reflexivity |].
+    unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db))); reflexivity.
   Qed.
 
