@@ -2,10 +2,22 @@
 
     Union by size maintains a forest and compresses paths during lookup.
     For example, union links the smaller class under the larger root.
+
+    Main results
+    - [find_repr] Finding returns the queried key representative.
+    - [union_some] A successful union redirects the losing class to the winning root.
+    - [union_by_size] Union links the smaller class under the larger class.
+    - [find_complexity] Finding has logarithmic path length and per-bit lookup cost,
+      O((log n + 1) (w + 1)) for n members and keys of at most w bits.
+    - [add_complexity] Adding is linear in the key and the counter width, O(|x| + log n).
+    - [union_complexity] Union has logarithmic path length and per-bit lookup cost,
+      O((log (n + 2) + 1) (w + 1)).
+
     Builds on: trie code and Argent fuelled loops. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia Sorting.Permutation.
-From Argent Require Import Time Loop Std BigO Tactics.
+From Argent Require Import Time Loop Std Complexity Tactics.
+Import ComplexityNotations.
 From Galois.Base Require Import Trie UnionFindSig.
 Import ListNotations.
 
@@ -1964,10 +1976,10 @@ Module UnionFindT <: UNION_FIND_ALL.
       unfold c_uf; repeat rewrite Nat2N.inj_add in *; cbn [N.of_nat] in *; lia.
   Qed.
 
-  Lemma find_complexity : bigO (fun xu : positive * t => wf (snd xu))
-    (fun xu => N.of_nat ((Nat.log2 (card (snd xu)) + 1) *
-      (Nat.max (width (snd xu)) (Pos.size_nat (fst xu)) + 1)))
-    (fun xu => T_find (fst xu) (snd xu)).
+  Lemma find_complexity :
+    T_find x u ∈ 𝑂(N.of_nat ((Nat.log2 (card u) + 1) *
+      (Nat.max (width u) (Pos.size_nat x) + 1)))
+    for (x, u) | wf u.
   Proof.
     exists c_uf. intros [x u] Hwf. cbn [fst snd] in *.
     pose proof (T_find_le x u Hwf) as Hfind.
@@ -1975,9 +1987,8 @@ Module UnionFindT <: UNION_FIND_ALL.
   Qed.
 
   (** Adding costs at most a constant times the key and counter widths. *)
-  Lemma add_complexity : bigO (fun xu : positive * t => wf (snd xu))
-    (fun xu => N.of_nat (Pos.size_nat (fst xu) + Nat.log2 (card (snd xu)) + 1))
-    (fun xu => T_add (fst xu) (snd xu)).
+  Lemma add_complexity :
+    T_add x u ∈ 𝑂(N.of_nat (Pos.size_nat x + Nat.log2 (card u) + 1)) for (x, u) | wf u.
   Proof.
     exists c_uf. intros [x u] Hwf. cbn [fst snd] in *.
     pose proof (T_add_le x u Hwf) as Hadd.
@@ -1985,11 +1996,10 @@ Module UnionFindT <: UNION_FIND_ALL.
   Qed.
 
   (** Union spends logarithmically many parent steps at the maximum key width. *)
-  Lemma union_complexity : bigO (fun xyu : positive * positive * t => wf (snd xyu))
-    (fun xyu => N.of_nat ((Nat.log2 (card (snd xyu) + 2) + 1) *
-      (Nat.max (width (snd xyu))
-        (Nat.max (Pos.size_nat (fst (fst xyu))) (Pos.size_nat (snd (fst xyu)))) + 1)))
-    (fun xyu => T_union (fst (fst xyu)) (snd (fst xyu)) (snd xyu)).
+  Lemma union_complexity :
+    T_union x y u ∈ 𝑂(N.of_nat ((Nat.log2 (card u + 2) + 1) *
+      (Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)) + 1)))
+    for (x, y, u) | wf u.
   Proof.
     exists c_uf. intros [[x y] u] Hwf. cbn [fst snd] in *.
     pose proof (T_union_le x y u Hwf) as Hunion.
