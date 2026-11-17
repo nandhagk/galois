@@ -4,8 +4,10 @@
     For example, pushing priorities five and two for one key leaves priority two live.
 
     Main results
-    - [push_complexity] Push has the worst-case logarithmic comparison cost of bounded width.
-    - [pop_complexity] Pop pays one unit budget plus one for each stale entry it discards.
+    - [push_complexity] Push has the worst-case logarithmic comparison cost of bounded width,
+      O(unit_pq P w).
+    - [pop_complexity] Pop pays one unit budget plus one for each stale entry it discards,
+      O(unit_pq P w (stale entries + 1)).
     - [push_amort_complexity] Push is amortised logarithmic in the pending cap, with the potential
       of the queue before and after, O(unit_pq P w).
     - [pop_amort_complexity] Pop is amortised logarithmic in the pending cap, with the potential
