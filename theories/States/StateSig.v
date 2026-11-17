@@ -2,6 +2,13 @@
 
     State domains describe concrete environments and refine them through assignments and guards.
     For example, havoc permits every value for the selected variable.
+
+    Main results
+    - [assign_sound] Assignment contains each successful concrete update.
+    - [havoc_sound] Havoc contains every concrete update of the selected variable.
+    - [assume_sound] Assuming a true guard retains its concrete environment.
+    - [eval_sound] Abstract evaluation describes every successful concrete result.
+
     Builds on: KeySig, LatticeSig, LangSig and ValueSig. *)
 
 From Stdlib Require Import List NArith.

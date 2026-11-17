@@ -3,10 +3,29 @@
     A partition is a capped list of labelled states that denotes their union. Labels come
     from tokens and decide which parts join and which part a widening grows.
     For example, joining [(T, s1)] with [(E, s2); (T, s3)] gives [(T, s1 ⊔ s3); (E, s2)].
+
+    Main results
+    - [merge_sound] Merging keeps every environment of the partition.
+    - [leb_complexity] Inclusion is linear in both sizes for the fixed cap.
+    - [join_complexity] Join is linear in both sizes for the fixed cap.
+    - [widen_complexity] Widening is linear in the sizes and in the units times the parameter
+      size.
+    - [merge_complexity] Merging all parts under one token is linear in the token and the
+      partition.
+    - [is_bot_complexity] The bottom test is linear in the size for the fixed cap.
+    - [narrow_complexity] Narrowing is linear in both sizes for the fixed cap.
+    - [assign_complexity] Assignment is linear in its work measure.
+    - [havoc_complexity] Havoc is linear in its work measure.
+    - [assume_complexity] Assumption is linear in its work measure.
+    - [eval_complexity] Evaluation is linear in its work measure.
+    - [inject_complexity] Injection is linear in the token and the state.
+    - [retag_complexity] Retagging is linear in the token and the partition.
+
     Builds on: LatticeSig, StateSig and the state disjunction interfaces. *)
 
 From Stdlib Require Import List NArith Arith Bool.
-From Argent Require Import Time BigO.
+From Argent Require Import Time Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -207,47 +226,31 @@ Module Type PARTITION_TIME (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Parameter merge_size : forall k a,
     (N.of_nat (size (merge k a)) <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
   (** Inclusion is linear in both sizes for the fixed cap. *)
-  Parameter leb_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_leb (fst ab) (snd ab)).
+  Parameter leb_complexity : T_leb a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   (** Join is linear in both sizes for the fixed cap. *)
-  Parameter join_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_join (fst ab) (snd ab)).
+  Parameter join_complexity : T_join a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   (** Widening is linear in the sizes and in the units times the parameter size. *)
-  Parameter widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
-    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
-    (fun '(p, a, b) => T_widen p a b).
+  Parameter widen_complexity : T_widen p a b ∈ 𝑂(N.of_nat ((wunits a + wunits b) * wsize p +
+    (size a + size b + wsize p))) for (p, a, b).
   (** Merging all parts under one token is linear in the token and the partition. *)
-  Parameter merge_complexity : bigO (X := Tk.t * t) (fun _ => True)
-    (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
-    (fun ka => T_merge (fst ka) (snd ka)).
+  Parameter merge_complexity : T_merge k a ∈ 𝑂(N.of_nat (Tk.bits k + size a)) for (k, a).
   (** The bottom test is linear in the size for the fixed cap. *)
-  Parameter is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Parameter is_bot_complexity : T_is_bot a ∈ 𝑂(N.of_nat (size a)) for a.
   (** Narrowing is linear in both sizes for the fixed cap. *)
-  Parameter narrow_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_narrow (fst ab) (snd ab)).
+  Parameter narrow_complexity : T_narrow a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   (** Assignment is linear in its work measure. *)
-  Parameter assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
-    (fun '(x, e, a) => N.of_nat (assign_work x e a)) (fun '(x, e, a) => T_assign x e a).
+  Parameter assign_complexity : T_assign x e a ∈ 𝑂(N.of_nat (assign_work x e a)) for (x, e, a).
   (** Havoc is linear in its work measure. *)
-  Parameter havoc_complexity : bigO (X := X.t * t) (fun _ => True)
-    (fun '(x, a) => N.of_nat (havoc_work x a)) (fun '(x, a) => T_havoc x a).
+  Parameter havoc_complexity : T_havoc x a ∈ 𝑂(N.of_nat (havoc_work x a)) for (x, a).
   (** Assumption is linear in its work measure. *)
-  Parameter assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
-    (fun '(gd, es, a) => N.of_nat (assume_work gd es a)) (fun '(gd, es, a) => T_assume gd es a).
+  Parameter assume_complexity :
+    T_assume gd es a ∈ 𝑂(N.of_nat (assume_work gd es a)) for (gd, es, a).
   (** Evaluation is linear in its work measure. *)
-  Parameter eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
-    (fun '(e, a) => N.of_nat (eval_work e a)) (fun '(e, a) => T_eval e a).
+  Parameter eval_complexity : T_eval e a ∈ 𝑂(N.of_nat (eval_work e a)) for (e, a).
   (** Injection is linear in the token and the state. *)
-  Parameter inject_complexity : bigO (X := Tk.t * S.t) (fun _ => True)
-    (fun ks => N.of_nat (Tk.bits (fst ks) + S.size (snd ks)))
-    (fun ks => T_inject (fst ks) (snd ks)).
+  Parameter inject_complexity : T_inject k s ∈ 𝑂(N.of_nat (Tk.bits k + S.size s)) for (k, s).
   (** Retagging is linear in the token and the partition. *)
-  Parameter retag_complexity : bigO (X := Tk.t * t) (fun _ => True)
-    (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
-    (fun ka => T_retag (fst ka) (snd ka)).
+  Parameter retag_complexity : T_retag k a ∈ 𝑂(N.of_nat (Tk.bits k + size a)) for (k, a).
 End PARTITION_TIME.
 
 Module Type PARTITION_T (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)

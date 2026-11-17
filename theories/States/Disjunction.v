@@ -2,10 +2,23 @@
 
     Lists of alternatives represent a union and compact when the capacity is exceeded.
     For example, cap one joins two alternatives into one state.
+
+    Main results
+    - [widen_complexity] Widening is linear in the sizes and in the units times the parameter
+      size.
+    - [narrow_complexity] Narrowing is linear in both sizes for the fixed cap.
+    - [assign_complexity] Assignment is linear in its work measure.
+    - [havoc_complexity] Havoc is linear in its work measure.
+    - [assume_complexity] Assumption is linear in its work measure.
+    - [eval_complexity] Evaluation is linear in its work measure.
+    - [collapse_complexity] Collapsing at most the cap plus one alternatives is linear in their
+      sizes.
+
     Builds on: DisjunctionSig, StateSig and the lattice interfaces. *)
 
 From Stdlib Require Import List NArith Arith Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -1342,9 +1355,8 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Widening pays for the state sizes and the units times the parameter size. *)
-  Lemma widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
-    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
-    (fun '(p, a, b) => T_widen p a b).
+  Lemma widen_complexity : T_widen p a b ∈ 𝑂(N.of_nat ((wunits a + wunits b) * wsize p +
+    (size a + size b + wsize p))) for (p, a, b).
   Proof.
     exists c_lat; intros [[p a] b] _.
     pose proof (T_widen_le p a b) as Hbound.
@@ -1352,9 +1364,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Narrowing is linear in both disjunction sizes for the fixed cap. *)
-  Lemma narrow_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_narrow (fst ab) (snd ab)).
+  Lemma narrow_complexity : T_narrow a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   Proof.
     exists c_lat; intros [a b] _.
     pose proof (T_narrow_le a b) as Hbound.
@@ -1362,8 +1372,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assignment is linear in its alternative work measure. *)
-  Lemma assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
-    (fun '(x, e, d) => N.of_nat (assign_work x e d)) (fun '(x, e, d) => T_assign x e d).
+  Lemma assign_complexity : T_assign x e d ∈ 𝑂(N.of_nat (assign_work x e d)) for (x, e, d).
   Proof.
     exists c_state; intros [[x e] a] _.
     pose proof (T_assign_le x e a) as Hbound.
@@ -1371,8 +1380,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Havoc is linear in its alternative work measure. *)
-  Lemma havoc_complexity : bigO (X := X.t * t) (fun _ => True)
-    (fun '(x, d) => N.of_nat (havoc_work x d)) (fun '(x, d) => T_havoc x d).
+  Lemma havoc_complexity : T_havoc x d ∈ 𝑂(N.of_nat (havoc_work x d)) for (x, d).
   Proof.
     exists c_state; intros [x a] _.
     pose proof (T_havoc_le x a) as Hbound.
@@ -1380,8 +1388,8 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assumption is linear in its alternative work measure. *)
-  Lemma assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
-    (fun '(gd, es, d) => N.of_nat (assume_work gd es d)) (fun '(gd, es, d) => T_assume gd es d).
+  Lemma assume_complexity :
+    T_assume gd es d ∈ 𝑂(N.of_nat (assume_work gd es d)) for (gd, es, d).
   Proof.
     exists c_state; intros [[g es] a] _.
     pose proof (T_assume_le g es a) as Hbound.
@@ -1389,8 +1397,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Evaluation is linear in its alternative work measure. *)
-  Lemma eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
-    (fun '(e, d) => N.of_nat (eval_work e d)) (fun '(e, d) => T_eval e d).
+  Lemma eval_complexity : T_eval e d ∈ 𝑂(N.of_nat (eval_work e d)) for (e, d).
   Proof.
     exists c_state; intros [e a] _.
     pose proof (T_eval_le e a) as Hbound.
@@ -1398,8 +1405,9 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Collapsing at most the cap plus one alternatives is linear in their sizes. *)
-  Lemma collapse_complexity : bigO (fun xs : list S.t => length xs <= C.k + 1)
-    (fun xs => N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs)) T_collapse.
+  Lemma collapse_complexity :
+    T_collapse xs ∈ 𝑂(N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs))
+      for xs | length xs <= C.k + 1.
   Proof.
     exists c_disjunction; intros xs Hcap.
     pose proof (T_collapse_le xs Hcap) as Hbound.

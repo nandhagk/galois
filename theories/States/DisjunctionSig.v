@@ -2,10 +2,23 @@
 
     Lists retain alternatives and compact joins when a fixed cap is exceeded.
     For example, cap one joins two alternatives into one state.
+
+    Main results
+    - [widen_complexity] Widening is linear in the sizes and in the units times the parameter
+      size.
+    - [narrow_complexity] Narrowing is linear in both sizes for the fixed cap.
+    - [assign_complexity] Assignment is linear in its work measure.
+    - [havoc_complexity] Havoc is linear in its work measure.
+    - [assume_complexity] Assumption is linear in its work measure.
+    - [eval_complexity] Evaluation is linear in its work measure.
+    - [collapse_complexity] Collapsing at most the cap plus one alternatives is linear in their
+      sizes.
+
     Builds on: LatticeSig and StateSig. *)
 
 From Stdlib Require Import List NArith Arith Bool.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig DisjunctionSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -123,28 +136,23 @@ Module Type DISJUNCTION_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Parameter wunits_alternatives : forall d,
     wunits d = fold_right Nat.add 0%nat (map S.wunits (proj1_sig d)).
   (** Widening is linear in the sizes and in the units times the parameter size. *)
-  Parameter widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
-    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
-    (fun '(p, a, b) => T_widen p a b).
+  Parameter widen_complexity : T_widen p a b ∈ 𝑂(N.of_nat ((wunits a + wunits b) * wsize p +
+    (size a + size b + wsize p))) for (p, a, b).
   (** Narrowing is linear in both sizes for the fixed cap. *)
-  Parameter narrow_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_narrow (fst ab) (snd ab)).
+  Parameter narrow_complexity : T_narrow a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   (** Assignment is linear in its work measure. *)
-  Parameter assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
-    (fun '(x, e, d) => N.of_nat (assign_work x e d)) (fun '(x, e, d) => T_assign x e d).
+  Parameter assign_complexity : T_assign x e d ∈ 𝑂(N.of_nat (assign_work x e d)) for (x, e, d).
   (** Havoc is linear in its work measure. *)
-  Parameter havoc_complexity : bigO (X := X.t * t) (fun _ => True)
-    (fun '(x, d) => N.of_nat (havoc_work x d)) (fun '(x, d) => T_havoc x d).
+  Parameter havoc_complexity : T_havoc x d ∈ 𝑂(N.of_nat (havoc_work x d)) for (x, d).
   (** Assumption is linear in its work measure. *)
-  Parameter assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
-    (fun '(gd, es, d) => N.of_nat (assume_work gd es d)) (fun '(gd, es, d) => T_assume gd es d).
+  Parameter assume_complexity :
+    T_assume gd es d ∈ 𝑂(N.of_nat (assume_work gd es d)) for (gd, es, d).
   (** Evaluation is linear in its work measure. *)
-  Parameter eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
-    (fun '(e, d) => N.of_nat (eval_work e d)) (fun '(e, d) => T_eval e d).
+  Parameter eval_complexity : T_eval e d ∈ 𝑂(N.of_nat (eval_work e d)) for (e, d).
   (** Collapsing at most the cap plus one alternatives is linear in their sizes. *)
-  Parameter collapse_complexity : bigO (fun xs : list S.t => length xs <= C.k + 1)
-    (fun xs => N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs)) T_collapse.
+  Parameter collapse_complexity :
+    T_collapse xs ∈ 𝑂(N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs))
+      for xs | length xs <= C.k + 1.
   (** The widening parameter is the component's parameter. *)
   Parameter wsize_component : forall p, wsize p = S.wsize p.
   (** Collapsing at most the cap plus one alternatives charges their sizes. *)

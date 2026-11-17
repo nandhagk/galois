@@ -2,10 +2,18 @@
 
     Checks use numeric ranges to detect possible bit-vector errors.
     For example, a divisor range excluding zero rules out division by zero.
+
+    Main results
+    - [width_sound] A reported width is the width of every concrete value that the abstract
+      value describes.
+    - [may_fail_sound] A successful check excludes concrete errors.
+    - [may_fail_complexity] A check is linear in its operand work.
+
     Builds on: BitsChecksSig, ChecksSig, BitsLang and ValueSig. *)
 
 From Stdlib Require Import ZArith Zpow_facts NArith List Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import LangSig ValueSig BitsLang.
 From Galois.Alarms Require Import ChecksSig BitsChecksSig.
@@ -879,8 +887,7 @@ Module BitsChecksT (V : VALUE_DOMAIN_T BitsLangT)
   Qed.
 
   (** A check is linear in its operand work. *)
-  Lemma may_fail_complexity : bigO (X := kd * list V.t) (fun _ => True)
-    (fun kx => N.of_nat (work (fst kx) (snd kx))) (fun kx => T_may_fail (fst kx) (snd kx)).
+  Lemma may_fail_complexity : T_may_fail k xs ∈ 𝑂(N.of_nat (work k xs)) for (k, xs).
   Proof.
     eapply bigO_intro with (c := c_checks). intros [k xs] _.
     change (T_may_fail k xs <= c_checks * N.of_nat (work k xs) + c_checks)%N.

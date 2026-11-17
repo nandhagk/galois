@@ -2,10 +2,29 @@
 
     A capped list of labelled states represents their union.
     For example, a join combines states carrying the same token.
+
+    Main results
+    - [merge_sound] Merging keeps every environment of the partition.
+    - [leb_complexity] Inclusion is linear in both sizes for the fixed cap.
+    - [join_complexity] Join is linear in both sizes for the fixed cap.
+    - [widen_complexity] Widening is linear in the sizes and in the units times the parameter
+      size.
+    - [merge_complexity] Merging all parts under one token is linear in the token and the
+      partition.
+    - [is_bot_complexity] The bottom test is linear in the size for the fixed cap.
+    - [narrow_complexity] Narrowing is linear in both sizes for the fixed cap.
+    - [assign_complexity] Assignment is linear in its work measure.
+    - [havoc_complexity] Havoc is linear in its work measure.
+    - [assume_complexity] Assumption is linear in its work measure.
+    - [eval_complexity] Evaluation is linear in its work measure.
+    - [inject_complexity] Injection is linear in the token and the state.
+    - [retag_complexity] Retagging is linear in the token and the partition.
+
     Builds on: PartitionSig, StateSig and LatticeSig. *)
 
 From Stdlib Require Import List NArith Arith Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -2574,9 +2593,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Inclusion is linear in both partition sizes for the fixed cap. *)
-  Lemma leb_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_leb (fst ab) (snd ab)).
+  Lemma leb_complexity : T_leb a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   Proof.
     exists c_lat; intros [a b] _.
     pose proof (T_leb_le a b) as Hbound.
@@ -2584,9 +2601,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Joining is linear in both partition sizes for the fixed cap. *)
-  Lemma join_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_join (fst ab) (snd ab)).
+  Lemma join_complexity : T_join a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   Proof.
     exists c_lat; intros [a b] _.
     pose proof (T_join_le a b) as Hbound.
@@ -2594,9 +2609,8 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Widening pays for the state sizes and the units times the parameter size. *)
-  Lemma widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
-    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
-    (fun '(p, a, b) => T_widen p a b).
+  Lemma widen_complexity : T_widen p a b ∈ 𝑂(N.of_nat ((wunits a + wunits b) * wsize p +
+    (size a + size b + wsize p))) for (p, a, b).
   Proof.
     exists c_lat; intros [[p a] b] _.
     pose proof (T_widen_le p a b) as Hbound.
@@ -2604,9 +2618,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Merging is linear in the token width and the partition size. *)
-  Lemma merge_complexity : bigO (X := Tk.t * t) (fun _ => True)
-    (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
-    (fun ka => T_merge (fst ka) (snd ka)).
+  Lemma merge_complexity : T_merge k a ∈ 𝑂(N.of_nat (Tk.bits k + size a)) for (k, a).
   Proof.
     exists c_partition; intros [k a] _.
     pose proof (T_merge_le k a) as Hbound.
@@ -2614,7 +2626,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** The bottom test is linear in the partition size for the fixed cap. *)
-  Lemma is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Lemma is_bot_complexity : T_is_bot a ∈ 𝑂(N.of_nat (size a)) for a.
   Proof.
     exists c_lat; intros a _.
     pose proof (T_is_bot_le a) as Hbound.
@@ -2622,9 +2634,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Narrowing is linear in both partition sizes for the fixed cap. *)
-  Lemma narrow_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_narrow (fst ab) (snd ab)).
+  Lemma narrow_complexity : T_narrow a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   Proof.
     exists c_lat; intros [a b] _.
     pose proof (T_narrow_le a b) as Hbound.
@@ -2632,8 +2642,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assignment is linear in its component work measure. *)
-  Lemma assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
-    (fun '(x, e, a) => N.of_nat (assign_work x e a)) (fun '(x, e, a) => T_assign x e a).
+  Lemma assign_complexity : T_assign x e a ∈ 𝑂(N.of_nat (assign_work x e a)) for (x, e, a).
   Proof.
     exists c_state; intros [[x e] a] _.
     pose proof (T_assign_le x e a) as Hbound.
@@ -2641,8 +2650,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Havoc is linear in its component work measure. *)
-  Lemma havoc_complexity : bigO (X := X.t * t) (fun _ => True)
-    (fun '(x, a) => N.of_nat (havoc_work x a)) (fun '(x, a) => T_havoc x a).
+  Lemma havoc_complexity : T_havoc x a ∈ 𝑂(N.of_nat (havoc_work x a)) for (x, a).
   Proof.
     exists c_state; intros [x a] _.
     pose proof (T_havoc_le x a) as Hbound.
@@ -2650,8 +2658,8 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assumption is linear in its component work measure. *)
-  Lemma assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
-    (fun '(gd, es, a) => N.of_nat (assume_work gd es a)) (fun '(gd, es, a) => T_assume gd es a).
+  Lemma assume_complexity :
+    T_assume gd es a ∈ 𝑂(N.of_nat (assume_work gd es a)) for (gd, es, a).
   Proof.
     exists c_state; intros [[g es] a] _.
     pose proof (T_assume_le g es a) as Hbound.
@@ -2659,8 +2667,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Evaluation is linear in its component work measure. *)
-  Lemma eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
-    (fun '(e, a) => N.of_nat (eval_work e a)) (fun '(e, a) => T_eval e a).
+  Lemma eval_complexity : T_eval e a ∈ 𝑂(N.of_nat (eval_work e a)) for (e, a).
   Proof.
     exists c_state; intros [e a] _.
     pose proof (T_eval_le e a) as Hbound.
@@ -2668,9 +2675,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Injection is linear in the token width and the component state size. *)
-  Lemma inject_complexity : bigO (X := Tk.t * S.t) (fun _ => True)
-    (fun ks => N.of_nat (Tk.bits (fst ks) + S.size (snd ks)))
-    (fun ks => T_inject (fst ks) (snd ks)).
+  Lemma inject_complexity : T_inject k s ∈ 𝑂(N.of_nat (Tk.bits k + S.size s)) for (k, s).
   Proof.
     exists c_partition; intros [k a] _.
     pose proof (T_inject_le k a) as Hbound.
@@ -2678,9 +2683,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Retagging is linear in the token width and the partition size. *)
-  Lemma retag_complexity : bigO (X := Tk.t * t) (fun _ => True)
-    (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
-    (fun ka => T_retag (fst ka) (snd ka)).
+  Lemma retag_complexity : T_retag k a ∈ 𝑂(N.of_nat (Tk.bits k + size a)) for (k, a).
   Proof.
     exists c_partition; intros [k a] _.
     pose proof (T_retag_le k a) as Hbound.

@@ -2,10 +2,20 @@
 
     Alarm reporting checks abstract operands at each program point.
     For example, a missing invariant uses the bottom state.
+
+    Main results
+    - [inv_at_spec] Invariant lookup defaults to bottom.
+    - [alarm_spec] An alarm checks the abstract results of all operands at its site.
+    - [alarms_spec] Reporting retains precisely the checks that raise an alarm, in input order.
+    - [inv_at_complexity] Invariant lookup is linear in the bit length of the site key.
+    - [alarm_complexity] One alarm test is linear in its check work.
+    - [alarms_complexity] Reporting is linear in the sum of the check work.
+
     Builds on: AlarmsSig. *)
 
 From Stdlib Require Import List NArith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
@@ -167,8 +177,7 @@ Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
     assert (Hk : (1 <= k_alarm)%N) by (unfold k_alarm; lia). nia.
   Qed.
 
-  Lemma inv_at_complexity : bigO (X := MN.t S.t * N.t) (fun _ => True)
-    (fun x => N.of_nat (N.bits (snd x))) (fun x => T_inv_at (fst x) (snd x)).
+  Lemma inv_at_complexity : T_inv_at inv n ∈ 𝑂(N.of_nat (N.bits n)) for (inv, n).
   Proof.
     eapply bigO_intro with (c := c_alarms). intros [inv n] _.
     change (T_inv_at inv n <= c_alarms * N.of_nat (N.bits n) + c_alarms)%N.
@@ -176,17 +185,16 @@ Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
     rewrite Nat2N.inj_add in Hbound. nia.
   Qed.
 
-  Lemma alarm_complexity : bigO (X := MN.t S.t * check N.t L.op X.t C.kd) (fun _ => True)
-    (fun x => N.of_nat (check_work (fst x) (snd x))) (fun x => T_alarm (fst x) (snd x)).
+  Lemma alarm_complexity : T_alarm inv k ∈ 𝑂(N.of_nat (check_work inv k)) for (inv, k).
   Proof.
     eapply bigO_intro with (c := c_alarms). intros [inv k] _.
     change (T_alarm inv k <= c_alarms * N.of_nat (check_work inv k) + c_alarms)%N.
     pose proof (T_alarm_le inv k) as Hbound. nia.
   Qed.
 
-  Lemma alarms_complexity : bigO (X := MN.t S.t * list (check N.t L.op X.t C.kd)) (fun _ => True)
-    (fun x => N.of_nat (fold_right Nat.add 0 (map (check_work (fst x)) (snd x))))
-    (fun x => T_alarms (fst x) (snd x)).
+  Lemma alarms_complexity :
+    T_alarms inv ks ∈ 𝑂(N.of_nat (fold_right Nat.add 0%nat (map (check_work inv) ks)))
+      for (inv, ks).
   Proof.
     eapply bigO_intro with (c := c_alarms). intros [inv ks] _.
     change (T_alarms inv ks <=

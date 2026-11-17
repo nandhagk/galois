@@ -2,10 +2,25 @@
 
     Environments map variables to abstract values and track unreachable states.
     For example, reading an absent binding returns the value domain's top.
+
+    Main results
+    - [read_spec] Reading an absent key returns top.
+    - [leb_complexity] Inclusion is linear in both environment sizes, O(|a| + |b|).
+    - [join_complexity] Join is linear in both environment sizes, O(|a| + |b|).
+    - [widen_complexity] Widening is linear in the sizes and in the widening units times the
+      parameter size.
+    - [assign_complexity] Assignment is linear in its work measure.
+    - [havoc_complexity] Havoc is linear in its work measure.
+    - [assume_complexity] Assumption is linear in its work measure.
+    - [eval_complexity] Evaluation is linear in its work measure.
+    - [is_bot_complexity] The bottom test is linear in the environment size, O(|a|).
+    - [narrow_complexity] Narrowing is linear in both environment sizes, O(|a| + |b|).
+
     Builds on: EnvSig and the keyed map operations. *)
 
 From Stdlib Require Import List Bool NArith Arith Lia Permutation.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
@@ -1789,9 +1804,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Inclusion is linear in the combined environment sizes. *)
-  Lemma leb_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_leb (fst ab) (snd ab)).
+  Lemma leb_complexity : T_leb a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   Proof.
     eapply bigO_intro with (c := c_lat). intros [a b] _.
     change (T_leb a b <= c_lat * N.of_nat (size a + size b) + c_lat)%N.
@@ -1800,9 +1813,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Join is linear in the combined environment sizes. *)
-  Lemma join_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_join (fst ab) (snd ab)).
+  Lemma join_complexity : T_join a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   Proof.
     eapply bigO_intro with (c := c_lat). intros [a b] _.
     change (T_join a b <= c_lat * N.of_nat (size a + size b) + c_lat)%N.
@@ -1811,9 +1822,8 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Widening charges environment sizes and the parameter work of each binding. *)
-  Lemma widen_complexity : bigO (X := wparam * t * t) (fun _ => True)
-    (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
-    (fun '(p, a, b) => T_widen p a b).
+  Lemma widen_complexity : T_widen p a b ∈ 𝑂(N.of_nat ((wunits a + wunits b) * wsize p +
+    (size a + size b + wsize p))) for (p, a, b).
   Proof.
     eapply bigO_intro with (c := c_lat). intros [[p a] b] _.
     change (T_widen p a b <= c_lat * N.of_nat
@@ -1823,9 +1833,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assignment is linear in its annotation and insertion work. *)
-  Lemma assign_complexity : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
-    (fun '(x, e, s) => N.of_nat (assign_work x e s))
-    (fun '(x, e, s) => T_assign x e s).
+  Lemma assign_complexity : T_assign x e s ∈ 𝑂(N.of_nat (assign_work x e s)) for (x, e, s).
   Proof.
     eapply bigO_intro with (c := c_state). intros [[x e] s] _.
     change (T_assign x e s <= c_state * N.of_nat (assign_work x e s) + c_state)%N.
@@ -1834,9 +1842,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Havoc is linear in its environment and encoded-key work. *)
-  Lemma havoc_complexity : bigO (X := X.t * t) (fun _ => True)
-    (fun '(x, s) => N.of_nat (havoc_work x s))
-    (fun '(x, s) => T_havoc x s).
+  Lemma havoc_complexity : T_havoc x s ∈ 𝑂(N.of_nat (havoc_work x s)) for (x, s).
   Proof.
     eapply bigO_intro with (c := c_state). intros [x s] _.
     change (T_havoc x s <= c_state * N.of_nat (havoc_work x s) + c_state)%N.
@@ -1845,9 +1851,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Evaluation is linear in the work of one annotation pass. *)
-  Lemma eval_complexity : bigO (X := term L.op X.t * t) (fun _ => True)
-    (fun '(e, s) => N.of_nat (eval_work e s))
-    (fun '(e, s) => T_eval e s).
+  Lemma eval_complexity : T_eval e s ∈ 𝑂(N.of_nat (eval_work e s)) for (e, s).
   Proof.
     eapply bigO_intro with (c := c_state). intros [e s] _.
     change (T_eval e s <= c_state * N.of_nat (eval_work e s) + c_state)%N.
@@ -1856,7 +1860,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Bottom recognition is linear in the environment size. *)
-  Lemma is_bot_complexity : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Lemma is_bot_complexity : T_is_bot a ∈ 𝑂(N.of_nat (size a)) for a.
   Proof.
     eapply bigO_intro with (c := c_lat). intros a _.
     pose proof (T_is_bot_le a) as Hbound.
@@ -1864,9 +1868,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Narrowing is linear in the combined environment sizes. *)
-  Lemma narrow_complexity : bigO (X := t * t) (fun _ => True)
-    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
-    (fun ab => T_narrow (fst ab) (snd ab)).
+  Lemma narrow_complexity : T_narrow a b ∈ 𝑂(N.of_nat (size a + size b)) for (a, b).
   Proof.
     eapply bigO_intro with (c := c_lat). intros [a b] _.
     change (T_narrow a b <= c_lat * N.of_nat (size a + size b) + c_lat)%N.
@@ -2340,9 +2342,8 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
 
   (** Assumption is linear in its annotation, guard and refinement work. *)
-  Lemma assume_complexity : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
-    (fun '(gd, es, s) => N.of_nat (assume_work gd es s))
-    (fun '(gd, es, s) => T_assume gd es s).
+  Lemma assume_complexity :
+    T_assume gd es s ∈ 𝑂(N.of_nat (assume_work gd es s)) for (gd, es, s).
   Proof.
     eapply bigO_intro with (c := c_state). intros [[gd es] s] _.
     change (T_assume gd es s <= c_state * N.of_nat (assume_work gd es s) + c_state)%N.
