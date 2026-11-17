@@ -9,7 +9,9 @@
     - [fold_spec] Folding follows enumeration order.
     - [is_empty_spec] A trie is reported empty exactly when it is the empty trie.
     - [get_complexity] Lookup is linear in the key bit length, O(|p|) for a key p.
-    - [set_complexity] Setting is linear in the key bit length.
+    - [get_worst_complexity] Some stored key of every length is read to its end, so the
+      worst-case lookup time is Θ(|p|).
+    - [set_complexity] Setting reads and rebuilds the whole key path, so its time is Θ(|p|).
     - [remove_complexity] Removal is linear in the key bit length.
     - [merge_complexity] Merging is linear in both skeletons for bounded callbacks.
     - [forall2b_complexity] Relational checking is linear in both skeletons for bounded
@@ -1126,7 +1128,7 @@ Module PTrieT <: TRIE_ALL.
   Qed.
 
   (** Setting a key pays at least one unit for each key digit. *)
-  Lemma T_set_lower : forall A p (a : A) m,
+  Lemma T_set_ge : forall A p (a : A) m,
     (N.of_nat (Pos.size_nat p) <= T_set p a m)%N.
   Proof.
     intros A p a m. pose proof (replace_clock_lower A p (Some a) m) as Hreplace.
@@ -2195,13 +2197,43 @@ Module PTrieT <: TRIE_ALL.
     now rewrite Nat2N.inj_add in Hget.
   Qed.
 
-  (** Insertion time is linear in the number of key bits. *)
-  Lemma set_complexity : forall A,
-    T_set (A := A) p a m ∈ 𝑂(N.of_nat (Pos.size_nat p)) for (p, a, m).
+  (** The key [2^k] has [k + 1] bits. *)
+  Lemma size_nat_iter_xO : forall k, Pos.size_nat (Nat.iter k xO 1%positive) = S k.
   Proof.
-    intro A. exists c_trie. intros [[p a] m] _. cbn [fst snd].
-    pose proof (T_set_le A p a m) as Hset.
-    now rewrite Nat2N.inj_add in Hset.
+    induction k as [| k IH]; [reflexivity |].
+    change (S (Pos.size_nat (Nat.iter k xO 1%positive)) = S (S k)).
+    rewrite IH. reflexivity.
+  Qed.
+
+  (** A stored key of every length is read to its end, so the worst case of lookup is Θ of the
+      key length. *)
+  Lemma get_worst_complexity : forall A (a : A),
+    T_get (A := A) p m ∈ Θ_worst(N.of_nat (Pos.size_nat p)) for (p, m).
+  Proof.
+    intros A a. split.
+    - exact (get_complexity A).
+    - exists 1%N. intros n.
+      set (key := Nat.iter (N.to_nat n) xO 1%positive).
+      exists (key, set key a empty). cbn [fst snd].
+      pose proof (size_nat_iter_xO (N.to_nat n)) as Hsize.
+      fold key in Hsize.
+      pose proof (T_get_hit_ge A key (set key a empty)) as Hhit.
+      rewrite get_set_same in Hhit.
+      specialize (Hhit ltac:(discriminate)).
+      rewrite Hsize in Hhit |- *. repeat split; lia.
+  Qed.
+
+  (** Setting reads and rebuilds the whole key path, so its time is Θ of the key length. *)
+  Lemma set_complexity : forall A,
+    T_set (A := A) p a m ∈ Θ(N.of_nat (Pos.size_nat p)) for (p, a, m).
+  Proof.
+    intro A. split.
+    - exists c_trie. intros [[p a] m] _. cbn [fst snd].
+      pose proof (T_set_le A p a m) as Hset.
+      now rewrite Nat2N.inj_add in Hset.
+    - exists 1%N. intros [[p a] m] _. cbn [fst snd].
+      pose proof (T_set_ge A p a m) as Hlower.
+      lia.
   Qed.
 
   (** Removal time is linear in the number of key bits. *)
