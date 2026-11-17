@@ -1743,12 +1743,19 @@ Module HeapT <: PQ_ALL.
       time_simpl; time_cbn_all; unfold k_insert, k_step in *; lia.
   Qed.
 
+  (** Pushing fits the logarithmic comparison budget at bounded key and priority widths. *)
   Lemma push_bigO : bigO (X := nat * nat * N * positive * t)
     (fun '(P, w, p, x, q) => wf q /\ fits w q /\ (pending q < P)%nat /\
       (Pos.size_nat x + N.size_nat p <= w)%nat)
     (fun '(P, w, _, _, _) => N.of_nat (unit_pq P w))
     (fun '(_, _, p, x, q) => T_push p x q).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (k_insert + k_step)%N.
+    intros [[[[P w] p] x] q] [Hwf [Hfits [Hpending Hwidth]]].
+    cbn [fst snd].
+    pose proof (heap_push_clock P w p x q Hwf Hfits Hpending ltac:(lia)) as Hpush.
+    nia.
+  Qed.
 
   Lemma T6_push_bounded : forall P w p x q,
     (wf q -> bounded w q -> (pending q < P)%nat ->
@@ -1801,10 +1808,19 @@ Module HeapT <: PQ_ALL.
       (T5_pop_bounded P w q Hwf Hfits Hpending)).
   Qed.
 
+  (** Popping pays one comparison budget and the credit of discarded stale entries. *)
   Lemma pop_bigO : bigO (X := nat * nat * t)
     (fun '(P, w, q) => wf q /\ fits w q /\ (pending q <= P)%nat)
     (fun '(P, w, q) =>
       N.of_nat (unit_pq P w * (pending q - N.to_nat (size q) + 1)))
     (fun '(_, _, q) => T_pop q).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (c_pq + k_credit)%N.
+    intros [[P w] q] [Hwf [Hfits Hpending]]. cbn [fst snd].
+    pose proof (T_pop_amort P w q Hwf Hfits Hpending) as Hpop.
+    rewrite (F6_phi_bounded P w q Hwf Hfits) in Hpop.
+    unfold stale_phi, stale, credit in Hpop.
+    rewrite Nat2N.inj_mul, Nat2N.inj_add.
+    nia.
+  Qed.
 End HeapT.
