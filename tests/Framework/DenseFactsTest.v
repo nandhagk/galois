@@ -4,8 +4,8 @@
     For example, an absent backward boundary evaluates to false.
 
     Groups:
-    - Forward: the worklist solution reads the forward value at node true.
-    - Boundary: absent and listed backward boundaries give their seeded facts.
+    - [ForwardTests] The worklist solution reads the forward value at node true.
+    - [BoundaryTests] Absent and listed backward boundaries give their seeded facts.
 
     Builds on: Framework.Dense and Fixpoint.Worklist. *)
 
