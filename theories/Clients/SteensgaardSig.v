@@ -8,7 +8,7 @@
       congruence.
     - [seed_complexity] Seeding is linear in the constraints and initial pointers at the database
       unit.
-    - [compile_complexity] Compilation emits a fixed program, so its cost is a constant.
+    - [compile_complexity] Compilation emits a fixed program, so its cost is a constant, O(1).
     - [points_complexity] A points-to query is linear in the database unit and the bits of its
       two cells.
     - [solve_complexity] A solve costs its seed, the cube of the fixed program for planning, and
@@ -170,10 +170,10 @@ Module Type STEENSGAARD_TIME (V : VALUE_T with Definition t := positive)
   (** Compilation emits a fixed program, so its cost is a constant. *)
   Parameter compile_complexity : T_compile q ∈ 𝑂(0) for q.
   (** A points-to query is linear in the database unit and the bits of its two cells. *)
-  Parameter points_complexity : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
-    (fun z => let '(db, x, a) := z in
-      N.of_nat (8 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
-    (fun z => let '(db, x, a) := z in T_points db x a).
+  Parameter points_complexity :
+    T_points db (x : positive) (a : positive) ∈
+      𝑂(N.of_nat (8 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
+      for (db, x, a) | D.wf db.
   (** A solve costs its seed, the cube of the fixed program for planning, and the run. *)
   Parameter solve_complexity :
     T_solve q lim ∈ 𝑂((N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
