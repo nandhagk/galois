@@ -928,14 +928,49 @@ Proof.
   intros A weight xs; induction xs as [|item rest IH]; cbn; [reflexivity|]. rewrite IH. lia.
 Qed.
 
+(** An incoming edge stores its predecessor code and its own definition set. *)
+Record live_edge (A : Type) := LiveEdge {
+  live_pred : A;
+  live_pred_code : positive;
+  live_defs : ptrie unit
+}.
+Arguments LiveEdge {A}.
+Arguments live_pred {A}.
+Arguments live_pred_code {A}.
+Arguments live_defs {A}.
+TimeFun live_pred.
+TimeFun live_pred_code.
+TimeFun live_defs.
+
 Module LiveCode (O : OPS)
     (P : TYPE with Definition t := func positive O.K O.G)
     (Q : TYPE) (R : LANG_PREPARE_OPS O Q)
-    (BE E : TYPE) (N : KEY_OPS)
+    (BE : TYPE) (E N : KEY_OPS)
     (BC : CFG_INDEXED_OPS Q PosKeyCode BE) (C : CFG_INDEXED_OPS Q N E)
     (U : VARS_OPS Q N E C PosKeyCode)
     (SP : SSA_POINTS_OPS Q PosKeyCode BE BC N E C PosKeyCode U)
     <: LIVE_OPS O P Q R BE E N BC C U SP.
+
+  Definition incoming_edge (q : Q.t) (e : E.t) : live_edge N.t :=
+    let pred := C.src q e in
+    LiveEdge pred (N.encode pred) (live_intersection (U.defs q e) None).
+
+  (** Incidence rows may repeat edges. Deduplicating the edge inventory bounds setup
+      by the graph load and each cached row by its public incidence length. *)
+  Definition incoming_edges (q : Q.t) : list E.t :=
+    live_done (live_initial E.encode (C.edges q)).
+
+  Definition incoming_insert (q : Q.t) (e : E.t)
+      (table : ptrie (list (live_edge N.t))) : ptrie (list (live_edge N.t)) :=
+    let code := N.encode (C.dst q e) in
+    PTrieCode.set code (incoming_edge q e :: index_row table code) table.
+
+  Definition incoming_build (q : Q.t) (es : list E.t) : ptrie (list (live_edge N.t)) :=
+    fold_right (incoming_insert q) Empty es.
+
+  Definition incoming_table (q : Q.t) : ptrie (list (live_edge N.t)) :=
+    incoming_build q (incoming_edges q).
+
   Definition seed_table (q : Q.t) : ptrie (ptrie unit * list N.t) :=
     live_seed_batch N.encode (fun n => n) (U.exits q) (C.nodes q)
       (live_seed_batch N.encode (C.src q) (U.uses q) (C.edges q) Empty).
@@ -984,6 +1019,35 @@ Module LiveCode (O : OPS)
   Definition search (fuel : nat) (q : Q.t) (seeds : ptrie (list N.t))
       (kills : ptrie (ptrie (ptrie unit))) (x : positive) : list N.t :=
     live_done (explore_fuel fuel q kills x (live_initial N.encode (index_row seeds x))).
+
+  (** Each parallel edge retains its own definitions, so any non-killing edge
+      can discover the shared predecessor. *)
+  Definition cached_step (x : positive) (le : live_edge N.t) (st : live_state N.t)
+      : live_state N.t :=
+    if live_member x (live_defs le) then st else
+      live_discover_code (live_pred_code le) (live_pred le) st.
+
+  Definition cached_predecessors (table : ptrie (list (live_edge N.t))) (x : positive)
+      (n : N.t) (st : live_state N.t) : live_state N.t :=
+    fold_right (cached_step x) st (index_row table (N.encode n)).
+
+  Fixpoint cached_fuel (fuel : nat) (table : ptrie (list (live_edge N.t)))
+      (x : positive) (st : live_state N.t) : live_state N.t :=
+    match fuel with
+    | 0 => st
+    | S rest =>
+      match live_todo st with
+      | [] => st
+      | n :: pending =>
+        cached_fuel rest table x
+          (cached_predecessors table x n
+            {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |})
+      end
+    end.
+
+  Definition cached_search (fuel : nat) (seeds : ptrie (list N.t))
+      (table : ptrie (list (live_edge N.t))) (x : positive) : list N.t :=
+    live_done (cached_fuel fuel table x (live_initial N.encode (index_row seeds x))).
 
   Definition block_index (bs : list positive) : ptrie positive :=
     fold_right (fun b table => PTrieCode.set b b table) Empty bs.
@@ -1037,7 +1101,7 @@ Module LiveCode (O : OPS)
       Empty (U.universe q) in
     map (fun b => (b, index_row rows b)) bs.
 
-  Definition live_in (p : P.t) : list (positive * list positive) :=
+  Definition live_in_entries (p : P.t) : list (positive * list positive) :=
     let q := R.prepare p in
     let fuel := length (C.nodes q) in
     let seeds := seed_index q in
@@ -1048,12 +1112,24 @@ Module LiveCode (O : OPS)
       fold_right (group_entry entries x) acc (search fuel q seeds kills x))
       Empty (U.universe q) in
     map (fun b => (b, index_row rows b)) bs.
+
+  Definition live_in (p : P.t) : list (positive * list positive) :=
+    let q := R.prepare p in
+    let fuel := length (C.nodes q) in
+    let seeds := seed_index q in
+    let incoming := incoming_table q in
+    let bs := BC.nodes q in
+    let entries := entry_table q bs in
+    let rows := fold_right (fun x acc =>
+      fold_right (group_entry entries x) acc (cached_search fuel seeds incoming x))
+      Empty (U.universe q) in
+    map (fun b => (b, index_row rows b)) bs.
 End LiveCode.
 
 Module Live (O : OPS)
     (P : TYPE with Definition t := func positive O.K O.G)
     (Q : TYPE) (R : LANG_PREPARE_OPS O Q)
-    (BE E : TYPE) (N : KEY)
+    (BE : TYPE) (E N : KEY)
     (BC : CFG Q PosKey BE) (C : CFG Q N E) (U : VARS Q N E C PosKey)
     (SP : SSA_POINTS Q PosKey BE BC N E C PosKey U)
     <: LIVE O P Q R BE E N BC C U SP.
@@ -1114,6 +1190,109 @@ Module Live (O : OPS)
     - split; [exact (proj1 (C.edges_nodes q e Hwf He))|]. split.
       + apply U.universe_spec. left. exists e; split; [exact He|now left].
       + apply Point_live_use with e; [apply C.out_spec; auto|exact Hx].
+  Qed.
+
+  (** Cached predecessor identities retain their original source point. *)
+  Lemma incoming_edge_pred : forall q e,
+    live_pred (incoming_edge q e) = C.src q e.
+  Proof.
+    intros q e; reflexivity.
+  Qed.
+
+  (** Each cached code encodes the predecessor stored beside it. *)
+  Lemma incoming_edge_code : forall q e,
+    live_pred_code (incoming_edge q e) = N.encode (live_pred (incoming_edge q e)).
+  Proof.
+    intros q e; reflexivity.
+  Qed.
+
+  (** The cached definitions belong to this edge, including among parallel edges. *)
+  Lemma incoming_edge_defs : forall q e x,
+    live_member x (live_defs (incoming_edge q e)) = true <-> In x (U.defs q e).
+  Proof.
+    intros q e x. unfold incoming_edge; cbn [live_defs].
+    rewrite live_intersection_spec. tauto.
+  Qed.
+
+  (** Edge deduplication keeps precisely the listed edge identities. *)
+  Lemma incoming_edges_spec : forall q e,
+    In e (incoming_edges q) <-> In e (C.edges q).
+  Proof.
+    intros q e. unfold incoming_edges. apply live_initial_done. exact E.encode_inj.
+  Qed.
+
+  (** Each edge identity enters the cache at most once. *)
+  Lemma incoming_edges_nodup : forall q, NoDup (incoming_edges q).
+  Proof.
+    intro q. exact (proj1 (live_initial_valid E.t E.encode E.encode_inj (C.edges q))).
+  Qed.
+
+  (** Building a destination row filters its source edge list without changing its order. *)
+  Lemma incoming_build_row : forall q es n,
+    index_row (incoming_build q es) (N.encode n) =
+      map (incoming_edge q) (filter (fun e => N.eqb (C.dst q e) n) es).
+  Proof.
+    intros q es; induction es as [|e rest IH]; intro n.
+    - unfold incoming_build, index_row. cbn [fold_right].
+      rewrite PTrie.get_empty. reflexivity.
+    - cbn [incoming_build fold_right filter]. fold (incoming_build q rest).
+      unfold incoming_insert. destruct (N.eqb_spec (C.dst q e) n) as [Heq|Hneq].
+      + rewrite Heq, live_index_set_same. cbn [map]. now rewrite IH.
+      + rewrite live_index_set_other.
+        * apply IH.
+        * intro Hcode. apply Hneq. symmetry. now apply N.encode_inj.
+  Qed.
+
+  (** Every cached row represents each incoming edge identity exactly once. *)
+  Lemma incoming_table_spec : forall q n, C.wf q ->
+    exists es, NoDup es /\
+      (forall e, In e es <-> In e (C.inc q n)) /\
+      index_row (incoming_table q) (N.encode n) = map (incoming_edge q) es.
+  Proof.
+    intros q n Hwf.
+    exists (filter (fun e => N.eqb (C.dst q e) n) (incoming_edges q)).
+    split; [apply NoDup_filter, incoming_edges_nodup|]. split.
+    - intro e. rewrite filter_In, incoming_edges_spec, C.inc_spec by exact Hwf.
+      destruct (N.eqb_spec (C.dst q e) n); intuition congruence.
+    - unfold incoming_table. apply incoming_build_row.
+  Qed.
+
+  (** The cache returns only records constructed from incoming edges, and returns all of them. *)
+  Lemma incoming_table_member : forall q n le, C.wf q ->
+    (In le (index_row (incoming_table q) (N.encode n)) <->
+      exists e, In e (C.inc q n) /\ le = incoming_edge q e).
+  Proof.
+    intros q n le Hwf.
+    destruct (incoming_table_spec q n Hwf) as [es [Hdup [Hedges Hrow]]].
+    rewrite Hrow, in_map_iff. split.
+    - intros [e [<- He]]. exists e. split; [now apply Hedges|reflexivity].
+    - intros [e [He ->]]. exists e. split; [reflexivity|now apply Hedges].
+  Qed.
+
+  (** A cached row is no longer than the public incoming list, even if that list repeats edges. *)
+  Lemma incoming_table_length : forall q n, C.wf q ->
+    length (index_row (incoming_table q) (N.encode n)) <= length (C.inc q n).
+  Proof.
+    intros q n Hwf.
+    destruct (incoming_table_spec q n Hwf) as [es [Hdup [Hedges Hrow]]].
+    rewrite Hrow, length_map. apply NoDup_incl_length; [exact Hdup|].
+    intros e He. now apply Hedges.
+  Qed.
+
+  (** Deduplication cannot increase the combined edge and definition-occurrence budget. *)
+  Lemma incoming_edges_work : forall q,
+    length (incoming_edges q) + length (flat_map (U.defs q) (incoming_edges q)) <=
+      length (C.edges q) + length (flat_map (U.defs q) (C.edges q)).
+  Proof.
+    intro q.
+    pose proof (live_weighted_incl E.t (fun e => length (U.defs q e) + 1)
+      (incoming_edges q) (C.edges q) (incoming_edges_nodup q)
+      ltac:(intros e He; now apply incoming_edges_spec)) as Hwork.
+    pose proof (live_fold_lengths E.t PosKey.t (U.defs q) (incoming_edges q)) as Hsource.
+    pose proof (live_fold_lengths E.t PosKey.t (U.defs q) (C.edges q)) as Htarget.
+    cbn beta in Hwork.
+    rewrite Hsource, Htarget in Hwork.
+    exact Hwork.
   Qed.
 
   Definition node_eq_dec (a b : N.t) : {a = b} + {a <> b}.
@@ -1443,6 +1622,334 @@ Module Live (O : OPS)
       + now apply reverse_kills_clear.
   Qed.
 
+  (** Every cached row carries codes matching its stored predecessor points. *)
+  Lemma incoming_table_codes : forall q n, C.wf q -> forall le,
+    In le (index_row (incoming_table q) (N.encode n)) ->
+    live_pred_code le = N.encode (live_pred le).
+  Proof.
+    intros q n Hwf le Hin. apply (incoming_table_member q n le Hwf) in Hin.
+    destruct Hin as [e [He ->]]. apply incoming_edge_code.
+  Qed.
+
+  (** Grouped edge discovery preserves the worklist invariant when its stored codes agree. *)
+  Lemma cached_rows_valid : forall x les st,
+    (forall le, In le les -> live_pred_code le = N.encode (live_pred le)) ->
+    live_valid N.encode st -> live_valid N.encode (fold_right (cached_step x) st les).
+  Proof.
+    intros x les; induction les as [|le rest IH]; intros st Hcodes Hvalid;
+      cbn [fold_right]; [exact Hvalid|].
+    unfold cached_step. destruct (live_member x (live_defs le)).
+    - apply IH; [intros item Hin; apply Hcodes; now right|exact Hvalid].
+    - rewrite (Hcodes le (or_introl eq_refl)).
+      apply live_discover_valid; [exact N.encode_inj|].
+      apply IH; [intros item Hin; apply Hcodes; now right|exact Hvalid].
+  Qed.
+
+  (** A cached predecessor step preserves distinct discovered and pending points. *)
+  Lemma cached_predecessors_valid : forall q x n st, C.wf q ->
+    live_valid N.encode st ->
+    live_valid N.encode (cached_predecessors (incoming_table q) x n st).
+  Proof.
+    intros q x n st Hwf Hvalid. unfold cached_predecessors.
+    apply cached_rows_valid; [now apply incoming_table_codes|exact Hvalid].
+  Qed.
+
+  (** Adding one live predecessor preserves semantic soundness. *)
+  Lemma live_discover_sound : forall q x n st,
+    In n (C.nodes q) ->
+    point_live (C.nodes q) (C.out q) (C.dst q) (U.uses q) (U.defs q) (U.exits q) x n ->
+    live_sound q x st -> live_sound q x (live_discover N.encode n st).
+  Proof.
+    intros q x n st Hnode Hlive Hsound. unfold live_discover, live_discover_code.
+    destruct (live_member (N.encode n) (live_seen st)); [exact Hsound|].
+    intros m [<-|Hin]; [now split|now apply Hsound].
+  Qed.
+
+  (** Cached edges propagate only across an edge that does not define the variable. *)
+  Lemma cached_rows_sound : forall q x n les st, C.wf q ->
+    incl les (index_row (incoming_table q) (N.encode n)) ->
+    point_live (C.nodes q) (C.out q) (C.dst q) (U.uses q) (U.defs q) (U.exits q) x n ->
+    live_sound q x st -> live_sound q x (fold_right (cached_step x) st les).
+  Proof.
+    intros q x n les; induction les as [|le rest IH]; intros st Hwf Hrows Hlive Hsound;
+      cbn [fold_right]; [exact Hsound|].
+    assert (Htail : live_sound q x (fold_right (cached_step x) st rest)).
+    { apply IH; [exact Hwf|intros item Hin; apply Hrows; now right|exact Hlive|exact Hsound]. }
+    destruct (proj1 (incoming_table_member q n le Hwf) (Hrows le (or_introl eq_refl)))
+      as [e [He ->]].
+    unfold cached_step. destruct (live_member x (live_defs (incoming_edge q e))) eqn:Hclear;
+      [exact Htail|].
+    rewrite incoming_edge_code, incoming_edge_pred. apply live_discover_sound; [| |exact Htail].
+    - exact (proj1 (C.edges_nodes q e Hwf (proj1 (proj1 (C.inc_spec q n e Hwf) He)))).
+    - apply (C.inc_spec q n e Hwf) in He. destruct He as [He Hdst].
+      apply Point_live_next with e.
+      + apply C.out_spec; [exact Hwf|now split].
+      + intro Hdef. apply (proj2 (incoming_edge_defs q e x)) in Hdef. congruence.
+      + exact (proj2 (C.edges_nodes q e Hwf He)).
+      + now rewrite Hdst.
+  Qed.
+
+  (** A cached expansion preserves the live region after popping its current point. *)
+  Lemma cached_step_sound : forall q x st n pending, C.wf q ->
+    live_valid N.encode st -> live_sound q x st -> live_todo st = n :: pending ->
+    live_sound q x (cached_predecessors (incoming_table q) x n
+      {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}).
+  Proof.
+    intros q x st n pending Hwf Hvalid Hsound Htodo. unfold cached_predecessors.
+    apply cached_rows_sound with n; [exact Hwf|apply incl_refl| |exact Hsound].
+    assert (Hdone : In n (live_done st)).
+    { apply (proj2 (proj2 (proj2 Hvalid))). rewrite Htodo; now left. }
+    exact (proj2 (Hsound n Hdone)).
+  Qed.
+
+  (** The cached search preserves its worklist invariant for every amount of fuel. *)
+  Lemma cached_fuel_valid : forall fuel q x st, C.wf q ->
+    live_valid N.encode st ->
+    live_valid N.encode (cached_fuel fuel (incoming_table q) x st).
+  Proof.
+    induction fuel as [|fuel IH]; intros q x st Hwf Hvalid; cbn [cached_fuel];
+      [exact Hvalid|].
+    destruct (live_todo st) as [|n pending] eqn:Htodo; [exact Hvalid|].
+    apply IH; [exact Hwf|]. apply cached_predecessors_valid; [exact Hwf|].
+    eapply live_pop_valid; eassumption.
+  Qed.
+
+  (** Every discovered cached-search point is semantically live. *)
+  Lemma cached_fuel_sound : forall fuel q x st, C.wf q ->
+    live_valid N.encode st -> live_sound q x st ->
+    live_sound q x (cached_fuel fuel (incoming_table q) x st).
+  Proof.
+    induction fuel as [|fuel IH]; intros q x st Hwf Hvalid Hsound;
+      cbn [cached_fuel]; [exact Hsound|].
+    destruct (live_todo st) as [|n pending] eqn:Htodo; [exact Hsound|].
+    apply IH; [exact Hwf| |].
+    - apply cached_predecessors_valid; [exact Hwf|]. eapply live_pop_valid; eassumption.
+    - eapply cached_step_sound; eassumption.
+  Qed.
+
+  (** Cached search returns each point at most once. *)
+  Lemma cached_search_nodup : forall q x, C.wf q ->
+    NoDup (cached_search (length (C.nodes q)) (seed_index q) (incoming_table q) x).
+  Proof.
+    intros q x Hwf. unfold cached_search.
+    apply (proj1 (cached_fuel_valid (length (C.nodes q)) q x
+      (live_initial N.encode (index_row (seed_index q) x)) Hwf
+      (live_initial_valid N.t N.encode N.encode_inj _))).
+  Qed.
+
+  (** Cached search stays within the original semantic live-point region. *)
+  Lemma cached_search_live : forall q x n, C.wf q ->
+    In n (cached_search (length (C.nodes q)) (seed_index q) (incoming_table q) x) ->
+    In n (C.nodes q) /\
+      point_live (C.nodes q) (C.out q) (C.dst q) (U.uses q) (U.defs q) (U.exits q) x n.
+  Proof.
+    intros q x n Hwf Hin.
+    eapply (cached_fuel_sound (length (C.nodes q)) q x
+      (live_initial N.encode (index_row (seed_index q) x)) Hwf); [| |exact Hin].
+    - apply live_initial_valid; exact N.encode_inj.
+    - intros m Hm. apply live_initial_done in Hm; [|exact N.encode_inj].
+      destruct (seed_index_live q x m Hwf Hm) as [Hnode [_ Hlive]]; now split.
+  Qed.
+
+  (** A cached row adds exactly the predecessors of edges that do not kill the variable. *)
+  Lemma cached_rows_done : forall x les st,
+    (forall le, In le les -> live_pred_code le = N.encode (live_pred le)) ->
+    live_valid N.encode st -> forall m,
+    In m (live_done (fold_right (cached_step x) st les)) <->
+      In m (live_done st) \/ exists le, In le les /\
+        live_member x (live_defs le) = false /\ live_pred le = m.
+  Proof.
+    intros x les; induction les as [|le rest IH]; intros st Hcodes Hvalid m;
+      cbn [fold_right].
+    - split; [now left|intros [Hin|[item [Hin _]]]; [assumption|contradiction]].
+    - assert (Htailcodes : forall item, In item rest ->
+        live_pred_code item = N.encode (live_pred item)).
+      { intros item Hin; apply Hcodes; now right. }
+      unfold cached_step at 1.
+      destruct (live_member x (live_defs le)) eqn:Hkill.
+      + rewrite IH by assumption. split.
+        * intros [Hin|[item [Hi Hrest]]]; [now left|].
+          right; exists item; split; [now right|exact Hrest].
+        * intros [Hin|[item [[->|Hi] [Hclear Hpred]]]]; [now left|congruence|].
+          right; exists item; auto.
+      + rewrite (Hcodes le (or_introl eq_refl)).
+        fold (live_discover N.encode (live_pred le) (fold_right (cached_step x) st rest)).
+        rewrite live_discover_done by (now apply cached_rows_valid).
+        rewrite IH by assumption. split.
+        * intros [Heq|[Hin|[item [Hi Hrest]]]].
+          -- right; exists le; split; [now left|split; [exact Hkill|now symmetry]].
+          -- now left.
+          -- right; exists item; split; [now right|exact Hrest].
+        * intros [Hin|[item [[->|Hi] [Hclear Hpred]]]].
+          -- now right; left.
+          -- left; now symmetry.
+          -- right; right; exists item; auto.
+  Qed.
+
+  (** Reading a cached predecessor row implements the incoming edge relation exactly. *)
+  Lemma cached_predecessors_done : forall q x n st, C.wf q ->
+    live_valid N.encode st -> forall m,
+    In m (live_done (cached_predecessors (incoming_table q) x n st)) <->
+      In m (live_done st) \/ exists e, In e (C.inc q n) /\
+        ~ In x (U.defs q e) /\ C.src q e = m.
+  Proof.
+    intros q x n st Hwf Hvalid m. unfold cached_predecessors.
+    rewrite cached_rows_done by (first [now apply incoming_table_codes|exact Hvalid]).
+    split.
+    - intros [Hin|[le [Hle [Hclear Hpred]]]]; [now left|].
+      apply (incoming_table_member q n le Hwf) in Hle.
+      destruct Hle as [e [He ->]]. right; exists e. split; [exact He|]. split.
+      + intro Hdef. apply (proj2 (incoming_edge_defs q e x)) in Hdef. congruence.
+      + exact Hpred.
+    - intros [Hin|[e [He [Hnot Hsrc]]]]; [now left|].
+      right; exists (incoming_edge q e). split.
+      + apply (incoming_table_member q n (incoming_edge q e) Hwf). exists e; auto.
+      + split; [|exact Hsrc].
+        destruct (live_member x (live_defs (incoming_edge q e))) eqn:Hkill; [|reflexivity].
+        exfalso. apply Hnot, (proj1 (incoming_edge_defs q e x)), Hkill.
+  Qed.
+
+  (** Any point processed after additions was already processed before them. *)
+  Lemma cached_rows_processed : forall x les st m,
+    In m (live_done (fold_right (cached_step x) st les)) ->
+    ~ In m (live_todo (fold_right (cached_step x) st les)) ->
+    In m (live_done st) /\ ~ In m (live_todo st).
+  Proof.
+    intros x les; induction les as [|le rest IH]; intros st m Hdone Htodo;
+      [now split|].
+    cbn [fold_right] in Hdone, Htodo.
+    set (tail := fold_right (cached_step x) st rest) in Hdone, Htodo.
+    unfold cached_step in Hdone, Htodo.
+    destruct (live_member x (live_defs le)); [now apply IH with (m := m)|].
+    unfold live_discover_code in Hdone, Htodo.
+    destruct (live_member (live_pred_code le)
+      (live_seen tail)).
+    - now apply IH with (m := m).
+    - cbn in Hdone, Htodo. apply IH with (m := m); tauto.
+  Qed.
+
+  (** A new discovery increases the pending and discovered counts together. *)
+  Lemma cached_rows_balance : forall x les st,
+    length (live_done (fold_right (cached_step x) st les)) + length (live_todo st) =
+      length (live_done st) + length (live_todo (fold_right (cached_step x) st les)).
+  Proof.
+    intros x les; induction les as [|le rest IH]; intro st; cbn [fold_right]; [lia|].
+    set (tail := fold_right (cached_step x) st rest).
+    unfold cached_step. destruct (live_member x (live_defs le)); [apply IH|].
+    unfold live_discover_code.
+    destruct (live_member (live_pred_code le)
+      (live_seen tail)); [apply IH|].
+    change (S (length (live_done tail)) + length (live_todo st) =
+      length (live_done st) + S (length (live_todo tail))).
+    specialize (IH st). fold tail in IH. lia.
+  Qed.
+
+  (** All already processed points have propagated across their non-killing incoming edges. *)
+  Definition cached_ready (q : Q.t) (x : positive) (st : live_state N.t) : Prop :=
+    forall n, In n (live_done st) -> ~ In n (live_todo st) -> forall e,
+      In e (C.inc q n) -> ~ In x (U.defs q e) -> In (C.src q e) (live_done st).
+
+  (** Processing one cached predecessor row preserves closure of all processed points. *)
+  Lemma cached_step_ready : forall q x st n pending, C.wf q ->
+    live_valid N.encode st -> cached_ready q x st -> live_todo st = n :: pending ->
+    cached_ready q x (cached_predecessors (incoming_table q) x n
+      {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}).
+  Proof.
+    intros q x st n pending Hwf Hvalid Hready Htodo m Hdone Hnot e He Hclear.
+    assert (Hpop := live_pop_valid st n pending Hvalid Htodo).
+    unfold cached_predecessors in Hdone, Hnot.
+    destruct (cached_rows_processed x _ _ m Hdone Hnot) as [Hold Hpending].
+    cbn in Hold, Hpending.
+    apply cached_predecessors_done; [exact Hwf|exact Hpop|].
+    destruct (node_eq_dec m n) as [->|Hneq].
+    - right; exists e; auto.
+    - left. apply Hready with m; try assumption. rewrite Htodo; cbn. intuition congruence.
+  Qed.
+
+  (** The node-count fuel suffices because a point is popped at most once. *)
+  Lemma cached_fuel_correct : forall fuel q x st, C.wf q ->
+    live_valid N.encode st -> live_sound q x st -> cached_ready q x st ->
+    length (C.nodes q) + length (live_todo st) <= length (live_done st) + fuel ->
+    let result := cached_fuel fuel (incoming_table q) x st in
+    live_valid N.encode result /\ live_sound q x result /\
+      cached_ready q x result /\ live_todo result = [] /\
+      incl (live_done st) (live_done result).
+  Proof.
+    induction fuel as [|fuel IH]; intros q x st Hwf Hvalid Hsound Hready Hbudget.
+    - cbn [cached_fuel]. assert (Hlength : length (live_done st) <= length (C.nodes q)).
+      { apply NoDup_incl_length; [exact (proj1 Hvalid)|].
+        intros n Hin; exact (proj1 (Hsound n Hin)). }
+      assert (Hempty : live_todo st = []) by (apply length_zero_iff_nil; lia).
+      split; [exact Hvalid|]. split; [exact Hsound|]. split; [exact Hready|].
+      split; [exact Hempty|apply incl_refl].
+    - cbn [cached_fuel]. destruct (live_todo st) as [|n pending] eqn:Htodo.
+      + split; [exact Hvalid|]. split; [exact Hsound|]. split; [exact Hready|].
+        split; [exact Htodo|apply incl_refl].
+      + set (popped := {| live_seen := live_seen st; live_todo := pending;
+                         live_done := live_done st |}).
+        set (next := cached_predecessors (incoming_table q) x n popped).
+        assert (Hpop : live_valid N.encode popped) by (eapply live_pop_valid; eassumption).
+        assert (Hnext : live_valid N.encode next) by (now apply cached_predecessors_valid).
+        assert (Hnext_sound : live_sound q x next) by (eapply cached_step_sound; eassumption).
+        assert (Hnext_ready : cached_ready q x next) by (eapply cached_step_ready; eassumption).
+        assert (Hnext_budget : length (C.nodes q) + length (live_todo next) <=
+          length (live_done next) + fuel).
+        { pose proof (cached_rows_balance x
+            (index_row (incoming_table q) (N.encode n)) popped) as Hbalance.
+          change (length (live_done next) + length (live_todo popped) =
+            length (live_done popped) + length (live_todo next)) in Hbalance.
+          unfold popped in Hbalance; cbn in Hbalance. cbn in Hbudget. lia. }
+        destruct (IH q x next Hwf Hnext Hnext_sound Hnext_ready Hnext_budget)
+          as [Hv [Hs [Hr [Ht Hsub]]]].
+        split; [exact Hv|]. split; [exact Hs|]. split; [exact Hr|]. split; [exact Ht|].
+        intros m Hin. apply Hsub. apply cached_predecessors_done;
+          [exact Hwf|exact Hpop|now left].
+  Qed.
+
+  (** Cached search returns every live point exactly once, including across parallel edges. *)
+  Lemma cached_search_spec : forall q x, C.wf q ->
+    NoDup (cached_search (length (C.nodes q)) (seed_index q) (incoming_table q) x) /\ forall n,
+      In n (cached_search (length (C.nodes q)) (seed_index q) (incoming_table q) x) <->
+      In n (C.nodes q) /\
+        point_live (C.nodes q) (C.out q) (C.dst q) (U.uses q) (U.defs q) (U.exits q) x n.
+  Proof.
+    intros q x Hwf.
+    set (initial := live_initial N.encode (index_row (seed_index q) x)).
+    assert (Hvalid : live_valid N.encode initial) by
+      (apply live_initial_valid; exact N.encode_inj).
+    assert (Hsound : live_sound q x initial).
+    { intros n Hin. apply live_initial_done in Hin; [|exact N.encode_inj].
+      destruct (seed_index_live q x n Hwf Hin) as [Hn [_ Hlive]]; now split. }
+    assert (Hready : cached_ready q x initial).
+    { intros n Hin Hnot. exfalso. apply Hnot.
+      unfold initial. rewrite live_initial_todo. exact Hin. }
+    assert (Hbudget : length (C.nodes q) + length (live_todo initial) <=
+      length (live_done initial) + length (C.nodes q)).
+    { unfold initial. rewrite live_initial_todo. lia. }
+    destruct (cached_fuel_correct (length (C.nodes q)) q x initial Hwf Hvalid Hsound Hready
+      Hbudget) as [Hresult [Hlive [Hclosed [Hempty Hcontains]]]].
+    split; [exact (proj1 Hresult)|]. intro n. split; [apply Hlive|].
+    intros [Hnode Hn]; revert Hnode.
+    induction Hn as [n Hexit|n e Hout Huse|n e Hout Hnot Hdst Hn IH]; intro Hnode.
+    - apply Hcontains. apply live_initial_done; [exact N.encode_inj|].
+      apply seed_index_spec. now left.
+    - apply Hcontains. apply live_initial_done; [exact N.encode_inj|].
+      apply seed_index_spec. right; exists e. apply C.out_spec in Hout; [|exact Hwf]. tauto.
+    - apply C.out_spec in Hout; [|exact Hwf]. destruct Hout as [He Hsrc].
+      rewrite <- Hsrc. apply Hclosed with (C.dst q e); [now apply IH| | |exact Hnot].
+      + rewrite Hempty. tauto.
+      + apply C.inc_spec; auto.
+  Qed.
+
+  (** The cached and reference searches enumerate the same live points. *)
+  Lemma cached_search_membership : forall q x n, C.wf q ->
+    (In n (cached_search (length (C.nodes q)) (seed_index q) (incoming_table q) x) <->
+      In n (search (length (C.nodes q)) q (seed_index q) (reverse_kills q) x)).
+  Proof.
+    intros q x n Hwf. rewrite (proj2 (cached_search_spec q x Hwf) n).
+    symmetry. exact (proj2 (search_spec q x Hwf) n).
+  Qed.
+
   Lemma group_point_values : forall q listed x n rows allowed,
     In x allowed -> (forall b, incl (index_row rows b) allowed) ->
     forall b, incl (index_row (group_point q listed x n rows) b) allowed.
@@ -1631,9 +2138,9 @@ Module Live (O : OPS)
   Qed.
 
   (** The cache preserves row order and contents whenever the point graph is well formed. *)
-  Lemma live_in_agrees : forall p, C.wf (R.prepare p) -> live_in p = live_in_spec p.
+  Lemma live_in_entries_agrees : forall p, C.wf (R.prepare p) -> live_in_entries p = live_in_spec p.
   Proof.
-    intros p Hwf. unfold live_in, live_in_spec.
+    intros p Hwf. unfold live_in_entries, live_in_spec.
     set (q := R.prepare p) in *.
     set (bs := BC.nodes q).
     set (visits := search (length (C.nodes q)) q (seed_index q) (reverse_kills q)).
@@ -1663,9 +2170,22 @@ Module LiveT (O : OPS)
   TimeFun seed_index.
   TimeFun reverse_index.
   TimeFun reverse_kills.
+
+  TimeFun incoming_edge.
+  TimeFun incoming_edges.
+  TimeFun incoming_insert.
+  TimeFun incoming_build.
+  TimeFun incoming_table.
+
   TimeFun add_predecessors.
   TimeFun explore_fuel.
   TimeFun search.
+
+  TimeFun cached_step.
+  TimeFun cached_predecessors.
+  TimeFun cached_fuel.
+  TimeFun cached_search.
+
   TimeFun block_index.
   TimeFun group_point.
   TimeFun entry_block.
@@ -1694,6 +2214,27 @@ Module LiveT (O : OPS)
     - intros n x. rewrite live_pairs_in, (proj2 (search_spec (R.prepare p) x Hwf) n).
       tauto.
   Qed.
+  (** The cached producer enumerates only pairs of the original charged live region. *)
+  Definition cached_region (p : P.t) : list (N.t * positive) :=
+    let q := R.prepare p in
+    flat_map (fun x => map (fun n => (n, x))
+      (cached_search (length (C.nodes q)) (seed_index q) (incoming_table q) x))
+      (U.universe q).
+
+  Lemma cached_region_nodup : forall p, NoDup (cached_region p).
+  Proof.
+    intro p. unfold cached_region. apply live_pairs_nodup; [apply U.universe_nodup|].
+    intro x. apply cached_search_nodup. exact (proj2 (PB.prepared_wf p)).
+  Qed.
+
+  Lemma cached_region_incl : forall p, incl (cached_region p) (live_region p).
+  Proof.
+    intros p [n x] Hin. unfold cached_region in Hin. apply live_pairs_in in Hin.
+    destruct Hin as [Hx Hn]. apply (proj2 (live_region_spec p) n x).
+    destruct (cached_search_live (R.prepare p) x n (proj2 (PB.prepared_wf p)) Hn)
+      as [Hnode Hlive]. repeat split; assumption.
+  Qed.
+
   Definition live_size p := fold_right (fun pair n =>
     1 + length (C.inc (R.prepare p) (fst pair)) + n) 0 (live_region p).
   Definition rows_size (rows : list (positive * list positive)) :=
@@ -1704,7 +2245,7 @@ Module LiveT (O : OPS)
   Proof.
     intro p. unfold live_in.
     set (q := R.prepare p). set (bs := BC.nodes q).
-    set (visits := search (length (C.nodes q)) q (seed_index q) (reverse_kills q)).
+    set (visits := cached_search (length (C.nodes q)) (seed_index q) (incoming_table q)).
     set (rows := fold_right (fun x acc =>
       fold_right (group_entry (entry_table q bs) x) acc (visits x)) Empty (U.universe q)).
     assert (Hrows : forall ids table,
@@ -1718,7 +2259,11 @@ Module LiveT (O : OPS)
     rewrite Hrows.
     change (length bs + live_rows_mass bs rows <= length (blocks _ _ _ p) + live_size p).
     assert (Hmass : live_rows_mass bs rows <= length (live_region p)).
-    { apply group_entry_variables_mass. apply BC.nodes_nodup. exact (proj1 (PB.prepared_wf p)). }
+    { assert (Hcache : live_rows_mass bs rows <= length (cached_region p)).
+      { apply group_entry_variables_mass. apply BC.nodes_nodup.
+        exact (proj1 (PB.prepared_wf p)). }
+      eapply Nat.le_trans; [exact Hcache|].
+      apply NoDup_incl_length; [apply cached_region_nodup|apply cached_region_incl]. }
     assert (Hregion : length (live_region p) <= live_size p).
     { unfold live_size. apply live_weighted_length. }
     pose proof (PB.block_nodes_le p) as Hblocks. unfold bs, q in *. lia.
@@ -2513,6 +3058,115 @@ Module LiveT (O : OPS)
     time_unfold T_reverse_kills. unfold live_graph_load. rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
+  (** Edge deduplication charges each encoded edge identity once. *)
+  Lemma incoming_discover_atom : forall p e st, In e (C.edges (R.prepare p)) ->
+    (T_live_discover E.encode E.T_encode e st <= 16 * live_clock_atom p)%N.
+  Proof.
+    intros p e st He.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_edge_key p e He) as Hkey.
+    pose proof (live_encode_edge_atom p e He) as Hencode.
+    pose proof (live_member_atom p (E.encode e) (live_seen st) Hkey) as Hmember.
+    pose proof (live_set_atom _ p (E.encode e) tt (live_seen st) Hkey) as Hset.
+    time_unfold @T_live_discover. time_unfold @T_live_discover_code. time_simpl.
+    destruct (live_member (E.encode e) (live_seen st)); nia.
+  Qed.
+
+  (** Deduplicating the edge inventory takes linear work at the syntax key width. *)
+  Lemma incoming_edges_atom : forall p,
+    (T_incoming_edges (R.prepare p) <=
+      24 * live_clock_atom p * N.of_nat (length (C.edges (R.prepare p)) + 1))%N.
+  Proof.
+    intro p. pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_edges_atom p) as Hedges.
+    assert (Hinitial : (T_live_initial E.encode E.T_encode (C.edges (R.prepare p)) <=
+      20 * live_clock_atom p * N.of_nat (length (C.edges (R.prepare p)) + 1))%N).
+    { time_unfold @T_live_initial.
+      let p := constr:(p) in match goal with
+      | |- context [List.T_fold_right ?step ?clock ?initial (C.edges (R.prepare p))] =>
+        assert (Hfold : (List.T_fold_right step clock initial (C.edges (R.prepare p)) <=
+          (16 * live_clock_atom p + 1) * N.of_nat (length (C.edges (R.prepare p))) + 1)%N)
+      end.
+      { apply live_fold_clock_uniform. intros e He st. now apply incoming_discover_atom. }
+      rewrite Nat2N.inj_add. nia. }
+    time_unfold T_incoming_edges.
+    change (1 + (C.T_edges (R.prepare p) +
+      T_live_initial E.encode E.T_encode (C.edges (R.prepare p)) + 1) <=
+      24 * live_clock_atom p * N.of_nat (length (C.edges (R.prepare p)) + 1))%N.
+    rewrite Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Resolving an edge stores its source code and builds its definition set once. *)
+  Lemma incoming_edge_atom : forall p e, In e (C.edges (R.prepare p)) ->
+    (T_incoming_edge (R.prepare p) e <=
+      16 * live_clock_atom p * N.of_nat (length (U.defs (R.prepare p) e) + 1))%N.
+  Proof.
+    intros p e He.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (proj2 (PB.prepared_wf p)) as Hwf.
+    pose proof (proj1 (C.edges_nodes (R.prepare p) e Hwf He)) as Hsrc.
+    pose proof (live_src_atom p e) as Hsource.
+    pose proof (live_encode_node_atom p (C.src (R.prepare p) e) Hsrc) as Hencode.
+    pose proof (live_defs_atom p e He) as Hdefs.
+    pose proof (live_intersection_atom p (U.defs (R.prepare p) e) None
+      ltac:(intros x Hx; exact (live_defs_universe (R.prepare p) e x He Hx))) as Hset.
+    time_unfold T_incoming_edge. rewrite Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Inserting a resolved edge pays for its destination key and definition occurrences. *)
+  Lemma incoming_insert_atom : forall p e table, In e (C.edges (R.prepare p)) ->
+    (T_incoming_insert (R.prepare p) e table <=
+      24 * live_clock_atom p * N.of_nat (length (U.defs (R.prepare p) e) + 1))%N.
+  Proof.
+    intros p e table He.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (proj2 (PB.prepared_wf p)) as Hwf.
+    pose proof (proj2 (C.edges_nodes (R.prepare p) e Hwf He)) as Hdst.
+    pose proof (live_dst_atom p e) as Htarget.
+    pose proof (live_encode_node_atom p (C.dst (R.prepare p) e) Hdst) as Hencode.
+    pose proof (live_node_key p (C.dst (R.prepare p) e) Hdst) as Hkey.
+    pose proof (incoming_edge_atom p e He) as Hedge.
+    pose proof (live_row_atom _ p table (N.encode (C.dst (R.prepare p) e)) Hkey) as Hrow.
+    pose proof (live_set_atom _ p (N.encode (C.dst (R.prepare p) e))
+      (incoming_edge (R.prepare p) e :: index_row table (N.encode (C.dst (R.prepare p) e)))
+      table Hkey) as Hset.
+    time_unfold T_incoming_insert. rewrite Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Cache construction scans only its edge list and its definition occurrences. *)
+  Lemma incoming_build_atom : forall p es, incl es (C.edges (R.prepare p)) ->
+    (T_incoming_build (R.prepare p) es <= 32 * live_clock_atom p *
+      N.of_nat (length es + length (flat_map (U.defs (R.prepare p)) es) + 1))%N.
+  Proof.
+    intros p es Hedges. pose proof (live_clock_atom_positive p) as Hpositive.
+    time_unfold T_incoming_build.
+    let es := constr:(es) in match goal with
+    | |- context [List.T_fold_right ?step ?clock Empty es] =>
+      assert (Hfold : (List.T_fold_right step clock Empty es <=
+        (24 * live_clock_atom p + 1) * N.of_nat
+          (fold_right (fun e n => (length (U.defs (R.prepare p) e) + 1 + n)%nat) 0%nat es)
+          + 1)%N)
+    end.
+    { apply live_fold_clock_weight; [intros; lia|].
+      intros e He table. apply incoming_insert_atom. now apply Hedges. }
+    rewrite live_fold_lengths in Hfold. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** The eager cache is linear in listed edges, regardless of adjacency multiplicities. *)
+  Lemma incoming_table_atom : forall p,
+    (T_incoming_table (R.prepare p) <=
+      128 * live_clock_atom p * N.of_nat (live_graph_load (R.prepare p)))%N.
+  Proof.
+    intro p. pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (incoming_edges_atom p) as Hedges.
+    pose proof (incoming_build_atom p (incoming_edges (R.prepare p))
+      ltac:(intros e He; now apply incoming_edges_spec)) as Hbuild.
+    pose proof (incoming_edges_work (R.prepare p)) as Hwork.
+    pose proof (live_def_count (R.prepare p)) as Hdefs.
+    time_unfold T_incoming_table. unfold live_graph_load.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
   Lemma use_index_bound : forall p,
     (T_use_index (R.prepare p) <= live_index_budget * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
@@ -2558,6 +3212,112 @@ Module LiveT (O : OPS)
     - apply live_discover_done; [exact Hvalid|now right].
     - rewrite live_discover_todo by exact Hvalid.
       intros [[-> Hfresh]|Hin]; contradiction.
+  Qed.
+
+  (** Processing cached edges cannot requeue a point that has already been processed. *)
+  Lemma cached_rows_keep_processed : forall x les st m,
+    (forall le, In le les -> live_pred_code le = N.encode (live_pred le)) ->
+    live_valid N.encode st -> In m (live_done st) -> ~ In m (live_todo st) ->
+    In m (live_done (fold_right (cached_step x) st les)) /\
+      ~ In m (live_todo (fold_right (cached_step x) st les)).
+  Proof.
+    intros x les; induction les as [|le rest IH]; intros st m Hcodes Hvalid Hdone Htodo;
+      cbn [fold_right]; [now split|].
+    assert (Htailcodes : forall item, In item rest ->
+      live_pred_code item = N.encode (live_pred item)).
+    { intros item Hin; apply Hcodes; now right. }
+    destruct (IH st m Htailcodes Hvalid Hdone Htodo) as [Hdone' Htodo'].
+    unfold cached_step. destruct (live_member x (live_defs le)); [now split|].
+    rewrite (Hcodes le (or_introl eq_refl)).
+    apply live_discover_keep_processed; [now apply cached_rows_valid|assumption|assumption].
+  Qed.
+
+  (** A complete cached predecessor row also preserves already processed points. *)
+  Lemma cached_predecessors_keep_processed : forall q x n st m, C.wf q ->
+    live_valid N.encode st -> In m (live_done st) -> ~ In m (live_todo st) ->
+    In m (live_done (cached_predecessors (incoming_table q) x n st)) /\
+      ~ In m (live_todo (cached_predecessors (incoming_table q) x n st)).
+  Proof.
+    intros q x n st m Hwf Hvalid Hdone Htodo. unfold cached_predecessors.
+    apply cached_rows_keep_processed; [now apply incoming_table_codes|assumption|assumption|assumption].
+  Qed.
+
+  (** This proof-only trace records expanded points of the cached search. *)
+  Fixpoint cached_trace (fuel : nat) (table : ptrie (list (live_edge N.t)))
+      (x : positive) (st : live_state N.t) : list N.t :=
+    match fuel with
+    | 0 => []
+    | S rest =>
+      match live_todo st with
+      | [] => []
+      | n :: pending => n :: cached_trace rest table x
+          (cached_predecessors table x n
+            {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |})
+      end
+    end.
+
+  Lemma cached_trace_excludes : forall fuel q x st m, C.wf q ->
+    live_valid N.encode st -> In m (live_done st) -> ~ In m (live_todo st) ->
+    ~ In m (cached_trace fuel (incoming_table q) x st).
+  Proof.
+    induction fuel as [|fuel IH]; intros q x st m Hwf Hvalid Hdone Htodo;
+      cbn [cached_trace]; [tauto|].
+    destruct (live_todo st) as [|n pending] eqn:Hpending; [tauto|].
+    intros [Heq|Hin].
+    - subst m. apply Htodo. now left.
+    - assert (Hpop := live_pop_valid st n pending Hvalid Hpending).
+      assert (Hnot : ~ In m pending).
+      { intro Hm; apply Htodo. now right. }
+      destruct (cached_predecessors_keep_processed q x n
+        {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}
+        m Hwf Hpop Hdone Hnot) as [Hdone' Htodo'].
+      eapply (IH q x (cached_predecessors (incoming_table q) x n
+        {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}) m).
+      + exact Hwf.
+      + apply cached_predecessors_valid; assumption.
+      + exact Hdone'.
+      + exact Htodo'.
+      + exact Hin.
+  Qed.
+
+  Lemma cached_trace_nodup : forall fuel q x st, C.wf q ->
+    live_valid N.encode st -> NoDup (cached_trace fuel (incoming_table q) x st).
+  Proof.
+    induction fuel as [|fuel IH]; intros q x st Hwf Hvalid;
+      cbn [cached_trace]; [constructor|].
+    destruct (live_todo st) as [|n pending] eqn:Hpending; [constructor|].
+    assert (Hpop := live_pop_valid st n pending Hvalid Hpending).
+    assert (Hnext : live_valid N.encode (cached_predecessors (incoming_table q) x n
+      {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |})).
+    { apply cached_predecessors_valid; assumption. }
+    constructor; [|now apply IH].
+    assert (Hdone : In n (live_done st)).
+    { apply (proj2 (proj2 (proj2 Hvalid))). rewrite Hpending; now left. }
+    assert (Hnot : ~ In n pending).
+    { pose proof (proj1 (proj2 (proj2 Hvalid))) as Hdup.
+      rewrite Hpending in Hdup. now inversion Hdup. }
+    destruct (cached_predecessors_keep_processed q x n
+      {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}
+      n Hwf Hpop Hdone Hnot) as [Hdone' Htodo'].
+    eapply cached_trace_excludes; eassumption.
+  Qed.
+
+  Lemma cached_trace_sound : forall fuel q x st,
+    C.wf q -> live_valid N.encode st -> live_sound q x st ->
+    forall n, In n (cached_trace fuel (incoming_table q) x st) ->
+      In n (C.nodes q) /\
+      point_live (C.nodes q) (C.out q) (C.dst q) (U.uses q) (U.defs q) (U.exits q) x n.
+  Proof.
+    induction fuel as [|fuel IH]; intros q x st Hwf Hvalid Hsound m Hin;
+      cbn [cached_trace] in Hin; [contradiction|].
+    destruct (live_todo st) as [|n pending] eqn:Hpending; [contradiction|].
+    destruct Hin as [<-|Hin].
+    - apply Hsound. apply (proj2 (proj2 (proj2 Hvalid))). rewrite Hpending; now left.
+    - eapply (IH q x (cached_predecessors (incoming_table q) x n
+        {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}) Hwf).
+      + apply cached_predecessors_valid; [exact Hwf|]. eapply live_pop_valid; eassumption.
+      + eapply cached_step_sound; eassumption.
+      + exact Hin.
   Qed.
 
   Lemma add_predecessors_keep_processed : forall q kills x n es st m,
@@ -2711,6 +3471,33 @@ Module LiveT (O : OPS)
     apply (proj2 (live_region_spec p) n x). apply Hspec in Hin; tauto.
   Qed.
 
+  Lemma cached_trace_charge : forall p x fuel st,
+    In x (U.universe (R.prepare p)) -> live_valid N.encode st ->
+    live_sound (R.prepare p) x st ->
+    live_trace_work (R.prepare p)
+      (cached_trace fuel (incoming_table (R.prepare p)) x st) <= variable_work p x.
+  Proof.
+    intros p x fuel st Hx Hvalid Hsound. apply live_point_charge.
+    - apply cached_trace_nodup; [exact (proj2 (PB.prepared_wf p))|exact Hvalid].
+    - intros n Hin. apply (proj2 (live_region_spec p) n x).
+      destruct (cached_trace_sound fuel (R.prepare p) x st
+        (proj2 (PB.prepared_wf p)) Hvalid Hsound n Hin) as [Hnode Hlive].
+      repeat split; assumption.
+  Qed.
+
+  Lemma cached_search_charge : forall p x,
+    In x (U.universe (R.prepare p)) ->
+    length (cached_search (length (C.nodes (R.prepare p)))
+      (seed_index (R.prepare p)) (incoming_table (R.prepare p)) x) <= variable_work p x.
+  Proof.
+    intros p x Hx. eapply Nat.le_trans; [apply live_points_length|].
+    apply live_point_charge.
+    - apply cached_search_nodup. exact (proj2 (PB.prepared_wf p)).
+    - intros n Hin. apply (proj2 (live_region_spec p) n x).
+      destruct (cached_search_live (R.prepare p) x n (proj2 (PB.prepared_wf p)) Hin)
+        as [Hnode Hlive]. repeat split; assumption.
+  Qed.
+
   (** Each expansion pays for its bounded keys and actual incoming incidences. *)
   Lemma live_kill_row_atom : forall p table src dst,
     (N.of_nat (Pos.size_nat src + 1) <= live_clock_scale * live_clock_width p)%N ->
@@ -2776,6 +3563,117 @@ Module LiveT (O : OPS)
     end.
     { apply live_fold_clock_uniform. intros n Hn st. apply live_discover_atom; now apply Hseeds. }
     rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** A cached edge expansion performs one definition-membership check and discovery. *)
+  Lemma cached_step_atom : forall p x n le st,
+    In x (U.universe (R.prepare p)) ->
+    In le (index_row (incoming_table (R.prepare p)) (N.encode n)) ->
+    (T_cached_step x le st <= 16 * live_clock_atom p)%N.
+  Proof.
+    intros p x n le st Hx Hle.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (proj2 (PB.prepared_wf p)) as Hwf.
+    apply (incoming_table_member (R.prepare p) n le Hwf) in Hle.
+    destruct Hle as [e [He ->]]. apply (C.inc_spec _ _ _ Hwf) in He.
+    pose proof (proj1 (C.edges_nodes (R.prepare p) e Hwf (proj1 He))) as Hsrc.
+    pose proof (live_discover_code_atom p (C.src (R.prepare p) e) st Hsrc) as Hdiscover.
+    pose proof (live_member_atom p x (live_defs (incoming_edge (R.prepare p) e))
+      (live_variable_key p x Hx)) as Hmember.
+    time_unfold T_cached_step. time_simpl.
+    rewrite incoming_edge_code, incoming_edge_pred.
+    destruct (live_member x (live_defs (incoming_edge (R.prepare p) e))); nia.
+  Qed.
+
+  (** Reading a cached row pays for its point key and no more than its public incidence count. *)
+  Lemma cached_predecessors_atom : forall p x n st,
+    In x (U.universe (R.prepare p)) -> In n (C.nodes (R.prepare p)) ->
+    (T_cached_predecessors (incoming_table (R.prepare p)) x n st <=
+      32 * live_clock_atom p * N.of_nat (length (C.inc (R.prepare p) n) + 1))%N.
+  Proof.
+    intros p x n st Hx Hn.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_encode_node_atom p n Hn) as Hencode.
+    pose proof (live_row_atom _ p (incoming_table (R.prepare p)) (N.encode n)
+      (live_node_key p n Hn)) as Hrow.
+    pose proof (incoming_table_length (R.prepare p) n (proj2 (PB.prepared_wf p))) as Hlength.
+    time_unfold T_cached_predecessors.
+    let st := constr:(st) in match goal with
+    | |- context [List.T_fold_right ?step ?clock st ?row] =>
+      assert (Hfold : (List.T_fold_right step clock st row <=
+        (16 * live_clock_atom p + 1) * N.of_nat (length row) + 1)%N)
+    end.
+    { apply live_fold_clock_uniform. intros le Hle state. now apply cached_step_atom with n. }
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma cached_fuel_atom : forall fuel p x st,
+    In x (U.universe (R.prepare p)) -> live_valid N.encode st ->
+    live_sound (R.prepare p) x st ->
+    (T_cached_fuel fuel (incoming_table (R.prepare p)) x st <=
+      64 * live_clock_atom p * N.of_nat
+        (live_trace_work (R.prepare p)
+          (cached_trace fuel (incoming_table (R.prepare p)) x st) + 1))%N.
+  Proof.
+    induction fuel as [|fuel IH]; intros p x st Hx Hvalid Hsound.
+    - pose proof (live_clock_atom_positive p) as Hpositive. time_step.
+    - pose proof (live_clock_atom_positive p) as Hpositive.
+      pose proof (proj2 (PB.prepared_wf p)) as Hwf.
+      time_unfold T_cached_fuel. time_simpl.
+      cbn [cached_trace]. destruct (live_todo st) as [|n pending] eqn:Hpending.
+      + cbn [live_trace_work fold_right]. nia.
+      + set (next := cached_predecessors (incoming_table (R.prepare p)) x n
+          {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}).
+        assert (Hnext : live_valid N.encode next).
+        { apply cached_predecessors_valid; [exact Hwf|]. eapply live_pop_valid; eassumption. }
+        assert (Hnextsound : live_sound (R.prepare p) x next).
+        { eapply cached_step_sound; eassumption. }
+        specialize (IH p x next Hx Hnext Hnextsound).
+        assert (Hnode : In n (C.nodes (R.prepare p))).
+        { assert (Hdone : In n (live_done st)).
+          { apply (proj2 (proj2 (proj2 Hvalid))). rewrite Hpending; now left. }
+          exact (proj1 (Hsound n Hdone)). }
+        pose proof (cached_predecessors_atom p x n
+          {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}
+          Hx Hnode) as Hpred.
+        fold next. change (1 + (1 + ((1 + 1) +
+          T_cached_predecessors (incoming_table (R.prepare p)) x n
+            {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}
+          + T_cached_fuel fuel (incoming_table (R.prepare p)) x next)) <=
+          64 * live_clock_atom p * N.of_nat
+            (1 + length (C.inc (R.prepare p) n) +
+              live_trace_work (R.prepare p)
+                (cached_trace fuel (incoming_table (R.prepare p)) x next) + 1))%N.
+        rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma cached_search_atom : forall p x, In x (U.universe (R.prepare p)) ->
+    (T_cached_search (length (C.nodes (R.prepare p)))
+      (seed_index (R.prepare p)) (incoming_table (R.prepare p)) x <=
+      128 * live_clock_atom p * N.of_nat (variable_work p x + 1))%N.
+  Proof.
+    intros p x Hx. set (q := R.prepare p).
+    set (initial := live_initial N.encode (index_row (seed_index q) x)).
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (proj2 (PB.prepared_wf p)) as Hwf.
+    assert (Hvalid : live_valid N.encode initial).
+    { apply live_initial_valid; exact N.encode_inj. }
+    assert (Hsound : live_sound q x initial).
+    { intros n Hn. apply live_initial_done in Hn; [|exact N.encode_inj].
+      destruct (seed_index_live q x n Hwf Hn) as [Hnode [_ Hlive]]; now split. }
+    pose proof (cached_trace_charge p x (length (C.nodes q)) initial Hx Hvalid Hsound) as Hcharge.
+    pose proof (cached_fuel_atom (length (C.nodes q)) p x initial Hx Hvalid Hsound) as Hfuel.
+    pose proof (live_seed_charge p x) as Hseeds.
+    pose proof (live_initial_atom p (index_row (seed_index q) x)
+      ltac:(intros n Hn; exact (proj1 (seed_index_live q x n Hwf Hn)))) as Hinitial.
+    pose proof (live_row_atom _ p (seed_index q) x (live_variable_key p x Hx)) as Hrow.
+    time_unfold T_cached_search. time_simpl. fold q initial.
+    fold q in Hcharge, Hfuel, Hseeds, Hinitial, Hrow.
+    change (1 + (T_index_row (seed_index q) x +
+      T_live_initial N.encode N.T_encode (index_row (seed_index q) x) +
+      T_cached_fuel (length (C.nodes q)) (incoming_table q) x initial + 1) <=
+      128 * live_clock_atom p * N.of_nat (variable_work p x + 1))%N.
+    rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
   Lemma add_predecessors_atom : forall p kills x n es st,
@@ -3076,6 +3974,24 @@ Module LiveT (O : OPS)
     - rewrite Nat2N.inj_add. nia.
   Qed.
 
+  Lemma cached_group_search_atom : forall p x rows, In x (U.universe (R.prepare p)) ->
+    (List.T_fold_right (group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p))) x)
+      (fun n acc => T_group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p)))
+        x n acc) rows
+      (cached_search (length (C.nodes (R.prepare p)))
+        (seed_index (R.prepare p)) (incoming_table (R.prepare p)) x) <=
+      20 * live_clock_atom p * N.of_nat (variable_work p x + 1))%N.
+  Proof.
+    intros p x rows Hx.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (cached_search_charge p x Hx) as Hcharge.
+    eapply N.le_trans.
+    - apply live_fold_clock_uniform with (bound := (16 * live_clock_atom p)%N).
+      intros n Hn acc. apply group_entry_atom.
+      exact (proj1 (cached_search_live (R.prepare p) x n (proj2 (PB.prepared_wf p)) Hn)).
+    - rewrite Nat2N.inj_add. nia.
+  Qed.
+
   Lemma live_rows_atom : forall p (rows : ptrie (list positive)),
     (ListDef.T_map (fun b => (b, index_row rows b))
       (fun b => 1 + T_index_row rows b)%N (BC.nodes (R.prepare p)) <=
@@ -3203,7 +4119,7 @@ Module LiveT (O : OPS)
     lia.
   Qed.
 
-  Lemma live_all_variables_atom : forall p,
+  Lemma live_entries_all_variables_atom : forall p,
     (List.T_fold_right
       (fun x acc => fold_right
         (group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p))) x) acc
@@ -3229,6 +4145,32 @@ Module LiveT (O : OPS)
     rewrite Nat2N.inj_add in *. nia.
   Qed.
 
+  Lemma live_all_variables_atom : forall p,
+    (List.T_fold_right
+      (fun x acc => fold_right
+        (group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p))) x) acc
+        (cached_search (length (C.nodes (R.prepare p)))
+          (seed_index (R.prepare p)) (incoming_table (R.prepare p)) x))
+      (fun x acc => 1 +
+        (T_cached_search (length (C.nodes (R.prepare p)))
+          (seed_index (R.prepare p)) (incoming_table (R.prepare p)) x +
+        List.T_fold_right (group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p))) x)
+          (fun n rows => T_group_entry (entry_table (R.prepare p) (BC.nodes (R.prepare p)))
+            x n rows) acc
+          (cached_search (length (C.nodes (R.prepare p)))
+            (seed_index (R.prepare p)) (incoming_table (R.prepare p)) x)))%N
+      Empty (U.universe (R.prepare p)) <=
+      (192 * live_clock_atom p + 1) *
+        N.of_nat (live_size p + length (U.universe (R.prepare p))) + 1)%N.
+  Proof.
+    intro p. pose proof (live_clock_atom_positive p) as Hpositive.
+    rewrite <- (F3_partition p), <- live_sum_extra.
+    apply live_fold_clock_weight; [intros; lia|]. intros x Hx rows.
+    pose proof (cached_search_atom p x Hx) as Hsearch.
+    pose proof (cached_group_search_atom p x rows Hx) as Hgroup.
+    rewrite Nat2N.inj_add in *. nia.
+  Qed.
+
   Lemma live_driver_atom : forall p,
     (T_live_in p <= 4096 * live_clock_atom p * live_clock_scale * live_clock_scale *
       N.of_nat (function_size p + live_size p + 1))%N.
@@ -3240,7 +4182,7 @@ Module LiveT (O : OPS)
     pose proof (live_nodes_atom p) as Hnodes.
     pose proof (Datatypes.T_length_le (C.nodes q)) as Hlength.
     pose proof (seed_index_atom p) as Hseeds.
-    pose proof (reverse_kills_atom p) as Hkills.
+    pose proof (incoming_table_atom p) as Hkills.
     pose proof (block_nodes_atom p) as Hblocks.
     pose proof (entry_table_atom p) as Hlisted.
     pose proof (live_universe_atom p) as Huniverse.
@@ -3315,7 +4257,7 @@ Module LiveT (O : OPS)
           N.of_nat (live_graph_load q))%N.
         rewrite <- Nat2N.inj_add. exact Hnodecount. }
       pose proof (N.le_trans _ _ _ Hseeds (Hgraphscale 256%N)) as Hseed_budget.
-      pose proof (N.le_trans _ _ _ Hkills (Hgraphscale 64%N)) as Hkill_budget.
+      pose proof (N.le_trans _ _ _ Hkills (Hgraphscale 128%N)) as Hkill_budget.
       assert (Hblocks_budget : (BC.T_nodes q <= syntax_budget)%N).
       { eapply N.le_trans; [exact Hblocks|exact Hblockpaid]. }
       assert (Hlisted_budget : (T_entry_table q (BC.nodes q) <=
