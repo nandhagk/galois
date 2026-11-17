@@ -2,10 +2,40 @@
 
     Presentations expose value definitions, block parameters, edge operands and guards.
     For example, an incoming edge pairs each destination parameter with its source operand.
+
+    Main results
+    - [entry_params_spec] The entry inventory of a well-formed presentation follows entry and
+      parameter order.
+    - [arg_rows_spec] The operand inventory of a well-formed presentation follows edge and
+      operand order.
+    - [instruction_edges_complete] Every unprojected edge is an instruction edge of its source
+      block.
+    - [values_complexity] The value inventory is linear in its output.
+    - [def_complexity] Definition lookup is linear in the value key and the returned operands.
+    - [params_complexity] Parameter lookup is linear in the node key and the returned values.
+    - [args_complexity] Incoming operands are linear in the edge key and the returned pairs.
+    - [entry_params_complexity] Entry-parameter enumeration is linear in its output.
+    - [arg_rows_complexity] Operand-row enumeration is linear in its output.
+    - [home_complexity] Home lookup is linear in the value key.
+    - [guards_complexity] Guard lookup is linear in the edge key and the returned guards.
+    - [points_in_block_complexity] Block point lists are linear in the block key and the
+      returned points.
+    - [block_of_point_complexity] The owner lookup is linear in the point key.
+    - [instruction_edges_complexity] Instruction edge lists are linear in the block key and the
+      returned edges.
+    - [parameter_edge_complexity] The parameter edge lookup is linear in the block key.
+    - [block_edge_of_complexity] The edge projection is linear in the edge key.
+    - [block_params_complexity] Block parameters are linear in the block key and the returned
+      values.
+    - [block_edge_args_complexity] Phi operands are linear in the block-edge key and the
+      returned values.
+    - [point_definition_complexity] The definition point lookup is linear in the value key.
+
     Builds on: Program.CfgSig, Program.VarsSig and Base keys. *)
 
 From Stdlib Require Import List NArith.
-From Argent Require Import BigO.
+From Argent Require Import Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig.
 From Galois.Program Require Import CfgSig SemanticsSig VarsSig.
 
@@ -154,29 +184,26 @@ Module Type SSA_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
   Parameter T_guards_le : forall p e,
     (T_guards p e <= c_ssa * N.of_nat (E.bits e + length (guards p e) + 1))%N.
   (** The value inventory is linear in its output. *)
-  Parameter values_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (values p))) T_values.
+  Parameter values_complexity : T_values p ∈ 𝑂(N.of_nat (length (values p))) for p.
   (** Definition lookup is linear in the value key and the returned operands. *)
-  Parameter def_complexity : bigO (X := P.t * V.t) (fun _ => True)
-    (fun '(p, x) => N.of_nat (V.bits x + length (operands p x))) (fun '(p, x) => T_def p x).
+  Parameter def_complexity :
+    T_def p x ∈ 𝑂(N.of_nat (V.bits x + length (operands p x))) for (p, x).
   (** Parameter lookup is linear in the node key and the returned values. *)
-  Parameter params_complexity : bigO (X := P.t * N.t) (fun _ => True)
-    (fun '(p, n) => N.of_nat (N.bits n + length (params p n))) (fun '(p, n) => T_params p n).
+  Parameter params_complexity :
+    T_params p n ∈ 𝑂(N.of_nat (N.bits n + length (params p n))) for (p, n).
   (** Incoming operands are linear in the edge key and the returned pairs. *)
-  Parameter args_complexity : bigO (X := P.t * E.t) (fun _ => True)
-    (fun '(p, e) => N.of_nat (E.bits e + length (args p e))) (fun '(p, e) => T_args p e).
+  Parameter args_complexity :
+    T_args p e ∈ 𝑂(N.of_nat (E.bits e + length (args p e))) for (p, e).
   (** Entry-parameter enumeration is linear in its output. *)
-  Parameter entry_params_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (entry_params p))) T_entry_params.
+  Parameter entry_params_complexity :
+    T_entry_params p ∈ 𝑂(N.of_nat (length (entry_params p))) for p.
   (** Operand-row enumeration is linear in its output. *)
-  Parameter arg_rows_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat (length (arg_rows p))) T_arg_rows.
+  Parameter arg_rows_complexity : T_arg_rows p ∈ 𝑂(N.of_nat (length (arg_rows p))) for p.
   (** Home lookup is linear in the value key. *)
-  Parameter home_complexity : bigO (X := P.t * V.t) (fun _ => True)
-    (fun '(_, x) => N.of_nat (V.bits x)) (fun '(p, x) => T_home p x).
+  Parameter home_complexity : T_home p x ∈ 𝑂(N.of_nat (V.bits x)) for (p, x).
   (** Guard lookup is linear in the edge key and the returned guards. *)
-  Parameter guards_complexity : bigO (X := P.t * E.t) (fun _ => True)
-    (fun '(p, e) => N.of_nat (E.bits e + length (guards p e))) (fun '(p, e) => T_guards p e).
+  Parameter guards_complexity :
+    T_guards p e ∈ 𝑂(N.of_nat (E.bits e + length (guards p e))) for (p, e).
 End SSA_TIME.
 
 Module Type SSA_T (P : TYPE) (N : KEY_T) (E : KEY_T)
@@ -346,33 +373,30 @@ Module Type SSA_POINTS_TIME (P : TYPE) (B : KEY_T) (BE : KEY_T)
   Parameter T_point_definition_le : forall p x,
     (T_point_definition p x <= c_points * N.of_nat (V.bits x + 1))%N.
   (** Block point lists are linear in the block key and the returned points. *)
-  Parameter points_in_block_complexity : bigO (X := P.t * B.t) (fun _ => True)
-    (fun '(p, b) => N.of_nat (B.bits b + length (points_in_block p b)))
-    (fun '(p, b) => T_points_in_block p b).
+  Parameter points_in_block_complexity :
+    T_points_in_block p b ∈ 𝑂(N.of_nat (B.bits b + length (points_in_block p b))) for (p, b).
   (** The owner lookup is linear in the point key. *)
-  Parameter block_of_point_complexity : bigO (X := P.t * N.t) (fun _ => True)
-    (fun '(_, n) => N.of_nat (N.bits n)) (fun '(p, n) => T_block_of_point p n).
+  Parameter block_of_point_complexity :
+    T_block_of_point p n ∈ 𝑂(N.of_nat (N.bits n)) for (p, n).
   (** Instruction edge lists are linear in the block key and the returned edges. *)
-  Parameter instruction_edges_complexity : bigO (X := P.t * B.t) (fun _ => True)
-    (fun '(p, b) => N.of_nat (B.bits b + length (instruction_edges p b)))
-    (fun '(p, b) => T_instruction_edges p b).
+  Parameter instruction_edges_complexity :
+    T_instruction_edges p b ∈ 𝑂(N.of_nat (B.bits b + length (instruction_edges p b))) for (p, b).
   (** The parameter edge lookup is linear in the block key. *)
-  Parameter parameter_edge_complexity : bigO (X := P.t * B.t) (fun _ => True)
-    (fun '(_, b) => N.of_nat (B.bits b)) (fun '(p, b) => T_parameter_edge p b).
+  Parameter parameter_edge_complexity :
+    T_parameter_edge p b ∈ 𝑂(N.of_nat (B.bits b)) for (p, b).
   (** The edge projection is linear in the edge key. *)
-  Parameter block_edge_of_complexity : bigO (X := P.t * E.t) (fun _ => True)
-    (fun '(_, e) => N.of_nat (E.bits e)) (fun '(p, e) => T_block_edge_of p e).
+  Parameter block_edge_of_complexity :
+    T_block_edge_of p e ∈ 𝑂(N.of_nat (E.bits e)) for (p, e).
   (** Block parameters are linear in the block key and the returned values. *)
-  Parameter block_params_complexity : bigO (X := P.t * B.t) (fun _ => True)
-    (fun '(p, b) => N.of_nat (B.bits b + length (block_params p b)))
-    (fun '(p, b) => T_block_params p b).
+  Parameter block_params_complexity :
+    T_block_params p b ∈ 𝑂(N.of_nat (B.bits b + length (block_params p b))) for (p, b).
   (** Phi operands are linear in the block-edge key and the returned values. *)
-  Parameter block_edge_args_complexity : bigO (X := P.t * BE.t) (fun _ => True)
-    (fun '(p, be) => N.of_nat (BE.bits be + length (block_edge_args p be)))
-    (fun '(p, be) => T_block_edge_args p be).
+  Parameter block_edge_args_complexity :
+    T_block_edge_args p be ∈ 𝑂(N.of_nat (BE.bits be + length (block_edge_args p be)))
+      for (p, be).
   (** The definition point lookup is linear in the value key. *)
-  Parameter point_definition_complexity : bigO (X := P.t * V.t) (fun _ => True)
-    (fun '(_, x) => N.of_nat (V.bits x)) (fun '(p, x) => T_point_definition p x).
+  Parameter point_definition_complexity :
+    T_point_definition p x ∈ 𝑂(N.of_nat (V.bits x)) for (p, x).
 End SSA_POINTS_TIME.
 
 Module Type SSA_POINTS_T (P : TYPE) (B : KEY_T) (BE : KEY_T)
