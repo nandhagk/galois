@@ -2,12 +2,19 @@
 
     Flat values distinguish bottom, one value and top.
     For example, joining distinct singleton values returns top.
+
+    Main results
+    - [eqb_spec] Equality testing reflects concrete equality.
+    - [forward_complexity] Generic constant transfer is bounded by the operator work,
+      O(work + 1) for the operator and its operands.
+
     Builds on: ConstSig and the concrete language operations. *)
 
 From Stdlib Require Import List ZArith NArith Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Bits Require Import Word Fun Op Testbit Arith.
 From Galois.Domains Require Import ConstSig LangSig WordSig BitsLang.
+Import ComplexityNotations.
 Import List.ListNotations WordAlgebra.
 
 Module ConstWordFast.
@@ -614,9 +621,8 @@ Module ConstT (L : LANG_T) (E : VAL_EQ_T L) <: CONST_ALL L E.
   Proof.
     intro c. time_unfold T_abst. unfold c_const. lia.
   Qed.
-  Lemma forward_complexity : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
-    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Lemma forward_complexity :
+    (T_forward o xs ∈ 𝑂(N.of_nat ((work o xs)%nat)) for (o, xs))%N.
   Proof.
     exists c_val. intros [o xs] _. cbn [fst snd].
     pose proof (T_forward_le o xs) as Htime.

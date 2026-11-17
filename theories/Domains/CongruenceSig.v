@@ -2,11 +2,24 @@
 
     Congruences describe residue classes of normalized words.
     For example, modulus two and residue zero describe even words.
+
+    Main results
+    - [mul_complexity] Congruence multiplication is quadratic in the width and the payload
+      sizes, O((w + a + b + 1)^2).
+    - [congr_urem_complexity] Remainder has the published quadratic class, because it takes a gcd.
+    - [congr_norm_lin_complexity] Canonical payloads normalize in time linear in the width and size.
+    - [congr_neg_lin_complexity] Negation of a canonical payload is linear in the width and size.
+    - [congr_add_lin_complexity] Addition of canonical payloads is linear in their sizes.
+    - [congr_sub_lin_complexity] Subtraction of canonical payloads is linear in their sizes.
+    - [congr_shl_lin_complexity] Shifting a canonical payload by a canonical amount is linear.
+    - [congr_project_lin_complexity] Projection of a canonical payload is linear in both widths.
+
     Builds on: WordSig. *)
 
 From Stdlib Require Import ZArith List.
-From Argent Require Import Std BigO.
+From Argent Require Import Std Complexity.
 From Galois.Domains Require Import WordSig.
+Import ComplexityNotations.
 
 Inductive congr : Type :=
   | CBot
@@ -143,49 +156,40 @@ Module Type CONGRUENCE_TIME (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE L).
     c_congruence * N.of_nat
       (((Pos.to_nat source + Pos.to_nat target + congr_bits a + 1) ^ 2)%nat))%N.
   (** Congruence multiplication has the published quadratic width bound. *)
-  Parameter mul_complexity : (bigO (fun _ => True)
-    (fun x : positive * (congr * congr) => N.of_nat
-      (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
-    (fun x => T_congr_mul (fst x) (fst (snd x)) (snd (snd x))))%N.
+  Parameter mul_complexity :
+    (T_congr_mul w a b ∈ 𝑂(N.of_nat
+      (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))
+      for (w, (a, b)))%N.
   (** Remainder has the published quadratic class, because it takes a gcd. *)
-  Parameter congr_urem_complexity : bigO (X := positive * (congr * congr)) (fun _ => True)
-    (fun x => N.of_nat
-      (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
-    (fun x => T_congr_urem (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter congr_urem_complexity :
+    T_congr_urem w a b ∈ 𝑂(N.of_nat
+      (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))
+      for (w, (a, b)).
   (** Canonical payloads normalize in linear time. *)
-  Parameter congr_norm_lin_complexity : bigO (X := positive * congr)
-    (fun x => canonical (fst x) (snd x))
-    (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
-    (fun x => T_congr_norm (fst x) (snd x)).
+  Parameter congr_norm_lin_complexity :
+    T_congr_norm w a ∈ 𝑂(N.of_nat (Pos.to_nat w + congr_bits a + 1))
+      for (w, a) | canonical w a.
   (** Negation of a canonical payload is linear. *)
-  Parameter congr_neg_lin_complexity : bigO (X := positive * congr)
-    (fun x => canonical (fst x) (snd x))
-    (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
-    (fun x => T_congr_neg (fst x) (snd x)).
+  Parameter congr_neg_lin_complexity :
+    T_congr_neg w a ∈ 𝑂(N.of_nat (Pos.to_nat w + congr_bits a + 1))
+      for (w, a) | canonical w a.
   (** Addition of canonical payloads is linear. *)
-  Parameter congr_add_lin_complexity : bigO (X := positive * (congr * congr))
-    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
-    (fun x => N.of_nat
-      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
-    (fun x => T_congr_add (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter congr_add_lin_complexity :
+    T_congr_add w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + congr_bits a + congr_bits b + 1))
+      for (w, (a, b)) | canonical w a /\ canonical w b.
   (** Subtraction of canonical payloads is linear. *)
-  Parameter congr_sub_lin_complexity : bigO (X := positive * (congr * congr))
-    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
-    (fun x => N.of_nat
-      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
-    (fun x => T_congr_sub (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter congr_sub_lin_complexity :
+    T_congr_sub w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + congr_bits a + congr_bits b + 1))
+      for (w, (a, b)) | canonical w a /\ canonical w b.
   (** Shifting a canonical payload by a canonical amount is linear. *)
-  Parameter congr_shl_lin_complexity : bigO (X := positive * (congr * congr))
-    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
-    (fun x => N.of_nat
-      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
-    (fun x => T_congr_shl (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter congr_shl_lin_complexity :
+    T_congr_shl w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + congr_bits a + congr_bits b + 1))
+      for (w, (a, b)) | canonical w a /\ canonical w b.
   (** Projection of a canonical payload is linear in both widths. *)
-  Parameter congr_project_lin_complexity : bigO (X := positive * (positive * congr))
-    (fun x => (fst (snd x) <= fst x)%positive /\ canonical (fst x) (snd (snd x)))
-    (fun x => N.of_nat
-      (Pos.to_nat (fst x) + Pos.to_nat (fst (snd x)) + congr_bits (snd (snd x)) + 1))
-    (fun x => T_congr_project (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter congr_project_lin_complexity :
+    T_congr_project source target a
+      ∈ 𝑂(N.of_nat (Pos.to_nat source + Pos.to_nat target + congr_bits a + 1))
+      for (source, (target, a)) | (target <= source)%positive /\ canonical source a.
 End CONGRUENCE_TIME.
 
 Module Type CONGRUENCE_T (L : WORD_LANGUAGE_T) :=

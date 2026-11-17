@@ -2,12 +2,25 @@
 
     Congruences describe residues of normalized words.
     For example, modulus two and residue zero describe even words.
+
+    Main results
+    - [mul_complexity] Congruence multiplication is quadratic in the width and the payload
+      sizes, O((w + a + b + 1)^2).
+    - [congr_urem_complexity] Remainder has the published quadratic class, because it takes a gcd.
+    - [congr_norm_lin_complexity] Canonical payloads normalize in time linear in the width and size.
+    - [congr_neg_lin_complexity] Negation of a canonical payload is linear in the width and size.
+    - [congr_add_lin_complexity] Addition of canonical payloads is linear in their sizes.
+    - [congr_sub_lin_complexity] Subtraction of canonical payloads is linear in their sizes.
+    - [congr_shl_lin_complexity] Shifting a canonical payload by a canonical amount is linear.
+    - [congr_project_lin_complexity] Projection of a canonical payload is linear in both widths.
+
     Builds on: CongruenceSig and the fixed-width word operations. *)
 
 From Stdlib Require Import ZArith NArith Zpow_facts List Bool Lia Wellfounded.Inverse_Image.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
 From Galois.Bits Require Import Word Fun Op Testbit Arith.
 From Galois.Domains Require Import CongruenceSig WordSig BitsLang.
+Import ComplexityNotations.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
@@ -3566,37 +3579,35 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite Nat.pow_mul_l, Nat2N.inj_mul in Hwrap. cost_constants. lia.
   Qed.
   (** Congruence multiplication has the published quadratic width bound. *)
-  Lemma mul_complexity : (bigO (fun _ => True)
-    (fun x : positive * (congr * congr) => N.of_nat
-      (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
-    (fun x => T_congr_mul (fst x) (fst (snd x)) (snd (snd x))))%N.
+  Lemma mul_complexity :
+    (T_congr_mul w a b ∈ 𝑂(N.of_nat
+      (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))
+      for (w, (a, b)))%N.
   Proof.
     exists c_congruence. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_congr_mul_le w a b). nia.
   Qed.
   (** Remainder has the published quadratic class, because it takes a gcd. *)
-  Lemma congr_urem_complexity : bigO (X := positive * (congr * congr)) (fun _ => True)
-    (fun x => N.of_nat
-      (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
-    (fun x => T_congr_urem (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma congr_urem_complexity :
+    T_congr_urem w a b ∈ 𝑂(N.of_nat
+      (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))
+      for (w, (a, b)).
   Proof.
     exists c_congruence. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_congr_urem_le w a b). nia.
   Qed.
   (** Canonical payloads normalize in linear time. *)
-  Lemma congr_norm_lin_complexity : bigO (X := positive * congr)
-    (fun x => canonical (fst x) (snd x))
-    (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
-    (fun x => T_congr_norm (fst x) (snd x)).
+  Lemma congr_norm_lin_complexity :
+    T_congr_norm w a ∈ 𝑂(N.of_nat (Pos.to_nat w + congr_bits a + 1))
+      for (w, a) | canonical w a.
   Proof.
     exists 128%N. intros [w a] Hcanonical. cbn [fst snd] in *.
     pose proof (normalization_time_linear w a Hcanonical). nia.
   Qed.
   (** Negation of a canonical payload is linear. *)
-  Lemma congr_neg_lin_complexity : bigO (X := positive * congr)
-    (fun x => canonical (fst x) (snd x))
-    (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
-    (fun x => T_congr_neg (fst x) (snd x)).
+  Lemma congr_neg_lin_complexity :
+    T_congr_neg w a ∈ 𝑂(N.of_nat (Pos.to_nat w + congr_bits a + 1))
+      for (w, a) | canonical w a.
   Proof.
     exists 8192%N. intros [w a] Ha. cbn [fst snd] in *.
     pose proof (normalization_time_linear w a Ha) as Hnorm.
@@ -3604,11 +3615,9 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
   Qed.
   (** Addition of canonical payloads is linear. *)
-  Lemma congr_add_lin_complexity : bigO (X := positive * (congr * congr))
-    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
-    (fun x => N.of_nat
-      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
-    (fun x => T_congr_add (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma congr_add_lin_complexity :
+    T_congr_add w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + congr_bits a + congr_bits b + 1))
+      for (w, (a, b)) | canonical w a /\ canonical w b.
   Proof.
     exists 8192%N. intros [w [a b]] [Ha Hb]. cbn [fst snd] in *.
     pose proof (normalization_time_linear w a Ha) as Hnorma.
@@ -3617,11 +3626,9 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
   Qed.
   (** Subtraction of canonical payloads is linear. *)
-  Lemma congr_sub_lin_complexity : bigO (X := positive * (congr * congr))
-    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
-    (fun x => N.of_nat
-      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
-    (fun x => T_congr_sub (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma congr_sub_lin_complexity :
+    T_congr_sub w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + congr_bits a + congr_bits b + 1))
+      for (w, (a, b)) | canonical w a /\ canonical w b.
   Proof.
     exists 8192%N. intros [w [a b]] [Ha Hb]. cbn [fst snd] in *.
     pose proof (normalization_time_linear w a Ha) as Hnorma.
@@ -3630,11 +3637,9 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
   Qed.
   (** Shifting a canonical payload by a canonical amount is linear. *)
-  Lemma congr_shl_lin_complexity : bigO (X := positive * (congr * congr))
-    (fun x => canonical (fst x) (fst (snd x)) /\ canonical (fst x) (snd (snd x)))
-    (fun x => N.of_nat
-      (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
-    (fun x => T_congr_shl (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma congr_shl_lin_complexity :
+    T_congr_shl w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + congr_bits a + congr_bits b + 1))
+      for (w, (a, b)) | canonical w a /\ canonical w b.
   Proof.
     exists 8192%N. intros [w [a b]] [Ha Hb]. cbn [fst snd] in *.
     pose proof (normalization_time_linear w a Ha) as Hnorma.
@@ -3643,11 +3648,10 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
   Qed.
   (** Projection of a canonical payload is linear in both widths. *)
-  Lemma congr_project_lin_complexity : bigO (X := positive * (positive * congr))
-    (fun x => (fst (snd x) <= fst x)%positive /\ canonical (fst x) (snd (snd x)))
-    (fun x => N.of_nat
-      (Pos.to_nat (fst x) + Pos.to_nat (fst (snd x)) + congr_bits (snd (snd x)) + 1))
-    (fun x => T_congr_project (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma congr_project_lin_complexity :
+    T_congr_project source target a
+      ∈ 𝑂(N.of_nat (Pos.to_nat source + Pos.to_nat target + congr_bits a + 1))
+      for (source, (target, a)) | (target <= source)%positive /\ canonical source a.
   Proof.
     exists 8192%N. intros [source [target a]] [Hwidth Ha]. cbn [fst snd] in *.
     pose proof (normalization_time_linear source a Ha) as Hnorm.

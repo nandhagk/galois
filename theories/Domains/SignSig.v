@@ -2,12 +2,17 @@
 
     Three flags describe negative, zero and positive signed word values.
     For example, enabling zero and positive describes nonnegative signed values.
+
+    Main results
+    - [sign_entry_complexity] Sign table dispatch takes constant time.
+
     Builds on: WordSig. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import WordSig.
+Import ComplexityNotations.
 
 Record sgn : Type := Sgn {
   neg : bool;
@@ -158,9 +163,8 @@ Module Type SIGN_TABLE_TIME (L : WORD_LANGUAGE_T) (S : SIGN_T L)
   (** Sign table dispatch has the published constant entry bound. *)
   Parameter T_sign_entry_le : forall o rw xs, (T_wfwd o rw xs <= c_sign_table)%N.
   (** Sign table dispatch takes constant time. *)
-  Parameter sign_entry_complexity : bigO
-    (X := L.op * (positive * list (positive * S.p))) (fun _ => True)
-    (fun _ => 0%N) (fun x => T_wfwd (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter sign_entry_complexity :
+    T_wfwd o rw xs ∈ 𝑂(0%N) for (o, (rw, xs)).
 End SIGN_TABLE_TIME.
 Module Type SIGN_TABLE_T (L : WORD_LANGUAGE_T) (S : SIGN_T L) :=
   SIGN_TABLE L S <+ SIGN_TABLE_TIME L S.

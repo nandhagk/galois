@@ -2,11 +2,18 @@
 
     Raw results are normalized and cut outward before entering the carrier.
     For example, a large upper endpoint becomes positive infinity.
+
+    Main results
+    - [cut_sound] Cutting retains every integer represented by the raw interval.
+    - [forward_complexity] Forward transfer is bounded by the operator work,
+      O(work + 1) for the operator and its operands.
+
     Builds on: CutIntervalSig and the shared interval operations. *)
 
 From Stdlib Require Import List ZArith NArith Bool Lia Eqdep_dec.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig CutIntervalSig Interval.
+Import ComplexityNotations.
 
 Definition pack_cut (bits : nat) (raw : itv) : cut_itv bits :=
   match cut_interval_ok bits raw as ok return cut_interval_ok bits raw = ok -> cut_itv bits with
@@ -1797,9 +1804,8 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Qed.
 
   (** Forward transfer has the published operator-work class. *)
-  Lemma forward_complexity : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
-    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Lemma forward_complexity :
+    (T_forward o xs ∈ 𝑂(N.of_nat ((work o xs)%nat)) for (o, xs))%N.
   Proof.
     exists c_val. intros [o xs] _. cbn [fst snd].
     pose proof (T_forward_le o xs) as Htime.

@@ -2,11 +2,44 @@
 
     Intervals use integer bounds and threshold widening.
     For example, meeting disjoint finite intervals returns bottom.
+
+    Main results
+    - [interval_leb_complexity] Scalar inclusion has the published endpoint-bit class.
+    - [interval_join_complexity] Scalar join has the published endpoint-bit class.
+    - [interval_meet_complexity] Scalar meet has the published endpoint-bit class.
+    - [interval_stable_widen_complexity] Scalar widening has the published bits-plus-search-path
+      class.
+    - [mul_complexity] Multiplication has the published quadratic endpoint bound.
+    - [add_complexity] Addition is linear in the endpoint sizes, O(size a + size b + 1).
+    - [sub_complexity] Subtraction is linear in the endpoint sizes, O(size a + size b + 1).
+    - [udiv_complexity] Unsigned division has the published quadratic endpoint class.
+    - [urem_complexity] Unsigned remainder has the published quadratic endpoint class.
+    - [shl_complexity] Shift has the published quadratic endpoint class.
+    - [widen_complexity] Threshold widening has the published bits-plus-search-path class.
+    - [add_back_complexity] Backward addition is linear in the result and operand sizes.
+    - [sub_back_complexity] Backward subtraction is linear in the result and operand sizes.
+    - [bitand_complexity] Bitwise conjunction is linear, because the result is a minimum of
+      upper endpoints.
+    - [bitor_complexity] Bitwise disjunction is linear, because the result is a mask of one
+      bit length.
+    - [cmp_complexity] Comparison has the published linear class.
+    - [mul_back_complexity] Backward multiplication is linear, because a preimage only reads a
+      point.
+    - [udiv_back_complexity] Backward division is linear, because it only meets with fixed
+      bounds.
+    - [urem_back_complexity] Backward remainder is linear, because it only meets with fixed
+      bounds.
+    - [ult_back_complexity] Backward comparison is linear in the result and operand sizes.
+    - [signed_split_complexity] Signed splitting is linear in the width and the endpoints.
+    - [forward_complexity] Forward transfer is bounded by the operator work,
+      O(work + 1) for the operator and its operands.
+
     Builds on: IntervalSig and ThresholdsSig. *)
 
 From Stdlib Require Import ZArith Zpow_facts NArith Bool List Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig.
+Import ComplexityNotations.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
@@ -369,37 +402,35 @@ Module IntervalBaseT (T : THRESHOLDS_T) <: INTERVAL_SCALAR_T T.
   Qed.
 
   (** Scalar inclusion has the published endpoint-bit class. *)
-  Lemma interval_leb_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
-    (fun x => T_interval_leb (fst x) (snd x)).
+  Lemma interval_leb_complexity :
+    T_interval_leb a b ∈ 𝑂(N.of_nat (interval_bits a + interval_bits b + 1)) for (a, b).
   Proof.
     exists c_scalar. intros [a b] _. cbn [fst snd].
     pose proof (T_interval_leb_le a b). nia.
   Qed.
 
   (** Scalar join has the published endpoint-bit class. *)
-  Lemma interval_join_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
-    (fun x => T_interval_join (fst x) (snd x)).
+  Lemma interval_join_complexity :
+    T_interval_join a b ∈ 𝑂(N.of_nat (interval_bits a + interval_bits b + 1)) for (a, b).
   Proof.
     exists c_scalar. intros [a b] _. cbn [fst snd].
     pose proof (T_interval_join_le a b). nia.
   Qed.
 
   (** Scalar meet has the published endpoint-bit class. *)
-  Lemma interval_meet_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
-    (fun x => T_interval_meet (fst x) (snd x)).
+  Lemma interval_meet_complexity :
+    T_interval_meet a b ∈ 𝑂(N.of_nat (interval_bits a + interval_bits b + 1)) for (a, b).
   Proof.
     exists c_scalar. intros [a b] _. cbn [fst snd].
     pose proof (T_interval_meet_le a b). nia.
   Qed.
 
   (** Scalar widening has the published bits-plus-search-path class. *)
-  Lemma interval_stable_widen_complexity : bigO (X := ttree * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (interval_bits (fst (snd x)) + interval_bits (snd (snd x)) +
-      (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
-    (fun x => T_interval_stable_widen (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma interval_stable_widen_complexity :
+    T_interval_stable_widen ts a b
+      ∈ 𝑂(N.of_nat (interval_bits a + interval_bits b +
+        (T.depth ts + 1) * (T.tree_bits ts + 1) + 1))
+      for (ts, (a, b)).
   Proof.
     exists c_scalar. intros [ts [a b]] _. cbn [fst snd].
     pose proof (T_interval_stable_widen_le ts a b). nia.
@@ -3479,158 +3510,146 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     assert (Hpos : (1 <= N.of_nat (size a + size b + wsize ts + 1))%N) by lia. nia.
   Qed.
   (** Multiplication has the published quadratic endpoint bound. *)
-  Lemma mul_complexity : (bigO (fun _ => True)
-    (fun ab => N.of_nat ((binary_work (fst ab) (snd ab))%nat))
-    (fun ab => T_mul (fst ab) (snd ab)))%N.
+  Lemma mul_complexity :
+    (T_mul a b ∈ 𝑂(N.of_nat ((binary_work a b)%nat)) for (a, b))%N.
   Proof.
     unfold bigO. exists 64%N. intros [a b] _.
     cbn [fst snd]. pose proof (mul_time_quadratic a b). nia.
   Qed.
 
   (** Addition has the published linear class. *)
-  Lemma add_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
-    (fun x => T_add (fst x) (snd x)).
+  Lemma add_complexity :
+    T_add a b ∈ 𝑂(N.of_nat (size a + size b + 1)) for (a, b).
   Proof.
     exists c_interval. intros [a b] _. cbn [fst snd].
     pose proof (T_add_le a b). nia.
   Qed.
 
   (** Subtraction has the published linear class. *)
-  Lemma sub_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
-    (fun x => T_sub (fst x) (snd x)).
+  Lemma sub_complexity :
+    T_sub a b ∈ 𝑂(N.of_nat (size a + size b + 1)) for (a, b).
   Proof.
     exists c_interval. intros [a b] _. cbn [fst snd].
     pose proof (T_sub_le a b). nia.
   Qed.
 
   (** Unsigned division has the published quadratic endpoint class. *)
-  Lemma udiv_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_udiv (fst x) (snd x)).
+  Lemma udiv_complexity :
+    T_udiv a b ∈ 𝑂(N.of_nat (binary_work a b)) for (a, b).
   Proof.
     exists c_interval. intros [a b] _. cbn [fst snd].
     pose proof (T_udiv_le a b). nia.
   Qed.
 
   (** Unsigned remainder has the published quadratic endpoint class. *)
-  Lemma urem_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_urem (fst x) (snd x)).
+  Lemma urem_complexity :
+    T_urem a b ∈ 𝑂(N.of_nat (binary_work a b)) for (a, b).
   Proof.
     exists c_interval. intros [a b] _. cbn [fst snd].
     pose proof (T_urem_le a b). nia.
   Qed.
 
   (** Shift has the published quadratic endpoint class. *)
-  Lemma shl_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_shl (fst x) (snd x)).
+  Lemma shl_complexity :
+    T_shl a b ∈ 𝑂(N.of_nat (binary_work a b)) for (a, b).
   Proof.
     exists c_interval. intros [a b] _. cbn [fst snd].
     pose proof (T_shl_le a b). nia.
   Qed.
 
   (** Threshold widening has the published bits-plus-search-path class. *)
-  Lemma widen_complexity : bigO (X := ttree * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) +
-      (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
-    (fun x => T_widen (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma widen_complexity :
+    T_widen ts a b
+      ∈ 𝑂(N.of_nat (size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1))
+      for (ts, (a, b)).
   Proof.
     exists c_interval. intros [ts [a b]] _. cbn [fst snd].
     pose proof (T_widen_thresholds_le ts a b). nia.
   Qed.
 
   (** Backward addition is linear in the result and operand sizes. *)
-  Lemma add_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_add_back (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma add_back_complexity :
+    T_add_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   Proof.
     exists (512 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (add_back_time_linear r a b). nia.
   Qed.
 
   (** Backward subtraction is linear in the result and operand sizes. *)
-  Lemma sub_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_sub_back (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma sub_back_complexity :
+    T_sub_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   Proof.
     exists (512 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (sub_back_time_linear r a b). nia.
   Qed.
 
   (** Bitwise conjunction is linear, because the result is a minimum of upper endpoints. *)
-  Lemma bitand_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitand (fst x) (snd x)).
+  Lemma bitand_complexity :
+    T_bitand a b ∈ 𝑂(N.of_nat (size a + size b + 1)) for (a, b).
   Proof.
     exists 16%N. intros [a b] _. cbn [fst snd].
     pose proof (bitand_time_linear a b). nia.
   Qed.
 
   (** Bitwise disjunction is linear, because the result is a mask of one bit length. *)
-  Lemma bitor_complexity : bigO (X := itv * itv) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitor (fst x) (snd x)).
+  Lemma bitor_complexity :
+    T_bitor a b ∈ 𝑂(N.of_nat (size a + size b + 1)) for (a, b).
   Proof.
     exists 64%N. intros [a b] _. cbn [fst snd].
     pose proof (bitor_time_linear a b). nia.
   Qed.
 
   (** Comparison has the published linear class. *)
-  Lemma cmp_complexity : bigO (X := comparison * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_cmp (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma cmp_complexity :
+    T_cmp c a b ∈ 𝑂(N.of_nat (size a + size b + 1)) for (c, (a, b)).
   Proof.
     exists c_interval. intros [c [a b]] _. cbn [fst snd].
     pose proof (T_cmp_le c a b). nia.
   Qed.
 
   (** Backward multiplication is linear, because a preimage only reads a point. *)
-  Lemma mul_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_mul_back (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma mul_back_complexity :
+    T_mul_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   Proof.
     exists (2048 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (mul_back_time_linear r a b). nia.
   Qed.
 
   (** Backward division is linear, because it only meets with fixed bounds. *)
-  Lemma udiv_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_udiv_back (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma udiv_back_complexity :
+    T_udiv_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   Proof.
     exists (256 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (unsigned_back_time_linear a b). unfold T_udiv_back. nia.
   Qed.
 
   (** Backward remainder is linear, because it only meets with fixed bounds. *)
-  Lemma urem_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_urem_back (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma urem_back_complexity :
+    T_urem_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   Proof.
     exists (256 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (unsigned_back_time_linear a b). unfold T_urem_back. nia.
   Qed.
 
   (** Backward comparison is linear in the result and operand sizes. *)
-  Lemma ult_back_complexity : bigO (X := itv * (itv * itv)) (fun _ => True)
-    (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
-    (fun x => T_ult_back (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma ult_back_complexity :
+    T_ult_back r a b ∈ 𝑂(N.of_nat (size r + size a + size b + 1)) for (r, (a, b)).
   Proof.
     exists (2048 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
     pose proof (ult_back_time_linear r a b). nia.
   Qed.
 
   (** Signed splitting is linear in the width and the endpoints. *)
-  Lemma signed_split_complexity : bigO (X := positive * itv) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + size (snd x) + 1))
-    (fun x => T_signed_split (fst x) (snd x)).
+  Lemma signed_split_complexity :
+    T_signed_split w a ∈ 𝑂(N.of_nat (Pos.to_nat w + size a + 1)) for (w, a).
   Proof.
     exists (512 * (T.c_thresholds + 1))%N. intros [w a] _. cbn [fst snd].
     pose proof (signed_split_time_linear w a). nia.
   Qed.
 
   (** Forward transfer has the published operator-work class. *)
-  Lemma forward_complexity : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
-    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Lemma forward_complexity :
+    (T_forward o xs ∈ 𝑂(N.of_nat ((work o xs)%nat)) for (o, xs))%N.
   Proof.
     exists c_val. intros [o xs] _. cbn [fst snd].
     pose proof (T_forward_le o xs). rewrite Nat2N.inj_add in *. nia.
