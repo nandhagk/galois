@@ -2,6 +2,12 @@
 
     The executable interval tower cuts every raw result to the endpoint budget.
     For example, an eight-bit upper endpoint of 256 becomes positive infinity.
+
+    Groups:
+    - TransferTests: outward transfers construct their already-checked results.
+    - BudgetTests: endpoints within the budget are kept, and malformed ones are bottom.
+    - OverflowTests: results and operands beyond the budget become top or are kept.
+    - PermutedRawTests: a lawful raw domain can still break the cutoff's bottom laws.
     Builds on: CutInterval, Interval, Thresholds and ZLang. *)
 
 From Stdlib Require Import List ZArith.
@@ -10,66 +16,17 @@ From Galois.Domains Require Import ValueSig IntervalSig CutIntervalSig CutInterv
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
+(** * Fixtures *)
+
+(** The endpoint budget of eight bits. *)
 Module Budget8 <: INTERVAL_CUTOFF.
   Definition bits := 8%nat.
 End Budget8.
+
 Module Raw := IntervalCode ZLangCode ThresholdsCode.
 Module Cut := CutIntervalCode Budget8 ZLangCode ThresholdsCode Raw.
 
-(** Each outward operation constructs its already-checked result directly. *)
-Example direct_cut_transfers :
-  cut_raw (Cut.join (Cut.cut (I (Fin 1) (Fin 4))) (Cut.cut (I (Fin 2) (Fin 9)))) =
-    I (Fin 1) (Fin 9) /\
-  cut_raw (Cut.meet (Cut.cut (I (Fin 1) (Fin 4))) (Cut.cut (I (Fin 2) (Fin 9)))) =
-    I (Fin 2) (Fin 4) /\
-  cut_raw (Cut.widen TLeaf (Cut.cut (I (Fin 1) (Fin 4))) (Cut.cut (I (Fin 2) (Fin 9)))) =
-    I (Fin 1) PosInf /\
-  cut_raw (Cut.narrow Cut.top (Cut.cut (I (Fin 2) (Fin 9)))) = I (Fin 2) (Fin 9) /\
-  cut_raw (Cut.forward ZAdd
-    [Cut.cut (I (Fin 1) (Fin 4)); Cut.cut (I (Fin 2) (Fin 9))]) = I (Fin 3) (Fin 13).
-Proof.
-  vm_compute. repeat split; reflexivity.
-Qed.
-
-Example bounded_and_malformed :
-  cut_raw (Cut.cut (I (Fin (-12)) (Fin 24))) = I (Fin (-12)) (Fin 24) /\
-  cut_interval_ok 8 (cut_raw (Cut.cut (I (Fin (-12)) (Fin 24)))) = true /\
-  cut_raw (Cut.cut (I (Fin 2) (Fin 1))) = IBot /\
-  cut_raw (Cut.cut (I PosInf PosInf)) = IBot.
-Proof. vm_compute. repeat split; reflexivity. Qed.
-
-Example outward_endpoints :
-  cut_raw (Cut.cut (I (Fin 256) (Fin 300))) = I NegInf PosInf /\
-  cut_raw (Cut.cut (I (Fin (-300)) (Fin (-256)))) = I NegInf PosInf /\
-  cut_raw (Cut.cut (I (Fin (-256)) (Fin 10))) = I NegInf (Fin 10) /\
-  cut_raw (Cut.cut (I (Fin 10) (Fin 256))) = I (Fin 10) PosInf.
-Proof. vm_compute. repeat split; reflexivity. Qed.
-
-Example literal_and_add_overflow :
-  cut_raw (Cut.forward (ZConst 256) []) = I NegInf PosInf /\
-  cut_raw (Cut.forward ZAdd [Cut.cut (I (Fin 200) (Fin 200));
-                             Cut.cut (I (Fin 100) (Fin 100))]) = I NegInf PosInf.
-Proof. vm_compute. repeat split; reflexivity. Qed.
-
-Example unrestricted_threshold_is_cut :
-  cut_raw (Cut.widen (ThresholdsCode.make [1000])
-    (Cut.cut (I (Fin 0) (Fin 0))) (Cut.cut (I (Fin 0) (Fin 1)))) =
-    I (Fin 0) PosInf.
-Proof. vm_compute. reflexivity. Qed.
-
-Example backward_overflow_keeps_operand :
-  map cut_raw (Cut.backward ZAdd (Cut.cut (I (Fin 255) (Fin 255)))
-    [Cut.cut (I (Fin 0) PosInf); Cut.cut (I (Fin (-255)) (Fin (-255)))]) =
-  [I (Fin 0) PosInf; I (Fin (-255)) (Fin (-255))].
-Proof. vm_compute. reflexivity. Qed.
-
-Example guard_overflow_keeps_operand :
-  map cut_raw (Cut.guard (ZGuardCmp Lt)
-    [Cut.cut (I (Fin 255) (Fin 255)); Cut.cut (I (Fin 0) PosInf)]) =
-  [I (Fin 255) (Fin 255); I (Fin 0) PosInf].
-Proof. vm_compute. reflexivity. Qed.
-
-(** The raw functional interface does not pin its carrier labels to endpoint meaning.
+(** A raw functional domain whose carrier labels do not fix endpoint meaning.
     This lawful two-point domain calls IBot top and every I constructor bottom. *)
 Module PermutedRaw <: INTERVAL ZLang Thresholds.
   Definition t := itv.
@@ -226,8 +183,177 @@ End PermutedRaw.
 
 Module PermutedCut := CutIntervalCode Budget8 ZLang Thresholds PermutedRaw.
 
-(** A fully lawful raw functional domain can invalidate the cutoff's bottom laws. *)
-Example raw_functional_interface_does_not_fix_cutoff_bottom :
-  PermutedCut.leb PermutedCut.bot PermutedCut.top = false /\
-  PermutedCut.is_bot PermutedCut.bot = false.
-Proof. split; reflexivity. Qed.
+(** * Transfers *)
+
+Module TransferTests.
+
+  (** The cut join of two intervals is their hull. *)
+  Example cut_join_gives_hull :
+    cut_raw (Cut.join (Cut.cut (I (Fin 1) (Fin 4))) (Cut.cut (I (Fin 2) (Fin 9)))) =
+      I (Fin 1) (Fin 9).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The cut meet of two intervals is their intersection. *)
+  Example cut_meet_gives_intersection :
+    cut_raw (Cut.meet (Cut.cut (I (Fin 1) (Fin 4))) (Cut.cut (I (Fin 2) (Fin 9)))) =
+      I (Fin 2) (Fin 4).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Widening without a threshold drops the upper bound. *)
+  Example cut_widen_without_threshold_drops_upper_bound :
+    cut_raw (Cut.widen TLeaf (Cut.cut (I (Fin 1) (Fin 4))) (Cut.cut (I (Fin 2) (Fin 9)))) =
+      I (Fin 1) PosInf.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Narrowing from top gives the second operand. *)
+  Example cut_narrow_from_top_gives_operand :
+    cut_raw (Cut.narrow Cut.top (Cut.cut (I (Fin 2) (Fin 9)))) = I (Fin 2) (Fin 9).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A forward addition sums the endpoints of its operands. *)
+  Example cut_forward_add_sums_endpoints :
+    cut_raw (Cut.forward ZAdd
+      [Cut.cut (I (Fin 1) (Fin 4)); Cut.cut (I (Fin 2) (Fin 9))]) = I (Fin 3) (Fin 13).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End TransferTests.
+
+(** * Budget *)
+
+Module BudgetTests.
+
+  (** An interval within the budget is kept as it is. *)
+  Example bounded_interval_is_kept :
+    cut_raw (Cut.cut (I (Fin (-12)) (Fin 24))) = I (Fin (-12)) (Fin 24).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A kept bounded interval passes the eight-bit interval check. *)
+  Example bounded_interval_passes_budget_check :
+    cut_interval_ok 8 (cut_raw (Cut.cut (I (Fin (-12)) (Fin 24)))) = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** An interval whose lower bound exceeds its upper bound is bottom. *)
+  Example reversed_bounds_are_bottom :
+    cut_raw (Cut.cut (I (Fin 2) (Fin 1))) = IBot.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** An interval with two infinite endpoints is bottom. *)
+  Example infinite_pair_is_bottom :
+    cut_raw (Cut.cut (I PosInf PosInf)) = IBot.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** An upper endpoint above the budget becomes positive infinity. *)
+  Example cut_above_budget_gives_top :
+    cut_raw (Cut.cut (I (Fin 256) (Fin 300))) = I NegInf PosInf.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A lower endpoint below the negative budget gives the unbounded interval. *)
+  Example cut_below_budget_gives_top :
+    cut_raw (Cut.cut (I (Fin (-300)) (Fin (-256)))) = I NegInf PosInf.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A lower endpoint at the negative budget becomes negative infinity. *)
+  Example cut_at_negative_budget_drops_lower_bound :
+    cut_raw (Cut.cut (I (Fin (-256)) (Fin 10))) = I NegInf (Fin 10).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** An upper endpoint at the budget becomes positive infinity. *)
+  Example cut_at_budget_drops_upper_bound :
+    cut_raw (Cut.cut (I (Fin 10) (Fin 256))) = I (Fin 10) PosInf.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A threshold beyond the budget is cut, so the widened upper bound becomes infinite. *)
+  Example threshold_beyond_budget_is_cut :
+    cut_raw (Cut.widen (ThresholdsCode.make [1000])
+      (Cut.cut (I (Fin 0) (Fin 0))) (Cut.cut (I (Fin 0) (Fin 1)))) =
+      I (Fin 0) PosInf.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End BudgetTests.
+
+(** * Overflow *)
+
+Module OverflowTests.
+
+  (** A literal beyond the budget gives the unbounded interval. *)
+  Example literal_beyond_budget_gives_top :
+    cut_raw (Cut.forward (ZConst 256) []) = I NegInf PosInf.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A sum beyond the budget gives the unbounded interval. *)
+  Example add_beyond_budget_gives_top :
+    cut_raw (Cut.forward ZAdd [Cut.cut (I (Fin 200) (Fin 200));
+                               Cut.cut (I (Fin 100) (Fin 100))]) = I NegInf PosInf.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A backward addition whose result overflows keeps both operands. *)
+  Example backward_add_overflow_keeps_operands :
+    map cut_raw (Cut.backward ZAdd (Cut.cut (I (Fin 255) (Fin 255)))
+      [Cut.cut (I (Fin 0) PosInf); Cut.cut (I (Fin (-255)) (Fin (-255)))]) =
+    [I (Fin 0) PosInf; I (Fin (-255)) (Fin (-255))].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A guard whose comparison overflows keeps both operands. *)
+  Example lt_guard_overflow_keeps_operands :
+    map cut_raw (Cut.guard (ZGuardCmp Lt)
+      [Cut.cut (I (Fin 255) (Fin 255)); Cut.cut (I (Fin 0) PosInf)]) =
+    [I (Fin 255) (Fin 255); I (Fin 0) PosInf].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End OverflowTests.
+
+(** * Permuted raw interface *)
+
+Module PermutedRawTests.
+
+  (** With the permuted raw domain, the cut bottom is not below the cut top. *)
+  Example permuted_cut_bottom_is_not_below_top :
+    PermutedCut.leb PermutedCut.bot PermutedCut.top = false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** With the permuted raw domain, the cut bottom does not test as bottom. *)
+  Example permuted_cut_bottom_is_not_bot :
+    PermutedCut.is_bot PermutedCut.bot = false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End PermutedRawTests.
