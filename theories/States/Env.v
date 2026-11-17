@@ -1855,13 +1855,24 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Hbound. nia.
   Qed.
 
+  (** Bottom recognition is linear in the environment size. *)
   Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_lat). intros a _.
+    pose proof (T_is_bot_le a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Narrowing is linear in the combined environment sizes. *)
   Lemma narrow_bigO : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_narrow (fst ab) (snd ab)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_lat). intros [a b] _.
+    change (T_narrow a b <= c_lat * N.of_nat (size a + size b) + c_lat)%N.
+    pose proof (T_narrow_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
   Lemma F_wunits_unreached : wunits Unreached = 0.
   Proof.
