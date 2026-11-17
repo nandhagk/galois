@@ -2,14 +2,27 @@
 
     This driver compiles source constraints and queries their least inclusion solution.
     For example, an address constraint seeds a row used by the first inclusion rule.
+
+    Main results
+    - [points_spec] Points-to queries reflect canonical relation membership.
+    - [solve_exact] A saturated result is exactly the least inclusion solution.
+    - [seed_complexity] Seeding is linear in the constraints and initial pointers at the database
+      unit.
+    - [compile_complexity] Compilation emits a fixed program, so its cost is a constant.
+    - [points_complexity] A points-to query is linear in the database unit and the bits of its
+      two cells.
+    - [solve_complexity] A solve costs its seed, the cube of the fixed program for planning, and
+      the run.
+
     Builds on: AndersenSig and the relational database and run interfaces. *)
 
 From Stdlib Require Import List PArith NArith Bool Lia Arith.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
 From Galois.Clients Require Import AndersenSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** The inductive inclusion relation contains the seeds and obeys all source constraints. *)
 Lemma pointer_source_closed : forall q, pointer_closed q (may_points q).
@@ -1311,10 +1324,9 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** Seeding is linear in the input entries at the final database unit and identifier width. *)
-  Lemma seed_complexity : bigO (fun _ => True)
-    (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
-      D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
-    T_seed.
+  Lemma seed_complexity :
+    T_seed q ∈ 𝑂(N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
+      D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1))) for q.
   Proof.
     apply bigO_intro with (c := c_andersen).
     intros q _; cbn beta.
@@ -1323,7 +1335,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** Compiling the fixed inclusion program costs a constant. *)
-  Lemma compile_complexity : bigO (fun _ => True) (fun _ => 0%N) T_compile.
+  Lemma compile_complexity : T_compile q ∈ 𝑂(0) for q.
   Proof.
     apply bigO_intro with (c := c_andersen).
     intros q _; cbn beta.
@@ -1343,17 +1355,14 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** Solving composes the seed, plan and run bounds under the final database budgets. *)
-  Lemma solve_complexity : bigO
-    (fun x : N * nat * pointer_input * limits =>
-      let '(B, U, q, lim) := x in
-      (D.ids (snd (solve q lim)) <= B)%N /\ D.unit (snd (solve q lim)) <= U)
-    (fun x => let '(B, U, q, lim) := x in
-      (N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
-        D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)) +
+  Lemma solve_complexity :
+    T_solve q lim ∈ 𝑂((N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
+      D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)) +
       N.of_nat ((R.size_program (compile q) + 1) * (R.size_program (compile q) + 1) *
         (R.size_program (compile q) + 1)) +
       R.run_cost B U (compile q) (R.plan (compile q)) lim (seed q))%N)
-    (fun x => let '(_, _, q, lim) := x in T_solve q lim).
+      for (B, U, q, lim) |
+        (D.ids (snd (solve q lim)) <= B)%N /\ D.unit (snd (solve q lim)) <= U.
   Proof.
     destruct seed_complexity as [c_seed Hseed].
     destruct R.plan_complexity as [c_plan Hplan].
