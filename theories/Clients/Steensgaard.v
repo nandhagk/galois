@@ -2,15 +2,28 @@
 
     This driver compiles pointer equations and queries their constructor congruence.
     For example, an address constraint equates a pointer's dereference with an addressed cell.
+
+    Main results
+    - [points_spec] Queries test whether the pointee term equals the addressed cell in the final
+      congruence.
+    - [seed_complexity] Seeding is linear in the constraints and initial pointers at the database
+      unit.
+    - [compile_complexity] Compilation emits a fixed program, so its cost is a constant.
+    - [points_complexity] A points-to query is linear in the database unit and the bits of its
+      two cells.
+    - [solve_complexity] A solve costs its seed, the cube of the fixed program for planning, and
+      the run.
+
     Builds on: SteensgaardSig, Andersen and the database and run interfaces. *)
 
 From Stdlib Require Import List PArith NArith Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import
   Syntax Model ModelFacts Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
 From Galois.Clients Require Import AndersenSig Andersen SteensgaardSig.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** A total unary algebra retains terms whose constructors are absent from the database. *)
 Inductive pointer_normal :=
@@ -859,10 +872,9 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** Seeding is linear in the input count at the final database's unit and identifier width. *)
-  Lemma seed_complexity : bigO (fun _ => True)
-    (fun q => N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
-      D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)))
-    T_seed.
+  Lemma seed_complexity :
+    T_seed q ∈ 𝑂(N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
+      D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1))) for q.
   Proof.
     apply (bigO_intro _ _ _ c_steensgaard).
     intros q _; pose proof (T_seed_le q) as Hseed.
@@ -870,7 +882,7 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** The fixed pointer program has a constant compilation cost. *)
-  Lemma compile_complexity : bigO (fun _ => True) (fun _ => 0%N) T_compile.
+  Lemma compile_complexity : T_compile q ∈ 𝑂(0) for q.
   Proof.
     apply (bigO_intro _ _ _ c_steensgaard).
     intros q _; rewrite N.mul_0_r, N.add_0_l; apply T_compile_le.
@@ -889,17 +901,14 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** Solving composes the seed and fixed-program plan with the engine's trace cost. *)
-  Lemma solve_complexity : bigO
-    (fun x : N * nat * pointer_input * limits =>
-      let '(B, U, q, lim) := x in
-      (D.ids (snd (solve q lim)) <= B)%N /\ D.unit (snd (solve q lim)) <= U)
-    (fun x => let '(B, U, q, lim) := x in
-      (N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
-        D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)) +
+  Lemma solve_complexity :
+    T_solve q lim ∈ 𝑂((N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
+      D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)) +
       N.of_nat ((R.size_program (compile q) + 1) * (R.size_program (compile q) + 1) *
         (R.size_program (compile q) + 1)) +
       R.run_cost B U (compile q) (R.plan (compile q)) lim (seed q))%N)
-    (fun x => let '(_, _, q, lim) := x in T_solve q lim).
+      for (B, U, q, lim) |
+        (D.ids (snd (solve q lim)) <= B)%N /\ D.unit (snd (solve q lim)) <= U.
   Proof.
     destruct seed_complexity as [cseed Hseed].
     destruct R.plan_complexity as [cplan Hplan].

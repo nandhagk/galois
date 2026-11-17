@@ -2,13 +2,30 @@
 
     Extraction chooses finite constructor witnesses and checks their DAG certificates.
     For example, a class containing a literal constructor can have a one-node certificate.
+
+    Main results
+    - [inventory_spec] The computed inventory fits a sorted database whose layout gives every
+      constructor a slot in declaration order.
+    - [unfold_spec] Successful unfolding agrees with finite prefix unfolding.
+    - [check_dag_sound] Accepted certificates unfold to represented trees and report their
+      unfolded tree cost.
+    - [inventory_complexity] Building the inventory costs the layout bits times the logarithm of
+      the slot count.
+    - [best_complexity] Best rows cost the inventory, the incidences and the heap, at the
+      database unit.
+    - [check_dag_complexity] Checking costs the certificate syntax at the database unit and the
+      accepted root cost width.
+    - [extract_complexity] Extraction costs its best rows and the traversal of their witness at
+      the database unit.
+
     Builds on: ValueSig, IndexSig, DatabaseSig and Model. *)
 
 From Stdlib Require Import List PArith NArith Relations.Relation_Operators.
-From Argent Require Import Time Std Loop BigO.
+From Argent Require Import Time Std Loop Complexity.
 From Galois.Egglog Require Import ValueSig IndexSig DatabaseSig Syntax Model Sorts.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition extraction_row (V : Type) := (positive * list (cell V))%type.
 Definition extraction_dag (V : Type) := list (positive * extraction_row V).
@@ -233,35 +250,26 @@ Module Type EXTRACT_TIME (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
     (T_extract cs db c <= T_best cs db + c_ex * N.of_nat (R db + 1) *
       N.of_nat (a db + 1) * N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
   (** Building the inventory costs the layout bits times the logarithm of the slot count. *)
-  Parameter inventory_complexity : bigO (fun _ => True)
-    (fun x : list decl * list (positive * list nat) =>
-      N.of_nat ((layout_bits (fst x) (snd x) + 1) * (Nat.log2 (length (snd x)) + 1)))
-    (fun x => T_inventory (fst x) (snd x)).
+  Parameter inventory_complexity :
+    T_inventory ds sl ∈ 𝑂(N.of_nat ((layout_bits ds sl + 1) * (Nat.log2 (length sl) + 1)))
+      for (ds, sl).
   (** Best rows cost the inventory, the incidences and the heap, at the database unit. *)
-  Parameter best_complexity : bigO
-    (fun x : list (positive * (N * nat)) * D.t =>
-      D.wf (snd x) /\ D.canonical (snd x) /\ ctor_inventory (fst x) (snd x))
-    (fun x => N.of_nat ((inventory_bits (fst x) + (R (snd x) + 1) * (a (snd x) + 1) +
-      (R (snd x) + 1) * (Nat.log2 (R (snd x)) + 1)) * (D.unit (snd x) + 1) *
-      (cost_width (snd x) + 1)))
-    (fun x => T_best (fst x) (snd x)).
+  Parameter best_complexity :
+    T_best cs db ∈ 𝑂(N.of_nat ((inventory_bits cs + (R db + 1) * (a db + 1) +
+      (R db + 1) * (Nat.log2 (R db) + 1)) * (D.unit db + 1) * (cost_width db + 1)))
+      for (cs, db) | D.wf db /\ D.canonical db /\ ctor_inventory cs db.
   (** Checking costs the certificate syntax at the database unit and the accepted root cost
       width. *)
-  Parameter check_dag_complexity : bigO
-    (fun x : D.t * positive * extraction_dag V.t => D.wf (fst (fst x)))
-    (fun x => let '(db, c, g) := x in
-      N.of_nat ((cert_size V.encode g + Pos.size_nat c + 1) * (D.unit db + 1) *
-        (match check_dag db c g with Some n => N.size_nat n | None => 0 end + 1)))
-    (fun x => let '(db, c, g) := x in T_check_dag db c g).
+  Parameter check_dag_complexity :
+    T_check_dag db c g ∈ 𝑂(N.of_nat ((cert_size V.encode g + Pos.size_nat c + 1) *
+      (D.unit db + 1) * (match check_dag db c g with Some n => N.size_nat n | None => 0 end + 1)))
+      for (db, c, g) | D.wf db.
   (** Extraction costs its best rows and the traversal of their witness at the database
       unit. *)
-  Parameter extract_complexity : bigO
-    (fun x : list (positive * (N * nat)) * D.t * positive =>
-      let '(cs, db, _) := x in D.wf db /\ D.canonical db /\ ctor_inventory cs db)
-    (fun x => let '(cs, db, _) := x in
-      N.of_nat ((inventory_bits cs + 2 * ((R db + 1) * (a db + 1)) +
-        (R db + 1) * (Nat.log2 (R db) + 1)) * (D.unit db + 1) * (cost_width db + 1)))
-    (fun x => let '(cs, db, c) := x in T_extract cs db c).
+  Parameter extract_complexity :
+    T_extract cs db c ∈ 𝑂(N.of_nat ((inventory_bits cs + 2 * ((R db + 1) * (a db + 1)) +
+      (R db + 1) * (Nat.log2 (R db) + 1)) * (D.unit db + 1) * (cost_width db + 1)))
+      for (cs, db, c) | D.wf db /\ D.canonical db /\ ctor_inventory cs db.
 End EXTRACT_TIME.
 
 Module Type EXTRACT_T (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)

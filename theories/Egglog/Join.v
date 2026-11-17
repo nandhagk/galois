@@ -2,13 +2,21 @@
 
     Joins bind one variable at a time and probe every participating index.
     For example, two binary indexes can share their middle variable.
+
+    Main results
+    - [run_sound] Every emitted assignment satisfies every input index.
+    - [run_complete] Every satisfying assignment is emitted.
+    - [run_complexity] A join costs its recursive probe work at the maximum index width. The
+      factor of the variable count comes from unary level tests inside each probe.
+
     Builds on: JoinSig and the index operations. *)
 
 From Stdlib Require Import List PArith NArith Arith Sorting.Sorted Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax JoinSig Index.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** Folding disjoint branches preserves the absence of duplicate results. *)
 Lemma fold_left_nodup_disjoint {A B : Type} (f : list B -> A -> list B)
@@ -1621,10 +1629,9 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   Qed.
 
   (** The run clock is linear in charged work, scaled by index width and level scans. *)
-  Lemma run_complexity : bigO (fun x : jplan * list I.t => wf_plan (fst x) (snd x))
-    (fun x => N.of_nat ((work (fst x) (snd x) + length (snd x) + 2) *
-      (wmax (fst x) (snd x) + 1) * ((nvars (fst x) + 1) * (nvars (fst x) + 1))))
-    (fun x => T_run (fst x) (snd x)).
+  Lemma run_complexity :
+    T_run p ixs ∈ 𝑂(N.of_nat ((work p ixs + length ixs + 2) * (wmax p ixs + 1) *
+      ((nvars p + 1) * (nvars p + 1)))) for (p, ixs) | wf_plan p ixs.
   Proof.
     apply bigO_intro with (c := c_join).
     intros [p ixs] Hwf. cbn [fst snd] in Hwf |- *.

@@ -2,13 +2,21 @@
 
     Joins enumerate the assignments that satisfy every indexed projection.
     For example, a shared column binds the same cell in two relation indexes.
+
+    Main results
+    - [run_sound] Every emitted assignment satisfies every input index.
+    - [run_complete] Every satisfying assignment is emitted.
+    - [run_complexity] A join costs its recursive probe work at the maximum index width. The
+      factor of the variable count comes from unary level tests inside each probe.
+
     Builds on: ValueSig, IndexSig and Syntax. *)
 
 From Stdlib Require Import List PArith NArith Arith Sorting.Sorted.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition project_cells {V : Type} (lv : list nat) (b : list (cell V))
     : option (list (cell V)) :=
@@ -64,10 +72,9 @@ Module Type JOIN_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN V I).
       N.of_nat ((nvars p + 1) * (nvars p + 1)))%N.
   (** A join costs its recursive probe work at the maximum index width. The factor of the
       variable count comes from unary level tests inside each probe. *)
-  Parameter run_complexity : bigO (fun x : jplan * list I.t => wf_plan (fst x) (snd x))
-    (fun x => N.of_nat ((work (fst x) (snd x) + length (snd x) + 2) *
-      (wmax (fst x) (snd x) + 1) * ((nvars (fst x) + 1) * (nvars (fst x) + 1))))
-    (fun x => T_run (fst x) (snd x)).
+  Parameter run_complexity :
+    T_run p ixs ∈ 𝑂(N.of_nat ((work p ixs + length ixs + 2) * (wmax p ixs + 1) *
+      ((nvars p + 1) * (nvars p + 1)))) for (p, ixs) | wf_plan p ixs.
 End JOIN_TIME.
 
 Module Type JOIN_T (V : VALUE_T) (I : INDEX_T V) := JOIN V I <+ JOIN_TIME V I.

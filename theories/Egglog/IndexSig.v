@@ -2,14 +2,26 @@
 
     Indexes expose tuple membership and navigation through live prefixes.
     For example, following two children from the root selects a two-cell prefix.
+
+    Main results
+    - [child_spec] Child lookup agrees with prefix extension and detects missing members.
+    - [children_spec] Child enumeration is exact and duplicate free.
+    - [degree_spec] Stored degrees count enumerated children.
+    - [insert_complexity] Insertion is linear in the tuple length and the stored bit width.
+    - [remove_complexity] Removal is linear in the tuple length and the stored bit width.
+    - [child_complexity] Child lookup is linear in the bit width of one edge.
+    - [children_complexity] Child enumeration is linear in the degree and the bit width of a node.
+    - [degree_complexity] Degree lookup is linear in the bit width of a node.
+
     Builds on: ValueSig and Syntax. *)
 
 From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition cell_bits {V : Type} (encode : V -> positive) (c : cell V) : nat :=
   match c with
@@ -136,32 +148,20 @@ Module Type INDEX_TIME (V : VALUE_T) (Import X : INDEX V).
   Parameter T_degree_le : forall ix n,
     (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
   (** Insertion is linear in the tuple length and the stored bit width. *)
-  Parameter insert_complexity : bigO
-    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
-    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
-      (width (snd x) (snd (fst x)) + 1)))
-    (fun x => T_insert (snd (fst x)) (snd x)).
+  Parameter insert_complexity :
+    T_insert r ix ∈ 𝑂(N.of_nat ((length r + 1) * (width ix r + 1))) for (a, r, ix) | wf a ix.
   (** Removal is linear in the tuple length and the stored bit width. *)
-  Parameter remove_complexity : bigO
-    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
-    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
-      (width (snd x) (snd (fst x)) + 1)))
-    (fun x => T_remove (snd (fst x)) (snd x)).
+  Parameter remove_complexity :
+    T_remove r ix ∈ 𝑂(N.of_nat ((length r + 1) * (width ix r + 1))) for (a, r, ix) | wf a ix.
   (** Child lookup is linear in the bit width of one edge. *)
-  Parameter child_complexity : bigO (fun _ => True)
-    (fun x : t * positive * cell V.t =>
-      N.of_nat (width (fst (fst x)) [snd x] + 1))
-    (fun x => T_child (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter child_complexity :
+    T_child ix n c ∈ 𝑂(N.of_nat (width ix [c] + 1)) for (ix, n, c).
   (** Child enumeration is linear in the degree and the bit width of a node. *)
-  Parameter children_complexity : bigO
-    (fun x : nat * t * positive => wf (fst (fst x)) (snd (fst x)))
-    (fun x => N.of_nat ((N.to_nat (degree (snd (fst x)) (snd x)) + 1) *
-      (width (snd (fst x)) [] + 1)))
-    (fun x => T_children (snd (fst x)) (snd x)).
+  Parameter children_complexity :
+    T_children ix n ∈ 𝑂(N.of_nat ((N.to_nat (degree ix n) + 1) * (width ix [] + 1)))
+      for (a, ix, n) | wf a ix.
   (** Degree lookup is linear in the bit width of a node. *)
-  Parameter degree_complexity : bigO (fun _ => True)
-    (fun x : t * positive => N.of_nat (width (fst x) [] + 1))
-    (fun x => T_degree (fst x) (snd x)).
+  Parameter degree_complexity : T_degree ix n ∈ 𝑂(N.of_nat (width ix [] + 1)) for (ix, n).
 End INDEX_TIME.
 
 Module Type INDEX_T (V : VALUE_T) := INDEX V <+ INDEX_TIME V.

@@ -2,14 +2,26 @@
 
     Indexes store cell edges, live suffix counts and terminal prefix nodes.
     For example, removing one tuple preserves a prefix shared with another tuple.
+
+    Main results
+    - [child_spec] Child lookup agrees with prefix extension and detects missing members.
+    - [children_spec] Child enumeration is exact and duplicate free.
+    - [degree_spec] Stored degrees count enumerated children.
+    - [insert_complexity] Insertion is linear in the tuple length and the stored bit width.
+    - [remove_complexity] Removal is linear in the tuple length and the stored bit width.
+    - [child_complexity] Child lookup is linear in the bit width of one edge.
+    - [children_complexity] Child enumeration is linear in the degree and the bit width of a node.
+    - [degree_complexity] Degree lookup is linear in the bit width of a node.
+
     Builds on: IndexSig and positive-key tries. *)
 
 From Stdlib Require Import List PArith NArith PeanoNat Lia Sorting.Permutation.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** * Cardinality of updates to an edge trie *)
 
@@ -4588,11 +4600,8 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   (** Insertion is linear in the tuple length and the stored bit width. *)
-  Lemma insert_complexity : bigO
-    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
-    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
-      (width (snd x) (snd (fst x)) + 1)))
-    (fun x => T_insert (snd (fst x)) (snd x)).
+  Lemma insert_complexity :
+    T_insert r ix ∈ 𝑂(N.of_nat ((length r + 1) * (width ix r + 1))) for (a, r, ix) | wf a ix.
   Proof.
     apply bigO_intro with (c := c_ix).
     intros [[a r] ix] Hwf. cbn [fst snd] in *.
@@ -4601,11 +4610,8 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   (** Removal is linear in the tuple length and the stored bit width. *)
-  Lemma remove_complexity : bigO
-    (fun x : nat * list (cell V.t) * t => wf (fst (fst x)) (snd x))
-    (fun x => N.of_nat ((length (snd (fst x)) + 1) *
-      (width (snd x) (snd (fst x)) + 1)))
-    (fun x => T_remove (snd (fst x)) (snd x)).
+  Lemma remove_complexity :
+    T_remove r ix ∈ 𝑂(N.of_nat ((length r + 1) * (width ix r + 1))) for (a, r, ix) | wf a ix.
   Proof.
     apply bigO_intro with (c := c_ix).
     intros [[a r] ix] Hwf. cbn [fst snd] in *.
@@ -4614,10 +4620,8 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   (** Child lookup is linear in the bit width of one edge. *)
-  Lemma child_complexity : bigO (fun _ => True)
-    (fun x : t * positive * cell V.t =>
-      N.of_nat (width (fst (fst x)) [snd x] + 1))
-    (fun x => T_child (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma child_complexity :
+    T_child ix n c ∈ 𝑂(N.of_nat (width ix [c] + 1)) for (ix, n, c).
   Proof.
     apply bigO_intro with (c := c_ix).
     intros [[ix n] c] _. cbn [fst snd].
@@ -4625,11 +4629,9 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   (** Child enumeration is linear in the degree and the bit width of a node. *)
-  Lemma children_complexity : bigO
-    (fun x : nat * t * positive => wf (fst (fst x)) (snd (fst x)))
-    (fun x => N.of_nat ((N.to_nat (degree (snd (fst x)) (snd x)) + 1) *
-      (width (snd (fst x)) [] + 1)))
-    (fun x => T_children (snd (fst x)) (snd x)).
+  Lemma children_complexity :
+    T_children ix n ∈ 𝑂(N.of_nat ((N.to_nat (degree ix n) + 1) * (width ix [] + 1)))
+      for (a, ix, n) | wf a ix.
   Proof.
     apply bigO_intro with (c := c_ix).
     intros [[a ix] n] Hwf. cbn [fst snd] in *.
@@ -4638,9 +4640,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   (** Degree lookup is linear in the bit width of a node. *)
-  Lemma degree_complexity : bigO (fun _ => True)
-    (fun x : t * positive => N.of_nat (width (fst x) [] + 1))
-    (fun x => T_degree (fst x) (snd x)).
+  Lemma degree_complexity : T_degree ix n ∈ 𝑂(N.of_nat (width ix [] + 1)) for (ix, n).
   Proof.
     apply bigO_intro with (c := c_ix).
     intros [ix n] _. cbn [fst snd].

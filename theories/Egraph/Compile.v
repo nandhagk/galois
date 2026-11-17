@@ -2,14 +2,22 @@
 
     Compilation names constructor nodes, queries the left side and builds the right side.
     For example, the rewrite [f(x) = x] queries [f] and joins its result with [x].
+
+    Main results
+    - [flatten_complete] A canonical view matches every represented left side whose condition
+      holds.
+    - [compile_complexity] Compilation is linear in the rewrites and the analysis rules.
+    - [compile_rule_complexity] Compiling one rewrite is in the linear class of its size.
+
     Builds on: CompileSig. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Egglog Require Import ValueSig DatabaseSig Syntax Model Sorts.
 From Galois.Egraph Require Import Syntax CompileSig.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition name_max (x y : positive) : positive :=
   match Pos.compare x y with
@@ -3644,11 +3652,10 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
   Qed.
 
   (** Compilation is linear in the rewrite inventory and the appended rules. *)
-  Lemma compile_complexity : bigO (fun _ => True)
-    (fun x : list decl * list (rewrite V.t) * list (rule V.t) =>
-      let '(_, rws, ans) := x in
-      N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0 rws + length ans + 1))
-    (fun x => let '(ds, rws, ans) := x in T_compile ds rws ans).
+  Lemma compile_complexity :
+    T_compile ds rws ans ∈ 𝑂(N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0%nat rws +
+      length ans + 1))
+      for (ds, rws, ans).
   Proof.
     apply bigO_intro with (c := c_compile).
     intros [[ds rws] ans] _.
@@ -3656,8 +3663,8 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
   Qed.
 
   (** Compiling one rewrite is linear in its syntactic size. *)
-  Lemma compile_rule_complexity : bigO (fun _ => True)
-    (fun rw => N.of_nat (rewrite_size rw + 1)) T_compile_rule.
+  Lemma compile_rule_complexity :
+    T_compile_rule rw ∈ 𝑂(N.of_nat (rewrite_size rw + 1)) for rw.
   Proof.
     apply bigO_intro with (c := k_compile).
     intros rw _.

@@ -2,14 +2,34 @@
 
     Runs use semi-naive rounds followed by a naive confirmation round.
     For example, a quiet confirmation round returns [Saturated] and establishes closure.
+
+    Main results
+    - [universe_spec] The finite universe contains exactly declared relational tuples over active
+      values.
+    - [herbrand_spec] The Herbrand budget counts the pinned finite universe.
+    - [load_spec] Loading initializes precisely the declarations and compiled index slots.
+    - [run_least] A saturated relational result is included in every closed extension of its seed
+      that keeps the program's kinds and sorts, so a relation row of the extension has no output.
+    - [plan_complexity] Planning is cubic in the program text, because sorting the positions of an
+      atom compares unary join indices.
+    - [load_complexity] Loading is linear in its declarations and slots, with the layout work of
+      sorting.
+    - [check_plan_complexity] Plan checking is linear in the program and plan syntax at their
+      identifier width.
+    - [run_complexity] A run costs its trace work at the identifier width, its fuel counter and
+      its scaled initial credit.
+    - [round_complexity] A round costs its round work at the identifier width and its scaled
+      initial credit.
+
     Builds on: ValueSig, IndexSig, JoinSig, DatabaseSig and Model. *)
 
 From Stdlib Require Import List PArith NArith Bool Relations.Relation_Operators.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import Loop Code Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Fixpoint binding_env {V} (vars : list positive) (cells : list (cell V))
     (x : positive) : option (cell V) :=
@@ -391,27 +411,22 @@ Module Type RUN_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
       N.of_nat (N.size_nat (max_iter lim) + 1) + N.of_nat U * D.potential B db)%N.
   (** Planning is cubic in the program text, because sorting the positions of an atom
       compares unary join indices. *)
-  Parameter plan_complexity : bigO (fun _ => True)
-    (fun p => N.of_nat ((size_program p + 1) * (size_program p + 1) * (size_program p + 1)))
-    T_plan.
+  Parameter plan_complexity :
+    T_plan p ∈ 𝑂(N.of_nat ((size_program p + 1) * (size_program p + 1) * (size_program p + 1)))
+      for p.
   (** Loading is linear in its declarations and slots, with the layout work of sorting. *)
-  Parameter load_complexity : bigO (fun _ => True)
-    (fun x : program V.t * compiled V.t => load_cost (fst x) (snd x))
-    (fun x => T_load (fst x) (snd x)).
+  Parameter load_complexity : T_load p cp ∈ 𝑂(load_cost p cp) for (p, cp).
   (** Plan checking is linear in the program and plan syntax at their identifier width. *)
-  Parameter check_plan_complexity : bigO (fun _ => True)
-    (fun x : program V.t * compiled V.t =>
-      N.of_nat ((size_program (fst x) + size_compiled (snd x) + 1) * (wbits (fst x) + 1)))
-    (fun x => T_check_plan (fst x) (snd x)).
+  Parameter check_plan_complexity :
+    T_check_plan p cp ∈ 𝑂(N.of_nat ((size_program p + size_compiled cp + 1) * (wbits p + 1)))
+      for (p, cp).
   (** A run costs its trace work at the identifier width, its fuel counter and its scaled
       initial credit. *)
-  Parameter run_complexity : bigO
-    (fun x : N * nat * program V.t * compiled V.t * limits * D.t =>
-      let '(B, U, p, cp, lim, db) := x in
-      plans_ok p cp /\ D.wf db /\ loaded p cp db /\
-      (D.ids (snd (run p cp lim db)) <= B)%N /\ D.unit (snd (run p cp lim db)) <= U)
-    (fun x => let '(B, U, p, cp, lim, db) := x in run_cost B U p cp lim db)
-    (fun x => let '(_, _, p, cp, lim, db) := x in T_run p cp lim db).
+  Parameter run_complexity :
+    T_run p cp lim db ∈ 𝑂(run_cost B U p cp lim db)
+      for (B, U, p, cp, lim, db) |
+        plans_ok p cp /\ D.wf db /\ loaded p cp db /\
+        (D.ids (snd (run p cp lim db)) <= B)%N /\ D.unit (snd (run p cp lim db)) <= U.
 End RUN_TIME.
 
 Module Type RUN_T (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
@@ -770,13 +785,11 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
         N.of_nat (round_work p cp nv db + D.pending db + 1) +
       N.of_nat U * D.potential B db)%N.
   (** A round costs its round work at the identifier width and its scaled initial credit. *)
-  Parameter round_complexity : bigO
-    (fun x : N * nat * program V.t * compiled V.t * bool * D.t =>
-      let '(B, U, p, cp, nv, db) := x in
-      plans_ok p cp /\ D.wf db /\ loaded p cp db /\
-      (D.ids (round p cp nv db) <= B)%N /\ D.unit (round p cp nv db) <= U)
-    (fun x => let '(B, U, p, cp, nv, db) := x in round_cost B U p cp nv db)
-    (fun x => let '(_, _, p, cp, nv, db) := x in T_round p cp nv db).
+  Parameter round_complexity :
+    T_round p cp nv db ∈ 𝑂(round_cost B U p cp nv db)
+      for (B, U, p, cp, nv, db) |
+        plans_ok p cp /\ D.wf db /\ loaded p cp db /\
+        (D.ids (round p cp nv db) <= B)%N /\ D.unit (round p cp nv db) <= U.
 
   (** A driver call pays for its round, the limit test, the flag test and advancing. *)
   Parameter T_driver_split : forall p cp lim nv db, plans_ok p cp -> D.wf db ->
