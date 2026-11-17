@@ -315,8 +315,9 @@ Module DestroyCode (O : OPS)
     map (fun '(dst, src) => (dst, O.mov, [src])) sq.
 
   Definition moves_ok (par : moves) (tmp : positive) : bool :=
-    andb (distinct_vars (map fst par) Empty)
-      (negb (existsb (fun x => Pos.eqb tmp x) (map fst par ++ map snd par))).
+    if distinct_vars (map fst par) Empty then
+      negb (existsb (fun x => Pos.eqb tmp x) (map fst par ++ map snd par))
+    else false.
 
   Definition empty_params (table : ptrie (list positive)) (target : positive) : bool :=
     match trie_get target table with Some [] => true | _ => false end.
@@ -333,11 +334,13 @@ Module DestroyCode (O : OPS)
         | Some [] => Some (Block _ _ _ [] (code _ _ _ body) (Jump target []), None)
         | Some par =>
           let sq := PM.seq par tmp in
-          if andb (moves_ok par tmp) (PM.check_moves par tmp sq) then
-            (* Reading every actual preserves errors even when a self-copy is omitted. *)
-            let reads := move_code (map (fun src => (tmp, src)) actuals) in
-            Some (Block _ _ _ [] (code _ _ _ body ++ reads ++ move_code sq)
-              (Jump target []), Some (par, tmp, sq))
+          if moves_ok par tmp then
+            if PM.check_moves par tmp sq then
+              (* Reading every actual preserves errors even when a self-copy is omitted. *)
+              let reads := move_code (map (fun src => (tmp, src)) actuals) in
+              Some (Block _ _ _ [] (code _ _ _ body ++ reads ++ move_code sq)
+                (Jump target []), Some (par, tmp, sq))
+            else None
           else None
         end
       end
@@ -522,11 +525,19 @@ Module Destroy (O : OPS)
         intro Heq. subst y. contradiction.
   Qed.
 
+  (** Lazy freshness checking preserves the original conjunction. *)
+  Lemma moves_ok_andb par tmp :
+    moves_ok par tmp = andb (distinct_vars (map fst par) Empty)
+      (negb (existsb (fun x => Pos.eqb tmp x) (map fst par ++ map snd par))).
+  Proof.
+    reflexivity.
+  Qed.
+
   (** The explicit move precondition check establishes uniqueness and temporary freshness. *)
   Lemma moves_ok_sound : forall par tmp, moves_ok par tmp = true ->
     NoDup (map fst par) /\ ~ In tmp (map fst par ++ map snd par).
   Proof.
-    intros par tmp Hchecked. unfold moves_ok in Hchecked.
+    intros par tmp Hchecked. rewrite moves_ok_andb in Hchecked.
     apply andb_true_iff in Hchecked as [Hdistinct Hfresh].
     apply negb_true_iff in Hfresh. split.
     - exact (proj1 (distinct_vars_sound _ _ Hdistinct)).
@@ -542,6 +553,14 @@ Module Destroy (O : OPS)
     NoDup (map fst par) /\ ~ In tmp (map fst par ++ map snd par) /\
       PM.check_moves par tmp sq = true.
 
+  (** Nested option checks preserve the result of their conjunction. *)
+  Lemma copy_check_andb {A} (a b : bool) (out : option A) :
+    (if a then if b then out else None else None) =
+      if andb a b then out else None.
+  Proof.
+    destruct a; reflexivity.
+  Qed.
+
   (** Every recorded block check passed both the preconditions and the symbolic checker. *)
   Lemma copy_block_checked : forall table tmp body out checked,
     copy_block table tmp body = Some (out, checked) ->
@@ -553,7 +572,8 @@ Module Destroy (O : OPS)
     - destruct (trie_get target table) as [target_formals|]; [|discriminate].
       destruct (pair_moves target_formals actuals) as [[|first par]|]; try discriminate.
       + intros Hcopy. inversion Hcopy; subst. exact I.
-      + destruct (andb (moves_ok (first :: par) tmp)
+      + rewrite copy_check_andb.
+        destruct (andb (moves_ok (first :: par) tmp)
           (PM.check_moves (first :: par) tmp (PM.seq (first :: par) tmp)))
           eqn:Hchecked; [|discriminate].
         intros Hcopy. inversion Hcopy; subst.
@@ -606,7 +626,8 @@ Module Destroy (O : OPS)
     - destruct (trie_get target table) as [target_formals|]; [|discriminate].
       destruct (pair_moves target_formals actuals) as [[|first par]|]; try discriminate.
       + intros Hcopy. inversion Hcopy; subst. split; reflexivity.
-      + destruct (andb (moves_ok (first :: par) tmp)
+      + rewrite copy_check_andb.
+        destruct (andb (moves_ok (first :: par) tmp)
           (PM.check_moves (first :: par) tmp (PM.seq (first :: par) tmp)));
           [|discriminate].
         intros Hcopy. inversion Hcopy; subst. split; reflexivity.
@@ -942,7 +963,8 @@ Module Destroy (O : OPS)
     - destruct (trie_get target table) as [target_formals|]; [|discriminate].
       destruct (pair_moves target_formals actuals) as [[|first par]|]; try discriminate.
       + inversion Hcopy; subst. exists []. symmetry. apply app_nil_r.
-      + destruct (andb (moves_ok (first :: par) tmp)
+      + rewrite copy_check_andb in Hcopy.
+        destruct (andb (moves_ok (first :: par) tmp)
           (PM.check_moves (first :: par) tmp (PM.seq (first :: par) tmp))); [|discriminate].
         inversion Hcopy; subst. eexists. reflexivity.
     - destruct yes_args as [|x xs]; [|discriminate].
@@ -979,7 +1001,8 @@ Module Destroy (O : OPS)
           cbn [map] in Hformals, Hactuals. subst target_formals actuals.
           inversion Hcopy; subst. cbn [code term]. rewrite Htarget.
           cbn [finish_exit read_vars copy_outcomes]. eapply entered_empty; eassumption.
-        * destruct (andb (moves_ok (first :: par) (fresh_after (function_vars s)))
+        * rewrite copy_check_andb in Hcopy.
+          destruct (andb (moves_ok (first :: par) (fresh_after (function_vars s)))
             (PM.check_moves (first :: par) (fresh_after (function_vars s))
               (PM.seq (first :: par) (fresh_after (function_vars s))))) eqn:Hchecked;
             [|discriminate].
@@ -1644,7 +1667,8 @@ Module Destroy (O : OPS)
       destruct (pair_moves target_formals actuals) as [[|first par]|] eqn:Hpair;
         try discriminate.
       + inversion Hcopy; subst. cbn [term exit_arg_count]. lia.
-      + destruct (andb (moves_ok (first :: par) tmp)
+      + rewrite copy_check_andb in Hcopy.
+        destruct (andb (moves_ok (first :: par) tmp)
           (PM.check_moves (first :: par) tmp (PM.seq (first :: par) tmp))); [|discriminate].
         inversion Hcopy; subst. cbn [fst term exit_arg_count].
         destruct (pair_moves_rows _ _ _ Hpair) as [Hleft Hright].
@@ -1708,6 +1732,7 @@ Module Destroy (O : OPS)
       cbn [copy_block term code] in Hcopy.
     - destruct (trie_get target table) as [formals|] eqn:Hrow; [|discriminate].
       destruct (pair_moves formals actuals) as [[|first rest]|] eqn:Hpair; try discriminate.
+      rewrite copy_check_andb in Hcopy.
       destruct (andb (moves_ok (first :: rest) tmp)
         (PM.check_moves (first :: rest) tmp (PM.seq (first :: rest) tmp)));
         [|discriminate].
@@ -3011,10 +3036,11 @@ Module DestroyT (O : OPS)
     pose proof (List.T_existsb_le (fun x => Pos.eqb tmp x)
       (fun x => (1 + Pos.T_eqb tmp x)%N) (N.of_nat w + 1)%N
       (map fst par ++ map snd par) Hcallback) as Hexists.
-    time_unfold T_moves_ok. unfold Datatypes.T_andb, Datatypes.T_negb.
+    time_unfold T_moves_ok. unfold Datatypes.T_negb.
     rewrite !length_map in Hdistinct, Happend.
     rewrite length_app, !length_map in Hexists.
-    rewrite !Nat2N.inj_add in *. nia.
+    destruct (distinct_vars (map fst par) Empty);
+      rewrite !Nat2N.inj_add in *; nia.
   Qed.
 
   (** The producer retains the common width of its input variables and temporary. *)
@@ -3204,8 +3230,8 @@ Module DestroyT (O : OPS)
             (N.of_nat (length instructions)) (N.of_nat w)
             Hinsert Hchecked' Hpairtime Htarget) as Hcost.
           clear - Hcost Hget.
-          unfold Datatypes.T_andb. destruct (andb (moves_ok (first :: par) tmp)
-            (PM.check_moves (first :: par) tmp (PM.seq (first :: par) tmp))); lia.
+          destruct (moves_ok (first :: par) tmp);
+            [destruct (PM.check_moves (first :: par) tmp (PM.seq (first :: par) tmp))|]; lia.
         * apply time_of_nat_le in Htarget. rewrite !Nat2N.inj_add in *. nia.
       + apply time_of_nat_le in Htarget. rewrite !Nat2N.inj_add in *. nia.
     - destruct ys as [|y ys]; [|unfold T_copy_block, T_term; cbn [term];

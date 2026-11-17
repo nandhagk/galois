@@ -4,7 +4,7 @@
     For example, a diamond join receives one parameter and a loop carries its updated value.
     Builds on: Ssa.Build, Ssa.Validate and Ssa.Present. *)
 
-From Stdlib Require Import List PArith NArith.
+From Stdlib Require Import List PArith NArith Arith.
 From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import DigraphSig DomSig FrontierSig Digraph Dom Frontier.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig Validate Present Build.
@@ -90,3 +90,123 @@ Definition build_duplicate_block : TestSource.t :=
 Example build_rejects_duplicate_block_before_renaming :
   TestBuild.produce build_duplicate_block = None.
 Proof. vm_compute; reflexivity. Qed.
+
+(** Short-circuit validation keeps the checked result on accepted and rejected inputs. *)
+Example build_short_circuit_agrees :
+  map TestBuild.build [build_diamond; build_unavailable] =
+    map (fun p => match TestBuild.produce p with
+      | None => None
+      | Some (s, c) =>
+        if andb (TestValidate.check p s c) (TestValidate.check_ssa s) then Some s else None
+      end) [build_diamond; build_unavailable].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** These fixtures keep the inputs live across blocks and all temporary definitions local. *)
+Module TestInputLive.
+  Definition live_in (p : TestSource.t) : list (positive * list positive) :=
+    map (fun item => (fst item, inputs _ _ _ p)) (blocks _ _ _ p).
+End TestInputLive.
+Module TestInputBuild := BuildCode TestOps PosKeyCode PosKeyCode TestSource
+  TestView.Q TestView.R BlockEdge PointEdge PointKey TestView.BC TestView.C TestView.U
+  TestView.SP TestView.S DigraphCode DomCode FrontierCode TestInputLive TestValidate.
+
+Definition build_local_temporaries : TestSource.t :=
+  Func _ _ _ 1 [1; 2]
+    [(1, Block _ _ _ []
+      (map (fun j => (Pos.of_nat (j + 3), 1, [Pos.of_succ_nat (j mod 2)%nat])) (seq 0 40))
+      (Branch 1 [1] 2 [] 3 []));
+     (2, Block _ _ _ [] [] (Jump 4 []));
+     (3, Block _ _ _ [] [] (Jump 4 []));
+     (4, Block _ _ _ [] [] (Return [1; 2]))].
+
+(** Forty block-local temporaries add no cross-block placement variables. *)
+Example build_local_temporaries_inventory :
+  (length (TestView.U.universe (TestView.R.prepare build_local_temporaries)),
+    length (live_variables (TestInputLive.live_in build_local_temporaries)
+      (TestView.U.universe (TestView.R.prepare build_local_temporaries)))) = (42, 2)%nat.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Filtering leaves exactly the same placement table as the complete universe. *)
+Example build_local_temporaries_placement :
+  TestInputBuild.placement build_local_temporaries =
+    TestInputBuild.placement_with (TestInputBuild.frontiers build_local_temporaries)
+      (TestInputBuild.def_index build_local_temporaries)
+      (TestInputBuild.live_sets (TestInputLive.live_in build_local_temporaries))
+      (TestView.U.universe (TestView.R.prepare build_local_temporaries)).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** A function accepted by the original guard keeps its exact checked candidate. *)
+Example build_local_temporaries_unchanged :
+  TestInputBuild.build build_local_temporaries =
+    match TestInputBuild.rename build_local_temporaries
+      (TestInputBuild.dom_tree build_local_temporaries)
+      (TestInputBuild.placement_with (TestInputBuild.frontiers build_local_temporaries)
+        (TestInputBuild.def_index build_local_temporaries)
+        (TestInputBuild.live_sets (TestInputLive.live_in build_local_temporaries))
+        (TestView.U.universe (TestView.R.prepare build_local_temporaries)))
+      (TestInputLive.live_in build_local_temporaries) with
+    | None => None
+    | Some (s, c) =>
+      if andb (TestValidate.check build_local_temporaries s c) (TestValidate.check_ssa s)
+      then Some s else None
+    end.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example build_local_temporaries_result :
+  option_map (fun s => run_with TestOps.eval TestOps.test 3 s [4; 5])
+    (TestInputBuild.build build_local_temporaries) = Some (Returned [4; 5]).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition build_large_inputs : list positive := map Pos.of_succ_nat (seq 0 20).
+Definition build_large_block (i : nat) : positive * block positive positive positive :=
+  (Pos.of_succ_nat i,
+   Block _ _ _ []
+     (map (fun j =>
+       (Pos.of_nat (21 + 99 * i + j), 1, [Pos.of_succ_nat (j mod 20)%nat])) (seq 0 99))
+     (Branch 1 build_large_inputs (Pos.of_nat (Nat.min 20 (i + 2))) []
+       (Pos.of_nat (Nat.max 2 i)) [])).
+Definition build_large_universe : TestSource.t :=
+  Func _ _ _ 1 build_large_inputs (map build_large_block (seq 0 20)).
+
+(** The old guard rejected this function: 2,000 times 37 exceeds 54,704, so old build returned
+    None. Only the twenty inputs are live across block entries; the new product is 740. *)
+Example build_large_universe_produced : TestInputBuild.produce build_large_universe <> None.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+Example build_large_universe_accepted : TestInputBuild.build build_large_universe <> None.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+Example build_large_universe_is_ssa :
+  option_map TestValidate.check_ssa (TestInputBuild.build build_large_universe) = Some true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Module TestRejectValidate.
+  Definition check (_ _ : TestSource.t) (_ : cert) : bool := false.
+  Definition check_ssa := TestValidate.check_ssa.
+End TestRejectValidate.
+Module TestRejectBuild := BuildCode TestOps PosKeyCode PosKeyCode TestSource
+  TestView.Q TestView.R BlockEdge PointEdge PointKey TestView.BC TestView.C TestView.U
+  TestView.SP TestView.S DigraphCode DomCode FrontierCode TestLive TestRejectValidate.
+
+(** Failure of the translation validator rejects an otherwise valid produced candidate. *)
+Example build_short_circuit_rejects_candidate :
+  TestRejectBuild.produce build_diamond <> None /\ TestRejectBuild.build build_diamond = None.
+Proof.
+  vm_compute; split; [discriminate|reflexivity].
+Qed.

@@ -6,8 +6,8 @@
 
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Loop.
-From Galois.Base Require Import Key.
-From Galois.Graph Require Import Digraph Dom.
+From Galois.Base Require Import Key Trie.
+From Galois.Graph Require Import Data Digraph Dom.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig Validate Present.
 Import List.ListNotations.
 Open Scope positive_scope.
@@ -80,6 +80,114 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+(** An arm with a mismatched destination fails before checking its target arguments. *)
+Example mismatched_arm_rejected :
+  let t := V.tables imperative translated certificate in
+  (V.check_arm t 2 [(1, 11)] (val_set [1]) (Jump 2 []) (Jump 3 [11]) true,
+   V.check_arm t 2 [(1, 11)] (val_set [1]) (Jump 2 []) (Jump 2 [11]) true) =
+  (false, true).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition branch_source : Source.t :=
+  Func positive positive positive 1 [1]
+    [(1, Block positive positive positive [] [] (Branch 1 [1] 2 [] 3 []));
+     (2, Block positive positive positive [] [] (Return [1]));
+     (3, Block positive positive positive [] [] (Return [1]))].
+
+Definition branch_target : Source.t :=
+  Func positive positive positive 1 [10]
+    [(1, Block positive positive positive [] [] (Branch 1 [10] 2 [] 3 []));
+     (2, Block positive positive positive [] [] (Return [10]));
+     (3, Block positive positive positive [] [] (Return [10]))].
+
+Definition branch_certificate : cert :=
+  ([(1, [(1, 10)]); (2, [(1, 10)]); (3, [(1, 10)])],
+   [(1, [1]); (2, [1]); (3, [1])]).
+
+(** A branch exits early on a guard mismatch and keeps the accepted branch unchanged. *)
+Example branch_exit_checks_agree :
+  let t := V.tables branch_source branch_target branch_certificate in
+  let ib := Block positive positive positive [] [] (Branch 1 [1] 2 [] 3 []) in
+  let sb := Block positive positive positive [] [] (Branch 1 [10] 2 [] 3 []) in
+  let bad := Block positive positive positive [] [] (Branch 2 [10] 2 [] 3 []) in
+  (V.check branch_source branch_target branch_certificate,
+   V.check_exit t 1 ib sb [(1, 10)], V.check_exit t 1 ib bad [(1, 10)],
+   V.check_exit_ref t 1 ib sb [(1, 10)], V.check_exit_ref t 1 ib bad [(1, 10)]) =
+  (true, true, false, true, false).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Reused exit tables preserve both branch and return blocks. *)
+Example shared_exit_tables_agree :
+  let t := V.tables branch_source branch_target branch_certificate in
+  (map (V.check_block t) [1; 2; 3], map (V.check_block_ref t) [1; 2; 3]) =
+  ([true; true; true], [true; true; true]).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Repeated and shadowed input bindings retain their first-binding behavior. *)
+Example cached_scan_keeps_shadowed_history :
+  let rho := [(1, 10); (1, 9); (1, 10)] in
+  let result := [(1, 12); (1, 11); (1, 10); (1, 9); (1, 10)] in
+  (V.check_code [(1, 1, [1]); (1, 1, [1])]
+     [(11, 1, [10]); (12, 1, [11])] rho [1; 1],
+   V.check_code_tables [(1, 1, [1]); (1, 1, [1])]
+     [(11, 1, [10]); (12, 1, [11])] rho [1; 1]) =
+  (Some result, Some (result,
+    ExitTables (val_index result) (val_inverse result) (val_set [1]))).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition cache_source_code : list (positive * positive * list positive) :=
+  [(2, 1, [1]); (3, 1, [2]); (2, 1, [3])].
+
+Definition cache_target_code : list (positive * positive * list positive) :=
+  [(20, 1, [10]); (30, 1, [20]); (21, 1, [30])].
+
+(** Local overwrites update the forward table while preserving inverse history and membership. *)
+Example cached_scan_keeps_overwrite_tables :
+  let result := [(2, 21); (3, 30); (2, 20); (1, 10)] in
+  V.check_code_tables cache_source_code cache_target_code [(1, 10)] [1; 1] =
+  Some (result, ExitTables (val_index result) (val_inverse result)
+    (val_set [2; 3; 2; 1; 1])).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Different owners of one target remain rejected before scanning. *)
+Example cached_scan_rejects_conflicting_owners :
+  (V.check_code_tables [] [] [(1, 10); (2, 10)] [1; 2],
+   V.check_code [] [] [(1, 10); (2, 10)] [1; 2],
+   V.check_code_ref [] [] [(1, 10); (2, 10)] [1; 2]) = (None, None, None).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition cache_source : Source.t :=
+  Func positive positive positive 1 [1]
+    [(1, Block positive positive positive [] cache_source_code (Return [2; 3]))].
+
+Definition cache_target : Source.t :=
+  Func positive positive positive 1 [10]
+    [(1, Block positive positive positive [] cache_target_code (Return [21; 30]))].
+
+Definition cache_certificate : cert := ([(1, [(1, 10)])], [(1, [1])]).
+
+(** The exit consumes the final scan tables after an imperative local is overwritten. *)
+Example cached_exit_accepts_local_overwrite :
+  let t := V.tables cache_source cache_target cache_certificate in
+  (V.check cache_source cache_target cache_certificate,
+   V.check_block t 1, V.check_block_ref t 1, V.check_ssa cache_target) =
+  (true, true, true, true).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Example rejects_clobbered_live_renaming :
   V.check_code [(1, 1, [1])] [(20, 1, [10])] [(1, 10); (2, 20)] [1; 2] = None.
 Proof.
@@ -111,6 +219,25 @@ Proof.
 Qed.
 
 Example rejects_duplicate_definition : V.check_ssa imperative = false.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Sharing preparation preserves both an accepted and a rejected SSA check. *)
+Example shared_preparation_agrees :
+  (V.check_ssa translated, V.check_ssa use_before_definition) =
+  (V.check_ssa_ref translated, V.check_ssa_ref use_before_definition).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Locally available operands need no entries in the home or dominance tables. *)
+Example local_operands_are_visible :
+  let tree := DomTree Empty Empty Empty Empty in
+  (V.ssa_local tree Empty 1 (val_set [10])
+     [(11, 1, [10]); (12, 1, [11])] [12],
+   V.ssa_local tree Empty 1 (val_set [10]) [(11, 1, [99])] [11]) =
+  (true, false).
 Proof.
   vm_compute; reflexivity.
 Qed.

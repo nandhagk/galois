@@ -38,8 +38,17 @@ Fixpoint parallel_table (par : moves) : ptrie positive :=
 TimeFun parallel_table.
 
 Definition move_agrees (parallel sequential : ptrie positive) (tmp x : positive) : bool :=
-  Pos.eqb x tmp || Pos.eqb (move_lookup sequential x) (move_lookup parallel x).
+  if Pos.eqb x tmp then true
+  else Pos.eqb (move_lookup sequential x) (move_lookup parallel x).
 TimeFun move_agrees.
+
+(** The lazy temporary test preserves the original disjunction. *)
+Lemma move_agrees_orb parallel sequential tmp x :
+  move_agrees parallel sequential tmp x =
+    (Pos.eqb x tmp || Pos.eqb (move_lookup sequential x) (move_lookup parallel x)).
+Proof.
+  reflexivity.
+Qed.
 
 Fixpoint check_destinations (parallel sequential : ptrie positive) (tmp : positive)
     (ms : moves) : bool :=
@@ -210,7 +219,7 @@ Proof.
   induction ms as [|[dst src] rest IH]; cbn [check_destinations map fst].
   - intros _ x Hin. contradiction.
   - rewrite Bool.andb_true_iff. intros [Hhead Htail] x [Hequal|Hin] Htmp.
-    + subst x. unfold move_agrees in Hhead. apply Bool.orb_true_iff in Hhead.
+    + subst x. rewrite move_agrees_orb in Hhead. apply Bool.orb_true_iff in Hhead.
       destruct Hhead as [Htmp'|Hagree].
       * apply Pos.eqb_eq in Htmp'. contradiction.
       * now apply Pos.eqb_eq.
@@ -927,13 +936,23 @@ Module ParMoveT <: PARMOVE_ALL.
   Lemma seq_bigO : bigO (X := moves * positive) (fun _ => True)
     (fun '(par, _) => N.of_nat ((length par + 1) * (bits_of par + 1)))
     (fun '(par, tmp) => T_seq par tmp).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_pm).
+    intros [par tmp] _. cbn beta iota zeta.
+    pose proof (T_seq_le par tmp) as Hseq.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   (** Checking is linear in both sequences times the identifier width. *)
   Lemma check_moves_bigO : bigO (X := moves * positive * moves) (fun _ => True)
     (fun '(par, _, sq) => N.of_nat ((length par + length sq + 1) * (bits_of (par ++ sq) + 1)))
     (fun '(par, tmp, sq) => T_check_moves par tmp sq).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_pm).
+    intros [[par tmp] sq] _. cbn beta iota zeta.
+    pose proof (T_check_moves_le par tmp sq) as Hcheck.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   (** Cycle discovery uses the same bounded indexed search as move emission. *)
   Lemma T0_cycle_search : forall par,
