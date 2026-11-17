@@ -927,13 +927,23 @@ Module ParMoveT <: PARMOVE_ALL.
   Lemma seq_bigO : bigO (X := moves * positive) (fun _ => True)
     (fun '(par, _) => N.of_nat ((length par + 1) * (bits_of par + 1)))
     (fun '(par, tmp) => T_seq par tmp).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_pm).
+    intros [par tmp] _. cbn beta iota zeta.
+    pose proof (T_seq_le par tmp) as Hseq.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   (** Checking is linear in both sequences times the identifier width. *)
   Lemma check_moves_bigO : bigO (X := moves * positive * moves) (fun _ => True)
     (fun '(par, _, sq) => N.of_nat ((length par + length sq + 1) * (bits_of (par ++ sq) + 1)))
     (fun '(par, tmp, sq) => T_check_moves par tmp sq).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_pm).
+    intros [[par tmp] sq] _. cbn beta iota zeta.
+    pose proof (T_check_moves_le par tmp sq) as Hcheck.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   (** Cycle discovery uses the same bounded indexed search as move emission. *)
   Lemma T0_cycle_search : forall par,
