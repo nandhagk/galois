@@ -62,9 +62,16 @@ Module IntervalPayloadCode (L : WORD_LANGUAGE_OPS) (T : THRESHOLDS_OPS)
   Definition p := itv.
   Definition interval_top (w : positive) := I (Fin 0) (Fin (Word.modulus w - 1)).
   Definition interval_clip w a := interval_payload_clip Scalar.interval_meet w a.
-  Definition pleb w a b := Scalar.interval_leb (interval_clip w a) (interval_clip w b).
-  Definition pjoin w a b := Scalar.interval_join (interval_clip w a) (interval_clip w b).
-  Definition pmeet w a b := Scalar.interval_meet (interval_clip w a) (interval_clip w b).
+  Definition clip_m M a := Scalar.interval_meet a (I (Fin 0) (Fin (M - 1))).
+  Definition pleb_ref w a b := Scalar.interval_leb (interval_clip w a) (interval_clip w b).
+  Definition pleb w a b :=
+    let M := Word.modulus w in Scalar.interval_leb (clip_m M a) (clip_m M b).
+  Definition pjoin_ref w a b := Scalar.interval_join (interval_clip w a) (interval_clip w b).
+  Definition pjoin w a b :=
+    let M := Word.modulus w in Scalar.interval_join (clip_m M a) (clip_m M b).
+  Definition pmeet_ref w a b := Scalar.interval_meet (interval_clip w a) (interval_clip w b).
+  Definition pmeet w a b :=
+    let M := Word.modulus w in Scalar.interval_meet (clip_m M a) (clip_m M b).
   Definition pbot (_ : positive) := IBot.
   Definition ptop w := interval_top w.
   Definition pis_bot w a := Scalar.interval_is_bot (interval_clip w a).
@@ -73,10 +80,18 @@ Module IntervalPayloadCode (L : WORD_LANGUAGE_OPS) (T : THRESHOLDS_OPS)
     let v := Word.wrap w z in I (Fin v) (Fin v).
   Definition ppoint w a := Scalar.interval_singleton (interval_clip w a).
   Definition pwparam := ttree.
-  Definition pwiden ts w a b :=
+  Definition pwiden_ref ts w a b :=
     if pleb w b a then a else interval_clip w
       (Scalar.interval_stable_widen ts (interval_clip w a) (interval_clip w b)).
-  Definition pnarrow w a b := Scalar.interval_narrow (interval_clip w a) (interval_clip w b).
+  Definition pwiden ts w a b :=
+    let M := Word.modulus w in
+    let ca := clip_m M a in
+    let cb := clip_m M b in
+    if Scalar.interval_leb cb ca then a
+    else clip_m M (Scalar.interval_stable_widen ts ca cb).
+  Definition pnarrow_ref w a b := Scalar.interval_narrow (interval_clip w a) (interval_clip w b).
+  Definition pnarrow w a b :=
+    let M := Word.modulus w in Scalar.interval_narrow (clip_m M a) (clip_m M b).
 End IntervalPayloadCode.
 
 Module IntervalWordTableCode (L : WORD_LANGUAGE_OPS) (T : THRESHOLDS_OPS)
@@ -132,6 +147,42 @@ Local Close Scope Z_scope.
 Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_SCALAR_OPS T)
     <: INTERVAL_PAYLOAD_PINNED L T Scalar.
   Include IntervalPayloadCode L T Scalar.
+
+  (** Supplying the modulus explicitly preserves word clipping. *)
+  Lemma clip_m_agrees : forall w a, clip_m (Word.modulus w) a = interval_clip w a.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Sharing the modulus preserves payload inclusion. *)
+  Lemma pleb_agrees : forall w a b, pleb w a b = pleb_ref w a b.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Sharing the modulus preserves payload join. *)
+  Lemma pjoin_agrees : forall w a b, pjoin w a b = pjoin_ref w a b.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Sharing the modulus preserves payload meet. *)
+  Lemma pmeet_agrees : forall w a b, pmeet w a b = pmeet_ref w a b.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Sharing the clips preserves widening and its stable raw result. *)
+  Lemma pwiden_agrees : forall q w a b, pwiden q w a b = pwiden_ref q w a b.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Sharing the modulus preserves payload narrowing. *)
+  Lemma pnarrow_agrees : forall w a b, pnarrow w a b = pnarrow_ref w a b.
+  Proof.
+    reflexivity.
+  Qed.
   Include Scalar.
   Include INTERVAL_PAYLOAD_SPEC T Scalar.
   (** Every bound is below itself. *)
@@ -455,21 +506,24 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
   Proof.
-    intros q w a b. unfold pwiden. destruct (pleb w b a); unfold pleb.
+    intros q w a b. rewrite pwiden_agrees; unfold pwiden_ref.
+    destruct (pleb w b a); rewrite !pleb_agrees; unfold pleb_ref.
     - apply interval_leb_refl.
     - rewrite interval_clip_idem. rewrite <- (interval_clip_idem w a) at 1.
       apply interval_clip_mono. apply interval_stable_widen_upper_l.
   Qed.
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
   Proof.
-    intros q w a b. unfold pwiden. destruct (pleb w b a) eqn:Hle; [exact Hle|].
-    unfold pleb. rewrite interval_clip_idem. rewrite <- (interval_clip_idem w b) at 1.
+    intros q w a b. rewrite pwiden_agrees; unfold pwiden_ref.
+    destruct (pleb w b a) eqn:Hle; [exact Hle|].
+    rewrite !pleb_agrees; unfold pleb_ref. rewrite interval_clip_idem.
+    rewrite <- (interval_clip_idem w b) at 1.
     apply interval_clip_mono. apply interval_stable_widen_upper_r.
   Qed.
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
   Proof.
-    intros q w a b Hle. unfold pwiden. now rewrite Hle.
+    intros q w a b Hle. rewrite pwiden_agrees; unfold pwiden_ref. now rewrite Hle.
   Qed.
 
   (** Moving an endpoint right can only increase the number of smaller thresholds. *)
@@ -622,10 +676,10 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
     destruct (interval_clip_shape w a) as [Ha|[la [ha [Ha Harange]]]].
     { unfold pis_bot in Hbot. rewrite Ha in Hbot. discriminate. }
     destruct (interval_clip_shape w b) as [Hb|[lb [hb [Hb Hbrange]]]].
-    { unfold pleb in Hle. rewrite Hb in Hle. discriminate. }
+    { rewrite pleb_agrees in Hle. unfold pleb_ref in Hle. rewrite Hb in Hle. discriminate. }
     assert (Hraw : interval_leb (I (Fin lb) (Fin hb)) (I (Fin la) (Fin ha)) = false).
-    { unfold pleb in Hle. now rewrite Ha, Hb in Hle. }
-    unfold pwiden. rewrite Hle. unfold pwrank, payload_wrank.
+    { rewrite pleb_agrees in Hle. unfold pleb_ref in Hle. now rewrite Ha, Hb in Hle. }
+    rewrite pwiden_agrees; unfold pwiden_ref. rewrite Hle. unfold pwrank, payload_wrank.
     change ((match interval_clip w (interval_clip w
       (interval_stable_widen q (interval_clip w a) (interval_clip w b))) with
       | IBot => 0
@@ -660,24 +714,28 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   Proof.
     intros w a b Hle.
     assert (Hnarrow : pnarrow w a b = interval_clip w a).
-    { unfold pnarrow. destruct (interval_clip_shape w a) as
+    { rewrite pnarrow_agrees. unfold pnarrow_ref. destruct (interval_clip_shape w a) as
         [Hbot|[lo [hi [Hshape Hrange]]]].
       - now rewrite Hbot.
       - rewrite Hshape. destruct (interval_clip w b); reflexivity. }
-    unfold pleb in *. rewrite Hnarrow, interval_clip_idem.
+    change (pleb_ref w b (pnarrow w a b) = true /\ pleb_ref w (pnarrow w a b) a = true).
+    unfold pleb_ref. rewrite Hnarrow, !interval_clip_idem.
     split; [exact Hle|apply interval_leb_refl].
   Qed.
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
   Proof.
-    intros w a. unfold pleb. destruct (interval_clip w a) as [|l h]; cbn; [reflexivity|].
+    intros w a. rewrite !pleb_agrees; unfold pleb_ref.
+    destruct (interval_clip w a) as [|l h]; cbn; [reflexivity|].
     now rewrite !bound_leb_refl.
   Qed.
   (** Width-specific inclusion is transitive. *)
   Lemma pleb_trans : forall w a b c,
     pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
   Proof.
-    intros w a b c. unfold pleb.
+    intros w a b c.
+    change (pleb_ref w a b = true -> pleb_ref w b c = true -> pleb_ref w a c = true).
+    unfold pleb_ref.
     destruct (interval_clip w a) as [|la ha];
       destruct (interval_clip w b) as [|lb hb];
       destruct (interval_clip w c) as [|lc hc]; cbn; try discriminate; try reflexivity.
@@ -693,7 +751,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
   Proof.
-    intros w a. unfold pleb, ptop, interval_top.
+    intros w a. rewrite !pleb_agrees. unfold pleb_ref, ptop, interval_top.
     rewrite interval_clip_fixed by (pose proof (Word.modulus_pos w); lia).
     apply interval_meet_lower_r.
   Qed.
@@ -705,13 +763,13 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   (** Recognized bottoms are below every payload. *)
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
   Proof.
-    intros w a b. unfold pis_bot, pleb.
+    intros w a b. rewrite !pleb_agrees. unfold pis_bot, pleb_ref.
     destruct (interval_clip w a); cbn; [reflexivity|discriminate].
   Qed.
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
   Proof.
-    intros w a b. unfold pleb, pjoin.
+    intros w a b. rewrite !pleb_agrees, !pjoin_agrees. unfold pleb_ref, pjoin_ref.
     rewrite <- (interval_clip_idem w a) at 1. apply interval_clip_mono.
     destruct (interval_clip w a) as [|la ha], (interval_clip w b) as [|lb hb];
       cbn; try reflexivity; try (now rewrite !bound_leb_refl).
@@ -720,7 +778,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   (** Join contains the right payload. *)
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
   Proof.
-    intros w a b. unfold pleb, pjoin.
+    intros w a b. rewrite !pleb_agrees, !pjoin_agrees. unfold pleb_ref, pjoin_ref.
     rewrite <- (interval_clip_idem w b) at 1. apply interval_clip_mono.
     destruct (interval_clip w a) as [|la ha], (interval_clip w b) as [|lb hb];
       cbn; try reflexivity; try (now rewrite !bound_leb_refl).
@@ -729,13 +787,13 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
   Proof.
-    intros w a b. unfold pleb, pmeet.
+    intros w a b. rewrite !pleb_agrees, !pmeet_agrees. unfold pleb_ref, pmeet_ref.
     eapply interval_leb_trans; [apply interval_meet_lower_l|apply interval_meet_lower_l].
   Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
   Proof.
-    intros w a b. unfold pleb, pmeet.
+    intros w a b. rewrite !pleb_agrees, !pmeet_agrees. unfold pleb_ref, pmeet_ref.
     eapply interval_leb_trans; [apply interval_meet_lower_l|apply interval_meet_lower_r].
   Qed.
   (** Inclusion retains represented integers. *)
@@ -773,7 +831,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
   Proof.
-    intros w a b. unfold pleb, pis_bot.
+    intros w a b. rewrite !pleb_agrees. unfold pleb_ref, pis_bot.
     destruct (interval_clip w a), (interval_clip w b); cbn;
       try discriminate; reflexivity.
   Qed.
@@ -883,6 +941,7 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
 
   TimeFun interval_top.
   TimeFun interval_clip.
+  TimeFun clip_m.
   TimeFun pleb.
   TimeFun pjoin.
   TimeFun pmeet.
@@ -1024,6 +1083,13 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     unfold psize in *. rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
+  (** A clip with a supplied modulus avoids recomputing that modulus. *)
+  Lemma payload_clip_m_time : forall w a,
+    (Word.T_modulus w + T_clip_m (Word.modulus w) a <= T_interval_clip w a)%N.
+  Proof.
+    intros w a. unfold T_clip_m, T_interval_clip, T_interval_payload_clip. lia.
+  Qed.
+
   (** Inclusion pays for two clips and one scalar comparison. *)
   Lemma payload_leb_time : forall w a b,
     (T_pleb w a b <= 4 * (k_payload_clip + Scalar.c_scalar + 1) *
@@ -1032,7 +1098,9 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     intros w a b. pose proof (payload_clip_time w a). pose proof (payload_clip_time w b).
     pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
     pose proof (Scalar.T_interval_leb_le (interval_clip w a) (interval_clip w b)).
-    unfold T_pleb, psize in *. rewrite !Nat2N.inj_add in *. nia.
+    pose proof (payload_clip_m_time w a). pose proof (payload_clip_m_time w b).
+    unfold T_pleb, psize in *. cbn zeta. rewrite !clip_m_agrees.
+    rewrite !Nat2N.inj_add in *. nia.
   Qed.
 
   (** A larger coefficient and size budget preserve an established time bound. *)
@@ -1053,7 +1121,8 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros w a b. pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
     pose proof (payload_raw_join_bits (interval_clip w a) (interval_clip w b)).
-    unfold pjoin, psize, c_payload, k_payload_clip. rewrite !Nat2N.inj_add. nia.
+    rewrite pjoin_agrees. unfold pjoin_ref, psize, c_payload, k_payload_clip.
+    rewrite !Nat2N.inj_add. nia.
   Qed.
   (** Met payloads fit within the combined operand sizes. *)
   Lemma pmeet_size : forall w a b,
@@ -1062,14 +1131,15 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros w a b. pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
     pose proof (payload_raw_meet_bits (interval_clip w a) (interval_clip w b)).
-    unfold pmeet, psize, c_payload, k_payload_clip. rewrite !Nat2N.inj_add. nia.
+    rewrite pmeet_agrees. unfold pmeet_ref, psize, c_payload, k_payload_clip.
+    rewrite !Nat2N.inj_add. nia.
   Qed.
   (** Widened payloads fit within the operand and parameter sizes. *)
   Lemma pwiden_size : forall q w a b,
     (N.of_nat (psize w (pwiden q w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
   Proof.
-    intros q w a b. unfold pwiden. destruct (pleb w b a).
+    intros q w a b. rewrite pwiden_agrees; unfold pwiden_ref. destruct (pleb w b a).
     - unfold psize, c_payload, k_payload_clip. rewrite !Nat2N.inj_add. nia.
     - pose proof (payload_clip_bits w
         (Scalar.interval_stable_widen q (interval_clip w a) (interval_clip w b))).
@@ -1082,7 +1152,8 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros w a b. pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
     pose proof (payload_raw_narrow_bits (interval_clip w a) (interval_clip w b)).
-    unfold pnarrow, psize, c_payload, k_payload_clip. rewrite !Nat2N.inj_add. nia.
+    rewrite pnarrow_agrees. unfold pnarrow_ref, psize, c_payload, k_payload_clip.
+    rewrite !Nat2N.inj_add. nia.
   Qed.
   (** Payload widening charges both operands and its parameters. *)
   Lemma T_pwiden_le : forall q w a b,
@@ -1120,9 +1191,15 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       assert (Htree : T.tree_bits q <= pwsize q) by (unfold pwsize; nia).
       unfold budget, psize. lia. }
     rewrite Nat2N.inj_mul in Hresult.
-    unfold T_pwiden, c_payload. fold k budget.
+    pose proof (payload_clip_m_time w a) as Hshare_a.
+    pose proof (payload_clip_m_time w b) as Hshare_b.
+    pose proof (payload_clip_m_time w
+      (Scalar.interval_stable_widen q (interval_clip w a) (interval_clip w b))) as Hshare_result.
+    unfold T_pleb in Hleb. cbn zeta in Hleb. rewrite !clip_m_agrees in Hleb.
+    unfold T_pwiden, c_payload. cbn zeta. rewrite !clip_m_agrees.
+    fold k budget.
     clearbody k budget.
-    destruct (pleb w b a); nia.
+    destruct (Scalar.interval_leb (interval_clip w b) (interval_clip w a)); nia.
   Qed.
   (** Payload narrowing charges both raw payload sizes. *)
   Lemma T_pnarrow_le : forall w a b,
@@ -1130,7 +1207,9 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros w a b. pose proof (payload_clip_time w a). pose proof (payload_clip_time w b).
     pose proof (Scalar.T_interval_narrow_le (interval_clip w a) (interval_clip w b)).
-    unfold T_pnarrow, psize, c_payload in *. rewrite !Nat2N.inj_add in *. nia.
+    pose proof (payload_clip_m_time w a). pose proof (payload_clip_m_time w b).
+    unfold T_pnarrow, psize, c_payload in *. cbn zeta. rewrite !clip_m_agrees.
+    rewrite !Nat2N.inj_add in *. nia.
   Qed.
   (** Payload inclusion charges both raw payload sizes. *)
   Lemma T_pleb_le : forall w a b,
@@ -1145,7 +1224,9 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     intros w a b. pose proof (payload_clip_time w a). pose proof (payload_clip_time w b).
     pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
     pose proof (Scalar.T_interval_join_le (interval_clip w a) (interval_clip w b)).
-    unfold T_pjoin, psize, c_payload in *. rewrite !Nat2N.inj_add in *. nia.
+    pose proof (payload_clip_m_time w a). pose proof (payload_clip_m_time w b).
+    unfold T_pjoin, psize, c_payload in *. cbn zeta. rewrite !clip_m_agrees.
+    rewrite !Nat2N.inj_add in *. nia.
   Qed.
   (** Payload meet charges both raw payload sizes. *)
   Lemma T_pmeet_le : forall w a b,
@@ -1154,7 +1235,9 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     intros w a b. pose proof (payload_clip_time w a). pose proof (payload_clip_time w b).
     pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
     pose proof (Scalar.T_interval_meet_le (interval_clip w a) (interval_clip w b)).
-    unfold T_pmeet, psize, c_payload in *. rewrite !Nat2N.inj_add in *. nia.
+    pose proof (payload_clip_m_time w a). pose proof (payload_clip_m_time w b).
+    unfold T_pmeet, psize, c_payload in *. cbn zeta. rewrite !clip_m_agrees.
+    rewrite !Nat2N.inj_add in *. nia.
   Qed.
   (** Payload bottom recognition charges the raw endpoint bits and width. *)
   Lemma T_pis_bot_le : forall w a,
