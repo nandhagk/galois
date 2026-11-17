@@ -12101,20 +12101,35 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
       + pose proof assume_time_coefficient. nia.
   Qed.
 
+  (** Assignment is linear in the numeric work charged by its contract. *)
   Lemma assign_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [[x e] s] _.
+    cbn [fst snd]. pose proof (T_assign_le x e s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. nia.
+  Qed.
 
+  (** Havoc is linear in the numeric work charged by its contract. *)
   Lemma havoc_bigO : bigO (fun _ : X.t * t => True)
     (fun x => N.of_nat (havoc_work (fst x) (snd x)))
     (fun x => T_havoc (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [x s] _.
+    cbn [fst snd]. pose proof (T_havoc_le x s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. nia.
+  Qed.
 
+  (** Assumption is linear in the numeric work charged by its contract. *)
   Lemma assume_bigO : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
     (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
     (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_num). intros [[g es] s] _.
+    cbn [fst snd]. pose proof (T_assume_le g es s) as Htime.
+    rewrite Nat2N.inj_add in Htime. cbn [N.of_nat] in Htime. nia.
+  Qed.
 
   Lemma range_bigO : bigO (fun _ : term L.op X.t * t => True)
     (fun x => N.of_nat (range_work (fst x) (snd x)))
