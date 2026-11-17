@@ -34,11 +34,14 @@ Definition erase_wrapper : rewrite positive :=
 
 Module RewriteTests.
 
+  (** The rule that the erasing rewrite compiles to, a query on node 2 and a union of its result. *)
+  Definition erase_wrapper_rule : rule positive :=
+    Rule positive [Fun positive 2%positive [Var 1%positive] (Some (Var 2%positive))]
+      [Union (Var 2%positive) (Var 1%positive)].
+
   (** A rewrite that erases a wrapper becomes one query and one union of the two identifiers. *)
   Example wrapper_becomes_query_and_union :
-    Compiler.compile_rule erase_wrapper =
-      Rule positive [Fun positive 2%positive [Var 1%positive] (Some (Var 2%positive))]
-        [Union (Var 2%positive) (Var 1%positive)].
+    Compiler.compile_rule erase_wrapper = erase_wrapper_rule.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -106,12 +109,13 @@ Module AnalysisTests.
 
   Local Open Scope positive_scope.
 
+  (** An analysis rule with no query, which puts an empty tuple into relation 8. *)
+  Definition analysis_rule : rule positive := Rule positive [] [Put 8 [] None].
+
   (** Compiling a program keeps its analysis rules unchanged. *)
   Example analysis_rules_pass_through :
-    Compiler.compile [Decl 8 [] ORel] []
-      [Rule positive [] [Put 8 [] None]] =
-    Program positive [Decl 8 [] ORel]
-      [Rule positive [] [Put 8 [] None]].
+    Compiler.compile [Decl 8 [] ORel] [] [analysis_rule] =
+      Program positive [Decl 8 [] ORel] [analysis_rule].
   Proof.
     vm_compute. reflexivity.
   Qed.
