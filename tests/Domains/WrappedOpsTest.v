@@ -16,6 +16,22 @@ Local Abbreviation w1 := 1%positive.
 Local Abbreviation w4 := 4%positive.
 Local Abbreviation w16 := 16%positive.
 
+Example wrapped_mask_ite_join :
+  T.wfwd bvite w8
+    [(w1, WFull); (w8, WItv 250 3); (w8, WItv 1 9)] =
+    Some (WItv 250 9).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mask_ite_join_64 :
+  T.wfwd bvite 64%positive
+    [(w1, WFull); (64%positive, WItv 250 3); (64%positive, WItv 1 9)] =
+    Some (WItv 250 9).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example signed_division_cross_zero :
   T.wfwd bvsdiv w8 [(w8, WItv 250 255); (w8, WItv 2 2)] = Some (WItv 253 0).
 Proof. vm_compute. reflexivity. Qed.

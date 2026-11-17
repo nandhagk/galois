@@ -189,9 +189,13 @@ Definition wrapped_mul_piece (w : width) (a b : itv) : wrapped :=
   match a, b with
   | IBot, _ | _, IBot => WBot
   | I (Fin lo) (Fin hi), I (Fin lo') (Fin hi') =>
+    let p1 := lo * lo' in
+    let p2 := lo * hi' in
+    let p3 := hi * lo' in
+    let p4 := hi * hi' in
     wrapped_range w
-      (Z.min (Z.min (lo * lo') (lo * hi')) (Z.min (hi * lo') (hi * hi')))
-      (Z.max (Z.max (lo * lo') (lo * hi')) (Z.max (hi * lo') (hi * hi')))
+      (Z.min (Z.min p1 p2) (Z.min p3 p4))
+      (Z.max (Z.max p1 p2) (Z.max p3 p4))
   | _, _ => WFull
   end.
 TimeFun wrapped_mul_piece.
@@ -242,6 +246,15 @@ Definition wrapped_mul (w : width) (a b : wrapped) : wrapped :=
   let signed := wrapped_mul_both_parts w 0 (wrapped_signed_parts w a) (wrapped_signed_parts w b) in
   if wrapped_size w unsigned <=? wrapped_size w signed then unsigned else signed.
 TimeFun wrapped_mul.
+
+(** A cover with at most one value cannot be improved by the signed multiplication pass. *)
+Definition wrapped_mul_fast (w : width) (a b : wrapped) : wrapped :=
+  let unsigned := wrapped_mul_both_parts w (half w) (wrapped_parts w a) (wrapped_parts w b) in
+  let usize := wrapped_size w unsigned in
+  if usize <=? 1 then unsigned else
+  let signed := wrapped_mul_both_parts w 0 (wrapped_signed_parts w a) (wrapped_signed_parts w b) in
+  if usize <=? wrapped_size w signed then unsigned else signed.
+TimeFun wrapped_mul_fast.
 
 Definition wrapped_pole_cut (w : width) (a : itv) : itv * itv :=
   (WrappedScalar.interval_meet a (I (Fin 0) (Fin (half w - 1))),
@@ -324,10 +337,193 @@ Definition wrapped_split (w : width) (a : wrapped) : list (Z * Z) :=
   wrapped_interval_list (fst hi) ++ wrapped_interval_list (snd hi).
 TimeFun wrapped_split.
 
+(** * Circular operations with a shared mask *)
+
+Definition arc_wrap_m (m z : Z) : Z := Z.land z m.
+TimeFun arc_wrap_m.
+
+Definition wrapped_offset_m (m : Z) (_ : width) (origin x : Z) : Z :=
+  arc_wrap_m m (x - origin).
+TimeFun wrapped_offset_m.
+
+Definition wrapped_size_m (m : Z) (w : width) (a : wrapped) : Z :=
+  match a with
+  | WBot => 0
+  | WFull => m + 1
+  | WItv lo hi => wrapped_offset_m m w lo hi + 1
+  end.
+TimeFun wrapped_size_m.
+
+Definition wrapped_norm_m (m : Z) (w : width) (a : wrapped) : wrapped :=
+  match a with
+  | WItv lo hi =>
+    if wrapped_offset_m m w lo hi =? m
+    then WFull else WItv (arc_wrap_m m lo) (arc_wrap_m m hi)
+  | _ => a
+  end.
+TimeFun wrapped_norm_m.
+
+Definition wrapped_leb_m (m : Z) (w : width) (a b : wrapped) : bool :=
+  match a, b with
+  | WBot, _ => true
+  | _, WFull => true
+  | _, WBot => false
+  | WFull, WItv lo hi => wrapped_offset_m m w lo hi =? m
+  | WItv a b, WItv c d =>
+    if wrapped_offset_m m w c d =? m then true else
+    wrapped_offset_m m w c a + wrapped_offset_m m w a b <=?
+      wrapped_offset_m m w c d
+  end.
+TimeFun wrapped_leb_m.
+
+Definition wrapped_cover_m (m : Z) (w : width) (a b candidate : wrapped) : bool :=
+  if wrapped_leb_m m w a candidate then wrapped_leb_m m w b candidate else false.
+TimeFun wrapped_cover_m.
+
+Definition wrapped_choose_m (m : Z) (w : width) (a b first second : wrapped) : wrapped :=
+  if wrapped_cover_m m w a b first then
+    if wrapped_cover_m m w a b second then
+      if wrapped_size_m m w first <=? wrapped_size_m m w second then first else second
+    else first
+  else if wrapped_cover_m m w a b second then second else WFull.
+TimeFun wrapped_choose_m.
+
+Definition wrapped_join_m (m : Z) (w : width) (a b : wrapped) : wrapped :=
+  wrapped_norm_m m w
+    (if wrapped_leb_m m w a b then b else
+     if wrapped_leb_m m w b a then a else
+     match a, b with
+     | WItv lo hi, WItv lo' hi' =>
+       wrapped_choose_m m w a b (WItv lo hi') (WItv lo' hi)
+     | _, _ => WFull
+     end).
+TimeFun wrapped_join_m.
+
+Definition wrapped_double_m (m : Z) (w : width) (a : wrapped) : wrapped :=
+  match a with
+  | WBot => WBot
+  | WFull => WFull
+  | WItv lo hi =>
+    let size := wrapped_size_m m w a in
+    if m + 1 <=? 3 * size then WFull
+    else wrapped_norm_m m w (WItv (lo - size) (hi + size))
+  end.
+TimeFun wrapped_double_m.
+
+Definition wrapped_narrow_m (m : Z) (w : width) (a b : wrapped) : wrapped :=
+  let normalized := wrapped_norm_m m w a in
+  match normalized with
+  | WFull => wrapped_norm_m m w b
+  | _ => normalized
+  end.
+TimeFun wrapped_narrow_m.
+
+(** The all-ones mask is the largest word of its width. *)
+Lemma arc_mask_last : forall w, Z.ones (Zpos w) = modulus w - 1.
+Proof.
+  intro w. unfold modulus. apply Z.ones_equiv.
+Qed.
+
+(** Incrementing the all-ones mask gives the word modulus. *)
+Lemma arc_mask_modulus : forall w, Z.ones (Zpos w) + 1 = modulus w.
+Proof.
+  intro w. rewrite arc_mask_last. lia.
+Qed.
+
+(** A prepared mask performs the same word reduction as the original helper. *)
+Lemma arc_wrap_m_agrees : forall w z, arc_wrap_m (Z.ones (Zpos w)) z = arc_wrap w z.
+Proof.
+  reflexivity.
+Qed.
+
+(** Reusing the mask leaves circular offsets unchanged. *)
+Lemma wrapped_offset_m_agrees : forall w origin x,
+  wrapped_offset_m (Z.ones (Zpos w)) w origin x = wrapped_offset w origin x.
+Proof.
+  reflexivity.
+Qed.
+
+(** Reusing the mask leaves arc cardinality unchanged. *)
+Lemma wrapped_size_m_agrees : forall w a,
+  wrapped_size_m (Z.ones (Zpos w)) w a = wrapped_size w a.
+Proof.
+  intros w [| |lo hi]; cbn [wrapped_size_m wrapped_size]; try reflexivity.
+  apply arc_mask_modulus.
+Qed.
+
+(** Reusing the mask leaves normalized endpoints and full circles unchanged. *)
+Lemma wrapped_norm_m_agrees : forall w a,
+  wrapped_norm_m (Z.ones (Zpos w)) w a = wrapped_norm w a.
+Proof.
+  intros w [| |lo hi]; cbn [wrapped_norm_m wrapped_norm]; reflexivity.
+Qed.
+
+(** Reusing the mask and short-circuiting the full test preserves circular inclusion. *)
+Lemma wrapped_leb_m_agrees : forall w a b,
+  wrapped_leb_m (Z.ones (Zpos w)) w a b = wrapped_leb w a b.
+Proof.
+  intros w [| |la ha] [| |lb hb]; cbn [wrapped_leb_m wrapped_leb]; try reflexivity.
+  all: rewrite !wrapped_offset_m_agrees, arc_mask_last; reflexivity.
+Qed.
+
+(** A short-circuit cover test retains the original pair of inclusion checks. *)
+Lemma wrapped_cover_m_agrees : forall w a b candidate,
+  wrapped_cover_m (Z.ones (Zpos w)) w a b candidate = wrapped_cover w a b candidate.
+Proof.
+  intros w a b candidate. unfold wrapped_cover_m, wrapped_cover.
+  rewrite !wrapped_leb_m_agrees. reflexivity.
+Qed.
+
+(** Prepared-mask selection chooses the same candidate, including cardinality ties. *)
+Lemma wrapped_choose_m_agrees : forall w a b first second,
+  wrapped_choose_m (Z.ones (Zpos w)) w a b first second =
+    wrapped_choose w a b first second.
+Proof.
+  intros w a b first second. unfold wrapped_choose_m, wrapped_choose.
+  rewrite !wrapped_cover_m_agrees, !wrapped_size_m_agrees. reflexivity.
+Qed.
+
+(** Prepared-mask joining returns exactly the original circular cover. *)
+Lemma wrapped_join_m_agrees : forall w a b,
+  wrapped_join_m (Z.ones (Zpos w)) w a b = wrapped_join w a b.
+Proof.
+  intros w a b. unfold wrapped_join_m, wrapped_join.
+  rewrite wrapped_norm_m_agrees, !wrapped_leb_m_agrees.
+  destruct a, b; cbn; reflexivity.
+Qed.
+
+(** Prepared-mask expansion retains the original tripling of circular cardinality. *)
+Lemma wrapped_double_m_agrees : forall w a,
+  wrapped_double_m (Z.ones (Zpos w)) w a = wrapped_double w a.
+Proof.
+  intros w [| |lo hi]; cbn [wrapped_double_m wrapped_double]; try reflexivity.
+  rewrite wrapped_size_m_agrees, wrapped_norm_m_agrees, arc_mask_modulus. reflexivity.
+Qed.
+
+(** Sharing the first normalization leaves narrowing unchanged. *)
+Lemma wrapped_narrow_m_agrees : forall w a b,
+  wrapped_narrow_m (Z.ones (Zpos w)) w a b = wrapped_narrow w a b.
+Proof.
+  intros w a b. unfold wrapped_narrow_m, wrapped_narrow.
+  rewrite !wrapped_norm_m_agrees. destruct (wrapped_norm w a); reflexivity.
+Qed.
+
 Module WrappedCode (L : WORD_LANGUAGE_OPS) <: WRAPPED_OPS L.
   Definition p := wrapped.
-  Definition pleb := wrapped_leb.
-  Definition pjoin := wrapped_join.
+  Definition pleb w a b :=
+    match a, b with
+    | WBot, _ => true
+    | _, WFull => true
+    | _, WBot => false
+    | _, _ => wrapped_leb_m (Z.ones (Zpos w)) w a b
+    end.
+  Definition pjoin w a b :=
+    match a, b with
+    | WBot, WBot => WBot
+    | _, WFull => WFull
+    | WFull, WBot => WFull
+    | _, _ => wrapped_join_m (Z.ones (Zpos w)) w a b
+    end.
   Definition pmeet := wrapped_meet.
   Definition pbot (_ : positive) := WBot.
   Definition ptop (_ : positive) := WFull.
@@ -336,15 +532,29 @@ Module WrappedCode (L : WORD_LANGUAGE_OPS) <: WRAPPED_OPS L.
   Definition ppoint := wrapped_point.
   Definition pwparam := unit.
   Definition pwiden (_ : unit) w a b :=
-    if pleb w b a then a else pjoin w (wrapped_double w a) b.
-  Definition pnarrow := wrapped_narrow.
+    match a, b with
+    | _, WBot => a
+    | WFull, _ => WFull
+    | WBot, WFull => WFull
+    | _, _ =>
+      let m := Z.ones (Zpos w) in
+      if wrapped_leb_m m w b a then a
+      else wrapped_join_m m w (wrapped_double_m m w a) b
+    end.
+  Definition pnarrow w a b :=
+    match a, b with
+    | WBot, _ => WBot
+    | WFull, WBot => WBot
+    | WFull, WFull => WFull
+    | _, _ => wrapped_narrow_m (Z.ones (Zpos w)) w a b
+    end.
   Definition wrapped_norm := wrapped_norm.
   Definition wrapped_double := wrapped_double.
   Definition wrapped_neg := wrapped_neg.
   Definition wrapped_not := wrapped_not.
   Definition wrapped_add := wrapped_add.
   Definition wrapped_sub := wrapped_sub.
-  Definition wrapped_mul := wrapped_mul.
+  Definition wrapped_mul := wrapped_mul_fast.
   Definition wrapped_udiv := wrapped_udiv.
   Definition wrapped_urem := wrapped_urem.
   Definition wrapped_split := wrapped_split.
@@ -1201,6 +1411,119 @@ Proof.
   - right; left. apply wrapped_mul_parts_sound; now apply wrapped_mul_cut_sound.
   - right; right; left. apply wrapped_mul_parts_sound; now apply wrapped_mul_cut_sound.
   - right; right; right. apply wrapped_mul_parts_sound; now apply wrapped_mul_cut_sound.
+Qed.
+
+(** An empty left pair makes every multiplication piece empty. *)
+Local Lemma wrapped_mul_both_parts_bottom_left w pole b :
+  wrapped_mul_both_parts w pole (IBot, IBot) b = WBot.
+Proof.
+  reflexivity.
+Qed.
+
+(** An empty right interval makes an individual product empty. *)
+Local Lemma wrapped_mul_piece_bottom_right w a :
+  wrapped_mul_piece w a IBot = WBot.
+Proof.
+  destruct a as [|[|lo|] [|hi|]]; reflexivity.
+Qed.
+
+(** An empty right pair makes all four products empty. *)
+Local Lemma wrapped_mul_parts_bottom_right w a :
+  wrapped_mul_parts w a (IBot, IBot) = WBot.
+Proof.
+  unfold wrapped_mul_parts. cbn [fst snd].
+  rewrite !wrapped_mul_piece_bottom_right. reflexivity.
+Qed.
+
+(** Cutting an empty right pair leaves the complete multiplication pass empty. *)
+Local Lemma wrapped_mul_both_parts_bottom_right w pole a :
+  wrapped_mul_both_parts w pole a (IBot, IBot) = WBot.
+Proof.
+  unfold wrapped_mul_both_parts.
+  cbn [wrapped_mul_cut WrappedScalar.interval_meet fst snd].
+  rewrite !wrapped_mul_parts_bottom_right. reflexivity.
+Qed.
+
+(** A bottom operand makes the unsigned multiplication pass bottom. *)
+Local Lemma wrapped_mul_unsigned_bottom w a b :
+  a = WBot \/ b = WBot ->
+  wrapped_mul_both_parts w (half w) (wrapped_parts w a) (wrapped_parts w b) = WBot.
+Proof.
+  intros [-> | ->].
+  - change (wrapped_mul_both_parts w (half w) (IBot, IBot) (wrapped_parts w b) = WBot).
+    apply wrapped_mul_both_parts_bottom_left.
+  - change (wrapped_mul_both_parts w (half w) (wrapped_parts w a) (IBot, IBot) = WBot).
+    apply wrapped_mul_both_parts_bottom_right.
+Qed.
+
+(** Every nonbottom arc has a word member, even when its stored endpoints are raw. *)
+Local Lemma wrapped_nonempty w a :
+  a <> WBot -> exists z, wrapped_gamma w a z.
+Proof.
+  intro Hnonempty. destruct a as [| |lo hi].
+  - contradiction.
+  - exists 0. apply zero_is_word.
+  - exists (wrap w lo). split; [apply wrap_is_word|].
+    rewrite wrapped_offset_word, wrapped_offset_self.
+    pose proof (wrapped_offset_range w lo hi). lia.
+Qed.
+
+(** An arc that represents a word has positive cardinality. *)
+Local Lemma wrapped_gamma_size_pos w a z :
+  wrapped_gamma w a z -> 0 < wrapped_size w a.
+Proof.
+  intro Hmember. destruct a as [| |lo hi].
+  - contradiction.
+  - apply modulus_pos.
+  - cbn [wrapped_size]. pose proof (wrapped_offset_range w lo hi). lia.
+Qed.
+
+(** A zero- or one-value unsigned cover is no larger than the signed cover. *)
+Local Lemma wrapped_mul_small_unsigned w a b :
+  let unsigned :=
+    wrapped_mul_both_parts w (half w) (wrapped_parts w a) (wrapped_parts w b) in
+  let signed :=
+    wrapped_mul_both_parts w 0 (wrapped_signed_parts w a) (wrapped_signed_parts w b) in
+  wrapped_size w unsigned <= 1 -> wrapped_size w unsigned <= wrapped_size w signed.
+Proof.
+  cbn beta iota zeta.
+  set (u := wrapped_mul_both_parts w (half w) (wrapped_parts w a) (wrapped_parts w b)).
+  set (v := wrapped_mul_both_parts w 0 (wrapped_signed_parts w a) (wrapped_signed_parts w b)).
+  intro Hsmall. pose proof (wrapped_size_bounds w v) as Hv.
+  destruct (Z.eq_dec (wrapped_size w u) 0) as [Hzero|Hnonzero].
+  - lia.
+  - assert (Ha : a <> WBot).
+    { intro Hbottom.
+      assert (Hempty : u = WBot).
+      { unfold u. apply wrapped_mul_unsigned_bottom. now left. }
+      apply Hnonzero. rewrite Hempty. reflexivity. }
+    assert (Hb : b <> WBot).
+    { intro Hbottom.
+      assert (Hempty : u = WBot).
+      { unfold u. apply wrapped_mul_unsigned_bottom. now right. }
+      apply Hnonzero. rewrite Hempty. reflexivity. }
+    destruct (wrapped_nonempty w a Ha) as [x Hx].
+    destruct (wrapped_nonempty w b Hb) as [y Hy].
+    pose proof (wrapped_mul_both_parts_sound w 0
+      (wrapped_signed_parts w a) (wrapped_signed_parts w b) (signed w x) (signed w y)
+      (wrapped_signed_parts_sound w a x Hx) (wrapped_signed_parts_sound w b y Hy)) as Hmember.
+    fold v in Hmember. pose proof (wrapped_gamma_size_pos w v _ Hmember) as Hpositive.
+    lia.
+Qed.
+
+(** Skipping the signed pass on a smallest cover preserves the original result exactly. *)
+Lemma wrapped_mul_fast_agrees : forall w a b,
+  wrapped_mul_fast w a b = wrapped_mul w a b.
+Proof.
+  intros w a b. unfold wrapped_mul_fast, wrapped_mul. cbn beta iota zeta.
+  set (u := wrapped_mul_both_parts w (half w) (wrapped_parts w a) (wrapped_parts w b)).
+  set (v := wrapped_mul_both_parts w 0 (wrapped_signed_parts w a) (wrapped_signed_parts w b)).
+  destruct (wrapped_size w u <=? 1) eqn:Hsmall; [|reflexivity].
+  apply Z.leb_le in Hsmall.
+  pose proof (wrapped_mul_small_unsigned w a b Hsmall) as Horder.
+  assert (Htest : (wrapped_size w u <=? wrapped_size w v) = true).
+  { apply Z.leb_le. exact Horder. }
+  now rewrite Htest.
 Qed.
 
 Theorem wrapped_mul_sound w a b x y :
@@ -2365,6 +2688,58 @@ Proof.
 Qed.
 TimeBound wrapped_mul_time.
 
+(** The point shortcut retains the quadratic budget for raw multiplication inputs. *)
+Lemma wrapped_mul_fast_time : forall w a b,
+  (T_wrapped_mul_fast w a b <= 17592186044416 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
+Proof.
+  intros w a b.
+  pose proof (wrapped_parts_bits w a) as [Ha0 Ha1].
+  pose proof (wrapped_parts_bits w b) as [Hb0 Hb1].
+  pose proof (wrapped_signed_parts_bits w a) as [Hsa0 Hsa1].
+  pose proof (wrapped_signed_parts_bits w b) as [Hsb0 Hsb1].
+  pose proof (WordTime.word_half_size_bound w) as Hhalfbits.
+  pose proof (WordTime.word_half_time_bound w) as Hhalftime.
+  pose proof (wrapped_parts_time w a) as Hpartsa.
+  pose proof (wrapped_parts_time w b) as Hpartsb.
+  pose proof (wrapped_signed_parts_time w a) as Hsigneda.
+  pose proof (wrapped_signed_parts_time w b) as Hsignedb.
+  set (pa := wrapped_parts w a) in *.
+  set (pb := wrapped_parts w b) in *.
+  set (sa := wrapped_signed_parts w a) in *.
+  set (sb := wrapped_signed_parts w b) in *.
+  assert (Hunsigned : (T_wrapped_mul_both_parts w (half w) pa pb <=
+    618475290624 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+  { exact (WordTime.time_square_scale _ _ _ (Pos.to_nat w + 1) 6
+      (wrapped_mul_both_parts_time w (half w) pa pb) ltac:(lia)). }
+  assert (Hsigned : (T_wrapped_mul_both_parts w 0 sa sb <=
+    1391569403904 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+  { exact (WordTime.time_square_scale _ _ _ (Pos.to_nat w + 1) 9
+      (wrapped_mul_both_parts_time w 0 sa sb) ltac:(cbn [Z.size_nat]; lia)). }
+  pose proof (wrapped_mul_both_parts_bits w (half w) pa pb) as Hubits.
+  pose proof (wrapped_mul_both_parts_bits w 0 sa sb) as Hvbits.
+  set (u := wrapped_mul_both_parts w (half w) pa pb) in *.
+  set (v := wrapped_mul_both_parts w 0 sa sb) in *.
+  pose proof (wrapped_size_time w u) as Hucard.
+  pose proof (wrapped_size_time w v) as Hvcard.
+  pose proof (wrapped_size_bits w u) as Hucardbits.
+  pose proof (Std.Z.T_leb_le (wrapped_size w u) (wrapped_size w v)) as Hcompare.
+  pose proof (Std.Z.T_leb_le (wrapped_size w u) 1) as Hsmall.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+    ltac:(lia) ltac:(lia)) as Hwidth.
+  set (square := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b)).
+  change (T_wrapped_mul_fast w a b <= 17592186044416 * budget)%N.
+  assert (Hbudget : (square + N.of_nat (wrapped_bits a) + N.of_nat (wrapped_bits b) = budget)%N).
+  { unfold square, budget. rewrite !Nat2N.inj_add. reflexivity. }
+  apply time_of_nat_le in Hubits, Hvbits, Hucardbits.
+  rewrite Nat2N.inj_mul in Hubits, Hvbits.
+  time_unfold T_wrapped_mul_fast. cbn beta iota zeta. time_simpl. fold pa pb sa sb u v.
+  clearbody pa pb sa sb u v square budget.
+  destruct (wrapped_size w u <=? 1), (wrapped_size w u <=? wrapped_size w v);
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_mul_fast_time.
 
 (** Extracting one finite interval inspects only its constructors. *)
 Lemma wrapped_interval_list_time : forall a, (T_wrapped_interval_list a <= 4)%N.
@@ -2843,10 +3218,255 @@ Proof.
 Qed.
 TimeBound wrapped_urem_time.
 
+(** * Linear clocks for prepared masks *)
+
+(** A prepared word mask charges only the bitwise intersection. *)
+Lemma arc_wrap_m_time : forall w z,
+  (T_arc_wrap_m (Z.ones (Zpos w)) z <=
+    32 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+Proof.
+  intros w z.
+  pose proof (WordTime.word_size_bound w _ (arc_ones_word w)) as Hbits.
+  pose proof (Std.Z.T_land_le z (Z.ones (Zpos w))) as Hland.
+  time_unfold T_arc_wrap_m. rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound arc_wrap_m_time.
+
+(** Prepared circular offsets have the original linear endpoint budget. *)
+Lemma wrapped_offset_m_time : forall w origin x,
+  (T_wrapped_offset_m (Z.ones (Zpos w)) w origin x <=
+    128 * N.of_nat (Pos.to_nat w + Z.size_nat origin + Z.size_nat x + 1))%N.
+Proof.
+  intros w origin x.
+  pose proof (arc_wrap_m_time w (x - origin)) as Hwrap.
+  pose proof (Std.Z.T_sub_le x origin) as Hsub.
+  pose proof (WordTime.integer_sub_size x origin) as Hbits.
+  time_unfold T_wrapped_offset_m. rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_offset_m_time.
+
+(** Prepared offsets are word-sized independently of their raw endpoints. *)
+Lemma wrapped_offset_m_bits : forall w origin x,
+  (Z.size_nat (wrapped_offset_m (Z.ones (Zpos w)) w origin x) <= Pos.to_nat w)%nat.
+Proof.
+  intros w origin x. rewrite wrapped_offset_m_agrees. apply wrapped_offset_bits.
+Qed.
+
+(** Prepared cardinality costs linear work in the width and stored endpoints. *)
+Lemma wrapped_size_m_time : forall w a,
+  (T_wrapped_size_m (Z.ones (Zpos w)) w a <=
+    256 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w [| |lo hi].
+  - time_unfold T_wrapped_size_m. cbn [wrapped_bits]. rewrite Nat2N.inj_add. lia.
+  - pose proof (WordTime.word_size_bound w _ (arc_ones_word w)) as Hbits.
+    pose proof (Std.Z.T_add_le (Z.ones (Zpos w)) 1) as Hadd.
+    time_unfold T_wrapped_size_m. cbn [wrapped_bits].
+    rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
+  - pose proof (wrapped_offset_m_time w lo hi) as Hoffset.
+    pose proof (wrapped_offset_m_bits w lo hi) as Hbits.
+    pose proof (Std.Z.T_add_le (wrapped_offset_m (Z.ones (Zpos w)) w lo hi) 1) as Hadd.
+    time_unfold T_wrapped_size_m. cbn [wrapped_bits].
+    rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
+Qed.
+TimeBound wrapped_size_m_time.
+
+(** Prepared cardinality has the original width-dependent bit bound. *)
+Lemma wrapped_size_m_bits : forall w a,
+  (Z.size_nat (wrapped_size_m (Z.ones (Zpos w)) w a) <= Pos.to_nat w + 1)%nat.
+Proof.
+  intros w a. rewrite wrapped_size_m_agrees. apply wrapped_size_bits.
+Qed.
+
+(** Prepared normalization retains the original linear time budget. *)
+Lemma wrapped_norm_m_time : forall w a,
+  (T_wrapped_norm_m (Z.ones (Zpos w)) w a <=
+    512 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w [| |lo hi].
+  - time_unfold T_wrapped_norm_m. cbn [wrapped_bits]. rewrite Nat2N.inj_add. lia.
+  - time_unfold T_wrapped_norm_m. cbn [wrapped_bits]. rewrite Nat2N.inj_add. lia.
+  - pose proof (wrapped_offset_m_time w lo hi) as Hoffset.
+    pose proof (wrapped_offset_m_bits w lo hi) as Hoffsetbits.
+    pose proof (WordTime.word_size_bound w _ (arc_ones_word w)) as Hmaskbits.
+    pose proof (Std.Z.T_eqb_le (wrapped_offset_m (Z.ones (Zpos w)) w lo hi)
+      (Z.ones (Zpos w))) as Hequal.
+    pose proof (arc_wrap_m_time w lo) as Hlo.
+    pose proof (arc_wrap_m_time w hi) as Hhi.
+    time_unfold T_wrapped_norm_m. cbn [wrapped_bits].
+    destruct (wrapped_offset_m (Z.ones (Zpos w)) w lo hi =? Z.ones (Zpos w));
+      rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_norm_m_time.
+
+(** Short-circuit inclusion charges at most four prepared circular offsets. *)
+Lemma wrapped_leb_m_time : forall w a b,
+  (T_wrapped_leb_m (Z.ones (Zpos w)) w a b <=
+    1024 * N.of_nat (Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1))%N.
+Proof.
+  intro w.
+  pose proof (WordTime.word_size_bound w _ (arc_ones_word w)) as Hmaskbits.
+  intros [| |la ha] [| |lb hb]; time_unfold T_wrapped_leb_m; cbn [wrapped_bits].
+  all: try (rewrite !Nat2N.inj_add in *; lia).
+  - pose proof (wrapped_offset_m_bits w lb hb) as Hbits.
+    time_pose. rewrite !Nat2N.inj_add in *. lia.
+  - pose proof (wrapped_offset_m_bits w lb hb) as Hcoverbits.
+    pose proof (wrapped_offset_m_bits w lb la) as Hstartbits.
+    pose proof (wrapped_offset_m_bits w la ha) as Hlengthbits.
+    pose proof (WordTime.integer_add_size
+      (wrapped_offset_m (Z.ones (Zpos w)) w lb la)
+      (wrapped_offset_m (Z.ones (Zpos w)) w la ha)) as Hsumbits.
+    time_pose.
+    destruct (wrapped_offset_m (Z.ones (Zpos w)) w lb hb =? Z.ones (Zpos w));
+      rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_leb_m_time.
+
+(** Prepared cover checking short-circuits after a failed first inclusion. *)
+Lemma wrapped_cover_m_time : forall w a b candidate,
+  (T_wrapped_cover_m (Z.ones (Zpos w)) w a b candidate <= 4096 * N.of_nat
+    (Pos.to_nat w + wrapped_bits a + wrapped_bits b + wrapped_bits candidate + 1))%N.
+Proof.
+  intros w a b candidate. time_unfold T_wrapped_cover_m. time_pose.
+  destruct (wrapped_leb_m (Z.ones (Zpos w)) w a candidate);
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_cover_m_time.
+
+(** Prepared selection returns one of its candidates or the full circle. *)
+Lemma wrapped_choose_m_bits : forall m w a b first second,
+  (wrapped_bits (wrapped_choose_m m w a b first second) <=
+    wrapped_bits first + wrapped_bits second)%nat.
+Proof.
+  intros m w a b first second. unfold wrapped_choose_m.
+  destruct (wrapped_cover_m m w a b first), (wrapped_cover_m m w a b second),
+    (wrapped_size_m m w first <=? wrapped_size_m m w second); cbn [wrapped_bits]; lia.
+Qed.
+
+(** Prepared selection retains the original linear input and candidate budget. *)
+Lemma wrapped_choose_m_time : forall w a b first second,
+  (T_wrapped_choose_m (Z.ones (Zpos w)) w a b first second <= 16384 * N.of_nat
+    (Pos.to_nat w + wrapped_bits a + wrapped_bits b +
+      wrapped_bits first + wrapped_bits second + 1))%N.
+Proof.
+  intros w a b first second.
+  pose proof (wrapped_size_m_bits w first) as Hfirstbits.
+  time_unfold T_wrapped_choose_m. time_pose.
+  destruct (wrapped_cover_m (Z.ones (Zpos w)) w a b first),
+    (wrapped_cover_m (Z.ones (Zpos w)) w a b second),
+    (wrapped_size_m (Z.ones (Zpos w)) w first <=?
+      wrapped_size_m (Z.ones (Zpos w)) w second);
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_choose_m_time.
+
+(** Prepared join candidates contain only endpoint magnitudes from their inputs. *)
+Lemma wrapped_join_m_candidate_bits : forall m w a b,
+  (wrapped_bits
+    (if wrapped_leb_m m w a b then b else
+     if wrapped_leb_m m w b a then a else
+     match a, b with
+     | WItv lo hi, WItv lo' hi' =>
+       wrapped_choose_m m w a b (WItv lo hi') (WItv lo' hi)
+     | _, _ => WFull
+     end) <= wrapped_bits a + wrapped_bits b)%nat.
+Proof.
+  intros m w a b.
+  destruct (wrapped_leb_m m w a b), (wrapped_leb_m m w b a); try lia.
+  destruct a as [| |lo hi], b as [| |lo' hi']; cbn [wrapped_bits]; try lia.
+  pose proof (wrapped_choose_m_bits m w (WItv lo hi) (WItv lo' hi')
+    (WItv lo hi') (WItv lo' hi)) as Hbits. cbn [wrapped_bits] in Hbits. lia.
+Qed.
+
+(** Prepared joining retains the original linear budget for both raw arcs. *)
+Lemma wrapped_join_m_time : forall w a b,
+  (T_wrapped_join_m (Z.ones (Zpos w)) w a b <=
+    65536 * N.of_nat (Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1))%N.
+Proof.
+  intros w a b.
+  pose proof (wrapped_join_m_candidate_bits (Z.ones (Zpos w)) w a b) as Hcandidate.
+  time_unfold T_wrapped_join_m.
+  destruct (wrapped_leb_m (Z.ones (Zpos w)) w a b).
+  - cbn beta iota zeta. time_pose. rewrite !Nat2N.inj_add in *. lia.
+  - destruct (wrapped_leb_m (Z.ones (Zpos w)) w b a).
+    + cbn beta iota zeta. time_pose. rewrite !Nat2N.inj_add in *. lia.
+    + destruct a as [| |lo hi], b as [| |lo' hi'];
+        cbn beta iota zeta; time_pose; cbn [wrapped_bits] in *;
+        rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_join_m_time.
+
+(** Prepared expansion shares its mask with cardinality and endpoint normalization. *)
+Lemma wrapped_double_m_time : forall w a,
+  (T_wrapped_double_m (Z.ones (Zpos w)) w a <=
+    4096 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w [| |lo hi].
+  - time_unfold T_wrapped_double_m. cbn [wrapped_bits]. rewrite Nat2N.inj_add. lia.
+  - time_unfold T_wrapped_double_m. cbn [wrapped_bits]. rewrite Nat2N.inj_add. lia.
+  - pose proof (WordTime.word_size_bound w _ (arc_ones_word w)) as Hmaskbits.
+    assert (Hmodulusbits : (Z.size_nat (Z.ones (Zpos w) + 1) <= Pos.to_nat w + 1)%nat).
+    { rewrite arc_mask_modulus. apply WordTime.word_modulus_size_bound. }
+    pose proof (wrapped_size_m_bits w (WItv lo hi)) as Hsizebits.
+    pose proof (WordTime.integer_sub_size lo
+      (wrapped_size_m (Z.ones (Zpos w)) w (WItv lo hi))) as Hlobits.
+    pose proof (WordTime.integer_add_size hi
+      (wrapped_size_m (Z.ones (Zpos w)) w (WItv lo hi))) as Hhibits.
+    time_unfold T_wrapped_double_m. cbn beta iota zeta. time_pose.
+    destruct (Z.ones (Zpos w) + 1 <=?
+      3 * wrapped_size_m (Z.ones (Zpos w)) w (WItv lo hi));
+      cbn [wrapped_bits] in *; rewrite !Nat2N.inj_add in *; time_cbn_all; lia.
+Qed.
+TimeBound wrapped_double_m_time.
+
+(** Prepared narrowing charges at most the two input normalizations. *)
+Lemma wrapped_narrow_m_time : forall w a b,
+  (T_wrapped_narrow_m (Z.ones (Zpos w)) w a b <=
+    2048 * N.of_nat (Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1))%N.
+Proof.
+  intros w a b. time_unfold T_wrapped_narrow_m. cbn beta iota zeta. time_pose.
+  destruct (wrapped_norm_m (Z.ones (Zpos w)) w a);
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_narrow_m_time.
+
 
 Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Include WrappedCode L.
   Include WRAPPED_SPEC L.
+
+  (** The payload comparison shares a mask without changing circular inclusion. *)
+  Lemma pleb_agrees : forall w a b, pleb w a b = wrapped_leb w a b.
+  Proof.
+    intros w a b. unfold pleb.
+    destruct a, b; try reflexivity; apply wrapped_leb_m_agrees.
+  Qed.
+
+  (** The payload join chooses the same normalized circular cover. *)
+  Lemma pjoin_agrees : forall w a b, pjoin w a b = wrapped_join w a b.
+  Proof.
+    intros w a b. unfold pjoin.
+    destruct a, b; try reflexivity; apply wrapped_join_m_agrees.
+  Qed.
+
+  (** Shared-mask widening keeps the original raw arc when it is stable. *)
+  Lemma pwiden_agrees : forall q w a b,
+    pwiden q w a b =
+      if wrapped_leb w b a then a else wrapped_join w (wrapped_double w a) b.
+  Proof.
+    intros q w a b. unfold pwiden.
+    destruct a, b; cbn beta iota zeta; try reflexivity.
+    all: rewrite ?wrapped_leb_m_agrees, ?wrapped_double_m_agrees,
+      ?wrapped_join_m_agrees; reflexivity.
+  Qed.
+
+  (** Shared-mask narrowing agrees with the original normalization rule. *)
+  Lemma pnarrow_agrees : forall w a b, pnarrow w a b = wrapped_narrow w a b.
+  Proof.
+    intros w a b. unfold pnarrow.
+    destruct a, b; try reflexivity; apply wrapped_narrow_m_agrees.
+  Qed.
+
   Definition pgamma := arc_gamma.
   Definition pwrank (_ : pwparam) (w : positive) (a : p) : nat := size_rank w (card w a).
   (** The public arc meaning agrees with the checked circular helpers. *)
@@ -2872,27 +3492,30 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
 
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
   Proof.
-    intros q w a b. unfold pwiden. destruct (pleb w b a) eqn:Hcontained.
+    intros q w a b. rewrite pleb_agrees, pwiden_agrees.
+    destruct (wrapped_leb w b a) eqn:Hcontained.
     - apply wrapped_leb_refl.
     - eapply wrapped_leb_trans; [apply wrapped_double_upper|].
       exact (proj1 (proj1 (Bool.andb_true_iff _ _) (wrapped_join_cover w _ b))).
   Qed.
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
   Proof.
-    intros q w a b. unfold pwiden. destruct (pleb w b a) eqn:Hcontained.
+    intros q w a b. rewrite pleb_agrees, pwiden_agrees.
+    destruct (wrapped_leb w b a) eqn:Hcontained.
     - exact Hcontained.
     - exact (proj2 (proj1 (Bool.andb_true_iff _ _) (wrapped_join_cover w _ b))).
   Qed.
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
   Proof.
-    intros q w a b Hcontained. unfold pwiden. now rewrite Hcontained.
+    intros q w a b Hcontained. rewrite pleb_agrees in Hcontained.
+    now rewrite pwiden_agrees, Hcontained.
   Qed.
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
   Proof.
     intros q w a b Hnonbottom Hescape.
-    change (wrapped_leb w b a = false) in Hescape.
-    rewrite !pwrank_wrapped. unfold pwiden, pleb, pjoin. rewrite Hescape.
+    rewrite pleb_agrees in Hescape.
+    rewrite !pwrank_wrapped, pwiden_agrees, Hescape.
     pose proof (wrapped_size_bounds w a) as Hold.
     assert (Hproper : wrapped_size w a < modulus w).
     { destruct (Z.eq_dec (wrapped_size w a) (modulus w)) as [Hfull|Hproper]; [|lia].
@@ -2921,15 +3544,18 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
   Proof.
+    intros w a b. rewrite !pleb_agrees, !pnarrow_agrees.
     apply wrapped_narrow_between.
   Qed.
   Lemma pleb_refl : forall w a, pleb w a a = true.
   Proof.
+    intros w a. rewrite pleb_agrees.
     apply wrapped_leb_refl.
   Qed.
   Lemma pleb_trans : forall w a b c,
     pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
   Proof.
+    intros w a b c. rewrite !pleb_agrees.
     apply wrapped_leb_trans.
   Qed.
   Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
@@ -2950,22 +3576,24 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Qed.
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
   Proof.
-    intros w a b.
+    intros w a b. rewrite pleb_agrees, pjoin_agrees.
     exact (proj1 (proj1 (Bool.andb_true_iff _ _) (wrapped_join_cover w a b))).
   Qed.
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
   Proof.
-    intros w a b.
+    intros w a b. rewrite pleb_agrees, pjoin_agrees.
     exact (proj2 (proj1 (Bool.andb_true_iff _ _) (wrapped_join_cover w a b))).
   Qed.
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
   Proof.
+    intros w a b. rewrite pleb_agrees.
     apply wrapped_meet_lower_left.
   Qed.
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
   Proof.
     intros w a b z Hle. rewrite !pgamma_wrapped.
+    rewrite pleb_agrees in Hle.
     exact (proj1 (wrapped_leb_spec w a b) Hle z).
   Qed.
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
@@ -3044,7 +3672,8 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
     change (eval_op bvmul [(w, x); (w, y)] = Some (w, z)) in Heval.
     rewrite (eval_op_fun2 bvmul w x y BMul eq_refl) in Heval.
     cbn [eval_binary_tag] in Heval. inversion Heval; subst z.
-    rewrite !pgamma_wrapped in *. now apply wrapped_mul_sound.
+    rewrite !pgamma_wrapped in *.
+    unfold wrapped_mul. rewrite wrapped_mul_fast_agrees. now apply wrapped_mul_sound.
   Qed.
 End Wrapped.
 
@@ -3120,7 +3749,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
       c_payload * N.of_nat (psize w a + psize w b + 1))%N.
   Proof.
     intros w a b. pose proof (wrapped_join_bits w a b) as Hbits.
-    unfold c_payload, psize, pjoin. rewrite !Nat2N.inj_add in *. lia.
+    rewrite pjoin_agrees. unfold c_payload, psize. rewrite !Nat2N.inj_add in *. lia.
   Qed.
   (** Met payload storage fits the combined input budget. *)
   Lemma pmeet_size : forall w a b,
@@ -3135,11 +3764,10 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     (N.of_nat (psize w (pwiden q w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
   Proof.
-    intros q w a b. unfold pwiden. destruct (pleb w b a).
+    intros q w a b. rewrite pwiden_agrees. destruct (wrapped_leb w b a).
     - unfold c_payload, psize, pwsize. rewrite !Nat2N.inj_add in *. lia.
     - pose proof (wrapped_join_bits w (wrapped_double w a) b) as Hbits.
-      unfold wrapped_double in Hbits.
-      unfold c_payload, psize, pwsize, pjoin. rewrite !Nat2N.inj_add in *. lia.
+      unfold c_payload, psize, pwsize. rewrite !Nat2N.inj_add in *. lia.
   Qed.
   (** Narrowed storage fits both inputs. *)
   Lemma pnarrow_size : forall w a b,
@@ -3147,7 +3775,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
       c_payload * N.of_nat (psize w a + psize w b + 1))%N.
   Proof.
     intros w a b. pose proof (wrapped_narrow_bits w a b) as Hbits.
-    unfold c_payload, psize, pnarrow. rewrite !Nat2N.inj_add in *. lia.
+    rewrite pnarrow_agrees. unfold c_payload, psize. rewrite !Nat2N.inj_add in *. lia.
   Qed.
   (** Payload widening charges both values and the parameter. *)
   Lemma T_pwiden_le : forall q w a b,
@@ -3155,38 +3783,44 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
       c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
   Proof.
     intros q w a b.
-    pose proof (wrapped_leb_time w b a) as Hcompare.
-    pose proof (wrapped_double_time w a) as Hdouble.
+    pose proof (arc_ones_time w) as Hmask.
+    pose proof (wrapped_leb_m_time w b a) as Hcompare.
+    pose proof (wrapped_double_m_time w a) as Hdouble.
     pose proof (wrapped_double_bits w a) as Hdoublebits.
-    pose proof (wrapped_join_time w (wrapped_double w a) b) as Hjoin.
+    pose proof (wrapped_join_m_time w (wrapped_double w a) b) as Hjoin.
     unfold wrapped_double in Hjoin.
-    time_unfold T_pwiden. time_unfold T_pleb. time_unfold T_pjoin. cbn beta iota zeta. time_simpl.
-    destruct (pleb w b a); unfold c_payload, psize, pwsize;
+    destruct (wrapped_leb w b a) eqn:Hcontained;
+      destruct a, b; time_unfold T_pwiden; cbn beta iota zeta;
+      rewrite ?wrapped_double_m_agrees, ?wrapped_leb_m_agrees, ?Hcontained;
+      time_simpl; unfold c_payload, psize, pwsize;
       rewrite !Nat2N.inj_add in *; lia.
   Qed.
   (** Payload narrowing charges both input values. *)
   Lemma T_pnarrow_le : forall w a b,
     (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
   Proof.
-    intros w a b. pose proof (wrapped_narrow_time w a b) as Htime.
-    time_unfold T_pnarrow. cbn beta iota zeta. time_simpl. unfold c_payload, psize.
-    rewrite !Nat2N.inj_add in *. lia.
+    intros w a b. pose proof (wrapped_narrow_m_time w a b) as Htime.
+    pose proof (arc_ones_time w) as Hmask.
+    destruct a, b; time_unfold T_pnarrow; cbn beta iota zeta;
+      time_simpl; unfold c_payload, psize; rewrite !Nat2N.inj_add in *; lia.
   Qed.
   (** Payload comparison charges both values. *)
   Lemma T_pleb_le : forall w a b,
     (T_pleb w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
   Proof.
-    intros w a b. pose proof (wrapped_leb_time w a b) as Htime.
-    time_unfold T_pleb. cbn beta iota zeta. time_simpl. unfold c_payload, psize.
-    rewrite !Nat2N.inj_add in *. lia.
+    intros w a b. pose proof (wrapped_leb_m_time w a b) as Htime.
+    pose proof (arc_ones_time w) as Hmask.
+    destruct a, b; time_unfold T_pleb; cbn beta iota zeta;
+      time_simpl; unfold c_payload, psize; rewrite !Nat2N.inj_add in *; lia.
   Qed.
   (** Payload join charges both values. *)
   Lemma T_pjoin_le : forall w a b,
     (T_pjoin w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
   Proof.
-    intros w a b. pose proof (wrapped_join_time w a b) as Htime.
-    time_unfold T_pjoin. cbn beta iota zeta. time_simpl. unfold c_payload, psize.
-    rewrite !Nat2N.inj_add in *. lia.
+    intros w a b. pose proof (wrapped_join_m_time w a b) as Htime.
+    pose proof (arc_ones_time w) as Hmask.
+    destruct a, b; time_unfold T_pjoin; cbn beta iota zeta;
+      time_simpl; unfold c_payload, psize; rewrite !Nat2N.inj_add in *; lia.
   Qed.
   (** Payload meet charges both values. *)
   Lemma T_pmeet_le : forall w a b,
@@ -3271,7 +3905,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     (T_wrapped_mul w a b <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof.
-    intros w a b. pose proof (wrapped_mul_time w a b) as Htime.
+    intros w a b. pose proof (wrapped_mul_fast_time w a b) as Htime.
     pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
       (Nat.le_refl _) (ltac:(lia))) as Hfloor.
     time_unfold T_wrapped_mul. cbn beta iota zeta. time_simpl.
@@ -3342,60 +3976,112 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     exists 17592186044416%N. intros [w [a b]] _.
     change (T_wrapped_mul w a b <= 17592186044416 *
       (N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b) + 1))%N.
-    pose proof (wrapped_mul_time w a b) as Htime.
+    pose proof (wrapped_mul_fast_time w a b) as Htime.
     set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b)) in *.
     clearbody budget.
     time_unfold T_wrapped_mul. cbn beta iota zeta. time_simpl. lia.
   Qed.
 
+  (** Normalization is linear in the width and raw endpoint bits. *)
   Lemma norm_bigO : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_norm (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 512%N. intros [w a] _. cbn [fst snd].
+    pose proof (wrapped_norm_time w a) as Htime.
+    time_unfold T_wrapped_norm. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Arithmetic negation is linear in the width and raw endpoint bits. *)
   Lemma neg_bigO : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_neg (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 2048%N. intros [w a] _. cbn [fst snd].
+    pose proof (wrapped_neg_time w a) as Htime.
+    time_unfold T_wrapped_neg. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Circular expansion is linear in the width and raw endpoint bits. *)
   Lemma double_bigO : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_double (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 4096%N. intros [w a] _. cbn [fst snd].
+    pose proof (wrapped_double_time w a) as Htime.
+    time_unfold T_wrapped_double. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Bitwise negation is linear in the width and raw endpoint bits. *)
   Lemma not_bigO : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_not (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 1048576%N. intros [w a] _. cbn [fst snd].
+    pose proof (wrapped_not_time w a) as Htime.
+    time_unfold T_wrapped_not. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Pole splitting is linear in the width and raw endpoint bits. *)
   Lemma split_bigO : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_split (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 8388608%N. intros [w a] _. cbn [fst snd].
+    pose proof (wrapped_split_time w a) as Htime.
+    time_unfold T_wrapped_split. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Addition is linear in the width and both raw endpoint sets. *)
   Lemma add_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
       wrapped_bits (snd (snd x)) + 1))
     (fun x => T_wrapped_add (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 4096%N. intros [w [a b]] _. cbn [fst snd].
+    pose proof (wrapped_add_time w a b) as Htime.
+    time_unfold T_wrapped_add. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Subtraction is linear in the width and both raw endpoint sets. *)
   Lemma sub_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
       wrapped_bits (snd (snd x)) + 1))
     (fun x => T_wrapped_sub (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 16384%N. intros [w [a b]] _. cbn [fst snd].
+    pose proof (wrapped_sub_time w a b) as Htime.
+    time_unfold T_wrapped_sub. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Unsigned division has the published quadratic class. *)
   Lemma udiv_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
       wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_udiv (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_wrapped. intros [w [a b]] _. cbn [fst snd].
+    eapply N.le_trans; [apply T_wrapped_udiv_le|].
+    apply N.mul_le_mono_l. lia.
+  Qed.
 
+  (** Unsigned remainder has the published quadratic class. *)
   Lemma urem_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
       wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_urem (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_wrapped. intros [w [a b]] _. cbn [fst snd].
+    eapply N.le_trans; [apply T_wrapped_urem_le|].
+    apply N.mul_le_mono_l. lia.
+  Qed.
 
   Definition mul_piece (w : positive) (a b : Z * Z) : wrapped :=
     wrapped_mul_piece w
@@ -3432,7 +4118,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Lemma F7_widen : forall q w a b,
     pwiden q w a b = if pleb w b a then a else pjoin w (wrapped_double w a) b.
   Proof.
-    intros q w a b. reflexivity.
+    intros q w a b. rewrite pwiden_agrees, pleb_agrees, pjoin_agrees. reflexivity.
   Qed.
   (** Expansion triples cardinality until it reaches the modulus. *)
   Lemma F8_double_card : forall w a,
@@ -3443,13 +4129,15 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   (** Expansion contains the old arc. *)
   Lemma F8a_double_contains : forall w a, pleb w a (wrapped_double w a) = true.
   Proof.
+    intros w a. rewrite pleb_agrees.
     apply wrapped_double_upper.
   Qed.
   (** Cardinality is monotone in the payload order. *)
   Lemma F8b_card_mono : forall w a b,
     pleb w a b = true -> (card w a <= card w b)%Z.
   Proof.
-    intros w a b Hle. rewrite !card_wrapped_size. now apply wrapped_size_monotone.
+    intros w a b Hle. rewrite pleb_agrees in Hle.
+    rewrite !card_wrapped_size. now apply wrapped_size_monotone.
   Qed.
   (** Widening rank is determined by arc cardinality. *)
   Lemma F9_rank : forall q w a, pwrank q w a = size_rank w (card w a).
@@ -3481,7 +4169,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     intros w a b. repeat split.
     - apply wrapped_add_bits.
     - apply wrapped_add_bits.
-    - apply wrapped_mul_bits.
+    - unfold wrapped_mul. rewrite wrapped_mul_fast_agrees. apply wrapped_mul_bits.
     - apply wrapped_neg_bits.
   Qed.
   (** Every split piece has endpoints within the word width. *)
