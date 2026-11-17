@@ -3352,54 +3352,106 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     time_unfold T_wrapped_mul. cbn beta iota zeta. time_simpl. lia.
   Qed.
 
+  (** Normalization is linear in the width and raw endpoint bits. *)
   Lemma norm_bigO : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_norm (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 512%N. intros [w a] _. cbn [fst snd].
+    pose proof (wrapped_norm_time w a) as Htime.
+    time_unfold T_wrapped_norm. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Arithmetic negation is linear in the width and raw endpoint bits. *)
   Lemma neg_bigO : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_neg (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 2048%N. intros [w a] _. cbn [fst snd].
+    pose proof (wrapped_neg_time w a) as Htime.
+    time_unfold T_wrapped_neg. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Circular expansion is linear in the width and raw endpoint bits. *)
   Lemma double_bigO : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_double (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 4096%N. intros [w a] _. cbn [fst snd].
+    pose proof (wrapped_double_time w a) as Htime.
+    time_unfold T_wrapped_double. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Bitwise negation is linear in the width and raw endpoint bits. *)
   Lemma not_bigO : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_not (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 1048576%N. intros [w a] _. cbn [fst snd].
+    pose proof (wrapped_not_time w a) as Htime.
+    time_unfold T_wrapped_not. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Pole splitting is linear in the width and raw endpoint bits. *)
   Lemma split_bigO : bigO (X := positive * wrapped) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
     (fun x => T_wrapped_split (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 8388608%N. intros [w a] _. cbn [fst snd].
+    pose proof (wrapped_split_time w a) as Htime.
+    time_unfold T_wrapped_split. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Addition is linear in the width and both raw endpoint sets. *)
   Lemma add_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
       wrapped_bits (snd (snd x)) + 1))
     (fun x => T_wrapped_add (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 4096%N. intros [w [a b]] _. cbn [fst snd].
+    pose proof (wrapped_add_time w a b) as Htime.
+    time_unfold T_wrapped_add. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Subtraction is linear in the width and both raw endpoint sets. *)
   Lemma sub_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
       wrapped_bits (snd (snd x)) + 1))
     (fun x => T_wrapped_sub (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 16384%N. intros [w [a b]] _. cbn [fst snd].
+    pose proof (wrapped_sub_time w a b) as Htime.
+    time_unfold T_wrapped_sub. cbn beta iota zeta. time_simpl.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 
+  (** Unsigned division has the published quadratic class. *)
   Lemma udiv_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
       wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_udiv (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_wrapped. intros [w [a b]] _. cbn [fst snd].
+    eapply N.le_trans; [apply T_wrapped_udiv_le|].
+    apply N.mul_le_mono_l. lia.
+  Qed.
 
+  (** Unsigned remainder has the published quadratic class. *)
   Lemma urem_bigO : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
     (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
       wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_urem (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_wrapped. intros [w [a b]] _. cbn [fst snd].
+    eapply N.le_trans; [apply T_wrapped_urem_le|].
+    apply N.mul_le_mono_l. lia.
+  Qed.
 
   Definition mul_piece (w : positive) (a b : Z * Z) : wrapped :=
     wrapped_mul_piece w
