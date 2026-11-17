@@ -2,14 +2,14 @@
 
     Construction sorts and removes repeated thresholds before building a balanced tree.
     For example, a search around four in thresholds zero and eight returns those bounds.
-    Builds on: Thresholds. *)
+    Builds on: Thresholds.
 
-(* Groups:
-   - Construction: building a tree from an unsorted list, with duplicates and edge sizes.
-   - Search: the nearest threshold below and above a value.
-   - Depth: the depth of a tree built from a thousand thresholds.
-   - Preparation: sorting and removing repeats before construction.
-   - Large sets: searches in a thousand and in a hundred and one thresholds. *)
+    Groups:
+    - [ConstructionTests] Building a tree from an unsorted list, with duplicates and edge sizes.
+    - [SearchTests] The nearest threshold below and above a value.
+    - [DepthTests] The depth of a tree built from a thousand thresholds.
+    - [PreparationTests] Sorting and removing repeats before construction.
+    - [LargeSetTests] Searches in a thousand and in a hundred and one thresholds. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Domains Require Import Thresholds ThresholdsSig.
@@ -40,8 +40,7 @@ Module ConstructionTests.
     ThresholdsCode.make [10; 10; 10] = TNode TLeaf 10 TLeaf.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** An unsorted list with negative values and repeats builds the sorted tree of its
-      distinct values, and the search reports them as bounds. *)
+  (** An unsorted list with negatives and repeats gives bounds among its distinct values. *)
   Example unsorted_with_negatives_builds_sorted_bounds :
     (ThresholdsCode.below (ThresholdsCode.make [20; -5; 10; 10; 0]) 7,
       ThresholdsCode.above (ThresholdsCode.make [20; -5; 10; 10; 0]) 7) =

@@ -2,14 +2,13 @@
 
     These examples run word operations through the tagged constant harness.
     For example, adding two 32-bit singleton words yields a singleton two.
-    Builds on: BitsLang, Tagged and Harness. *)
+    Builds on: BitsLang, Tagged and Harness.
 
-(* Groups:
-   - Fixtures: the constant payload, the tagged domain and the harness over the word language.
-   - Bridge: arithmetic on singleton words.
-   - Guards: truth guards on singleton, unknown and malformed inputs.
-   - Expressions: bottom results of operations on malformed operands.
-   - Points: the wrapping of constants. *)
+    Groups:
+    - [BridgeTests] Arithmetic on singleton words.
+    - [GuardTests] Truth guards on singleton, unknown and malformed inputs.
+    - [ExpressionTests] Bottom results of operations on malformed operands.
+    - [PointTests] The wrapping of constants. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Bits Require Import Op.
@@ -105,36 +104,3 @@ Module PointTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End PointTests.
-
-(* The old truth_rejected expected [TBot] for a zero input. The current guard table
-   leaves the same input unchanged as [p 32 0].
-Example truth_rejected : Domain.guard (BTruth true) [p 32 0] = [TBot].
-Proof. vm_compute. reflexivity. Qed.
-*)
-
-(* The old op_bridge carried conversion and guard capability callbacks. BitsLangCode
-   now exposes BTruth and fixed-width word evaluation; it has no partial conversion,
-   Equal, Differ or Test guard constructors. The term-based probes are in BitsEnvTest.
-   These old capability statements have no corresponding current bridge interface.
-
-Theorem bool_bridge_laws :
-  op_bridge_laws bool_bridge (fun _ _ => None) (fun b => b).
-
-Theorem bool_value_laws :
-  value_laws bool_values (bits_sem bool_bridge (fun _ _ => None) (fun b => b))
-    (numeric_conc point_numeric point_meaning bool_bridge).
-
-Example partial_truth_fallback :
-  ValueAbs.guard (bits_values point_numeric partial_bridge TAny) (Truth true) [p 32 0] =
-    [p 32 0].
-
-Example partial_differ_fallback :
-  ValueAbs.guard (bits_values point_numeric partial_bridge TAny) (Differ None) [TAny] = [TAny].
-*)
-
-(* The old point dictionary bundled the following client. WORD_PAYLOAD now states
-   point meaning, inclusion, meet and constant laws separately; BitsLawTest cites
-   those current interfaces.
-Example numeric_instance_laws : numeric_laws point_numeric point_meaning.
-Proof. exact (tagged_numeric_laws point_word_domain point_gamma point_word_laws). Qed.
-*)

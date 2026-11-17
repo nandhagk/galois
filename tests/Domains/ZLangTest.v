@@ -2,12 +2,12 @@
 
     Integer operators evaluate their documented operand shapes.
     For example, integer addition adds two signed operands.
-    Builds on: ZLang. *)
+    Builds on: ZLang.
 
-(* Groups:
-   - Arithmetic: addition, subtraction and multiplication, with their arity.
-   - Division: quotient, remainder and shifts, with their zero and negative cases.
-   - Literals: constants and comparisons. *)
+    Groups:
+    - [ArithmeticTests] Addition, subtraction and multiplication, with their arity.
+    - [DivisionTests] Quotient, remainder and shifts, with their zero and negative cases.
+    - [LiteralTests] Constants and comparisons. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Domains Require Import IntervalSig ZLang.

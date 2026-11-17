@@ -52,8 +52,7 @@ Module Type TARGETS.
   Parameter values : list (list nat).
 End TARGETS.
 
-(** A trace domain whose values are lists of naturals and whose backward step
-    returns the targets of the functor argument. *)
+(** A trace domain of lists of naturals whose backward step returns the functor targets. *)
 Module TraceCode (T : TARGETS).
   Definition t := list nat.
   Definition leb (_ _ : t) := true.
@@ -131,10 +130,11 @@ Module TraceTests.
   Example earlier_bindings_are_kept : forward_trace [9] = [9; 1; 2].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** The reversed target list is observed in its own order. *)
+  (** The trace of variable 0 after refining with the reversed targets. *)
   Definition reverse_trace :=
     ReverseEnv.read (ReverseEnv.refine []
       (ReverseEnv.annotate NatMap.empty (Node tt [Leaf 0; Leaf 0])) NatMap.empty) 0.
+  (** The reversed target list is observed in its own order. *)
   Example reversed_targets_are_observed_in_order : reverse_trace = [2; 1].
   Proof. vm_compute. reflexivity. Qed.
 

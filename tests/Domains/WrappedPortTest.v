@@ -5,15 +5,14 @@
     Builds on: WrappedOps, Tagged and Harness.
 
     Groups:
-    - Fixtures: the wrapped, tagged and harness modules, and the port helpers.
-    - Narrowing: meets and narrowing of single arcs and pairs of arcs.
-    - Arithmetic: modular, signed and division results of arcs, including crossing zero.
-    - Widths: truncation, zero extension and sign extension.
-    - Comparisons: unsigned, signed and bitwise results over arcs.
-    - Backward: assumptions that narrow the operands of each operation.
-    - Full aliases: full-width arcs under each width change.
-    - Malformed: backward inputs with the wrong number of operands.
-    - Consistency: the assumed consistency of two operand arcs. *)
+    - [NarrowingTests] Meets and narrowing of single arcs and pairs of arcs.
+    - [ArithmeticTests] Modular, signed and division results of arcs, including crossing zero.
+    - [WidthTests] Truncation, zero extension and sign extension.
+    - [ComparisonTests] Unsigned, signed, choice and bitwise results over arcs.
+    - [BackwardTests] Assumptions that narrow the operands of each operation.
+    - [FullAliasTests] Full-width arcs under each width change.
+    - [MalformedTests] Backward inputs with the wrong number of operands.
+    - [ConsistencyTests] The assumed consistency of two operand arcs. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Op.
@@ -64,7 +63,7 @@ Definition malformed_backward_inputs : list (list (positive * wrapped)) :=
 
 Module NarrowingTests.
 
-  (** Narrowing to width eight keeps the arc from 250 to 3. *)
+  (** Narrowing the full arc by the arc from 250 to 3 gives that arc. *)
   Example narrow_full :
     W.pnarrow w8 (WItv 10 9) (WItv 250 3) = WItv 250 3.
   Proof.
@@ -172,7 +171,7 @@ Module ArithmeticTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** Multiplying the operands of the previous example in the other order gives 0 to 254. *)
+  (** Multiplying the point two by the arc from 100 to 50 also gives 0 to 254. *)
   Example mul_both_poles_right :
     fwd bvmul [(w8, WItv 2 2); (w8, WItv 100 50)] w8 = WItv 0 254.
   Proof.
@@ -448,8 +447,6 @@ End FullAliasTests.
 
 Module MalformedTests.
 
-  (* The source expected [WFull; WItv 15 1; WFull]. The shared harness returns
-     [WItv (-1) 2; WItv (-1) 17; WItv 10 9] for the malformed three-operand input. *)
   (** The shared harness keeps the lengths of malformed backward inputs and refines them. *)
   Example harness_malformed_backward :
     map (fun xs =>
@@ -495,58 +492,3 @@ Module ConsistencyTests.
   Proof. vm_compute. auto. Qed.
 
 End ConsistencyTests.
-
-(* The landed observation used the old payload-level malformed fallback.
-Example wrapped_backward_malformed_fallback_count_and_refinement :
-  map (fun xs =>
-    let ys := passume D bvadd xs w1 (WItv 1 1) in
-    (ys, Nat.eqb (length ys) (length xs),
-     forallb (fun p =>
-       leb (plat D (fst (fst p))) (snd p) (snd (fst p))) (combine xs ys)))
-    wrapped_malformed_backward_inputs =
-  [([], true, true); ([WFull; WItv 15 1; WFull], true, true)].
-Proof.
-  vm_compute. reflexivity.
-Qed.
-*)
-
-(* The charged Cost interface was removed. These source clock claims are deferred to
-   timing and are not executable tests of generated clocks.
-Example wrapped_join_retains_callback_costs :
-  Cost.ticks (wrapped_union_c w8
-    (Cost.tick 7 ;; Cost.ret (WItv 0 0))
-    (Cost.tick 11 ;; Cost.ret (WItv 1 1))) = 20%N.
-Proof. vm_compute. reflexivity. Qed.
-Example wrapped_pair_join_retains_callback_costs :
-  Cost.ticks (wrapped_pair_union_c w4 w8
-    (Cost.tick 7 ;; Cost.ret (WItv 0 0, WItv 2 2))
-    (Cost.tick 11 ;; Cost.ret (WItv 1 1, WItv 3 3))) = 22%N.
-Proof. vm_compute. reflexivity. Qed.
-Example wrapped_piece_retains_interval_costs :
-  Cost.ticks (wrapped_piece_forward_c bvnot [] w1) =
-  (Cost.ticks (interval_forward_c ThresholdEmpty bvnot [] w1) + 2)%N.
-Proof. vm_compute. reflexivity. Qed.
-Example wrapped_consistency_retains_delegated_forward_cost (q : interval) :
-  Cost.ticks (wrapped_assume_consistent_c bvadd w8 w8
-    (Itv (Fin 1) (Fin 3)) (Itv (Fin 2) (Fin 4)) q) =
-  (Cost.ticks (interval_forward_c ThresholdEmpty bvadd
-    [(w8, Itv (Fin 1) (Fin 3)); (w8, Itv (Fin 2) (Fin 4))] w8) + 2)%N.
-Proof. vm_compute. reflexivity. Qed.
-Example wrapped_consistency_accept_and_reject_costs :
-  (Cost.value (interval_forward_c ThresholdEmpty bvadd
-      [(w8, Itv (Fin 1) (Fin 3)); (w8, Itv (Fin 2) (Fin 4))] w8),
-    Cost.ticks (interval_forward_c ThresholdEmpty bvadd
-      [(w8, Itv (Fin 1) (Fin 3)); (w8, Itv (Fin 2) (Fin 4))] w8),
-    map (fun q =>
-      let checked := wrapped_assume_consistent_c bvadd w8 w8
-        (Itv (Fin 1) (Fin 3)) (Itv (Fin 2) (Fin 4)) q in
-      (Cost.value checked, Cost.ticks checked))
-      [Itv (Fin 4) (Fin 5); Itv (Fin 20) (Fin 21)]) =
-  (Itv (Fin 3) (Fin 7), 20%N, [(true, 22%N); (false, 22%N)]).
-Proof. vm_compute. reflexivity. Qed.
-Example wrapped_consistency_rejects_width_mismatch_without_delegation :
-  let checked := wrapped_assume_consistent_c bvadd w8 w4
-    (Itv (Fin 1) (Fin 3)) (Itv (Fin 2) (Fin 4)) (Itv (Fin 4) (Fin 5)) in
-  (Cost.value checked, Cost.ticks checked) = (false, 1%N).
-Proof. vm_compute. reflexivity. Qed.
-*)

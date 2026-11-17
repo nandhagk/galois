@@ -2,14 +2,13 @@
 
     Extraction offsets must be bounded before the table evaluates their arithmetic.
     For example, a one-bit operand cannot supply a bit at offset eight.
-    Builds on: KnownBitsOps and the generated word-operation clocks. *)
+    Builds on: KnownBitsOps and the generated word-operation clocks.
 
-(* Groups:
-   - Fixtures: the stage configuration, the known-bit masks and the table.
-   - Extraction: forward and backward extraction, inside and outside the operand width.
-   - Backward: backward transfers of bitwise, projection, order, negation and shift operators.
-   - Rotation: backward rotations at several widths.
-   - Clocks: lower bounds on the time of unchecked extraction. *)
+    Groups:
+    - [ClockTests] Lower bounds on the time of unchecked extraction.
+    - [ExtractionTests] Forward and backward extraction, inside and outside the operand width.
+    - [BackwardTests] Backward transfers of bitwise, projection, order, negation and shifts.
+    - [RotationTests] Backward rotations at several widths. *)
 
 From Stdlib Require Import ZArith NArith List Lia.
 From Argent Require Import Time Tactics Std.
@@ -88,7 +87,6 @@ End ClockTests.
 
 (** * Extraction *)
 
-(** The old unchecked forward value was Some (Tnum 1 0). *)
 Module ExtractionTests.
 
   (** A forward extraction past the operand width has no result. *)
@@ -132,7 +130,7 @@ Module BackwardTests.
         Some [tnum_const 8%positive 15; tnum_const 8%positive 0].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A backward xor with a constant result refines its operand to the difference. *)
+  (** A backward xor gives the operand the xor of the constant result and the other operand. *)
   Example backward_xor_constant_result :
     Table.wbwd bvxor 8%positive (tnum_const 8%positive 15)
       [(8%positive, tnum_top); (8%positive, tnum_const 8%positive 3)] =
@@ -198,46 +196,46 @@ Module BackwardTests.
       [(1%positive, tnum_top)] = Some [tnum_const 1%positive 1].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A backward negation of an exact mask keeps that mask. *)
+  (** A backward negation of a mask with conflicting bits keeps that mask. *)
   Example backward_not_of_exact_mask :
     Table.wbwd bvnot 8%positive (Tnum 7 7) [(8%positive, Tnum 7 7)] = Some [Tnum 7 7].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A backward negation of an oversized mask gives the complementary mask. *)
+  (** A backward negation of a mask wider than the word wraps it first, giving the constant 255. *)
   Example backward_not_of_oversized_mask :
     Table.wbwd bvnot 8%positive (Tnum 511 256) [(8%positive, tnum_top)] =
       Some [Tnum 0 255].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A backward left shift keeps the copied bits of a constant shifted by a known count. *)
+  (** Undoing a left shift to 128 by zero to three bits makes the low four bits known zero. *)
   Example backward_shift_left_known_count :
     Table.wbwd bvshl 8%positive (tnum_const 8%positive 128)
       [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
         Some [Tnum 15 0; Tnum 252 0].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A backward logical right shift keeps the copied bits of a constant. *)
+  (** Undoing a logical right shift to 128 by zero to three bits makes bits 3 to 6 known zero. *)
   Example backward_shift_right_known_count :
     Table.wbwd bvlshr 8%positive (tnum_const 8%positive 128)
       [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
         Some [Tnum 120 0; Tnum 252 0].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A backward arithmetic right shift keeps the sign bit of a constant. *)
+  (** Undoing an arithmetic right shift to 128 by zero to three bits keeps the sign bit one. *)
   Example backward_arithmetic_shift_keeps_sign :
     Table.wbwd bvashr 8%positive (tnum_const 8%positive 128)
       [(8%positive, tnum_top); (8%positive, Tnum 252 0)] =
         Some [Tnum 120 128; Tnum 252 0].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A possible logical shift by the width erases the copied bits. *)
+  (** A count that may equal the width leaves the operand of a backward logical shift unknown. *)
   Example backward_logical_shift_by_width_erases_bits :
     Table.wbwd bvlshr 8%positive (tnum_const 8%positive 15)
       [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
         Some [tnum_top; Tnum 247 0].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A possible arithmetic shift by the width keeps the sign information. *)
+  (** A count that may equal the width leaves the sign bit of the operand known zero. *)
   Example backward_arithmetic_shift_by_width_keeps_sign :
     Table.wbwd bvashr 8%positive (tnum_const 8%positive 15)
       [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
@@ -256,19 +254,19 @@ Module BackwardTests.
       [(1%positive, tnum_top); (1%positive, tnum_top)] = Some [Tnum 0 1; tnum_top].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A raw shift count of a larger width keeps the masks specified by the raw inputs. *)
+  (** Masks wider than the word give no information about the operand of a left shift. *)
   Example backward_shift_raw_mask_left :
     Table.wbwd bvshl 8%positive (Tnum 511 256)
       [(8%positive, tnum_top); (8%positive, Tnum 256 0)] = Some [tnum_top; tnum_top].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** An arithmetic shift of a raw oversized mask keeps the sign bit. *)
+  (** A result mask and a count mask wider than the word leave the operand sign bit known zero. *)
   Example backward_shift_raw_mask_arithmetic :
     Table.wbwd bvashr 8%positive (Tnum 511 256)
       [(8%positive, tnum_top); (8%positive, Tnum 256 0)] = Some [Tnum 128 0; tnum_top].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A logical shift of an exact mask by an exact count keeps the exact mask. *)
+  (** A logical shift of a mask with conflicting bits by zero to three bits keeps the mask. *)
   Example backward_shift_exact_mask_logical :
     Table.wbwd bvlshr 8%positive (Tnum 7 7)
       [(8%positive, Tnum 7 7); (8%positive, Tnum 252 0)] = Some [Tnum 7 7; Tnum 252 0].
@@ -280,42 +278,42 @@ End BackwardTests.
 
 Module RotationTests.
 
-  (** A zero rotation stride keeps the constant on the left rotation. *)
+  (** A count of zero or eight rotates a byte by zero, so the left rotation keeps the constant. *)
   Example backward_rotate_left_keeps_constant :
     Table.wbwd bvrotl 8%positive (tnum_const 8%positive 15)
       [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
         Some [tnum_const 8%positive 15; Tnum 247 0].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A zero rotation stride keeps the constant on the right rotation. *)
+  (** A count of zero or eight rotates a byte by zero, so the right rotation keeps the constant. *)
   Example backward_rotate_right_keeps_constant :
     Table.wbwd bvrotr 8%positive (tnum_const 8%positive 15)
       [(8%positive, tnum_top); (8%positive, Tnum 247 0)] =
         Some [tnum_const 8%positive 15; Tnum 247 0].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A left rotation at width five gives the inverse rotation of the constant. *)
+  (** Undoing a left rotation by zero or one at width five leaves bits 0 and 4 possible. *)
   Example backward_rotate_left_nonpower_width :
     Table.wbwd bvrotl 5%positive (tnum_const 5%positive 1)
       [(5%positive, tnum_top); (5%positive, Tnum 15 0)] =
         Some [Tnum 14 0; Tnum 15 0].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A right rotation at width five gives the inverse rotation of the constant. *)
+  (** Undoing a right rotation by zero or one at width five leaves bits 0 and 1 possible. *)
   Example backward_rotate_right_nonpower_width :
     Table.wbwd bvrotr 5%positive (tnum_const 5%positive 1)
       [(5%positive, tnum_top); (5%positive, Tnum 15 0)] =
         Some [Tnum 28 0; Tnum 15 0].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A left rotation at width sixty-four keeps an all-one unknown mask. *)
+  (** A left rotation of the all-ones constant at width sixty-four keeps the constant. *)
   Example backward_rotate_left_width_64 :
     Table.wbwd bvrotl 64%positive (Tnum 0 18446744073709551615)
       [(64%positive, tnum_top); (64%positive, tnum_top)] =
         Some [Tnum 0 18446744073709551615; tnum_top].
   Proof. vm_compute. reflexivity. Qed.
 
-  (** A right rotation at width sixty-four keeps an all-one unknown mask. *)
+  (** A right rotation of the all-ones constant at width sixty-four keeps the constant. *)
   Example backward_rotate_right_width_64 :
     Table.wbwd bvrotr 64%positive (Tnum 0 18446744073709551615)
       [(64%positive, tnum_top); (64%positive, tnum_top)] =

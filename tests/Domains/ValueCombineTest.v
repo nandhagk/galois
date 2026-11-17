@@ -2,12 +2,12 @@
 
     Product abstractions combine facts from their components.
     For example, a reducer can replace a product transfer result.
-    Builds on: Product, Reduced and ValueOpenTest. *)
+    Builds on: Product, Reduced and ValueOpenTest.
 
-(* Groups:
-   - Product: forward, guard and reduced transfers of a product of reachability domains.
-   - Reduced identity: reduced transfers with a reducer that keeps its input.
-   - Join: left folds of joins over lists, with weak and ordered joins. *)
+    Groups:
+    - [ProductTests] Forward, guard and reduced transfers of a product of reachability domains.
+    - [ReducedIdentityTests] Reduced transfers with a reducer that keeps its input.
+    - [JoinTests] Left folds of joins over lists, with weak and ordered joins. *)
 
 From Stdlib Require Import List Bool.
 From Galois.Domains Require Import Product Reduced.
@@ -120,16 +120,6 @@ Module ReducedIdentityTests.
   Proof. vm_compute. reflexivity. Qed.
 
 End ReducedIdentityTests.
-
-(* The old product-law client awaits conversion to module laws.
-Example identity_product_laws :
-  value_laws reach_product unit_sem (product_gamma bool_gamma bool_gamma).
-Proof.
-  apply product_laws; try exact reach_value_laws. intros p c H. exact H.
-Qed.
-
-
-*)
 
 (** * Join *)
 

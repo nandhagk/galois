@@ -2,10 +2,11 @@
 
     These examples inspect row and raw-code entry counts without invoking widening placeholders.
     For example, two stored equality rows contribute two rank units.
-    The groups are:
-    - Ranks, which count stored rows and raw entries.
-    - Widening, which checks widening and stability of raw and empty stored entries.
-    Builds on: Linearize, LinCert, Karr, Poly, Zone and Octagon. *)
+    Builds on: Linearize, LinCert, Karr, Poly, Zone and Octagon.
+
+    Groups:
+    - [RankTests] Counting stored rows and raw entries.
+    - [WideningTests] Widening and stability of raw and empty stored entries. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map Trie.

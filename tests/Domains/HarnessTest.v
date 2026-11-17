@@ -2,13 +2,12 @@
 
     Backward and guard dispatch accept only tables with the original operand count.
     For example, a short table leaves every input unchanged.
-    Builds on: Harness. *)
+    Builds on: Harness.
 
-(* Groups:
-   - Fixtures: a position language, a natural base, a table of candidates and the harness.
-   - Backward: backward entries of equal, shorter and longer length.
-   - Guard: guard entries of equal, shorter and longer length.
-   - Helpers: the positional meet of two lists. *)
+    Groups:
+    - [BackwardTests] Backward entries of equal, shorter and longer length.
+    - [GuardTests] Guard entries of equal, shorter and longer length.
+    - [HelperTests] The positional meet of two lists. *)
 
 From Stdlib Require Import List Arith ZArith.
 From Galois.Domains Require Import Harness.

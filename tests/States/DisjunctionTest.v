@@ -93,9 +93,12 @@ End HavocTests.
 
 Module MeetTests.
 
-  (** The meet under a cap of two keeps the intersections of the alternatives. *)
+  (** The alternatives of the meet: the three intersections, the last two merged under the cap. *)
+  Definition meet_expected : list State.t := [interval_state 5 10; interval_state 20 28].
+
+  (** The meet under a cap of two keeps the intersections, merging those over the cap. *)
   Example capped_meet_keeps_intersections :
-    proj1_sig (D2.meet meet_left meet_right) = [interval_state 5 10; interval_state 20 28].
+    proj1_sig (D2.meet meet_left meet_right) = meet_expected.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The capped meet does not refine the right operand, so the order fails. *)

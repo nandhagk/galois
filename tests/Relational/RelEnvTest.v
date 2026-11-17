@@ -2,11 +2,12 @@
 
     Product states run both component updates and refine evaluated values by numeric ranges.
     For example, an integer constant has the same finite range in both components.
-    The groups are:
-    - Evaluation, which checks the value of an evaluated term.
-    - Assignment, which checks both components after an update.
-    - Narrowing, which checks that a bottom candidate is kept.
-    Builds on: RelEnv, Env and interval operations. *)
+    Builds on: RelEnv, Env and interval operations.
+
+    Groups:
+    - [EvalTests] The value of an evaluated term.
+    - [AssignTests] Both components after an update.
+    - [NarrowTests] A bottom candidate is kept. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map.

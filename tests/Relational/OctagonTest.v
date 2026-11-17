@@ -2,18 +2,19 @@
 
     These examples observe the code tower on small signed difference matrices.
     For example, tightening a bound preserves the stronger bound already stored.
-    The groups are:
-    - Coherence, which checks that a signed matrix is symmetric and well formed.
-    - Closure, which composes bounds and detects contradictions.
-    - Tighten, which rounds unary bounds to even integers.
-    - Insertion, which adds and forgets constraints.
-    - Lattice, which joins, orders and widens matrices.
-    - Assume, which adds the constraints of a guard.
-    - Range, which computes the bounds of an affine form.
-    - Assign, which assigns affine forms to a variable.
-    - Agree, which checks the fast assignment paths against their specifications.
-    - OddEntries, which checks strong closure on a matrix with an odd unary entry.
-    Builds on: Octagon, keyed trie maps and the integer language. *)
+    Builds on: Octagon, keyed trie maps and the integer language.
+
+    Groups:
+    - [CoherenceTests] Whether a signed matrix is symmetric and well formed.
+    - [ClosureTests] Composing bounds and detecting contradictions.
+    - [TightenTests] Rounding unary bounds to even integers.
+    - [InsertionTests] Adding and forgetting constraints.
+    - [LatticeTests] Joining, ordering and widening matrices.
+    - [AssumeTests] Adding the constraints of a guard.
+    - [RangeTests] The bounds of an affine form.
+    - [AssignTests] Assigning affine forms to a variable.
+    - [AgreeTests] The fast assignment paths against their specifications.
+    - [OddEntriesTests] Strong closure on a matrix with an odd unary entry. *)
 
 From Stdlib Require Import List ZArith Lia.
 From Galois.Base Require Import Key Map Trie.
@@ -844,8 +845,8 @@ Module OddEntriesTests.
     intros [_ Heven]. specialize (Heven positive_y 1%Z eq_refl). vm_compute in Heven. discriminate.
   Qed.
 
-  (** The old interval assignment tightens the unrelated odd unary entry to zero. *)
-  Example old_interval_tightens_odd_unrelated_entry :
+  (** The closing interval assignment tightens the unrelated odd unary entry to zero. *)
+  Example closing_interval_tightens_odd_unrelated_entry :
     match Oct.add_range 1%positive (Fin 0%Z, Fin 0%Z)
       (Oct.havoc 1%positive (Reached strong_odd_matrix)) with
     | Reached m => OctTime.entry m positive_y negative_y

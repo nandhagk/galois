@@ -5,14 +5,13 @@
     Builds on: DomainsTnumMul and public Bits arithmetic.
 
     Groups:
-    - Fixtures: the short-stage masks and the concrete enumeration helpers.
-    - Products: sparse, constant and conflicting products of the short-stage masks.
-    - Contexts: the cached staged, accumulating and combined loops, at two widths.
-    - Enumeration: the concrete products and the witnesses of the audit.
-    - Edge cases: zero, conflicting, one-bit, odd-width and wrapped operands.
-    - Legacy: the carry, normalization and low-bit rules of the staged loops.
-    - Raw masks: equivalent raw masks, and the gamma and product controls on them.
-    - Shared low: the default multiplier agrees with the public specification. *)
+    - [ProductTests] Sparse, constant and conflicting products of the short-stage masks.
+    - [ContextTests] The staged, accumulating and combined loops, at two widths.
+    - [EnumerationTests] The concrete products and the witnesses of the audit.
+    - [EdgeTests] Zero, conflicting, one-bit, odd-width and wrapped operands.
+    - [StagedRuleTests] The carry, normalization and low-bit rules of the staged loops.
+    - [RawMaskTests] Equivalent raw masks, and the gamma and product controls on them.
+    - [SharedLowTests] The low multiplier agrees with the public specification. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Word Fun.
@@ -45,6 +44,9 @@ Definition mul_test_products (w : width) (a b : tnum) : list Z :=
   flat_map (fun x => map (wmul w x) (filter (mul_test_contains w b) (mul_test_words w)))
     (filter (mul_test_contains w a) (mul_test_words w)).
 
+(** The four multiplier choices. *)
+Definition mul_choices : list mulchoice := [MulLow; MulStages; MulAcc; MulBoth].
+
 (** The minimum and the mask of a mask at width w, as the audit's witness pair. *)
 Definition mul_test_pair (w : width) (a : tnum) : Z * Z :=
   (tnum_min w a, tnum_mask w a).
@@ -67,14 +69,14 @@ Module ProductTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** The default multiplier keeps the empty product Tnum 0 0 for an empty right operand. *)
+  (** An odd left operand times an unknown right operand is unknown under the default multiplier. *)
   Example zero_product_default :
     ShortMasks.tnum_mul 16%positive (Tnum 0 1) (Tnum 0 0) = Tnum 0 0.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Both stages keep the empty product Tnum 0 0 for an empty right operand. *)
+  (** An odd left operand times an unknown right operand is unknown under both stages. *)
   Example zero_product_both :
     ShortMasks.tnum_mul_with MulBoth 16%positive (Tnum 0 1) (Tnum 0 0) = Tnum 0 0.
   Proof.
@@ -88,7 +90,7 @@ Module ProductTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** Both stages give the fully unknown result for a Tnum 7 7 left operand. *)
+  (** Both stages give the contradictory mask for a left operand with conflicting bits. *)
   Example conflicting_product_both :
     ShortMasks.tnum_mul_with MulBoth 16%positive (Tnum 7 7) (Tnum 65527 8) =
       Tnum 65535 65535.
@@ -118,14 +120,14 @@ End ProductTests.
 
 Module ContextTests.
 
-  (** The staged loop at width eight gives 208 13 for the two-operand fixture. *)
+  (** The staged loop gives a mask that holds both 15 times one and 15 times three. *)
   Example stages_width_8 :
     ShortMasks.tnum_mul_with MulStages 8%positive (Tnum 240 15) (Tnum 252 1) = Tnum 208 13.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** The accumulating loop at width eight gives 192 1 for the same fixture. *)
+  (** The accumulating loop gives a less precise mask than the staged loop for the same fixture. *)
   Example acc_width_8 :
     ShortMasks.tnum_mul_with MulAcc 8%positive (Tnum 240 15) (Tnum 252 1) = Tnum 192 1.
   Proof.
@@ -160,7 +162,7 @@ Module ContextTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** The staged loop gives the fully unknown result for a Tnum 128 128 left operand. *)
+  (** The staged loop gives the contradictory mask for a left operand with a conflicting bit. *)
   Example stages_conflicting_left :
     ShortMasks.tnum_mul_with MulStages 8%positive (Tnum 128 128) (Tnum 252 1) =
       Tnum 255 255.
@@ -168,14 +170,14 @@ Module ContextTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** The accumulating loop gives the fully unknown result for a Tnum 1 1 right operand. *)
+  (** The accumulating loop gives the contradictory mask for a conflicting right operand. *)
   Example acc_conflicting_right :
     ShortMasks.tnum_mul_with MulAcc 8%positive (Tnum 240 15) (Tnum 1 1) = Tnum 255 255.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** The combined loop gives the fully unknown result for a Tnum 128 128 left operand. *)
+  (** The combined loop gives the contradictory mask for a left operand with a conflicting bit. *)
   Example both_conflicting_left :
     ShortMasks.tnum_mul_with MulBoth 8%positive (Tnum 128 128) (Tnum 252 1) = Tnum 255 255.
   Proof.
@@ -240,7 +242,7 @@ Module EnumerationTests.
       forallb (mul_test_contains 5%positive
         (tnum_mul_with choice 5%positive (tnum_const 5%positive 3) b))
         (mul_test_products 5%positive (tnum_const 5%positive 3) b))
-      [MulLow; MulStages; MulAcc; MulBoth]) [Tnum 28 1; Tnum 24 6] = true.
+      mul_choices) [Tnum 28 1; Tnum 24 6] = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -277,42 +279,42 @@ Module EdgeTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** The combined loop gives the fully unknown result for an unknown high bit at width eight. *)
+  (** The combined loop gives the contradictory mask for a conflicting right operand. *)
   Example conflict_both :
     tnum_mul_with MulBoth 8%positive tnum_top (Tnum 128 128) = Tnum 255 255.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** At width one, the constant one times top gives Tnum 0 0 under the staged loop. *)
+  (** At width one, the constant one times an unknown value is unknown under the staged loop. *)
   Example one_bit_stages :
     tnum_mul_stages 1%positive (tnum_const 1%positive 1) tnum_top = Tnum 0 0.
   Proof.
     vm_compute. auto.
   Qed.
 
-  (** At width one, the constant one times top gives Tnum 0 0 under the accumulating loop. *)
+  (** At width one, the constant one times an unknown value is unknown (accumulating loop). *)
   Example one_bit_acc :
     tnum_mul_acc 1%positive (tnum_const 1%positive 1) tnum_top = Tnum 0 0.
   Proof.
     vm_compute. auto.
   Qed.
 
-  (** At width three, the constant five times Tnum 6 0 gives Tnum 2 0 under the staged loop. *)
+  (** At width three, five times zero or one leaves only bit 1 known under the staged loop. *)
   Example width_3_stages :
     tnum_mul_stages 3%positive (tnum_const 3%positive 5) (Tnum 6 0) = Tnum 2 0.
   Proof.
     vm_compute. auto.
   Qed.
 
-  (** The accumulating loop gives Tnum 2 0 for the constant five times Tnum 6 0 at width three. *)
+  (** At width three, five times zero or one leaves only bit 1 known under the accumulating loop. *)
   Example width_3_acc :
     tnum_mul_acc 3%positive (tnum_const 3%positive 5) (Tnum 6 0) = Tnum 2 0.
   Proof.
     vm_compute. auto.
   Qed.
 
-  (** Minus one times 258 at width eight gives Tnum 1 254 under the staged loop. *)
+  (** Minus one times 258 at width eight wraps to the constant 254 under the staged loop. *)
   Example wrapped_constants_stages :
     tnum_mul_stages 8%positive (tnum_const 8%positive (-1)) (tnum_const 8%positive 258) =
       Tnum 1 254.
@@ -320,7 +322,7 @@ Module EdgeTests.
     vm_compute. auto.
   Qed.
 
-  (** Minus one times 258 at width eight gives Tnum 1 254 under the accumulating loop. *)
+  (** Minus one times 258 at width eight wraps to the constant 254 under the accumulating loop. *)
   Example wrapped_constants_acc :
     tnum_mul_acc 8%positive (tnum_const 8%positive (-1)) (tnum_const 8%positive 258) =
       Tnum 1 254.
@@ -335,7 +337,7 @@ Module EdgeTests.
     vm_compute. auto.
   Qed.
 
-  (** A left operand of Tnum 1 1 needs no stages. *)
+  (** A left operand with a conflicting bit needs no stages. *)
   Example known_left_operand_needs_no_stages :
     tnum_mul_stage_count 8%positive (Tnum 1 1) tnum_top = 0.
   Proof.
@@ -344,39 +346,39 @@ Module EdgeTests.
 
 End EdgeTests.
 
-(** * Legacy *)
+(** * Staged rules *)
 
-Module LegacyTests.
+Module StagedRuleTests.
 
-  (** Three times Tnum 252 1 gives Tnum 244 1 under the staged loop. *)
+  (** Three times one or three keeps bit two and the high nibble zero under the staged loop. *)
   Example three_times_unknown_low_bits :
     tnum_mul_stages 8%positive (tnum_const 8%positive 3) (Tnum 252 1) = Tnum 244 1.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Seven times Tnum 252 1 gives Tnum 232 5 under the staged loop. *)
+  (** Seven times one or three keeps bits zero and two known one under the staged loop. *)
   Example seven_times_unknown_low_bits :
     tnum_mul_stages 8%positive (tnum_const 8%positive 7) (Tnum 252 1) = Tnum 232 5.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Tnum 252 1 times two gives Tnum 249 2 under the staged loop. *)
+  (** One or three times two keeps bit one known one under the staged loop. *)
   Example unknown_times_two :
     tnum_mul_stages 8%positive (Tnum 252 1) (tnum_const 8%positive 2) = Tnum 249 2.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** The constant 128 times Tnum 252 1 gives Tnum 127 128 under the staged loop. *)
+  (** The constant 128 times one or three is the constant 128 under the staged loop. *)
   Example high_bit_constant_times_unknown :
     tnum_mul_stages 8%positive (tnum_const 8%positive 128) (Tnum 252 1) = Tnum 127 128.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Two hundred times three gives Tnum 167 88 under the staged loop. *)
+  (** Two hundred times three wraps to the constant 88 under the staged loop. *)
   Example constants_200_times_3 :
     tnum_mul_stages 8%positive (tnum_const 8%positive 200) (tnum_const 8%positive 3) =
       Tnum 167 88.
@@ -384,35 +386,35 @@ Module LegacyTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** A constant four times a mask above the width normalizes the mask to 251 0. *)
+  (** A constant four times a mask with bits above the width ignores those bits. *)
   Example mask_above_width_normalized :
     tnum_mul_stages 8%positive (tnum_const 8%positive 4) (Tnum (-2) 256) = Tnum 251 0.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Tnum 256 256 times zero gives the constant zero at width eight. *)
+  (** A mask whose only known bits lie above the width times zero is the constant zero. *)
   Example value_above_width_normalized :
     tnum_mul_stages 8%positive (Tnum 256 256) (tnum_const 8%positive 0) = Tnum 255 0.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** An unknown low bit times zero gives the fully unknown result. *)
+  (** A mask with a conflicting low bit times zero stays contradictory. *)
   Example unknown_low_bit_times_zero :
     tnum_mul_stages 8%positive (Tnum 1 1) (tnum_const 8%positive 0) = Tnum 255 255.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** The default product of the constants three and seven gives Tnum 234 21. *)
+  (** The default product of the constants three and seven is the constant 21. *)
   Example constant_product_low_rule :
     tnum_mul 8%positive (tnum_const 8%positive 3) (tnum_const 8%positive 7) = Tnum 234 21.
   Proof.
     vm_compute. auto.
   Qed.
 
-  (** The default product of Tnum 3 0 and Tnum 1 0 gives Tnum 7 0. *)
+  (** A multiple of four times an even value has three known trailing zeros by default. *)
   Example known_low_bits_rule :
     tnum_mul 8%positive (Tnum 3 0) (Tnum 1 0) = Tnum 7 0.
   Proof.
@@ -426,42 +428,42 @@ Module LegacyTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** Top times an unknown high bit gives the fully unknown result under the staged loop. *)
+  (** Top times a mask with a conflicting high bit is contradictory under the staged loop. *)
   Example top_times_unknown_high_bit_stages :
     tnum_mul_stages 8%positive tnum_top (Tnum 128 128) = Tnum 255 255.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** The default product of four and a mask of 254 is 3 0. *)
+  (** The default product of four and zero or one knows only the two low bits. *)
   Example four_times_254_default :
     tnum_mul 8%positive (tnum_const 8%positive 4) (Tnum 254 0) = Tnum 3 0.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** The staged product of four and a mask of 254 normalizes to 251 0. *)
+  (** The staged product of four and zero or one leaves only bit two unknown. *)
   Example four_times_254_stages :
     tnum_mul_stages 8%positive (tnum_const 8%positive 4) (Tnum 254 0) = Tnum 251 0.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** The order check accepts 251 0 below 3 0. *)
+  (** The staged product of four and zero or one is below the default product. *)
   Example order_251_below_3 :
     tnum_leb 8%positive (Tnum 251 0) (Tnum 3 0) = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** The order check rejects 3 0 below 251 0. *)
+  (** The default product of four and zero or one is not below the staged product. *)
   Example order_3_not_below_251 :
     tnum_leb 8%positive (Tnum 3 0) (Tnum 251 0) = false.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-End LegacyTests.
+End StagedRuleTests.
 
 (** * Raw masks *)
 
@@ -472,28 +474,28 @@ Module RawMaskTests.
     [(Tnum (-4) 35, Tnum 28 3); (Tnum (-4) 33, Tnum 28 1);
      (Tnum (-8) 38, Tnum 24 6); (Tnum 32 32, tnum_top); (Tnum (-31) 33, Tnum 1 1)].
 
-  (** The accumulating loop gives 16 1 for the first raw mask pair. *)
+  (** For the first raw pair, the accumulating loop knows bit four zero and bit zero one. *)
   Example acc_first_raw_pair :
     tnum_mul_acc 5%positive (Tnum (-4) 35) (Tnum (-4) 33) = Tnum 16 1.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** The accumulating loop gives 8 16 for the second raw mask pair. *)
+  (** For the second raw pair, the accumulating loop knows bit three zero and bit four one. *)
   Example acc_second_raw_pair :
     tnum_mul_acc 5%positive (Tnum (-4) 35) (Tnum (-8) 38) = Tnum 8 16.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** The accumulating loop gives Tnum 31 31 for Tnum (-31) 33 times zero. *)
+  (** The accumulating loop gives the contradictory mask for a conflicting mask times zero. *)
   Example acc_conflicting_left_zero_right :
     tnum_mul_acc 5%positive (Tnum (-31) 33) (tnum_const 5%positive 0) = Tnum 31 31.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** The accumulating loop gives Tnum 31 31 for zero times Tnum (-31) 33. *)
+  (** The accumulating loop gives the contradictory mask for zero times a conflicting mask. *)
   Example acc_zero_left_conflicting_right :
     tnum_mul_acc 5%positive (tnum_const 5%positive 0) (Tnum (-31) 33) = Tnum 31 31.
   Proof.
@@ -510,22 +512,24 @@ Module RawMaskTests.
     vm_compute. auto.
   Qed.
 
-  (** The mask Tnum (-31) 33 has no members at width five. *)
+  (** A mask with a conflicting low bit has no members at width five. *)
   Example mask_without_members_at_width_five :
     filter (mul_test_contains 5%positive (Tnum (-31) 33)) (mul_test_words 5%positive) = [].
   Proof.
     vm_compute. auto.
   Qed.
 
-  (** All choices keep equivalent raw masks at the same members, including conflicting masks. *)
+  (** Whether two equivalent pairs of raw masks multiply to masks with the same members. *)
+  Definition same_product_members (choice : mulchoice) (p q : tnum * tnum) : bool :=
+    forallb (fun z => Bool.eqb
+      (mul_test_contains 5%positive (tnum_mul_with choice 5%positive (fst p) (fst q)) z)
+      (mul_test_contains 5%positive (tnum_mul_with choice 5%positive (snd p) (snd q)) z))
+      (mul_test_words 5%positive).
+
+  (** Every multiplier choice multiplies equivalent raw masks to products with equal members. *)
   Example all_choices_keep_raw_members :
-    forallb (fun p => forallb (fun q => forallb (fun choice => forallb (fun z =>
-      Bool.eqb (mul_test_contains 5%positive
-        (tnum_mul_with choice 5%positive (fst p) (fst q)) z)
-        (mul_test_contains 5%positive
-          (tnum_mul_with choice 5%positive (snd p) (snd q)) z))
-      (mul_test_words 5%positive)) [MulLow; MulStages; MulAcc; MulBoth])
-      raw_equivalents) raw_equivalents = true.
+    forallb (fun p => forallb (fun q => forallb (fun choice => same_product_members choice p q)
+      mul_choices) raw_equivalents) raw_equivalents = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -535,25 +539,13 @@ Module RawMaskTests.
     forallb (fun p => forallb (fun q => forallb (fun choice =>
       forallb (mul_test_contains 5%positive
         (tnum_mul_with choice 5%positive (fst p) (fst q)))
-        (mul_test_products 5%positive (fst p) (fst q))) [MulLow; MulStages; MulAcc; MulBoth])
+        (mul_test_products 5%positive (fst p) (fst q))) mul_choices)
       raw_equivalents) raw_equivalents = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
 End RawMaskTests.
-
-(* The charged Cost interface was removed. These source clock observations are deferred
-   to the later timing work and are not executable tests of generated clocks.
-Example multiplier_early_stop_cost :
-  Cost.ticks (tnum_mul_acc_c 8%positive tnum_top (tnum_const 8%positive 0)) = 5%N.
-Proof. vm_compute. reflexivity. Qed.
-
-Example multiplier_cost_bound_clients :
-  (Cost.ticks (tnum_mul_with_c MulBoth 8%positive tnum_top tnum_top) <= 48)%N /\
-  (Cost.ticks (tnum_mul_stages_c 8%positive tnum_top tnum_top) <= 24)%N.
-Proof. vm_compute. intuition discriminate. Qed.
-*)
 
 (** * Shared low *)
 
@@ -577,7 +569,7 @@ Module SharedLowTests.
      (8%positive, Tnum (-16) 257, Tnum 65280 255);
      (64%positive, Tnum 240 0, Tnum 248 0)].
 
-  (** The default multiplier keeps exact constants and shared trailing-zero facts. *)
+  (** The low multiplier agrees with the public multiplication on every fixture. *)
   Example default_matches_public_specification :
     Forall (fun '(w, a, b) =>
       SharedLow.tnum_mul w a b = tnum_mul w a b /\

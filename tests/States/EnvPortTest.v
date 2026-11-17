@@ -9,7 +9,8 @@
     - [AssumeTests] Guards that refine the stored values.
     - [TraceTests] Operand order of traces through a guard.
     - [JoinTests] Joins and the top and bottom environments.
-    - [WideningTests] Widening over three iterations, and narrowing.
+    - [WideningTests] Widening over three iterations.
+    - [NarrowTests] Narrowing against a candidate with a stored bottom.
     - [BoundaryTests] The order on a value domain whose top is not the greatest element.
     - [PointTests] Meets and tops of the point domain. *)
 
@@ -36,8 +37,7 @@ Module IntEq.
 End IntEq.
 Module Points := ConstCode IntLanguage IntEq.
 
-(** A point domain whose forward step gives the constant z and whose guard meets
-    each target with z. *)
+(** A point domain with forward step z and a guard that meets each target with z. *)
 Module GuardedPoints.
   Definition t := Points.t.
   Definition leb := Points.leb.
@@ -104,8 +104,7 @@ Module AssumeTests.
   Example two_term_guard_refines_second_leaf : get true two_leaf_state = FVal 4.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** The state after a guard whose nested term keeps the stored leaf and materializes
-      the other one. *)
+  (** The state after a guard on a nested term, with one stored leaf and one free leaf. *)
   Definition nested_leaf_state :=
     E.assume 7 [Node 7 [Leaf false]; Leaf true] (stored [(false, FVal 3)]).
 
@@ -140,8 +139,7 @@ Module TraceTests.
     Definition literal (_ : op) : option Z := None.
   End TraceLanguage.
 
-  (** A trace domain whose values are lists of naturals and whose guard returns its
-      targets. *)
+  (** A trace domain of lists of naturals whose guard returns its targets. *)
   Module TraceValues.
     Definition t := list nat.
     Definition leb (_ _ : t) := true.
@@ -186,7 +184,7 @@ Module TraceTests.
   Proof. vm_compute. reflexivity. Qed.
 
   (** Materializing a guard leaves the traces of the other variables unchanged. *)
-  Example old_bindings_are_not_recomputed :
+  Example other_variables_keep_trace :
     trace_get true (TraceEnv.assume [[1%nat]; [2%nat]] [Leaf false; Leaf false] trace_input) =
       [8%nat].
   Proof. vm_compute. reflexivity. Qed.
@@ -195,8 +193,7 @@ End TraceTests.
 
 Module JoinTests.
 
-  (** The join of two environments with different keys, as the environment of variable
-      false. *)
+  (** The join of two environments that bind different keys. *)
   Definition joined := E.join (stored [(false, FVal 1)]) (stored [(true, FVal 2)]).
 
   (** A key that only the first environment binds reads as top after the join. *)
@@ -264,10 +261,13 @@ End WideningTests.
 
 Module NarrowTests.
 
+  (** The candidate environment, with a stored bottom for variable false. *)
+  Definition candidate_with_bottom := stored [(false, FBot); (true, FTop)].
+
   (** Narrowing keeps a candidate recognized through its stored bottom. *)
   Example narrowing_keeps_candidate_with_stored_bottom :
-    E.narrow (stored [(false, FVal 5); (true, FVal 0)])
-      (stored [(false, FBot); (true, FTop)]) = stored [(false, FBot); (true, FTop)].
+    E.narrow (stored [(false, FVal 5); (true, FVal 0)]) candidate_with_bottom =
+      candidate_with_bottom.
   Proof. vm_compute. reflexivity. Qed.
 
 End NarrowTests.
@@ -324,8 +324,7 @@ Module BoundaryTests.
   Example top_environment_is_below_point : BadEnv.leb BadEnv.top point = true.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** The upper environment is not below the point environment, so the order is not
-      transitive. *)
+  (** The upper environment is not below the point environment, so the order is not transitive. *)
   Example upper_environment_is_not_below_point : BadEnv.leb upper point = false.
   Proof. vm_compute. reflexivity. Qed.
 
@@ -333,8 +332,7 @@ End BoundaryTests.
 
 Module PointTests.
 
-  (** The concrete values that a point abstracts: none for bottom, the number for a
-      point and every number for top. *)
+  (** The concrete values of a point: none for bottom, its number, or every number for top. *)
   Definition point_gamma (a : Points.t) (z : Z) : Prop :=
     match a with FBot => False | FVal x => z = x | FTop => True end.
 
