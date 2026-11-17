@@ -2,19 +2,23 @@
 
     These examples exercise rational constraints, elimination and their expression wrappers.
     For example, 2*x <= 1 does not rationally entail x <= 0.
-    The groups are:
-    - Certificate, which checks certificates of entailment and their rational endpoints.
-    - Stop, which checks that a stopped search agrees with the full run.
-    - Prune, which checks that removing constant tautologies keeps the result.
-    - Parallel, which merges rows that share a left-hand side.
-    - Eliminate, which eliminates a variable by Fourier-Motzkin and projects it.
-    - Normalize, which divides a constraint by the gcd of its coefficients.
-    - Assign, which assigns an affine form to a variable.
-    - Range, which computes the bounds of an affine form.
-    - Substitute and Prepare, which merge repeated keys before an operation.
-    - Order, Bottom and Join, which compare, join and widen polyhedra.
-    - Syntactic, which checks the fast paths that avoid the elimination engine.
-    Builds on: Poly, LinCert, Linearize, ZLang and positive keys. *)
+    Builds on: Poly, LinCert, Linearize, ZLang and positive keys.
+
+    Groups:
+    - [CertificateTests] Certificates of entailment and their rational endpoints.
+    - [StopTests] A stopped search against the full run.
+    - [PruneTests] Removing constant tautologies keeps the result.
+    - [ParallelTests] Merging rows that share a left-hand side.
+    - [EliminateTests] Eliminating a variable by Fourier-Motzkin and projecting it.
+    - [NormalizeTests] Dividing a constraint by the gcd of its coefficients.
+    - [AssignTests] Assigning an affine form to a variable.
+    - [RangeTests] The bounds of an affine form.
+    - [PrepareTests] Merging repeated keys before an operation.
+    - [SubstituteTests] Merging repeated keys before a substitution.
+    - [BottomTests] The empty polyhedron.
+    - [OrderTests] Comparing polyhedra.
+    - [JoinTests] Joining and widening polyhedra.
+    - [SyntacticTests] The fast paths that avoid the elimination engine. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key.
@@ -189,15 +193,22 @@ Module StopTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** The stopped run keeps both unrelated rows, since it never visits them. *)
-  Example stopped_run_keeps_unvisited_rows :
+  (** The constraints that the stopped run returns for the first source and its negated target. *)
+  Definition stop_first_run : list (lcons positive) :=
     map poly_constraint
       (poly_run_stop PosKeyCode.encode PosKeyCode.eqb
         (poly_variables PosKeyCode.encode (stop_first_target :: stop_first_source))
         (poly_initial PosKeyCode.encode
           ((poly_negate stop_first_target, true) ::
-            map (fun r => (r, false)) stop_first_source))) =
-      [upper_x 3; LCons _ [(2%positive, 1)] RLe 4; LCons _ [] RLe (-2)].
+            map (fun r => (r, false)) stop_first_source))).
+
+  (** The two unrelated rows and the contradiction found, as the stopped run keeps them. *)
+  Definition stop_first_rows : list (lcons positive) :=
+    [upper_x 3; LCons _ [(2%positive, 1)] RLe 4; LCons _ [] RLe (-2)].
+
+  (** The stopped run keeps both unrelated rows, since it never visits them. *)
+  Example stopped_run_keeps_unvisited_rows :
+    stop_first_run = stop_first_rows.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -520,7 +531,7 @@ Module EliminateTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** A newly combined row sheds the common factor of its coefficients. *)
+  (** Combining the rows uses the smallest multipliers, giving 2y <= 4 rather than 4y <= 8. *)
   Example combined_row_drops_common_factor :
     map row_of (FixturePoly.fm_elim 1%positive
       [LCons _ [(1%positive, 2); (2%positive, 2)] RLe 6;
@@ -530,7 +541,7 @@ Module EliminateTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** The checked projection accepts the divided elimination row. *)
+  (** The checked projection accepts the row combined with the smallest multipliers. *)
   Example havoc_checks_divided_row :
     FixturePoly.havoc 1%positive
       (Reached [LCons _ [(1%positive, 2); (2%positive, 2)] RLe 6;
@@ -606,7 +617,7 @@ Module AssignTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** A self-dependent affine assignment is below the expected state. *)
+  (** Assigning x := x + y with x = 1 and y = 2 gives a state below the one with x = 3. *)
   Example self_dependent_assignment_uses_temporary :
     FixturePoly.leb
       (Reached (FixturePoly.assign_linear 1%positive
@@ -632,7 +643,7 @@ End AssignTests.
 
 Module RangeTests.
 
-  (** Projected bounds include the constant part of a queried linear form. *)
+  (** The lower endpoint adds the constant part of the queried linear form. *)
   Example constant_shift_lower_endpoint :
     fst (FixturePoly.range_linear [lower_x 2; upper_x 5] (Lin _ [(1%positive, 1)] 1)) =
       Fin 3.
@@ -640,7 +651,7 @@ Module RangeTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** Projected bounds include the constant part of a queried linear form. *)
+  (** The upper endpoint adds the constant part of the queried linear form. *)
   Example constant_shift_upper_endpoint :
     snd (FixturePoly.range_linear [lower_x 2; upper_x 5] (Lin _ [(1%positive, 1)] 1)) =
       Fin 6.
