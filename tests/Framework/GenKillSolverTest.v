@@ -4,11 +4,12 @@
     For example, an unreachable generator still contributes to the may solution.
 
     Groups:
-    - May: the may analysis gives the reaching facts of loops, diamonds and empty graphs.
-    - Must: the must analysis gives the available facts, and it stays fresh where nothing reaches.
-    - Backward: the backward analyses give liveness and invalidation facts.
-    - Paths: the enumerated gen/kill paths give the facts of a diamond and of one node.
-    - Checks: candidates for the may and must systems are accepted or rejected.
+    - [MayTests] The may analysis gives the reaching facts of loops, diamonds and empty graphs.
+    - [MustTests] The must analysis gives the available facts, and it stays fresh where nothing
+      reaches.
+    - [BackwardTests] The backward analyses give liveness and invalidation facts.
+    - [PathTests] The enumerated gen/kill paths give the facts of a diamond and of one node.
+    - [CheckTests] Candidates for the may and must systems are accepted or rejected.
 
     Builds on: Framework.GenKill and Fixpoint.Certified. *)
 
