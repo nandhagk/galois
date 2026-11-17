@@ -5,7 +5,7 @@
     Builds on: Framework.GenKillSig and Framework.Dense. *)
 
 From Stdlib Require Import List Bool NArith Arith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig SetSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -984,6 +984,27 @@ Module GenKillMayFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
     pose proof (S.nodes_diff a (G.kill p e)) as Hdiff.
     pose proof (G.gen_nodes p e) as Hgen; lia.
   Qed.
+
+  (** Reading the initial facts is linear in the gen-kill problem size. *)
+  Lemma boundary_bigO : bigO (X := P.t * N.t) (fun _ => True)
+    (fun '(p, _) => N.of_nat (G.gk_work p)) (fun '(p, n) => T_boundary p n).
+  Proof.
+    apply bigO_intro with (c := c_flow); intros [p n] _.
+    pose proof (T_boundary_le p n) as Htime.
+    unfold flow_work in Htime; rewrite Nat.add_0_r in Htime.
+    change (T_boundary p n <= c_flow * N.of_nat (G.gk_work p) + c_flow)%N; nia.
+  Qed.
+
+  (** A transfer is linear in the gen-kill problem and input fact sizes. *)
+  Lemma transfer_bigO : bigO (X := P.t * E.t * L.t) (fun _ => True)
+    (fun '(p, _, a) => N.of_nat (G.gk_work p + L.size a))
+    (fun '(p, e, a) => T_transfer p e a).
+  Proof.
+    apply bigO_intro with (c := c_flow); intros [[p e] a] _.
+    pose proof (T_transfer_le p e a) as Htime; unfold flow_work in Htime.
+    change (T_transfer p e a <=
+      c_flow * N.of_nat (G.gk_work p + L.size a) + c_flow)%N; nia.
+  Qed.
 End GenKillMayFlowT.
 
 Module GenKillMustFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
@@ -1035,6 +1056,27 @@ Module GenKillMustFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
     pose proof (S.nodes_union (G.gen p e) (S.diff a (G.kill p e))) as Hunion.
     pose proof (S.nodes_diff a (G.kill p e)) as Hdiff.
     pose proof (G.gen_nodes p e) as Hgen; lia.
+  Qed.
+
+  (** Reading the initial facts is linear in the gen-kill problem size. *)
+  Lemma boundary_bigO : bigO (X := P.t * N.t) (fun _ => True)
+    (fun '(p, _) => N.of_nat (G.gk_work p)) (fun '(p, n) => T_boundary p n).
+  Proof.
+    apply bigO_intro with (c := c_flow); intros [p n] _.
+    pose proof (T_boundary_le p n) as Htime.
+    unfold flow_work in Htime; rewrite Nat.add_0_r in Htime.
+    change (T_boundary p n <= c_flow * N.of_nat (G.gk_work p) + c_flow)%N; nia.
+  Qed.
+
+  (** A transfer is linear in the gen-kill problem and input fact sizes. *)
+  Lemma transfer_bigO : bigO (X := P.t * E.t * L.t) (fun _ => True)
+    (fun '(p, _, a) => N.of_nat (G.gk_work p + L.size a))
+    (fun '(p, e, a) => T_transfer p e a).
+  Proof.
+    apply bigO_intro with (c := c_flow); intros [[p e] a] _.
+    pose proof (T_transfer_le p e a) as Htime; unfold flow_work in Htime.
+    change (T_transfer p e a <=
+      c_flow * N.of_nat (G.gk_work p + L.size a) + c_flow)%N; nia.
   Qed.
 End GenKillMustFlowT.
 

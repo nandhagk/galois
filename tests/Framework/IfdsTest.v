@@ -32,8 +32,16 @@ Module Flow <: FLOW_FUN_OPS Prog NatKeyCode Edge Fact.
   Definition seeds (_ : unit) := [(0, None); (0, Some tt)].
 End Flow.
 Definition prepared_rules := Eval vm_compute in
-  path_rules NatKeyCode.eqb (Icfg.kind tt) (Graph.dst tt) (Flow.facts tt) (Flow.flow tt)
+  path_rules_fast NatKeyCode.encode (Icfg.kind tt) (Graph.dst tt) (Flow.facts tt) (Flow.flow tt)
     (Flow.seeds tt) (Graph.edges tt).
+
+Example prepared_rules_fast_agrees :
+  prepared_rules = path_rules NatKeyCode.eqb (Icfg.kind tt) (Graph.dst tt)
+    (Flow.facts tt) (Flow.flow tt) (Flow.seeds tt) (Graph.edges tt).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Module Rules <: IFDS_RULES_OPS Prog NatKeyCode Edge Fact.
   Definition rules (_ : unit) := prepared_rules.
 End Rules.
@@ -64,9 +72,18 @@ Module UnsupportedFlow <: FLOW_FUN_OPS Prog NatKeyCode Edge Fact.
   Definition seeds (_ : unit) : list (nat * option unit) := [(0, None)].
 End UnsupportedFlow.
 Definition unsupported_rules := Eval vm_compute in
-  path_rules NatKeyCode.eqb (UnsupportedIcfg.kind tt) (UnsupportedGraph.dst tt)
+  path_rules_fast NatKeyCode.encode (UnsupportedIcfg.kind tt) (UnsupportedGraph.dst tt)
     (UnsupportedFlow.facts tt) (UnsupportedFlow.flow tt) (UnsupportedFlow.seeds tt)
     (UnsupportedGraph.edges tt).
+
+Example unsupported_rules_fast_agrees :
+  unsupported_rules = path_rules NatKeyCode.eqb
+    (UnsupportedIcfg.kind tt) (UnsupportedGraph.dst tt) (UnsupportedFlow.facts tt)
+    (UnsupportedFlow.flow tt) (UnsupportedFlow.seeds tt) (UnsupportedGraph.edges tt).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Module UnsupportedRules <: IFDS_RULES_OPS Prog NatKeyCode Edge Fact.
   Definition rules (_ : unit) := unsupported_rules.
 End UnsupportedRules.
@@ -88,3 +105,32 @@ Proof. vm_compute; reflexivity. Qed.
 
 Example zero_seed_supported : existsb (Fact.eqb None) (UnsupportedFlow.facts tt) = true.
 Proof. vm_compute; reflexivity. Qed.
+
+(** Duplicated calls, returns and facts retain their occurrence order. *)
+Definition indexed_test_kind (e : nat) : edge_kind nat :=
+  match e with
+  | 0 => Call 7
+  | 1 => Return 9
+  | 2 => CallToReturn 7
+  | 3 => Return 7
+  | _ => Intra
+  end.
+
+Definition indexed_test_flow (e x : nat) : list nat :=
+  if Nat.eqb e 3 then [x; x] else [x].
+
+Example indexed_rules_preserve_order_and_duplicates :
+  path_rules_fast NatKeyCode.encode indexed_test_kind S [0; 0; 1]
+    indexed_test_flow [(0, 0)] [0; 3; 2; 0; 1; 3; 4] =
+  path_rules NatKeyCode.eqb indexed_test_kind S [0; 0; 1]
+    indexed_test_flow [(0, 0)] [0; 3; 2; 0; 1; 3; 4].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example indexed_empty_facts_preserve_seeds :
+  path_rules_fast NatKeyCode.encode indexed_test_kind S [] indexed_test_flow
+    [(0, 0)] [0; 3; 2; 0; 1; 3; 4] = [PathIdentity 0 0].
+Proof.
+  vm_compute; reflexivity.
+Qed.
