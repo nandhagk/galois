@@ -62,6 +62,40 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Definition paired_trie : PTrieCode.t bool :=
+  PTrieCode.set 2 true (PTrieCode.set 3 false PTrieCode.empty).
+
+Definition paired_eq (a b : option bool) : bool :=
+  match a, b with
+  | None, None | Some true, Some true | Some false, Some false => true
+  | _, _ => false
+  end.
+
+Example paired_shared_equal : PTrieCode.forall2b paired_eq paired_trie paired_trie = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example paired_shared_different :
+  PTrieCode.forall2b paired_eq paired_trie (PTrieCode.set 3 true paired_trie) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example paired_right_only :
+  PTrieCode.forall2b paired_eq paired_trie (PTrieCode.set 8 false paired_trie) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example paired_skips_absent_root :
+  PTrieCode.forall2b
+    (fun a b => match a, b with Some _, Some _ => true | _, _ => false end)
+    paired_trie paired_trie = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (* BaseTrieTest.update_present and update_absent use constant Some callbacks.
    Their public composition is set. update_remove uses a constant None callback,
    whose public composition is remove. The old equality to remove is definitional
