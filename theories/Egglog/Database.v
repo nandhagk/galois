@@ -2595,7 +2595,7 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     | Id i =>
       match N.compare (runtime_allocated (db_runtime db)) (Npos i) with
       | Lt => Id i
-      | _ => Id (fst (UnionFindCode.find i (db_forest db)))
+      | _ => Id (UnionFindCode.root_of i (db_forest db))
       end
     | Val v => Val v
     end.
@@ -2733,22 +2733,26 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
       PTrieCode.get (row_root depth r store) (row_keys store)
     end.
 
-  (** A replacement registers every identifier occurrence in its written tuple. *)
+  (** Rows without identifier occurrences need no historical identity. *)
   Definition register_row_uses (f : positive) (k : list (cell V.t))
       (o : option (cell V.t)) (db : t) : t :=
-    let entries := id_occurrences f k (k ++ option_list o) in
-    let identified := ensure_row_identity f k db in
-    let store := db_row_store identified in
-    let updated := {|
-      row_history := row_history store;
-      row_links := row_links store;
-      row_weights := row_weights store;
-      row_keys := row_keys store;
-      row_fresh := row_fresh store;
-      row_uses := DatabaseUses.register entries (row_uses store)
-    |} in
-    database_set_nuses (db_nuses identified + N.of_nat (length entries))
-      (database_set_row_store updated identified).
+    match id_occurrences f k (k ++ option_list o) with
+    | [] => db
+    | entry :: rest =>
+      let entries := entry :: rest in
+      let identified := ensure_row_identity f k db in
+      let store := db_row_store identified in
+      let updated := {|
+        row_history := row_history store;
+        row_links := row_links store;
+        row_weights := row_weights store;
+        row_keys := row_keys store;
+        row_fresh := row_fresh store;
+        row_uses := DatabaseUses.register entries (row_uses store)
+      |} in
+      database_set_nuses (db_nuses identified + N.of_nat (length entries))
+        (database_set_row_store updated identified)
+    end.
 
   Definition row_replace (f : positive) (k : list (cell V.t))
       (previous : option (option (cell V.t))) (o : option (cell V.t)) (db : t) : t :=
@@ -2817,7 +2821,7 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     let ck := normal_key db k in
     let previous := row_get f ck db in
     match previous with
-    | Some (Some (Id j)) => (fst (UnionFindCode.find j (db_forest db)), db)
+    | Some (Some (Id j)) => (UnionFindCode.root_of j (db_forest db), db)
     | _ =>
       let i := N.succ_pos (runtime_allocated (db_runtime db)) in
       let fresh := allocate_id i db in
@@ -2923,7 +2927,7 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     | [] => None
     | i :: rest =>
       let store := db_row_store db in
-      let root := fst (UnionFindCode.find i (db_forest db)) in
+      let root := UnionFindCode.root_of i (db_forest db) in
       let updated := {|
         row_history := row_history store;
         row_links := row_links store;
@@ -2982,6 +2986,24 @@ End DatabaseCode.
 Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Include DatabaseCode V I.
   Include DATABASE_SPEC V I.
+
+  (** Every identifier occurrence makes its registration list nonempty. *)
+  Lemma id_occurrences_nonempty : forall f k cells i,
+    In (Id i) cells -> id_occurrences f k cells <> [].
+  Proof.
+    intros f k cells i Hin Hnil.
+    pose proof (proj2 (id_occurrences_member f k cells i f k)
+      (conj eq_refl (conj eq_refl Hin))) as Hentry.
+    rewrite Hnil in Hentry. contradiction.
+  Qed.
+
+  (** A row without identifier occurrences leaves the use store untouched. *)
+  Lemma register_row_uses_nil : forall db f k o,
+    id_occurrences f k (k ++ option_list o) = [] -> register_row_uses f k o db = db.
+  Proof.
+    intros db f k o Hnil. unfold register_row_uses. now rewrite Hnil.
+  Qed.
+
   (** Shared preprocessing stores the same runtime group table as the original traversal. *)
   Lemma init_function_groups : forall ds sl,
     runtime_function_slots (db_runtime (init ds sl)) =
@@ -3672,10 +3694,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - exact Hallocated.
   Qed.
 
-  (** A pop moves only existing occurrences to the allocated root returned by find. *)
+  (** A pop moves only existing occurrences to the allocated root. *)
   Lemma database_uses_allocated_pop : forall db x db',
     (forall i, allocated db i ->
-      allocated db (fst (UnionFindCode.find i (db_forest db)))) ->
+      allocated db (UnionFindCode.root_of i (db_forest db))) ->
     database_uses_allocated db -> db_pop_loser db = Some (x, db') ->
     database_uses_allocated db'.
   Proof.
@@ -3685,7 +3707,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     injection Hpop as Hname Hstate. subst x db'.
     intros y e Hin.
     change (In e (DatabaseUses.bucket y
-      (DatabaseUses.transfer first (fst (UnionFindCode.find first (db_forest db)))
+      (DatabaseUses.transfer first (UnionFindCode.root_of first (db_forest db))
         (row_uses (db_row_store db))))) in Hin.
     change (allocated db y).
     apply DatabaseUsesFacts.bucket_transfer_member in Hin.
@@ -4115,56 +4137,75 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         split; [lia |]. split; [lia | now left].
   Qed.
 
+  (** Registration with identifiers retains each lookup of its allocated row history. *)
   Lemma register_row_uses_history : forall db f k o g args,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     PTrieCode.get (db_row_code g args)
       (row_history (db_row_store (register_row_uses f k o db))) =
     PTrieCode.get (db_row_code g args)
       (row_history (db_row_store (ensure_row_identity f k db))).
   Proof.
-    intros db f k o g args.
-    unfold register_row_uses.
-    reflexivity.
+    intros db f k o g args Hnonempty. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction | reflexivity].
   Qed.
 
+  (** Registration with identifiers retains the fresh counter after identity allocation. *)
   Lemma register_row_uses_fresh : forall db f k o,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     row_fresh (db_row_store (register_row_uses f k o db)) =
       row_fresh (db_row_store (ensure_row_identity f k db)).
   Proof.
-    reflexivity.
+    intros db f k o Hnonempty. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction | reflexivity].
   Qed.
 
+  (** Registration with identifiers retains the history map after identity allocation. *)
   Lemma register_row_uses_history_map : forall db f k o,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     row_history (db_row_store (register_row_uses f k o db)) =
       row_history (db_row_store (ensure_row_identity f k db)).
   Proof.
-    reflexivity.
+    intros db f k o Hnonempty. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction | reflexivity].
   Qed.
 
   Lemma register_row_uses_links : forall db f k o,
     row_links (db_row_store (register_row_uses f k o db)) =
       row_links (db_row_store (ensure_row_identity f k db)).
   Proof.
-    reflexivity.
+    intros db f k o. unfold register_row_uses, ensure_row_identity.
+    destruct (id_occurrences f k (k ++ option_list o));
+      destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
   Qed.
 
+  (** Registration with identifiers retains the row weights after identity allocation. *)
   Lemma register_row_uses_weights : forall db f k o,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     row_weights (db_row_store (register_row_uses f k o db)) =
       row_weights (db_row_store (ensure_row_identity f k db)).
   Proof.
-    reflexivity.
+    intros db f k o Hnonempty. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction | reflexivity].
   Qed.
 
+  (** Registration with identifiers retains the current keys after identity allocation. *)
   Lemma register_row_uses_keys : forall db f k o,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     row_keys (db_row_store (register_row_uses f k o db)) =
       row_keys (db_row_store (ensure_row_identity f k db)).
   Proof.
-    reflexivity.
+    intros db f k o Hnonempty. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction | reflexivity].
   Qed.
 
   Lemma register_row_uses_ids : forall db f k o,
     ids (register_row_uses f k o db) = ids (ensure_row_identity f k db).
   Proof.
-    reflexivity.
+    intros db f k o. unfold register_row_uses, ensure_row_identity.
+    destruct (id_occurrences f k (k ++ option_list o));
+      destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
   Qed.
 
   Lemma register_row_uses_history_range : forall db f k o,
@@ -4175,8 +4216,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (r < row_fresh (db_row_store (register_row_uses f k o db)))%positive.
   Proof.
     intros db f k o Hstore g args key r Hget.
-    rewrite register_row_uses_history in Hget.
-    rewrite register_row_uses_fresh.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_history_range db Hstore g args key r Hget). }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    rewrite register_row_uses_history in Hget by exact Hnonempty.
+    rewrite register_row_uses_fresh by exact Hnonempty.
     now apply (ensure_row_identity_history_range db f k Hstore g args key r).
   Qed.
 
@@ -4192,7 +4238,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       In (row_fresh store) (db_index_counters (register_row_uses f k o db)).
   Proof.
     intros db f k o Hstore g args key r Hget.
-    unfold register_row_uses in Hget |- *.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_history_counter db Hstore g args key r Hget). }
+    unfold register_row_uses in Hget |- *. rewrite Hentries in Hget |- *.
     cbn [database_set_nuses database_set_row_store db_row_store row_history
       row_links row_fresh db_index_counters] in Hget |- *.
     exact (ensure_row_identity_history_counter db f k Hstore g args key r Hget).
@@ -4205,17 +4254,24 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (row_history (db_row_store (register_row_uses f k o db))) = Some (key, r).
   Proof.
     intros db f k o g args key r Hget.
-    rewrite register_row_uses_history.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact Hget. }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    rewrite register_row_uses_history by exact Hnonempty.
     now apply ensure_row_identity_history_old.
   Qed.
 
+  (** A row with identifier occurrences receives a historical row identifier. *)
   Lemma register_row_uses_history_new : forall db f k o,
     database_row_store_ok db ->
+    id_occurrences f k (k ++ option_list o) <> [] ->
     exists r, PTrieCode.get (db_row_code f k)
       (row_history (db_row_store (register_row_uses f k o db))) = Some ((f, k), r).
   Proof.
-    intros db f k o Hstore.
-    rewrite register_row_uses_history.
+    intros db f k o Hstore Hnonempty.
+    rewrite register_row_uses_history by exact Hnonempty.
     now apply ensure_row_identity_history_new.
   Qed.
 
@@ -4227,7 +4283,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       key = (g, args).
   Proof.
     intros db f k o Hstore g args key r Hget.
-    rewrite register_row_uses_history in Hget.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_labels db Hstore g args key r Hget). }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    rewrite register_row_uses_history in Hget by exact Hnonempty.
     now apply (ensure_row_identity_labels db f k Hstore g args key r).
   Qed.
 
@@ -4257,7 +4318,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (p < row_fresh (db_row_store (register_row_uses f k o db)))%positive.
   Proof.
     intros db f k o Hstore r p Hlink.
-    unfold register_row_uses in *.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_link_range db Hstore r p Hlink). }
+    unfold register_row_uses in *. rewrite Hentries in *.
     cbn [database_set_nuses database_set_row_store db_row_store row_fresh row_links]
       in Hlink |- *.
     exact (ensure_row_identity_link_range db f k Hstore r p Hlink).
@@ -4286,7 +4350,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       PTrieCode.get r (row_links (db_row_store (register_row_uses f k o db))) = None.
   Proof.
     intros db f k o Hstore r Hfuture.
-    unfold register_row_uses in *.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_future_links db Hstore r Hfuture). }
+    unfold register_row_uses in *. rewrite Hentries in *.
     cbn [database_set_nuses database_set_row_store db_row_store row_fresh row_links]
       in Hfuture |- *.
     exact (ensure_row_identity_future_links db f k Hstore r Hfuture).
@@ -4978,13 +5045,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db [i | v] Hforest Hmembers; cbn [normal_cell canon repr].
     - destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)) eqn:Hallocated.
-      + f_equal. apply UnionFind.find_repr. exact Hforest.
+      + f_equal. apply UnionFind.root_of_repr. exact Hforest.
       + f_equal. symmetry. apply UnionFindCodeFacts.repr_absent.
         intro Hmember. apply (proj1 (Hmembers i)) in Hmember.
         apply N.compare_lt_iff in Hallocated.
         change (Npos i <= runtime_allocated (db_runtime db))%N in Hmember.
         apply (N.lt_irrefl (Npos i)). eapply N.le_lt_trans; eassumption.
-      + f_equal. apply UnionFind.find_repr. exact Hforest.
+      + f_equal. apply UnionFind.root_of_repr. exact Hforest.
     - reflexivity.
   Qed.
 
@@ -5739,7 +5806,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma metadata_register_row_uses : forall db f k o, metadata_ok db ->
     metadata_ok (register_row_uses f k o db).
   Proof.
-    intros db f k o Hmetadata. unfold register_row_uses.
+    intros db f k o Hmetadata.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hmetadata). }
+    unfold register_row_uses. rewrite Hentries.
     eapply metadata_snapshot_ok; [reflexivity |].
     apply metadata_ensure_row_identity. exact Hmetadata.
   Qed.
@@ -6006,7 +6077,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma register_row_uses_runtime : forall f k o db,
     db_runtime (register_row_uses f k o db) = db_runtime db.
   Proof.
-    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    intros f k o db.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (eq_refl). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       reflexivity.
   Qed.
@@ -6156,7 +6231,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     slots (register_row_uses f k o db) = slots db /\
     db_forest (register_row_uses f k o db) = db_forest db.
   Proof.
-    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    intros f k o db.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (conj eq_refl (conj eq_refl (conj eq_refl eq_refl))). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       repeat split; reflexivity.
   Qed.
@@ -6165,7 +6244,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma register_row_uses_written_cells : forall f k o db,
     db_written_cells (register_row_uses f k o db) = db_written_cells db.
   Proof.
-    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    intros f k o db.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (eq_refl). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       reflexivity.
   Qed.
@@ -6548,7 +6631,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma register_row_uses_npending : forall f k o db,
     db_npending (register_row_uses f k o db) = db_npending db.
   Proof.
-    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    intros f k o db.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (eq_refl). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       reflexivity.
   Qed.
@@ -7177,7 +7264,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - destruct (constructor_old db f (map (canon db) k) before Hwf Hkind
         (eq_sym Hprevious)) as [j ->].
       left. exists j. split; [exact (eq_sym Hprevious) |]. split; [| reflexivity].
-      apply UnionFind.find_repr. exact (wf_forest db Hwf).
+      apply UnionFind.root_of_repr. exact (wf_forest db Hwf).
     - change (kind_get f db = Some OId) in Hkind. rewrite Hkind.
       right. split; [reflexivity |]. split.
       + apply row_replace_binding. right. split; reflexivity.
@@ -8140,7 +8227,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       try apply fresh_make_layout.
     cbn [fst snd]. split; [reflexivity |]. split; [reflexivity |].
     split; [lia |]. split; [| reflexivity].
-    rewrite (UnionFind.find_repr j (db_forest db) (wf_forest db Hwf)).
+    rewrite (UnionFind.root_of_repr j (db_forest db) (wf_forest db Hwf)).
     unfold allocated. eapply UnionFindCodeFacts.repr_allocated.
     - exact (wf_forest db Hwf).
     - intro i. exact (wf_forest_members db Hwf i).
@@ -9080,7 +9167,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db i Hforest. unfold repr. cbn [normal_cell].
     destruct (N.compare (runtime_allocated (db_runtime db))
       (Npos (UnionFind.repr (db_forest db) i))); try reflexivity;
-      f_equal; rewrite (UnionFind.find_repr _ _ Hforest);
+      f_equal; rewrite (UnionFind.root_of_repr _ _ Hforest);
       now apply UnionFind.repr_idem.
   Qed.
 
@@ -9092,10 +9179,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     remember (normal_cell db (Id i)) as normalized eqn:Hnormal.
     unfold normal_cell in Hnormal.
     destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)) eqn:Hbound.
-    - rewrite (UnionFind.find_repr i (db_forest db) Hforest) in Hnormal.
+    - rewrite (UnionFind.root_of_repr i (db_forest db) Hforest) in Hnormal.
       subst normalized. now apply normal_cell_root.
     - subst normalized. unfold normal_cell. now rewrite Hbound.
-    - rewrite (UnionFind.find_repr i (db_forest db) Hforest) in Hnormal.
+    - rewrite (UnionFind.root_of_repr i (db_forest db) Hforest) in Hnormal.
       subst normalized. now apply normal_cell_root.
   Qed.
 
@@ -9585,7 +9672,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros M nu db [Hforest Hmeaning] [i | v]; cbn [normal_cell den]; [| reflexivity].
     destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); try reflexivity;
-      rewrite (UnionFind.find_repr i (db_forest db) Hforest); cbn [den];
+      rewrite (UnionFind.root_of_repr i (db_forest db) Hforest); cbn [den];
       f_equal; exact (Hmeaning i).
   Qed.
 
@@ -9895,10 +9982,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db [i | v] Hagrees; [| constructor].
     destruct Hagrees as [Hforest Hsame]. cbn [normal_cell].
     destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); constructor.
-    - rewrite (UnionFind.find_repr i (db_forest db) Hforest).
+    - rewrite (UnionFind.root_of_repr i (db_forest db) Hforest).
       exact (forest_agrees_id db i (conj Hforest Hsame)).
     - apply equality_log_refl.
-    - rewrite (UnionFind.find_repr i (db_forest db) Hforest).
+    - rewrite (UnionFind.root_of_repr i (db_forest db) Hforest).
       exact (forest_agrees_id db i (conj Hforest Hsame)).
   Qed.
 
@@ -10359,7 +10446,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     assert (Hcell : forall c, In c (k ++ option_list o) -> normal_cell db c = c).
     { intros [i | v] Hin; [| reflexivity]. cbn [normal_cell].
       destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); try reflexivity;
-        rewrite (UnionFind.find_repr i (db_forest db) Hforest); f_equal; exact (Hfixed i Hin). }
+        rewrite (UnionFind.root_of_repr i (db_forest db) Hforest); f_equal; exact (Hfixed i Hin). }
     split.
     - unfold normal_key. rewrite <- (map_id k) at 2. apply map_ext_in.
       intros c Hin. apply Hcell. apply in_or_app. now left.
@@ -11062,8 +11149,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       length (uses_entries (register_row_uses f k o db)).
   Proof.
     intros db f k o Hmap Hcount.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact Hcount. }
     rewrite (uses_entries_facts db Hmap) in Hcount.
-    unfold register_row_uses, ensure_row_identity.
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       cbn [database_set_nuses database_set_row_store database_set_index_counters
         db_nuses db_row_store row_uses];
@@ -11074,7 +11164,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     DatabaseUseMap.wf (row_uses (db_row_store db)) ->
     DatabaseUseMap.wf (row_uses (db_row_store (register_row_uses f k o db))).
   Proof.
-    intros db f k o Hmap. unfold register_row_uses, ensure_row_identity.
+    intros db f k o Hmap.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hmap). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       cbn [database_set_nuses database_set_row_store database_set_index_counters
         db_row_store row_uses]; apply DatabaseUsesFacts.wf_register; exact Hmap.
@@ -11086,9 +11180,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       In (x, (g, key)) (id_occurrences f k (k ++ option_list o))).
   Proof.
     intros db f k o x g key Hmap.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      cbn [In]. tauto. }
     rewrite (uses_entries_facts db Hmap).
     rewrite uses_entries_facts by (apply register_row_uses_map_wf; exact Hmap).
-    unfold register_row_uses, ensure_row_identity.
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       cbn [database_set_nuses database_set_row_store database_set_index_counters
         db_row_store row_uses];
@@ -11115,8 +11212,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       apply (proj1 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap)) in Hold.
       destruct (database_row_store_uses_history db Hstore x g args Hold) as [r Hr].
       exists r. now apply register_row_uses_history_old.
-    - apply id_occurrences_member in Hnew as [-> [-> _]].
-      now apply register_row_uses_history_new.
+    - assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> []).
+      { intro Hnil. rewrite Hnil in Hnew. contradiction. }
+      apply id_occurrences_member in Hnew as [-> [-> _]].
+      apply register_row_uses_history_new; assumption.
   Qed.
   Lemma register_row_uses_written_coverage : forall db f k o,
     DatabaseUseMap.wf (row_uses (db_row_store db)) ->
@@ -11199,7 +11298,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma slot_rank_ok_register_row_uses : forall db f k o,
     slot_rank_ok db -> slot_rank_ok (register_row_uses f k o db).
   Proof.
-    intros db f k o Hrank. unfold register_row_uses, ensure_row_identity.
+    intros db f k o Hrank.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hrank). }
+    unfold register_row_uses. rewrite Hentries. unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       eapply slot_rank_ok_frame with (db := db); try reflexivity; exact Hrank.
   Qed.
@@ -11331,7 +11434,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     db_pop_loser db = Some (x, db') ->
     forall y e, uses db' y e <->
       (uses db y e /\ y <> x) \/
-      (y = fst (UnionFindCode.find x (db_forest db)) /\ uses db x e).
+      (y = UnionFindCode.root_of x (db_forest db) /\ uses db x e).
   Proof.
     intros db x db' Hmap Hpop y e.
     unfold db_pop_loser in Hpop.
@@ -11358,23 +11461,25 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     rewrite uses_entries_facts by (apply DatabaseUsesFacts.wf_transfer; exact Hmap).
     change (N.to_nat (db_nuses db) =
       DatabaseUsesFacts.count (DatabaseUses.transfer i
-        (fst (UnionFindCode.find i (db_forest db))) (row_uses (db_row_store db)))).
+        (UnionFindCode.root_of i (db_forest db)) (row_uses (db_row_store db)))).
     rewrite DatabaseUsesFacts.count_transfer by exact Hmap.
     exact Hcount.
   Qed.
 
+  (** Registration with identifiers resolves histories as identity allocation does. *)
   Lemma register_row_uses_locate : forall db f k o g args,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     db_locate g args (register_row_uses f k o db) =
       db_locate g args (ensure_row_identity f k db).
   Proof.
-    intros db f k o g args. unfold db_locate.
-    rewrite register_row_uses_history_map.
+    intros db f k o g args Hnonempty. unfold db_locate.
+    rewrite register_row_uses_history_map by exact Hnonempty.
     pose proof (register_row_uses_ids db f k o) as Hids.
     unfold ids in Hids. rewrite Hids.
     destruct (PTrieCode.get (db_row_code g args)
       (row_history (db_row_store (ensure_row_identity f k db))))
       as [[key r] |]; [| reflexivity].
-    rewrite register_row_uses_keys.
+    rewrite register_row_uses_keys by exact Hnonempty.
     f_equal. apply row_root_same_links. apply register_row_uses_links.
   Qed.
 
@@ -13709,9 +13814,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_row_weights_positive (register_row_uses f k o db).
   Proof.
     intros db f k o Hpositive.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hpositive). }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
     eapply database_row_weights_positive_transport with
       (db := ensure_row_identity f k db).
-    - apply register_row_uses_weights.
+    - apply register_row_uses_weights. exact Hnonempty.
     - apply database_row_weights_positive_ensure. exact Hpositive.
   Qed.
 
@@ -13925,7 +14035,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_history_root_owner (register_row_uses f k o db).
   Proof.
     intros db f k o Hstore Howner.
-    unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Howner). }
+    unfold register_row_uses. rewrite Hentries.
     set (identified := ensure_row_identity f k db).
     eapply database_history_root_owner_transport with (db := identified);
       try reflexivity.
@@ -13937,7 +14050,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_history_key_shape (register_row_uses f k o db).
   Proof.
     intros db f k o Hstore Hshape.
-    unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hshape). }
+    unfold register_row_uses. rewrite Hentries.
     set (identified := ensure_row_identity f k db).
     eapply database_history_key_shape_transport with (db := identified);
       try reflexivity.
@@ -13949,7 +14065,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_history_codes_valid (register_row_uses f k o db).
   Proof.
     intros db f k o Hvalid.
-    unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hvalid). }
+    unfold register_row_uses. rewrite Hentries.
     set (identified := ensure_row_identity f k db).
     eapply database_history_codes_valid_transport with (db := identified);
       [reflexivity |].
@@ -13962,7 +14081,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_history_key_ids_bounded (register_row_uses f k o db).
   Proof.
     intros db f k o Hbounded Hinput.
-    unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hbounded). }
+    unfold register_row_uses. rewrite Hentries.
     set (identified := ensure_row_identity f k db).
     eapply database_history_key_ids_bounded_transport with (db := identified).
     - reflexivity.
@@ -13976,7 +14098,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_row_weight_conserved (register_row_uses f k o db).
   Proof.
     intros db f k o Hstore Hconserved.
-    unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hconserved). }
+    unfold register_row_uses. rewrite Hentries.
     set (identified := ensure_row_identity f k db).
     eapply database_row_weight_conserved_transport with (db := identified);
       try reflexivity.
@@ -14312,13 +14437,18 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
             (row_keys (db_row_store (register_row_uses f k o db))).
   Proof.
     intros db f k o Hstore g args key r Hget.
-    rewrite register_row_uses_history_map in Hget.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_depth db Hstore g args key r Hget). }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    rewrite register_row_uses_history_map in Hget by exact Hnonempty.
     pose proof (database_row_store_ok_ensure db f k Hstore) as Hidentified.
     destruct (database_row_store_depth _ Hidentified g args key r Hget)
       as [d [Hbound [Hroot Hcurrent]]].
     exists d. rewrite register_row_uses_ids. split; [exact Hbound |].
     rewrite register_row_uses_links. split; [exact Hroot |].
-    rewrite register_row_uses_locate, register_row_uses_keys.
+    rewrite register_row_uses_locate, register_row_uses_keys by exact Hnonempty.
     exact Hcurrent.
   Qed.
 
@@ -14342,9 +14472,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
        (ids (register_row_uses f k o db) + 1) ^ N.of_nat (length args))%N.
   Proof.
     intros db f k o Hstore g args key r d Hget Hroot.
-    rewrite register_row_uses_history_map in Hget.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (database_row_store_size db Hstore g args key r d Hget Hroot). }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    rewrite register_row_uses_history_map in Hget by exact Hnonempty.
     rewrite register_row_uses_links in Hroot |- *.
-    rewrite register_row_uses_weights, register_row_uses_ids.
+    rewrite register_row_uses_weights, register_row_uses_ids by exact Hnonempty.
     apply (database_row_store_size _ (database_row_store_ok_ensure db f k Hstore)
       g args key r d Hget Hroot).
   Qed.
@@ -14355,6 +14490,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_row_store_ok (register_row_uses f k o db).
   Proof.
     intros db f k o Hstore Hkey.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact Hstore. }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
     pose proof (database_row_store_ok_ensure db f k Hstore) as Hidentified.
     pose proof Hstore as Hbase.
     unfold database_row_store_ok in Hbase.
@@ -14362,7 +14502,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold database_row_store_ok.
     split.
     - rewrite register_row_uses_history_map, register_row_uses_links,
-        register_row_uses_weights.
+        register_row_uses_weights by exact Hnonempty.
       exact (proj1 Hidentified).
     - split; [apply register_row_uses_history_coverage; exact Hstore |].
       split.
@@ -14449,12 +14589,37 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (fun all new counts state => eq_refl) f k previous o db).
   Qed.
 
+  (** A replacement without identifiers preserves the row store. *)
+  Lemma row_replace_nil_store : forall db f k previous o,
+    id_occurrences f k (k ++ option_list o) = [] ->
+    db_row_store (row_replace f k previous o db) = db_row_store db.
+  Proof.
+    intros db f k [before |] o Hnil; unfold row_replace;
+      rewrite register_row_uses_nil by exact Hnil;
+      rewrite row_write_row_store, !slots_update_row_store; reflexivity.
+  Qed.
+
+  (** Skipping registration leaves every historical resolution unchanged. *)
+  Lemma row_replace_nil_locate : forall db f k previous o g args,
+    id_occurrences f k (k ++ option_list o) = [] ->
+    db_locate g args (row_replace f k previous o db) = db_locate g args db.
+  Proof.
+    intros db f k previous o g args Hnil. apply db_locate_same_store_ids.
+    - apply row_replace_nil_store. exact Hnil.
+    - apply row_replace_ids.
+  Qed.
+
   Lemma row_replace_old_locate : forall db f k previous o g args key r,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) = Some (key, r) ->
     db_locate g args (row_replace f k previous o db) = db_locate g args db.
   Proof.
-    intros db f k [before |] o g args key r Hstore Hget; unfold row_replace.
+    intros db f k previous o g args key r Hstore Hget.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { apply row_replace_nil_locate. exact Hentries. }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    destruct previous as [before |]; unfold row_replace.
     - set (prepared := row_write f k o
         (slots_update true f (k ++ option_list o)
           (slots_update false f (k ++ option_list before) db))).
@@ -14465,7 +14630,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       { subst prepared. now rewrite row_write_row_store, !slots_update_row_store. }
       assert (Hids : ids prepared = ids db).
       { subst prepared. now rewrite row_write_ids, !slots_update_ids. }
-      rewrite register_row_uses_locate.
+      rewrite register_row_uses_locate by exact Hnonempty.
       rewrite (ensure_row_identity_old_locate prepared f k g args key r Hstore')
         by (rewrite Hsame; exact Hget).
       apply db_locate_same_store_ids; assumption.
@@ -14477,7 +14642,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       { subst prepared. now rewrite row_write_row_store, slots_update_row_store. }
       assert (Hids : ids prepared = ids db).
       { subst prepared. now rewrite row_write_ids, slots_update_ids. }
-      rewrite register_row_uses_locate.
+      rewrite register_row_uses_locate by exact Hnonempty.
       rewrite (ensure_row_identity_old_locate prepared f k g args key r Hstore')
         by (rewrite Hsame; exact Hget).
       apply db_locate_same_store_ids; assumption.
@@ -14489,11 +14654,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (row_history (db_row_store (row_replace f k previous o db))) =
     PTrieCode.get (db_row_code g args) (row_history (db_row_store db)).
   Proof.
-    intros db f k [before |] o g args Hother; unfold row_replace.
-    - rewrite register_row_uses_history_map.
+    intros db f k previous o g args Hother.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { now rewrite row_replace_nil_store by exact Hentries. }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    destruct previous as [before |]; unfold row_replace.
+    - rewrite register_row_uses_history_map by exact Hnonempty.
       rewrite ensure_row_identity_history_other by exact Hother.
       now rewrite row_write_row_store, !slots_update_row_store.
-    - rewrite register_row_uses_history_map.
+    - rewrite register_row_uses_history_map by exact Hnonempty.
       rewrite ensure_row_identity_history_other by exact Hother.
       now rewrite row_write_row_store, slots_update_row_store.
   Qed.
@@ -14503,19 +14673,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     PTrieCode.get code
       (row_history (db_row_store (row_replace f k previous o db))) = Some (key, r).
   Proof.
-    intros db f k [before |] o code key r Hentry; unfold row_replace;
-      rewrite register_row_uses_history_map;
+    intros db f k previous o code key r Hentry.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite row_replace_nil_store by exact Hentries. exact Hentry. }
+    assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+    destruct previous as [before |]; unfold row_replace;
+      rewrite register_row_uses_history_map by exact Hnonempty;
       apply ensure_row_identity_raw_history_old.
     - now rewrite row_write_row_store, !slots_update_row_store.
     - now rewrite row_write_row_store, slots_update_row_store.
   Qed.
 
+  (** An identified replacement creates self-location for a previously absent history. *)
   Lemma row_replace_new_locate : forall db f k previous o,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
+    id_occurrences f k (k ++ option_list o) <> [] ->
     db_locate f k (row_replace f k previous o db) = Some k.
   Proof.
-    intros db f k [before |] o Hstore Hnone; unfold row_replace.
+    intros db f k [before |] o Hstore Hnone Hnonempty; unfold row_replace.
     - set (prepared := row_write f k o
         (slots_update true f (k ++ option_list o)
           (slots_update false f (k ++ option_list before) db))).
@@ -14524,7 +14701,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         apply slots_update_row_store_ok, slots_update_row_store_ok. exact Hstore. }
       assert (Hsame : db_row_store prepared = db_row_store db).
       { subst prepared. now rewrite row_write_row_store, !slots_update_row_store. }
-      rewrite register_row_uses_locate.
+      rewrite register_row_uses_locate by exact Hnonempty.
       apply ensure_row_identity_new_locate; [exact Hstore' |].
       now rewrite Hsame.
     - set (prepared := row_write f k o (slots_update true f (k ++ option_list o) db)).
@@ -14533,25 +14710,49 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         exact Hstore. }
       assert (Hsame : db_row_store prepared = db_row_store db).
       { subst prepared. now rewrite row_write_row_store, slots_update_row_store. }
-      rewrite register_row_uses_locate.
+      rewrite register_row_uses_locate by exact Hnonempty.
       apply ensure_row_identity_new_locate; [exact Hstore' |].
       now rewrite Hsame.
   Qed.
 
+  (** Replacing a row with identifier occurrences leaves a history for its key. *)
+  Lemma row_replace_history_new : forall db f k previous o,
+    database_row_store_ok db ->
+    id_occurrences f k (k ++ option_list o) <> [] ->
+    exists r, PTrieCode.get (db_row_code f k)
+      (row_history (db_row_store (row_replace f k previous o db))) =
+        Some ((f, k), r).
+  Proof.
+    intros db f k [before |] o Hstore Hnonempty; unfold row_replace;
+      apply register_row_uses_history_new; try exact Hnonempty;
+      apply row_write_row_store_ok, slots_update_row_store_ok.
+    - apply slots_update_row_store_ok. exact Hstore.
+    - exact Hstore.
+  Qed.
+
+  (** An identified replacement resolves to its own key when its old history agrees. *)
   Lemma row_replace_new_locate_from_alignment : forall db f k previous o,
     database_row_store_ok db ->
     (forall key r,
       PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = Some (key, r) ->
       db_locate f k db = Some k) ->
+    (exists key r, PTrieCode.get (db_row_code f k)
+      (row_history (db_row_store (row_replace f k previous o db))) = Some (key, r)) ->
     db_locate f k (row_replace f k previous o db) = Some k.
   Proof.
-    intros db f k previous o Hstore Haligned.
-    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
-      as [[key r] |] eqn:Hprior.
-    - specialize (Haligned key r eq_refl).
-      rewrite (row_replace_old_locate db f k previous o f k key r Hstore Hprior).
-      exact Haligned.
-    - exact (row_replace_new_locate db f k previous o Hstore Hprior).
+    intros db f k previous o Hstore Haligned Hhistory.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    - destruct Hhistory as [key [r Hentry]].
+      rewrite row_replace_nil_store in Hentry by exact Hentries.
+      rewrite row_replace_nil_locate by exact Hentries.
+      exact (Haligned key r Hentry).
+    - assert (Hnonempty : id_occurrences f k (k ++ option_list o) <> [])
+      by (rewrite Hentries; discriminate).
+      destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+        as [[key r] |] eqn:Hprior.
+      + rewrite (row_replace_old_locate db f k previous o f k key r Hstore Hprior).
+        exact (Haligned key r eq_refl).
+      + exact (row_replace_new_locate db f k previous o Hstore Hprior Hnonempty).
   Qed.
 
   Lemma database_history_alignment_row_replace : forall db f k previous o,
@@ -14565,10 +14766,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k))
       as [Hsame | Hother].
     - apply RowKeys.encode_inj in Hsame. injection Hsame as -> ->.
-      apply row_replace_new_locate_from_alignment; [exact Hstore |].
-      intros old_key old_id Hold.
-      exact (database_history_alignment_entry db Halign f k old_key old_id
-        Hold Hcanonical_old).
+      apply row_replace_new_locate_from_alignment; [exact Hstore | |].
+      + intros old_key old_id Hold.
+        exact (database_history_alignment_entry db Halign f k old_key old_id
+          Hold Hcanonical_old).
+      + exists key, r. exact Hentry.
     - assert (Hkeys : (g, args) <> (f, k)).
       { intro Heq. inversion Heq; subst. apply Hother. reflexivity. }
       rewrite (row_replace_history_other db f k previous o g args Hkeys) in Hentry.
@@ -14589,9 +14791,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k))
       as [Hsame | Hother].
     - apply RowKeys.encode_inj in Hsame. injection Hsame as -> ->.
-      apply row_replace_new_locate_from_alignment; [exact Hstore |].
-      intros old_key old_id Hold.
-      exact (Hself old_key old_id Hold).
+      apply row_replace_new_locate_from_alignment; [exact Hstore | |].
+      + intros old_key old_id Hold.
+        exact (Hself old_key old_id Hold).
+      + exists key, r. exact Hentry.
     - assert (Hdifferent : (g, args) <> (f, k)).
       { intro Heq. inversion Heq; subst. apply Hother. reflexivity. }
       change (row (view (row_replace f k previous o db)) g args output) in Hrow.
@@ -14833,7 +15036,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   Lemma database_owned_ok_pop : forall db x db',
     (forall i, allocated db i ->
-      allocated db (fst (UnionFindCode.find i (db_forest db)))) ->
+      allocated db (UnionFindCode.root_of i (db_forest db))) ->
     database_owned_ok db -> db_pop_loser db = Some (x, db') ->
     database_owned_ok db'.
   Proof.
@@ -14901,8 +15104,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       [Hlocated [Hmetadata [Hpending [Huf [Hcard [Hsame [Hwidth
       [Hstore [Hcounts [Hhistory [Hcore [Hrank [Hnonroot Howned]]]]]]]]]]]]].
     assert (Hfind : forall i, allocated db i ->
-      allocated db (fst (UnionFindCode.find i (db_forest db)))).
-    { intros i Hi. rewrite (UnionFind.find_repr i (db_forest db) Huf).
+      allocated db (UnionFindCode.root_of i (db_forest db))).
+    { intros i Hi. rewrite (UnionFind.root_of_repr i (db_forest db) Huf).
       unfold allocated. eapply UnionFindCodeFacts.repr_allocated.
       - exact Huf.
       - exact (proj1 Hcore).
@@ -15181,9 +15384,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       split; [apply row_replace_uses_new; assumption |].
       split.
       + unfold located, locate. apply row_replace_new_locate_from_alignment;
-          [exact Hstore |].
-        intros key r Hentry. apply (Halign f k key r Hentry).
-        intros j Hin. apply Hcanonical. apply in_or_app. now left.
+          [exact Hstore | |].
+        * intros key r Hentry. apply (Halign f k key r Hentry).
+          intros j Hin. apply Hcanonical. apply in_or_app. now left.
+        * destruct (row_replace_history_new db f k previous o Hstore
+            (id_occurrences_nonempty f k (k ++ option_list o) i Hid)) as [r Hentry].
+          exists (f, k), r. exact Hentry.
       + left. symmetry. exact Hfixed.
   Qed.
 
@@ -15205,13 +15411,21 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     assert (Hmap : RowMap.wf
       (runtime_rows (db_runtime (row_replace f k previous o db)))).
     { rewrite row_replace_map. apply RowMap.wf_set. exact (wf_row_map db Hbase). }
-    assert (Hnew : located (row_replace f k previous o db) f k = Some k).
-    { unfold located, locate. apply row_replace_new_locate_from_alignment;
-        [exact Hstore |].
-      intros key r Hentry. apply (Halign f k key r Hentry).
-      intros i Hin. apply Hcanonical. apply in_or_app. now left. }
     destruct (RowKeys.eqb_spec (g, k0) (f, k)) as [Hsame | Hother].
-    - injection Hsame as -> ->. rewrite Hnew in Hlocated.
+    - injection Hsame as -> ->.
+      assert (Hhistory : exists key r, PTrieCode.get (db_row_code f k)
+        (row_history (db_row_store (row_replace f k previous o db))) = Some (key, r)).
+      { unfold located, locate, db_locate in Hlocated.
+        destruct (PTrieCode.get (db_row_code f k)
+          (row_history (db_row_store (row_replace f k previous o db))))
+          as [[key r] |] eqn:Hentry; [| discriminate Hlocated].
+        exists key, r. reflexivity. }
+      assert (Hnew : located (row_replace f k previous o db) f k = Some k).
+      { unfold located, locate. apply row_replace_new_locate_from_alignment;
+          [exact Hstore | | exact Hhistory].
+        intros key r Hentry. apply (Halign f k key r Hentry).
+        intros i Hin. apply Hcanonical. apply in_or_app. now left. }
+      rewrite Hnew in Hlocated.
       injection Hlocated as <-. exists o. split.
       + unfold rows. rewrite <- RowMap.elements_trie.
         apply row_elements_member; [exact Hmap |].
@@ -15846,10 +16060,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct previous as [before |].
     - destruct (output_eqb before updated).
       + exact Hnext_loc.
-      + intros key r _. apply row_replace_new_locate_from_alignment;
-          [exact Hnext_store | exact Hnext_loc].
-    - intros key r _. apply row_replace_new_locate_from_alignment;
-        [exact Hnext_store | exact Hnext_loc].
+      + intros key r Hentry. apply row_replace_new_locate_from_alignment;
+          [exact Hnext_store | exact Hnext_loc | exists key, r; exact Hentry].
+    - intros key r Hentry. apply row_replace_new_locate_from_alignment;
+        [exact Hnext_store | exact Hnext_loc | exists key, r; exact Hentry].
   Qed.
 
   Lemma database_active_history_coherent_put : forall db f k o,
@@ -18276,7 +18490,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_row_store_ok db -> database_history_complete db ->
     database_history_complete (register_row_uses f k o db).
   Proof.
-    intros db f k o Hstore Hcomplete. unfold register_row_uses.
+    intros db f k o Hstore Hcomplete.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hcomplete). }
+    unfold register_row_uses. rewrite Hentries.
     eapply database_history_complete_transport with (db := ensure_row_identity f k db);
       try reflexivity.
     apply database_history_complete_ensure; assumption.
@@ -18556,33 +18774,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - unfold next. rewrite move_row_identity_history. exact Htarget.
   Qed.
 
-  Lemma row_replace_history_new : forall db f k previous o,
-    database_row_store_ok db ->
-    exists r, PTrieCode.get (db_row_code f k)
-      (row_history (db_row_store (row_replace f k previous o db))) =
-        Some ((f, k), r).
-  Proof.
-    intros db f k [before |] o Hstore; unfold row_replace;
-      apply register_row_uses_history_new;
-      apply row_write_row_store_ok, slots_update_row_store_ok.
-    - apply slots_update_row_store_ok. exact Hstore.
-    - exact Hstore.
-  Qed.
 
+
+  (** Insertion retains a target history when its normalized key contains an identifier. *)
   Lemma put_target_history : forall db f k o,
     database_row_store_ok db ->
+    (exists i, In (Id i) (normal_key db k)) ->
     (forall before, row_get f (normal_key db k) db = Some before ->
       exists r, PTrieCode.get (db_row_code f (normal_key db k))
         (row_history (db_row_store db)) = Some ((f, normal_key db k), r)) ->
     exists r, PTrieCode.get (db_row_code f (normal_key db k))
       (row_history (db_row_store (put f k o db))) = Some ((f, normal_key db k), r).
   Proof.
-    intros db f k o Hstore Hexisting.
+    intros db f k o Hstore [i Hid] Hexisting.
     destruct (row_get f (normal_key db k) db) as [before |] eqn:Hprevious.
     - destruct (Hexisting before eq_refl) as [r Hentry].
       exists r. apply put_history_old. exact Hentry.
     - unfold put. rewrite Hprevious.
-      apply row_replace_history_new. exact Hstore.
+      apply row_replace_history_new; [exact Hstore |].
+      apply (id_occurrences_nonempty f (normal_key db k) _ i).
+      apply in_or_app. now left.
   Qed.
 
   Lemma normal_key_has_id_or_equal : forall db k,
@@ -18664,8 +18875,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         destruct (database_row_with_id_history db work f (normal_key db current)
           before i Hinv Hcomplete Hbefore_old Hid) as [r Hentry].
         exists r. unfold deleted. now rewrite row_delete_row_store. }
+      assert (Htarget_ids : exists j,
+        In (Id j) (normal_key deleted (normal_key db current))).
+      { rewrite Hnormal. exists i. exact Hin. }
       destruct (put_target_history deleted f (normal_key db current)
-        (option_map (normal_cell db) output) Hdeleted_store Hexisting)
+        (option_map (normal_cell db) output) Hdeleted_store Htarget_ids Hexisting)
         as [s Htarget].
       rewrite Hnormal in Htarget. exists s.
       unfold repair_current. rewrite Hrow, Hkey_test.
@@ -18829,8 +19043,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_uses_allocated (register_row_uses f k o db).
   Proof.
     intros db f k o Hallocated Hinput x e Hin.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    { rewrite (register_row_uses_nil db f k o Hentries) in *.
+      exact (Hallocated x e Hin). }
     unfold allocated. rewrite (proj1 (register_row_uses_control f k o db)).
-    unfold register_row_uses in Hin.
+    unfold register_row_uses in Hin. rewrite Hentries in Hin.
     cbn [database_set_nuses database_set_row_store db_row_store row_uses] in Hin.
     rewrite ensure_row_identity_uses in Hin.
     eapply database_bucket_owners_register with
@@ -18840,7 +19057,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - intros y [g args] Hentry.
       apply id_occurrences_member in Hentry as [_ [_ Hcell]].
       exact (Hinput y Hcell).
-    - exact Hin.
+    - rewrite Hentries. exact Hin.
   Qed.
 
   Lemma database_uses_allocated_row_replace : forall db f k previous o,
@@ -19395,7 +19612,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         exact Huf.
       + apply (pop_loser_uses_transfer db x db' Hmap Hpop).
         right. split; [| exact Huse].
-        rewrite (UnionFind.find_repr x (db_forest db) Huf). reflexivity.
+        rewrite (UnionFind.root_of_repr x (db_forest db) Huf). reflexivity.
       + unfold located, locate in *. rewrite (pop_loser_locate db x db' f k0 Hpop).
         exact Hloc.
       + left. rewrite !Hrepr. exact Hroot.
@@ -19763,7 +19980,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [exact Hview |].
     split.
     - intros y e. rewrite (pop_loser_uses_transfer db x db' Hmap Hpop y e).
-      rewrite (UnionFind.find_repr x (db_forest db) Huf). reflexivity.
+      rewrite (UnionFind.root_of_repr x (db_forest db) Huf). reflexivity.
     - split; [exact Hcount |].
       pose proof Hinv as Hpublic.
       unfold inv, inv_on in Hinv.
@@ -19796,7 +20013,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + intros e Hmember. exists (repr db x).
         apply (pop_loser_uses_transfer db x db' Hmap Hpop).
         right. split.
-        * rewrite (UnionFind.find_repr x (db_forest db) Huf). reflexivity.
+        * rewrite (UnionFind.root_of_repr x (db_forest db) Huf). reflexivity.
         * exact (proj1 (bucket_member db x e) Hmember).
       + eapply forest_ok_pop; [exact Hforest_ok | exact Hpop].
       + intros f k o Hrow. apply (pop_loser_kind_ok db x db' f k o Hpop).
@@ -24211,7 +24428,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       apply (pop_loser_uses_transfer db x db' Hmap Hpop y entry) in Huse.
       destruct Huse as [[Hold Hother] | [Hy Hold]].
       + exists (y, entry). split; assumption.
-      + rewrite (UnionFind.find_repr x (db_forest db) Hwf) in Hy. subst y.
+      + rewrite (UnionFind.root_of_repr x (db_forest db) Hwf) in Hy. subst y.
         change (repr db (repr db x) = root) in Hroot.
         rewrite (inv_on_repr_idem db [] x Hinv) in Hroot.
         exists (x, entry). split; assumption.
@@ -24220,7 +24437,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + exists (repr db x, entry). split.
         * cbn [fst]. rewrite Hrepr, (inv_on_repr_idem db [] x Hinv). exact Hroot.
         * apply (pop_loser_uses_transfer db x db' Hmap Hpop).
-          right. rewrite (UnionFind.find_repr x (db_forest db) Hwf). now split.
+          right. rewrite (UnionFind.root_of_repr x (db_forest db) Hwf). now split.
       + exists (y, entry). split; [cbn [fst]; now rewrite Hrepr |].
         apply (pop_loser_uses_transfer db x db' Hmap Hpop).
         left. now split.
@@ -24237,10 +24454,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     injection Hpop as Hname Hstate. subst x db'.
     cbn [database_set_pending database_set_runtime database_set_row_store
       db_row_store row_uses].
-    change (DatabaseUses.transfer i (fst (UnionFind.find i (db_forest db)))
+    change (DatabaseUses.transfer i (UnionFind.root_of i (db_forest db))
       (row_uses (db_row_store db)) =
       DatabaseUses.transfer i (repr db i) (row_uses (db_row_store db))).
-    now rewrite (UnionFind.find_repr i (db_forest db) Hwf).
+    now rewrite (UnionFind.root_of_repr i (db_forest db) Hwf).
   Qed.
 
   (** Transferring a queued nonroot releases one stored unit per activated occurrence. *)
@@ -25134,6 +25351,28 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     nia.
   Qed.
 
+  (** Allocated root walks fit the logarithmic database unit. *)
+  Lemma T_root_of_unit_budget : forall i db, wf db -> allocated db i ->
+    (UnionFindT.T_root_of i (db_forest db) <=
+      2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
+  Proof.
+    intros i db Hwf Hi.
+    pose proof (UnionFindT.T_root_of_le i (db_forest db) (wf_forest db Hwf)) as Hfind.
+    rewrite (forest_card_ids db Hwf) in Hfind.
+    pose proof (nat_log2_N_width (ids db)) as Hlog.
+    pose proof (slot_width_log (ids db)) as Hlogwidth.
+    assert (Hwidth : Nat.max (UnionFind.width (db_forest db)) (Pos.size_nat i) <=
+      N.size_nat (wmark db)).
+    { apply Nat.max_lub.
+      - eapply Nat.le_trans; [exact (wf_forest_width db Hwf) |].
+        apply N_width_mono. apply wmark_ids.
+      - change (N.size_nat (Npos i) <= N.size_nat (wmark db)).
+        apply N_width_mono. eapply N.le_trans; [exact Hi | apply wmark_ids]. }
+    unfold unit. rewrite Nat2N.inj_mul.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
+    nia.
+  Qed.
+
   (** The input-cell width sum separates tuple payloads from list bookkeeping. *)
   Definition tuple_cell_bits (k : list (cell V.t)) : nat :=
     fold_right (fun c n => cell_bits V.encode c + n) 0 k.
@@ -25514,6 +25753,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (wmark db <= wmark (register_row_uses f k o db))%N.
   Proof.
     intros f k o db. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries];
+      [reflexivity |].
     eapply N.le_trans; [apply wmark_ensure_row_identity |].
     set (identified := ensure_row_identity f k db).
     unfold wmark.
@@ -25522,7 +25763,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply fold_max_base_mono.
     change (N.max (db_nuses identified) (ids identified) <=
       N.max (db_nuses identified +
-        N.of_nat (length (id_occurrences f k (k ++ option_list o))))
+        N.of_nat (length (entry :: entries)))
         (ids identified))%N.
     apply N.max_lub.
     -
@@ -25673,7 +25914,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma register_row_uses_counters_incl : forall f k o db,
     incl (db_index_counters db) (db_index_counters (register_row_uses f k o db)).
   Proof.
-    intros f k o db p Hin. unfold register_row_uses, ensure_row_identity.
+    intros f k o db p Hin. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [exact Hin |].
+    unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
       cbn [database_set_nuses database_set_row_store database_set_index_counters
         db_index_counters]; [exact Hin | now right].
@@ -25930,17 +26173,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       clear - Hscalar. unfold unit. rewrite Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
   Qed.
 
-  (** Identifier normalization first pays the stored allocation guard, then an optional find. *)
+  (** Identifier normalization pays the allocation guard and an optional root walk. *)
   Lemma T_normal_cell_id : forall db i,
     (T_normal_cell db (Id i) = N.T_compare (ids db) (Npos i) + 3 +
       match N.compare (ids db) (Npos i) with
       | Lt => 0
-      | _ => UnionFindT.T_find i (db_forest db) + 2
+      | _ => UnionFindT.T_root_of i (db_forest db) + 1
       end)%N.
   Proof.
     intros db i. time_unfold T_normal_cell. time_unfold @T_db_runtime.
     time_unfold @T_runtime_allocated. time_unfold @T_db_forest.
-    time_unfold @Datatypes.T_fst. fold (ids db).
+    fold (ids db).
     destruct (N.compare (ids db) (Npos i)); nia.
   Qed.
 
@@ -25956,12 +26199,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       destruct (N.compare (ids db) (Npos i)) eqn:Hcompare_result.
       + apply N.compare_eq_iff in Hcompare_result.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+        pose proof (T_root_of_unit_budget i db Hwf Hi) as Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + apply N.compare_gt_iff in Hcompare_result.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+        pose proof (T_root_of_unit_budget i db Hwf Hi) as Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
     - time_unfold T_normal_cell. pose proof (unit_positive db).
       set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
@@ -27646,8 +27889,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma T_pop_loser_counter_bound : forall db i rest,
     runtime_queue (db_runtime db) = i :: rest ->
     (T_pop_loser db <= 64 + N.of_nat (N.size_nat (db_npending db)) +
-      UnionFindCode.T_find i (db_forest db) +
-      DatabaseUses.T_transfer i (fst (UnionFindCode.find i (db_forest db)))
+      UnionFindCode.T_root_of i (db_forest db) +
+      DatabaseUses.T_transfer i (UnionFindCode.root_of i (db_forest db))
         (row_uses (db_row_store db)))%N.
   Proof.
     intros db i rest Hqueue.
@@ -27659,12 +27902,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     time_simpl. time_cbn. lia.
   Qed.
 
-  Lemma pop_find_unit_budget : forall db work i, inv_on db work -> allocated db i ->
-    (UnionFindCode.T_find i (db_forest db) <=
+  Lemma pop_root_unit_budget : forall db work i, inv_on db work -> allocated db i ->
+    (UnionFindCode.T_root_of i (db_forest db) <=
       2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
   Proof.
     intros db work i Hinv Hi.
-    pose proof (UnionFindT.T_find_le i (db_forest db)
+    pose proof (UnionFindT.T_root_of_le i (db_forest db)
       (inv_on_forest_wf db work Hinv)) as Hfind.
     rewrite (inv_on_forest_card db work Hinv) in Hfind.
     pose proof (nat_log2_N_width (ids db)) as Hlog.
@@ -27681,12 +27924,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   Lemma pop_root_width : forall db work i, inv_on db work -> allocated db i ->
-    Pos.size_nat (fst (UnionFindCode.find i (db_forest db))) <=
+    Pos.size_nat (UnionFindCode.root_of i (db_forest db)) <=
       N.size_nat (wmark db).
   Proof.
     intros db work i Hinv Hi.
     pose proof (inv_on_forest_wf db work Hinv) as Hwf.
-    rewrite (UnionFind.find_repr i (db_forest db) Hwf).
+    rewrite (UnionFind.root_of_repr i (db_forest db) Hwf).
     destruct (PTrieCode.get i (UnionFind.parents (db_forest db))) as [parent |]
       eqn:Hmember.
     - eapply Nat.le_trans.
@@ -27723,10 +27966,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     { unfold queue. rewrite Hqueue. now left. }
     assert (Hi : allocated db x).
     { unfold inv, inv_on in Hinv. change (In x (queue db)) in Hqueued. firstorder. }
-    pose proof (pop_find_unit_budget db [] x Hinv Hi) as Hfind.
+    pose proof (pop_root_unit_budget db [] x Hinv Hi) as Hfind.
     pose proof (pop_root_width db [] x Hinv Hi) as Hroot.
     pose proof (T_database_uses_transfer_le use_entry x
-      (fst (UnionFindCode.find x (db_forest db)))
+      (UnionFindCode.root_of x (db_forest db))
       (row_uses (db_row_store db))) as Htransfer.
     change (DatabaseUses.bucket x (row_uses (db_row_store db)))
       with (get_uses x db) in Htransfer.
@@ -27745,17 +27988,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     set (M := DatabaseUseMap.c_map) in *.
     set (F := UnionFindT.c_uf) in *.
     assert (Hsum : (N.of_nat (Pos.size_nat x +
-      Pos.size_nat (fst (UnionFindCode.find x (db_forest db))) + 2) <= 2 * U)%N)
+      Pos.size_nat (UnionFindCode.root_of x (db_forest db)) + 2) <= 2 * U)%N)
       by (unfold U; lia).
     assert (Hmaps : (8 * M * N.of_nat (Pos.size_nat x +
-      Pos.size_nat (fst (UnionFindCode.find x (db_forest db))) + 2) <=
+      Pos.size_nat (UnionFindCode.root_of x (db_forest db)) + 2) <=
       16 * M * U)%N).
     { replace (16 * M * U)%N with ((8 * M) * (2 * U))%N by ring.
       apply N.mul_le_mono_l. exact Hsum. }
     assert (Hlength : (N.of_nat (length (bucket db x) + 1) <= W + 1)%N).
     { unfold W. lia. }
     assert (Htransfer_small :
-      (DatabaseUses.T_transfer x (fst (UnionFindCode.find x (db_forest db)))
+      (DatabaseUses.T_transfer x (UnionFindCode.root_of x (db_forest db))
         (row_uses (db_row_store db)) <= 16 * M * U + W + 1)%N).
     { eapply N.le_trans; [exact Htransfer |].
       replace (16 * M * U + W + 1)%N with (16 * M * U + (W + 1))%N by ring.
@@ -27941,13 +28184,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     ring.
   Qed.
 
-  (** An allocated find has the same unit bound during active repair as at a public boundary. *)
-  Lemma T_find_active_unit : forall db work i, inv_on db work -> allocated db i ->
-    (UnionFindT.T_find i (db_forest db) <=
+  (** An allocated root walk has the same unit bound during active repair. *)
+  Lemma T_root_of_active_unit : forall db work i, inv_on db work -> allocated db i ->
+    (UnionFindT.T_root_of i (db_forest db) <=
       2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
   Proof.
     intros db work i Hinv Hi.
-    pose proof (UnionFindT.T_find_le i (db_forest db)
+    pose proof (UnionFindT.T_root_of_le i (db_forest db)
       (inv_on_forest_wf db work Hinv)) as Hfind.
     rewrite (inv_on_forest_card db work Hinv) in Hfind.
     pose proof (nat_log2_N_width (ids db)) as Hlog.
@@ -27975,14 +28218,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       destruct (N.compare (ids db) (Npos i)) eqn:Hbranch.
       + apply N.compare_eq_iff in Hbranch.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_active_unit db work i Hinv Hi) as Hfind.
+        pose proof (T_root_of_active_unit db work i Hinv Hi) as Hfind.
         clear -Hcompare Hwidth Hpositive Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + clear -Hcompare Hwidth Hpositive.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + apply N.compare_gt_iff in Hbranch.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_active_unit db work i Hinv Hi) as Hfind.
+        pose proof (T_root_of_active_unit db work i Hinv Hi) as Hfind.
         clear -Hcompare Hwidth Hpositive Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
     - time_unfold T_normal_cell. pose proof (unit_positive db) as Hpositive.
@@ -28004,17 +28247,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
   Qed.
 
-  (** The find clock uses only forest well-formedness, cardinality and identifier width. *)
-  Lemma T_find_state_unit : forall db i,
+  (** The root-walk clock uses forest well-formedness, cardinality and identifier width. *)
+  Lemma T_root_of_state_unit : forall db i,
     UnionFind.wf (db_forest db) ->
     UnionFind.card (db_forest db) = N.to_nat (ids db) ->
     UnionFind.width (db_forest db) <= N.size_nat (ids db) ->
     allocated db i ->
-    (UnionFindT.T_find i (db_forest db) <=
+    (UnionFindT.T_root_of i (db_forest db) <=
       2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
   Proof.
     intros db i Hforest Hcard Hwidth Hi.
-    pose proof (UnionFindT.T_find_le i (db_forest db) Hforest) as Hfind.
+    pose proof (UnionFindT.T_root_of_le i (db_forest db) Hforest) as Hfind.
     rewrite Hcard in Hfind.
     pose proof (nat_log2_N_width (ids db)) as Hlog.
     pose proof (slot_width_log (ids db)) as Hlogwidth.
@@ -28044,14 +28287,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       destruct (N.compare (ids db) (Npos i)) eqn:Hbranch.
       + apply N.compare_eq_iff in Hbranch.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_state_unit db i Hforest Hcard Hwidth Hi) as Hfind.
+        pose proof (T_root_of_state_unit db i Hforest Hcard Hwidth Hi) as Hfind.
         clear -Hcompare Hbits Hpositive Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + clear -Hcompare Hbits Hpositive.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
       + apply N.compare_gt_iff in Hbranch.
         assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_state_unit db i Hforest Hcard Hwidth Hi) as Hfind.
+        pose proof (T_root_of_state_unit db i Hforest Hcard Hwidth Hi) as Hfind.
         clear -Hcompare Hbits Hpositive Hfind.
         set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
     - time_unfold T_normal_cell. pose proof (unit_positive db) as Hpositive.
@@ -28351,9 +28594,38 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros db f k o. cbn beta zeta.
     time_unfold T_register_row_uses.
-    time_unfold @T_database_set_nuses. time_unfold @T_database_set_row_store.
-    time_unfold @T_option_list. time_simpl.
-    destruct o; cbn beta iota zeta; lia.
+    destruct (id_occurrences f k (k ++ option_list o)).
+    - time_unfold @T_option_list. time_simpl.
+      destruct o; cbn beta iota zeta; lia.
+    - time_unfold @T_database_set_nuses. time_unfold @T_database_set_row_store.
+      time_unfold @T_option_list. time_simpl.
+      destruct o; cbn beta iota zeta; lia.
+  Qed.
+
+  (** Identifier-free registration pays only for constructing and scanning its tuple. *)
+  Lemma T_register_row_uses_nil_parts : forall db f k o,
+    id_occurrences f k (k ++ option_list o) = [] ->
+    (T_register_row_uses f k o db <=
+      64 + Datatypes.T_app k (option_list o) +
+      T_id_occurrences f k (k ++ option_list o))%N.
+  Proof.
+    intros db f k o Hentries.
+    time_unfold T_register_row_uses. time_unfold @T_option_list.
+    rewrite Hentries. destruct o; cbn beta iota zeta; lia.
+  Qed.
+
+  (** Skipped registration is linear in arity without a fresh-identifier width premise. *)
+  Lemma T_register_row_uses_nil_width : forall db f k o,
+    id_occurrences f k (k ++ option_list o) = [] ->
+    (T_register_row_uses f k o db <= 64 * N.of_nat (length k + 2))%N.
+  Proof.
+    intros db f k o Hentries.
+    pose proof (T_register_row_uses_nil_parts db f k o Hentries) as Hparts.
+    pose proof (Datatypes.T_app_le k (option_list o)) as Happ.
+    pose proof (T_id_occurrences_length f k (k ++ option_list o)) as Hwalk.
+    assert (Hlength : length (k ++ option_list o) <= length k + 1).
+    { rewrite length_app. destruct o; cbn [option_list length]; lia. }
+    lia.
   Qed.
 
   (** A tuple with bounded cells has bounded identifier owners in its occurrence list. *)
@@ -28434,6 +28706,26 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       by (unfold budget; ring).
     clear - Hparts Hpositive Happ_budget Hoccurrences_budget Hidentity_budget
       Hregister_budget Hlength_budget Hconvert_budget Hadd_budget. lia.
+  Qed.
+
+  (** Only nonempty registration needs to bound the fresh identity counter. *)
+  Lemma T_register_row_uses_guarded_width : forall db f k o bits,
+    Pos.size_nat f <= bits ->
+    (forall c, In c (k ++ option_list o) -> cell_bits V.encode c <= bits) ->
+    (id_occurrences f k (k ++ option_list o) <> [] ->
+      Pos.size_nat (row_fresh (db_row_store db)) <= bits) ->
+    N.size_nat (db_nuses db) <= bits ->
+    N.size_nat (N.of_nat (length (k ++ option_list o))) <= bits ->
+    (T_register_row_uses f k o db <=
+      1024 * (PTrieT.c_trie + V.c_key + DatabaseUseMap.c_map + 1) *
+        N.of_nat (length k + 2) * N.of_nat (bits + 1))%N.
+  Proof.
+    intros db f k o bits Hname Hcells Hfresh Hcount Hlength.
+    destruct (id_occurrences f k (k ++ option_list o)) as [| entry entries] eqn:Hentries.
+    - eapply N.le_trans; [apply T_register_row_uses_nil_width; exact Hentries |].
+      clear - k bits. nia.
+    - apply T_register_row_uses_width; try assumption.
+      apply Hfresh. congruence.
   Qed.
 
   Lemma T_slots_update_parts_width : forall db b f u, slots_ok db ->
@@ -29098,9 +29390,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Occurrence registration retains the watermark produced by identity allocation. *)
   Lemma register_row_uses_identity_wmark : forall db f k o,
+    id_occurrences f k (k ++ option_list o) <> [] ->
     (wmark (ensure_row_identity f k db) <= wmark (register_row_uses f k o db))%N.
   Proof.
-    intros db f k o. unfold register_row_uses.
+    intros db f k o Hentries. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [contradiction |].
     set (identified := ensure_row_identity f k db).
     unfold wmark.
     cbn [database_set_nuses database_set_row_store db_nuses ids
@@ -29151,8 +29445,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     assert (Hwithout_mark : (wmark without <= wmark result)%N).
     { eapply N.le_trans; [unfold inserted in Hinserted_mark; apply wmark_slots_update |
         exact Hinserted_mark]. }
-    assert (Hidentified_mark : (wmark identified <= wmark result)%N).
-    { rewrite Hresult. apply register_row_uses_identity_wmark. }
+    assert (Hidentified_mark : id_occurrences f k (k ++ option_list o) <> [] ->
+      (wmark identified <= wmark result)%N).
+    { intro Hentries. rewrite Hresult.
+      apply register_row_uses_identity_wmark. exact Hentries. }
     assert (Hinserted_width : N.size_nat (wmark inserted) <= bits).
     { eapply Nat.le_trans; [apply N_width_mono; exact Hinserted_mark | exact Hwidth]. }
     assert (Hwithout_width : N.size_nat (wmark without) <= bits).
@@ -29163,9 +29459,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
          exact Hinserted_width]. }
     assert (Hkey : forall c, In c k -> cell_bits V.encode c <= bits).
     { intros c Hin. apply Hcells. apply in_or_app. now left. }
-    assert (Hfresh : Pos.size_nat (row_fresh (db_row_store written)) <= bits).
-    { eapply Nat.le_trans; [apply ensure_row_identity_fresh_width; exact Hwritten_store |].
-      eapply Nat.le_trans; [apply N_width_mono; exact Hidentified_mark | exact Hwidth]. }
+    assert (Hfresh : id_occurrences f k (k ++ option_list o) <> [] ->
+      Pos.size_nat (row_fresh (db_row_store written)) <= bits).
+    { intro Hentries. eapply Nat.le_trans;
+        [apply ensure_row_identity_fresh_width; exact Hwritten_store |].
+      eapply Nat.le_trans;
+        [apply N_width_mono; exact (Hidentified_mark Hentries) | exact Hwidth]. }
     assert (Hnuses : N.size_nat (db_nuses written) <= bits).
     { eapply Nat.le_trans; [apply N_width_mono, wmark_nuses |].
       eapply Nat.le_trans; [apply N_width_mono; exact Hwritten_mark | exact Hwidth]. }
@@ -29180,7 +29479,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       Hwithout_ok Hnew_fit_without Hname Hinserted_width) as Hinsert.
     rewrite Hwithout_count in Hinsert.
     pose proof (T_row_write_width inserted f k o bits Hname Hkey) as Hwrite.
-    pose proof (T_register_row_uses_width written f k o bits Hname Hcells Hfresh
+    pose proof (T_register_row_uses_guarded_width written f k o bits Hname Hcells Hfresh
       Hnuses Htuple_length) as Hregister.
     pose proof (Datatypes.T_app_le k (option_list o)) as Happ.
     assert (Hnew_length : length (k ++ option_list o) <= length k + 1).
@@ -29556,7 +29855,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (T_make f k db <= 128 * N.of_nat (length k + 2) + T_normal_key db k +
       T_row_get f ck db +
       match previous with
-      | Some (Some (Id j)) => UnionFindT.T_find j (db_forest db)
+      | Some (Some (Id j)) => UnionFindT.T_root_of j (db_forest db)
       | _ =>
         let i := N.succ_pos (ids db) in
         let fresh := allocate_id i db in
@@ -29573,7 +29872,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     { intro next. apply T_database_record_inputs_le. }
     time_unfold T_make.
     time_unfold @T_db_forest. time_unfold @T_db_runtime.
-    time_unfold @T_runtime_allocated. time_unfold @Datatypes.T_fst.
+    time_unfold @T_runtime_allocated.
     fold (ids db).
     destruct (row_get f (normal_key db k) db) as [[[j | v] |] |]; [lia | | |].
     all: match goal with
@@ -29837,15 +30136,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     db_nuses (row_write f k o db) = db_nuses db.
   Proof. reflexivity. Qed.
 
+  (** Registration adds exactly its occurrences, including zero for a skipped row. *)
+  Lemma register_row_uses_nuses : forall db f k o,
+    db_nuses (register_row_uses f k o db) =
+      (db_nuses db + N.of_nat (length (id_occurrences f k (k ++ option_list o))))%N.
+  Proof.
+    intros db f k o. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)).
+    - cbn [length N.of_nat]. now rewrite N.add_0_r.
+    - cbn [database_set_nuses db_nuses]. now rewrite ensure_row_identity_nuses.
+  Qed.
+
   (** A row replacement adds exactly its newly registered identifier occurrences. *)
   Lemma row_replace_nuses : forall db f k previous o,
     db_nuses (row_replace f k previous o db) =
       (db_nuses db + N.of_nat (length (id_occurrences f k (k ++ option_list o))))%N.
   Proof.
-    intros db f k [before |] o; unfold row_replace, register_row_uses;
-      cbn [database_set_nuses db_nuses];
-      rewrite ensure_row_identity_nuses, row_write_nuses, !slots_update_nuses;
-      reflexivity.
+    intros db f k [before |] o; unfold row_replace;
+      rewrite register_row_uses_nuses, row_write_nuses, !slots_update_nuses; reflexivity.
   Qed.
 
   (** Union's queue maintenance leaves the occurrence inventory count unchanged. *)
@@ -30562,8 +30870,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         { apply (wf_row_ids db Hwf f ck (Some (Id j)) j).
           - symmetry. exact Hprevious.
           - apply in_or_app. right. cbn [option_list In]. now left. }
-        pose proof (T_find_unit_budget j db Hwf Hallocated) as Hfind.
-        assert (Hfind_budget : (UnionFindT.T_find j (db_forest db) <= 2 * budget)%N).
+        pose proof (T_root_of_unit_budget j db Hwf Hallocated) as Hfind.
+        assert (Hfind_budget : (UnionFindT.T_root_of j (db_forest db) <= 2 * budget)%N).
         { eapply N.le_trans; [exact Hfind |].
           replace (2 * UnionFindT.c_uf * N.of_nat (unit db))%N with
             ((2 * UnionFindT.c_uf) * 1 * 1 * N.of_nat (unit db))%N by ring.
@@ -32087,7 +32395,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     row_uses (db_row_store (register_row_uses f k o db)) =
       DatabaseUses.register (id_occurrences f k (k ++ option_list o)) (row_uses (db_row_store db)).
   Proof.
-    intros db f k o. unfold register_row_uses, ensure_row_identity.
+    intros db f k o. unfold register_row_uses.
+    destruct (id_occurrences f k (k ++ option_list o)); [reflexivity |].
+    unfold ensure_row_identity.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db))); reflexivity.
   Qed.
 
@@ -33056,7 +33366,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x : positive * t => wf (snd x) /\ allocated (snd x) (fst x))
     (fun x => N.of_nat (unit (snd x)))
     (fun x => T_find (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [i db] [Hwf Hallocated]. cbn [fst snd] in *.
+    pose proof (T_find_le i db Hwf Hallocated) as Htime. lia.
+  Qed.
 
   (** Lookup is linear in the key length and the key's encoded cells. *)
   Lemma lookup_bigO : bigO
@@ -33064,7 +33378,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => N.of_nat ((length (snd (fst x)) + 1) * unit (snd x) +
       fold_right (fun c n => cell_bits V.encode c + n) 0 (snd (fst x))))
     (fun x => T_lookup (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [[f k] db] Hwf. cbn [fst snd] in *.
+    pose proof (T_lookup_le f k db Hwf) as Htime.
+    rewrite Nat2N.inj_add, Nat2N.inj_mul, N.mul_add_distr_l, N.mul_assoc. lia.
+  Qed.
 
   (** Initialization is linear in the declarations and the permutation sizes, with the
       layout work of insertion sorting. *)
@@ -33075,7 +33394,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         (fold_right (fun d n => Pos.size_nat (name d) + n) 0 (fst x) +
          fold_right (fun s n => Pos.size_nat (fst s) + n) 0 (snd x))))
     (fun x => T_init (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [ds sl] _. cbn [fst snd].
+    pose proof (T_init_le ds sl) as Htime.
+    rewrite Nat2N.inj_add, Nat2N.inj_mul, N.mul_add_distr_l, N.mul_assoc. lia.
+  Qed.
+
+  (** The two-cell allowance is at most twice the arity measure. *)
+  Lemma arity_linear_scale : forall (c s u : N) n,
+    (c * s * N.of_nat (n + 2) * u <=
+      2 * c * (N.of_nat (n + 1) * s * u))%N.
+  Proof.
+    intros c s u n.
+    replace (2 * c * (N.of_nat (n + 1) * s * u))%N with
+      (c * s * (2 * N.of_nat (n + 1)) * u)%N by ring.
+    apply N.mul_le_mono_r. apply N.mul_le_mono_l. lia.
+  Qed.
 
   (** Insertion, without its share of the deferred rebuild, is linear in the arity and the
       number of slots of its function. *)
@@ -33085,7 +33420,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(f, k, o, db) := x in
       N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (put f k o db)))
     (fun x => let '(f, k, o, db) := x in T_put f k o db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := ((32 * 4096) *
+      (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf + V.c_key + V.c_val +
+        DatabaseUseMap.c_map + 1))%N).
+    intros [[[f k] o] db] [Hwf Hfit]. cbn beta iota zeta.
+    eapply N.le_trans; [exact (T_put_recorded_unit db f k o Hwf Hfit) |].
+    rewrite !Nat2N.inj_mul.
+    set (cost := (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf + V.c_key + V.c_val +
+      DatabaseUseMap.c_map + 1)%N).
+    replace ((32 * 4096) * cost)%N with (2 * ((16 * 4096) * cost))%N by ring.
+    eapply N.le_trans; [apply arity_linear_scale | apply N.le_add_r].
+  Qed.
 
   (** Constructor allocation, without its share of the deferred rebuild, has the same class. *)
   Lemma make_bigO : bigO
@@ -33094,7 +33440,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(f, k, db) := x in
       N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (snd (make f k db))))
     (fun x => let '(f, k, db) := x in T_make f k db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := ((32 * 4096) *
+      (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf + V.c_key + V.c_val +
+        DatabaseUseMap.c_map + 1))%N).
+    intros [[f k] db] [Hwf Hfit]. cbn beta iota zeta.
+    eapply N.le_trans; [exact (T_make_recorded_execution db f k Hwf Hfit) |].
+    rewrite !Nat2N.inj_mul.
+    eapply N.le_trans; [apply arity_linear_scale |].
+    eapply N.le_trans; [| apply N.le_add_r].
+    apply N.mul_le_mono_r. lia.
+  Qed.
 
   (** Union, without queued work, is linear in the bit steps of one identifier operation. *)
   Lemma union_bigO : bigO
@@ -33102,7 +33458,45 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       let '(i, j, db) := x in wf db /\ allocated db i /\ allocated db j)
     (fun x => let '(i, j, db) := x in N.of_nat (unit db))
     (fun x => let '(i, j, db) := x in T_union i j db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [[i j] db] [Hwf [Hi Hj]]. cbn beta iota zeta.
+    pose proof (T_union_unit_bound i j db (proj1 (F1_inv_wf db) Hwf) Hi Hj) as Htime.
+    lia.
+  Qed.
+
+  (** Squaring the two-cell allowance costs at most four times the arity square. *)
+  Lemma arity_square_bound : forall n,
+    (N.of_nat ((n + 2) * (n + 2)) <=
+      4 * N.of_nat ((n + 1) * (n + 1)))%N.
+  Proof.
+    intro n. rewrite !Nat2N.inj_mul.
+    replace (4 * (N.of_nat (n + 1) * N.of_nat (n + 1)))%N with
+      ((2 * N.of_nat (n + 1)) * (2 * N.of_nat (n + 1)))%N by ring.
+    apply N.mul_le_mono; lia.
+  Qed.
+
+  (** The arity square comparison is preserved by the spending and slot factors. *)
+  Lemma arity_square_scale : forall (c u s h : N) n,
+    (u * (c * N.of_nat ((n + 2) * (n + 2)) * s * h) <=
+      4 * c * (u * N.of_nat ((n + 1) * (n + 1)) * s * h))%N.
+  Proof.
+    intros c u s h n.
+    replace (u * (c * N.of_nat ((n + 2) * (n + 2)) * s * h))%N with
+      ((u * c * s * h) * N.of_nat ((n + 2) * (n + 2)))%N by ring.
+    replace (4 * c * (u * N.of_nat ((n + 1) * (n + 1)) * s * h))%N with
+      ((u * c * s * h) * (4 * N.of_nat ((n + 1) * (n + 1))))%N by ring.
+    apply N.mul_le_mono_l. apply arity_square_bound.
+  Qed.
+
+  (** Removing the old potential leaves at most the operation's allocated budget. *)
+  Lemma amortized_le_budget : forall T u after before budget,
+    (T + N.of_nat u * after <= N.of_nat u * (budget + before))%N ->
+    (amortized T u after before <= N.of_nat u * budget)%N.
+  Proof.
+    intros T u after before budget Htime. unfold amortized.
+    rewrite N.mul_add_distr_l in Htime. lia.
+  Qed.
 
   (** Insertion pays its own clock and the rebuild credit of its new use entries. *)
   Lemma put_amort_bigO : bigO
@@ -33115,7 +33509,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(B, f, k, o, db) := x in
       amortized (T_put f k o db) (unit (put f k o db))
         (potential B (put f k o db)) (potential B db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := (4 * c_db)%N).
+    intros [[[[B f] k] o] db] [Hwf [Hfit Hids]]. cbn beta iota zeta.
+    eapply N.le_trans.
+    - apply amortized_le_budget. exact (T_put_amort B f k o db Hwf Hfit Hids).
+    - pose proof (arity_square_scale c_db (N.of_nat (unit (put f k o db)))
+        (N.of_nat (slots_of db f + 1)) (N.of_nat (N.to_nat (N.log2 B) + 1))
+        (length k)) as Hscale.
+      repeat rewrite Nat2N.inj_mul in Hscale.
+      repeat rewrite Nat2N.inj_mul.
+      eapply N.le_trans; [exact Hscale | apply N.le_add_r].
+  Qed.
 
   (** Constructor allocation has the same amortized class as insertion. *)
   Lemma make_amort_bigO : bigO
@@ -33128,7 +33533,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(B, f, k, db) := x in
       amortized (T_make f k db) (unit (snd (make f k db)))
         (potential B (snd (make f k db))) (potential B db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := (4 * c_db)%N).
+    intros [[[B f] k] db] [Hwf [Hfit Hids]]. cbn beta iota zeta.
+    eapply N.le_trans.
+    - apply amortized_le_budget. exact (T_make_amort B f k db Hwf Hfit Hids).
+    - pose proof (arity_square_scale c_db (N.of_nat (unit (snd (make f k db))))
+        (N.of_nat (slots_of db f + 1)) (N.of_nat (N.to_nat (N.log2 B) + 1))
+        (length k)) as Hscale.
+      repeat rewrite Nat2N.inj_mul in Hscale.
+      repeat rewrite Nat2N.inj_mul.
+      eapply N.le_trans; [exact Hscale | apply N.le_add_r].
+  Qed.
 
   (** Union is constant at the spending unit, because it only queues rebuild work. *)
   Lemma union_amort_bigO : bigO
@@ -33139,7 +33555,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(B, i, j, db) := x in
       amortized (T_union i j db) (unit (union i j db))
         (potential B (union i j db)) (potential B db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [[[B i] j] db] [Hwf [Hi [Hj Hids]]]. cbn beta iota zeta.
+    eapply N.le_trans.
+    - apply amortized_le_budget. exact (T_union_amort B i j db Hwf Hi Hj Hids).
+    - nia.
+  Qed.
 
   (** Rebuilding is linear in the pending equalities at the spending unit. *)
   Lemma rebuild_amort_bigO : bigO
@@ -33149,16 +33571,38 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(B, db) := x in
       amortized (T_rebuild db) (unit (rebuild db))
         (potential B (rebuild db)) (potential B db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [B db] [Hwf Hids]. cbn beta iota zeta.
+    eapply N.le_trans.
+    - apply amortized_le_budget. exact (T_rebuild_amort B db Hwf Hids).
+    - rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   (** Slot lookup is logarithmic in the slot number. *)
   Lemma index_bigO : bigO (fun _ => True)
     (fun x : N * bool * t => N.of_nat (N.to_nat (N.log2 (fst (fst x))) + 1))
     (fun x => T_index (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [[s new] db] _. cbn [fst snd].
+    pose proof (T_index_le s new db) as Htime. lia.
+  Qed.
+
+  (** Advancing only resets the indexes and the change flag. *)
+  Lemma T_advance_const : forall db, (T_advance db <= c_db)%N.
+  Proof.
+    intro db. pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_advance. time_unfold @T_runtime_set_indexes.
+    time_unfold @T_runtime_set_changed. time_unfold @T_database_set_runtime.
+    time_simpl. time_cbn. nia.
+  Qed.
 
   (** Advancing is constant, because it empties the new-row indexes with one store. *)
   Lemma advance_bigO : bigO (fun _ => True) (fun _ : t => 0%N) T_advance.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db). intros db _.
+    rewrite N.mul_0_r, N.add_0_l. apply T_advance_const.
+  Qed.
 
 End DatabaseT.
