@@ -2,6 +2,28 @@
 
     Operator tags select width checks, arithmetic and metadata.
     For example, binary addition checks that both operand widths agree.
+
+    Main results
+    - [eval_op_total] Evaluation fails exactly when the width check fails, and otherwise returns a
+      word of the declared width, with [eval_op_width], [eval_op_fun2_width],
+      [eval_op_cmp_width], [eval_op_ite_width], [result_width_arity], [eval_op_arity] and
+      [eval_op_is_word].
+    - [normalize_word_idempotent] Normalising a word is idempotent, with [normalize_word_id],
+      [word_fun1_is_word], [word_fun2_is_word], [word_fun1_normalised], [word_fun2_normalised] and
+      [word_cmp_normalised], and evaluation is unchanged by normalising its operands first, as
+      [eval_op_normalised] states.
+    - [eval_op_fun1] Each operator family evaluates to the total word operation it names, with
+      [eval_op_fun2], [eval_op_cmp] and [eval_op_ite].
+    - [eval_op_zext] Resizing and concatenation operators evaluate to their word operation, with
+      [eval_op_sext], [eval_op_trunc], [eval_op_extract], [eval_op_concat], [eval_zext_value],
+      [eval_sext_value], [eval_trunc_value] and [eval_concat_value].
+    - [op_code_injective] Operator codes identify operators.
+    - [commutative_sound] An operator flagged commutative evaluates the same on swapped operands.
+    - [op_desc_wf] Each operator description has a width check that accepts its arity, with
+      [desc_wf], [unary_wf], [binary_wf], [compare_wf], [select_wf], [resize_wf], [concat_wf],
+      [unary_word_valued], [binary_word_valued], [compare_word_valued],
+      [select_word_valued], [resize_word_valued] and [concat_word_valued].
+
     Builds on: Word, Fun, Testbit, Arith and Base code. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
