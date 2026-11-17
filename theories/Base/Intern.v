@@ -4,11 +4,12 @@
     For example, interning [a; b; a] allocates only two identifiers.
 
     Main results
-    - [intern_complexity] Interning is linear in the key bits and the allocation frontier's width.
+    - [intern_complexity] Interning is linear in the key bits and the allocation frontier's width,
+      O(bits k + log (size s)).
     - [find_complexity] Forward lookup is linear in the key bits and the allocation
-      frontier's width.
+      frontier's width, O(bits k + log (size s)).
     - [name_complexity] Inverse lookup is linear in the identifier bits and the
-      allocation frontier's width.
+      allocation frontier's width, O(bits i + log (size s)).
 
     Builds on: InternSig, MapSig and KeySig. *)
 

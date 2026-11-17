@@ -2,6 +2,21 @@
 
     Transfers refine and evaluate circular intervals through linear pieces.
     For example, a binary operation checks each piece at the signed pole.
+
+    Main results
+    - [wrapped_project_sound] Projection, the pole cut, pair join, signed pieces and rewrapping
+      keep every concrete value they describe, as [wrapped_pole_cut_sound],
+      [wrapped_pair_join_sound], [wrapped_signed_piece_sound] and [wrapped_rewrap_sound] state.
+    - [wrapped_assume_consistent_sound] A true consistency test accepts every concrete tuple of
+      an evaluation.
+    - [wrapped_assume_binary_sound] Each backward assumption is sound, with
+      [wrapped_assume_binary_base_sound], [wrapped_assume_trunc_sound] and
+      [wrapped_assume_unary_sound].
+    - [wrapped_assume_binary_lower] Each backward assumption refines its input, with
+      [wrapped_assume_binary_base_lower] and [wrapped_assume_unary_lower].
+    - [wrapped_piece_forward_sound] Forward evaluation through linear pieces is sound, with
+      [wrapped_forward_unary_sound] and [wrapped_forward_binary_sound].
+
     Builds on: Wrapped, IntervalBack and WordSig. *)
 
 From Stdlib Require Import ZArith NArith List Bool Lia.

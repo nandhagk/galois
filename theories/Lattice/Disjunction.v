@@ -6,9 +6,11 @@
     Main results
     - [leb_spec] Order compares the projected lists by Hoare coverage.
     - [is_bot_spec] The bottom test recognizes exactly the empty projected list.
-    - [leb_complexity] Inclusion is linear in both sizes. The constant depends on the cap.
-    - [join_complexity] Joining is linear in both sizes. The constant depends on the cap.
-    - [is_bot_complexity] The bottom test is linear in the size.
+    - [leb_complexity] Inclusion is linear in both sizes, O(size x + size y), with a constant
+      that depends on the cap.
+    - [join_complexity] Joining is linear in both sizes, O(size x + size y), with a constant
+      that depends on the cap.
+    - [is_bot_complexity] The bottom test is linear in the size, O(size a).
     - [clip_complexity] Clipping at most twice the cap is linear in the raw length and component
       sizes.
 

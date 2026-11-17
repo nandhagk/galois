@@ -4,9 +4,10 @@
     For example, a forward transfer pairs the two component results.
 
     Main results
-    - [forward_complexity] Product forward transfer has the published work bound.
-    - [backward_complexity] Backward transfer has the published work-plus-request class.
-    - [guard_complexity] Guard transfer has the published guard-work class.
+    - [forward_complexity] Product forward transfer has the published work bound, O(work o xs).
+    - [backward_complexity] Backward transfer has the published work-plus-request class,
+      O(work o xs + size r).
+    - [guard_complexity] Guard transfer has the published guard-work class, O(gwork g xs).
 
     Builds on: ProductSig and lattice products. *)
 

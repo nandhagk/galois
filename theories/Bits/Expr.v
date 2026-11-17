@@ -2,6 +2,14 @@
 
     Expressions share variables, constants and argument evaluation across operator languages.
     For example, a client may supply a unit operator whose evaluator always rejects.
+
+    Main results
+    - [eval_var] Evaluating a variable or a constant reads the environment or returns the literal,
+      with [eval_const].
+    - [eval_app] Evaluating an application evaluates its arguments and then the operator, with
+      [eval_args_nil] and [eval_args_cons].
+    - [eval_is_word] Every successful evaluation returns a normalised word.
+
     Builds on: Word and Op. *)
 
 From Stdlib Require Import ZArith List.

@@ -2,6 +2,30 @@
 
     Division, counts and rotations obey their integer and bit-level specifications.
     For example, signed division truncates toward zero and signed modulus follows the divisor.
+
+    Main results
+    - [signed_wrap] Wrapping does not change the signed reading, with [signed_range], [wrap_signed],
+      [signed_id], [signed_inj], [signed_neg_iff_msb], [signed_nonnegative], [signed_negative],
+      [signed_zero] and [msb_zero].
+    - [wadd_signed] Signed arithmetic and order reduce to wrapped integer and unsigned arithmetic,
+      with [wsub_signed], [wmul_signed], [wadd_signed_right], [wadd_wrapped_neg],
+      [wneg_positive], [wxor_half_value], [wslt_bias], [wslt_wult], [wrap_add_right] and
+      [wrap_add_left].
+    - [wudiv_spec] Unsigned division and remainder meet their integer specification, with
+      [wurem_spec], [wudiv_quot], [wurem_rem], [wurem_mod], [wurem_lt], [wudiv_wurem_euclid],
+      [wudiv_zero] and [wurem_zero].
+    - [wsdiv_signed] Signed division truncates toward zero and signed remainder and modulus follow
+      the divisor, with [wsrem_signed], [wsmod_signed], [wsmod_sign], [wsdiv_zero] and
+      [wsdiv_wsrem_euclid].
+    - [wmul_wshl] Multiplication, division and remainder by a power of two are a shift or a mask,
+      with [wudiv_wlshr], [wurem_mask], [small_amount_word] and [pow2_word].
+    - [wclz_spec] Leading zeros, trailing zeros and population count meet their specifications,
+      with [wctz_spec], [wclz_zero], [wctz_zero], [wclz_range], [wpopcnt_range] and [wpopcnt_wnot].
+    - [wrotl_mod] Rotation reduces its amount modulo the width, with [testbit_wrotl],
+      [wrotr_wrotl] and [split_sum_bits].
+    - [word_widen] A word stays a word at every larger width, with [modulus_monotone],
+      [width_add_le], [half_monotone], [modulus_add] and [concat_is_word].
+
     Builds on: Word, Fun and Testbit. *)
 
 From Stdlib Require Import ZArith List Bool Lia Ring.

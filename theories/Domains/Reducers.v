@@ -6,7 +6,8 @@
     Main results
     - [left_sound] The first exchange retains every value shared by the input pair.
     - [right_sound] The second exchange retains every value shared by the input pair.
-    - [reduce_complexity] Reduction has the published combined-size asymptotic budget.
+    - [reduce_complexity] Reduction has the published combined-size asymptotic budget,
+      O(A.size a + B.size b + 1).
 
     Builds on: ReducersSig and Tagged. *)
 

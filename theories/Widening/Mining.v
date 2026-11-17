@@ -4,7 +4,7 @@
     For example, the literal four contributes three, four and five to the threshold tree.
 
     Main results
-    - [lits_complexity] Literal collection is linear in the term size.
+    - [lits_complexity] Literal collection is linear in the term size, O(tsize e).
     - [mine_complexity] Mining is linear in the terms and seeds plus the cost of building the
       thresholds.
 

@@ -2,6 +2,14 @@
 
     These operations connect known-bit masks to word transfers.
     For example, evaluating a zero-preserving operator keeps known zero bits.
+
+    Main results
+    - [known_bits_nullary] A forward transfer with no operands returns top.
+    - [known_bits_eval_primitive_bound] An operator applied at its arity has at most three
+      operands.
+    - [tnum_forward_raw_sound] The raw forward transfer retains every concrete result, in each of
+      the supplied-payload, fast-extraction and claim modules that state it.
+
     Builds on: KnownBits and the bit-vector operations. *)
 
 From Stdlib Require Import ZArith NArith List Bool Lia.

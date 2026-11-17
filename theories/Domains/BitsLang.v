@@ -4,6 +4,9 @@
     For example, an eight-bit literal is wrapped before evaluation returns it.
 
     Main results
+    - [wrap_is_word] Wrapping produces a normalized word of the stated width.
+    - [eval_op_is_word] A successful operator evaluation returns a normalized word of the
+      operator's result width.
     - [eval_op_complexity] Concrete word evaluation has the published quadratic class.
 
     Builds on: LangSig and bit-vector operations. *)

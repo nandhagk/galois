@@ -2,6 +2,17 @@
 
     Endpoint arithmetic retains finite ranges when they fit the word width.
     For example, adding [1, 4] to [2, 5] yields [3, 9] at width eight.
+
+    Main results
+    - [bound_leb_refl] Endpoint comparison is a total preorder, with [bound_leb_trans] and
+      [bound_leb_total].
+    - [bound_min_greatest] The endpoint minimum is the greatest lower bound and the maximum the
+      least upper bound, with [bound_min_lower_l], [bound_min_lower_r], [bound_max_upper_l],
+      [bound_max_upper_r] and [bound_max_least].
+    - [interval_add_sound] Each abstract operation, assumption and refinement has a Theorem
+      [interval_<op>_sound] that retains every concrete value it describes, from
+      [interval_top_sound] to [interval_ashr_sound].
+
     Builds on: Interval and the fixed-width word operations. *)
 
 From Stdlib Require Import ZArith NArith List Bool Lia.

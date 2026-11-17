@@ -2,6 +2,17 @@
 
     A successful client operation can be represented by a generic word expression.
     For example, an addition bridge applies the target operator to variables zero and one.
+
+    Main results
+    - [bridge_op_expr] Every arity-correct operator bridge induces a bridge through consecutive
+      variables, with [bridge_op_expr_bits], [eval_variable_sequence] and [eval_vars_words].
+    - [zext_value] Zero extension and sign extension give the widened and signed values, with
+      [sext_value] and [sext_signed].
+    - [eval_trunc_value] Truncation keeps the low bits, with [trunc_zext], [trunc_sext] and
+      [trunc_wadd].
+    - [eval_concat_value] Concatenation places the high word above the low word, with
+      [trunc_concat_lo] and [extract_concat_hi].
+
     Builds on: Word, Fun, Arith, Op and Expr. *)
 
 From Stdlib Require Import ZArith List Bool Lia Ring.

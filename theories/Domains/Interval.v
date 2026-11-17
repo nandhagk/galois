@@ -4,33 +4,44 @@
     For example, meeting disjoint finite intervals returns bottom.
 
     Main results
-    - [interval_leb_complexity] Scalar inclusion has the published endpoint-bit class.
-    - [interval_join_complexity] Scalar join has the published endpoint-bit class.
-    - [interval_meet_complexity] Scalar meet has the published endpoint-bit class.
+    - [interval_leb_complexity] Scalar inclusion has the published endpoint-bit class,
+      O(interval_bits a + interval_bits b + 1).
+    - [interval_join_complexity] Scalar join has the published endpoint-bit class,
+      O(interval_bits a + interval_bits b + 1).
+    - [interval_meet_complexity] Scalar meet has the published endpoint-bit class,
+      O(interval_bits a + interval_bits b + 1).
     - [interval_stable_widen_complexity] Scalar widening has the published bits-plus-search-path
-      class.
-    - [mul_complexity] Multiplication has the published quadratic endpoint bound.
+      class, O(interval_bits a + interval_bits b + (depth ts + 1) (tree_bits ts + 1) + 1).
+    - [mul_complexity] Multiplication has the published quadratic endpoint bound,
+      O(binary_work a b).
     - [add_complexity] Addition is linear in the endpoint sizes, O(size a + size b + 1).
     - [sub_complexity] Subtraction is linear in the endpoint sizes, O(size a + size b + 1).
-    - [udiv_complexity] Unsigned division has the published quadratic endpoint class.
-    - [urem_complexity] Unsigned remainder has the published quadratic endpoint class.
-    - [shl_complexity] Shift has the published quadratic endpoint class.
-    - [widen_complexity] Threshold widening has the published bits-plus-search-path class.
-    - [add_back_complexity] Backward addition is linear in the result and operand sizes.
-    - [sub_back_complexity] Backward subtraction is linear in the result and operand sizes.
+    - [udiv_complexity] Unsigned division has the published quadratic endpoint class,
+      O(binary_work a b).
+    - [urem_complexity] Unsigned remainder has the published quadratic endpoint class,
+      O(binary_work a b).
+    - [shl_complexity] Shift has the published quadratic endpoint class, O(binary_work a b).
+    - [widen_complexity] Threshold widening has the published bits-plus-search-path class,
+      O(size a + size b + (depth ts + 1) (tree_bits ts + 1) + 1).
+    - [add_back_complexity] Backward addition is linear in the result and operand sizes,
+      O(size r + size a + size b + 1).
+    - [sub_back_complexity] Backward subtraction is linear in the result and operand sizes,
+      O(size r + size a + size b + 1).
     - [bitand_complexity] Bitwise conjunction is linear, because the result is a minimum of
-      upper endpoints.
+      upper endpoints, O(size a + size b + 1).
     - [bitor_complexity] Bitwise disjunction is linear, because the result is a mask of one
-      bit length.
-    - [cmp_complexity] Comparison has the published linear class.
+      bit length, O(size a + size b + 1).
+    - [cmp_complexity] Comparison has the published linear class, O(size a + size b + 1).
     - [mul_back_complexity] Backward multiplication is linear, because a preimage only reads a
-      point.
+      point, O(size r + size a + size b + 1).
     - [udiv_back_complexity] Backward division is linear, because it only meets with fixed
-      bounds.
+      bounds, O(size r + size a + size b + 1).
     - [urem_back_complexity] Backward remainder is linear, because it only meets with fixed
-      bounds.
-    - [ult_back_complexity] Backward comparison is linear in the result and operand sizes.
-    - [signed_split_complexity] Signed splitting is linear in the width and the endpoints.
+      bounds, O(size r + size a + size b + 1).
+    - [ult_back_complexity] Backward comparison is linear in the result and operand sizes,
+      O(size r + size a + size b + 1).
+    - [signed_split_complexity] Signed splitting is linear in the width and the endpoints,
+      O(w + size a + 1).
     - [forward_complexity] Forward transfer is bounded by the operator work,
       O(work + 1) for the operator and its operands.
 

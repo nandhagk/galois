@@ -2,20 +2,23 @@
 
     Unit-valued maps represent finite sets.
     For example, adding one key twice leaves a singleton.
+
     Main results
     - [elements_spec] Consistent sets enumerate precisely their members.
     - [fold_spec] Folding follows enumeration order.
     - [subset_spec] Inclusion accepts exactly when every member of the left set is a member of
       the right set.
     - [equal_spec] Equality accepts exactly when two sets have the same members.
-    - [mem_complexity] Membership is linear in the encoded key length.
-    - [add_complexity] Adding a member is linear in the encoded key length.
-    - [union_complexity] Union, intersection and difference visit the shared skeleton only.
+    - [mem_complexity] Membership is linear in the encoded key length, O(bits k).
+    - [add_complexity] Adding a member is linear in the encoded key length, O(bits k).
+    - [union_complexity] Union, intersection and difference visit the shared skeleton only,
+      O(min (nodes s) (nodes u)).
     - [inter_complexity] Intersection visits the shared skeleton only, so its time is linear in
       the smaller tree.
     - [diff_complexity] Difference visits the shared skeleton only, so its time is linear in
       the smaller tree.
-    - [subset_complexity] Inclusion visits the left skeleton only and stops at the first failure.
+    - [subset_complexity] Inclusion visits the left skeleton only and stops at the first failure,
+      O(nodes s).
 
     Builds on: SetSig and MapSig. *)
 

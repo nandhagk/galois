@@ -4,8 +4,22 @@
     For example, wrapping 260 at width eight gives 4.
 
     Main results
-    - [modulus_complexity] Modulus construction is linear in the width.
-    - [wrap_complexity] Wrapping has the linear class in the width and the raw integer size.
+    - [modulus_value] The modulus is two to the width, with [modulus_log2], [modulus_pos],
+      [modulus_nonzero], [half_pos], [modulus_half] and [width_lt_modulus].
+    - [wrap_mod] Wrapping is remainder modulo the word modulus, with [wrap_is_word], [wrap_id] and
+      [wrap_wrap], and [signed_value] gives the signed reading after normalising.
+    - [wrap_add] Wrapping commutes with the ring operations, with [wrap_0], [wrap_1], [wrap_opp],
+      [wrap_sub], [wrap_mul], [wrap_add_modulus] and [wrap_narrow], and zero and one are words, as
+      [zero_is_word] and [one_is_word] state.
+    - [integer_size_le] The moduli, masks and raw integers have size bounded by the width, with
+      [modulus_size_le] and [ones_size_le].
+    - [modulus_time_le] The primitive clocks are linear or quadratic in the width and the raw
+      integer size, with [pow_two_time_le], [ones_time_le], [wrap_time_le], [wrap_time_quad_le],
+      [half_time_le], [signed_time_le], [signed_time_quad_le], [msb_time_le] and
+      [msb_time_quad_le].
+    - [modulus_complexity] Modulus construction is linear in the width, O(w).
+    - [wrap_complexity] Wrapping has the linear class in the width and the raw integer size,
+      O(w + |z|).
 
     Builds on: Stdlib integer arithmetic and Argent time derivation. *)
 

@@ -13,13 +13,14 @@
     - [get_worst_complexity] Some stored key of every length is read to its end, so the
       worst-case lookup time is Θ(|p|).
     - [set_complexity] Setting reads and rebuilds the whole key path, so its time is Θ(|p|).
-    - [remove_complexity] Removal is linear in the key bit length.
-    - [merge_complexity] Merging is linear in both skeletons for bounded callbacks.
+    - [remove_complexity] Removal is linear in the key bit length, O(|p|).
+    - [merge_complexity] Merging is linear in both skeletons for bounded callbacks,
+      O((k + 1) (nodes m1 + nodes m2 + 1)) for callbacks that cost at most k.
     - [forall2b_complexity] Relational checking is linear in both skeletons for bounded
-      callbacks.
+      callbacks, O((k + 1) (nodes m1 + nodes m2 + 1)).
     - [fold_complexity] Folding is linear in the skeleton and the key mass for bounded
-      callbacks.
-    - [elements_complexity] Enumeration is linear in the binding weight.
+      callbacks, O((k + 1) (nodes m + 1) + weight m).
+    - [elements_complexity] Enumeration is linear in the binding weight, O(weight m).
 
     Builds on: Stdlib lists and binary arithmetic, and Argent time interfaces. *)
 

@@ -10,9 +10,10 @@
     - [fwd_sound] A modeled forward entry retains concrete results.
     - [bwd_sound] A modeled backward entry retains consistent operands.
     - [grd_sound] A modeled guard entry retains satisfying operands.
-    - [forward_complexity] Forward transfer has the published operator-work class.
-    - [backward_complexity] Backward transfer has the published work-plus-request class.
-    - [guard_complexity] Guard transfer has the published guard-work class.
+    - [forward_complexity] Forward transfer has the published operator-work class, O(work o xs).
+    - [backward_complexity] Backward transfer has the published work-plus-request class,
+      O(work o xs + size r).
+    - [guard_complexity] Guard transfer has the published guard-work class, O(gwork g xs).
 
     Builds on: HarnessSig. *)
 

@@ -2,6 +2,19 @@
 
     Each operation interprets its operands at the supplied width and follows total bitvector
     arithmetic. For example, unsigned division by zero gives the all-ones word.
+
+    Main results
+    - [wadd_value] The total arithmetic operations return the wrapped integer result, with
+      [wneg_value], [wsub_value], [wmul_value], [wsdiv_value], [wsrem_value] and [wsmod_value].
+    - [wshl_value] The shifts and rotation return their bitwise result, with [wlshr_value],
+      [washr_value] and [wrotr_value].
+    - [wpopcnt_spec] Population count equals the number of set bits, with [popcount_testbit].
+    - [wult_value] The comparisons return the integer comparison of their operands as unsigned or
+      signed numbers, with [wule_value], [wslt_value] and [wsle_value].
+    - [wnot_time_le] The bitwise and additive operations have linear time bounds in the width and
+      raw operand sizes, with [wneg_time_le], [wadd_time_le], [wsub_time_le], [wand_time_le],
+      [wor_time_le] and [wxor_time_le].
+
     Builds on: Word. *)
 
 From Stdlib Require Import ZArith NArith List Lia.

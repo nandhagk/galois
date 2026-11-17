@@ -4,8 +4,14 @@
     For example, addition has linear cost in the operand widths and raw integer sizes.
 
     Main results
+    - [linear_value_time_le] Value evaluation of a linear operator fits the metadata and operand
+      widths in time and size, with [linear_value_size_le], [linear_result_width_size_le],
+      [linear_result_width_time_le] and [normalize_words_time_le].
+    - [eval_op_linear_time_le] Evaluating a linear operator charges width checks, normalisation and
+      wrapping linearly in the metadata widths and raw operand sizes.
     - [eval_op_linear_complexity] Linear operator evaluation is linear in metadata widths and
-      raw operand sizes.
+      raw operand sizes,
+      O(op widths + total operand size).
 
     Builds on: Word, Fun and Op. *)
 

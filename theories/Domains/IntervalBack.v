@@ -2,6 +2,14 @@
 
     Result assumptions refine comparisons and nonwrapping arithmetic.
     For example, equality to one refines both operands of an equality test.
+
+    Main results
+    - [bound_leb_refl] Endpoint comparison is a total preorder, with [bound_leb_trans] and
+      [bound_leb_total].
+    - [bound_min_greatest] The endpoint minimum is the greatest lower bound and the maximum the
+      least upper bound, with [bound_min_lower_l], [bound_min_lower_r], [bound_max_upper_l],
+      [bound_max_upper_r] and [bound_max_least].
+
     Builds on: IntervalOps and fixed-width word operators. *)
 
 From Stdlib Require Import ZArith Zpow_facts NArith List Bool Lia.

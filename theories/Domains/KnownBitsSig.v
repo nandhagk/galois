@@ -13,18 +13,21 @@
     - [tnum_xor_sound] Exclusive disjunction retains each concrete result.
     - [tnum_mul_with_sound] Every multiplier choice retains each concrete product.
     - [tnum_variable_sound] An unknown shift or rotation retains each concrete result.
-    - [mul_complexity] Configured multiplication has quadratic asymptotic width work.
-    - [normalise_complexity] Normalization is linear in the width and the raw masks.
-    - [not_complexity] Bitwise negation is linear.
-    - [neg_complexity] Arithmetic negation is linear.
-    - [add_complexity] Addition is linear.
-    - [sub_complexity] Subtraction is linear.
-    - [and_complexity] Conjunction is linear.
-    - [or_complexity] Disjunction is linear.
-    - [xor_complexity] Exclusive disjunction is linear.
-    - [variable_complexity] Unknown shifts and rotations have the published quadratic class.
+    - [mul_complexity] Configured multiplication has quadratic asymptotic width work,
+      O((w + 1)^2 + tnum_bits a + tnum_bits b).
+    - [normalise_complexity] Normalization is linear in the width and the raw masks,
+      O(w + tnum_bits a + 1).
+    - [not_complexity] Bitwise negation is linear, O(w + tnum_bits a + 1).
+    - [neg_complexity] Arithmetic negation is linear, O(w + tnum_bits a + 1).
+    - [add_complexity] Addition is linear, O(w + tnum_bits a + tnum_bits b + 1).
+    - [sub_complexity] Subtraction is linear, O(w + tnum_bits a + tnum_bits b + 1).
+    - [and_complexity] Conjunction is linear, O(w + tnum_bits a + tnum_bits b + 1).
+    - [or_complexity] Disjunction is linear, O(w + tnum_bits a + tnum_bits b + 1).
+    - [xor_complexity] Exclusive disjunction is linear, O(w + tnum_bits a + tnum_bits b + 1).
+    - [variable_complexity] Unknown shifts and rotations have the published quadratic class,
+      O((w + 1)^2 + tnum_bits a + tnum_bits b).
     - [variable_shift_complexity] Unknown shifts take logarithmically many expansion steps of
-      linear cost.
+      linear cost, O((w + tnum_bits a + tnum_bits b + 1) (log w + 2)).
 
     Builds on: WordSig and the bit-vector word operations. *)
 

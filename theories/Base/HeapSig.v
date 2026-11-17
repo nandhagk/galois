@@ -4,8 +4,10 @@
     For example, pushing a larger priority for a live item leaves its priority unchanged.
 
     Main results
-    - [push_complexity] Push has the worst-case logarithmic comparison cost of bounded width.
-    - [pop_complexity] Pop pays one unit budget plus one for each stale entry it discards.
+    - [push_complexity] Push has the worst-case logarithmic comparison cost of bounded width,
+      O(unit_pq P w).
+    - [pop_complexity] Pop pays one unit budget plus one for each stale entry it discards,
+      O(unit_pq P w (stale entries + 1)).
     - [push_amort_complexity] Push is amortised logarithmic in the pending cap, with the potential
       of the queue before and after, O(unit_pq P w).
     - [pop_amort_complexity] Pop is amortised logarithmic in the pending cap, with the potential
@@ -187,8 +189,8 @@ Module Type PQ_PLAN (Import Q : PQ_T).
   Parameter T_remove_min_le : forall P w q, (wf q -> bounded w q -> (pending q <= P)%nat ->
     T_remove_min (forest q) <= k_remove * N.of_nat (unit_pq P w))%N.
   (** A skipped stale entry pays for its step and the strict loop decrease. *)
-  Parameter T_pop_step_skip_credit : forall P w q q1, (wf q -> bounded w q -> (pending q <= P)%nat ->
-    pop_step q = inl q1 ->
+  Parameter T_pop_step_skip_credit : forall P w q q1,
+    (wf q -> bounded w q -> (pending q <= P)%nat -> pop_step q = inl q1 ->
     T_pop_step q + c_loopN + phi P w q1 <= phi P w q)%N.
   (** A stopping step pays its work and its actual output potential. *)
   Parameter T_pop_step_stop_credit : forall P w q r, (wf q -> bounded w q -> (pending q <= P)%nat ->
