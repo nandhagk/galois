@@ -33056,7 +33056,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x : positive * t => wf (snd x) /\ allocated (snd x) (fst x))
     (fun x => N.of_nat (unit (snd x)))
     (fun x => T_find (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [i db] [Hwf Hallocated]. cbn [fst snd] in *.
+    pose proof (T_find_le i db Hwf Hallocated) as Htime. lia.
+  Qed.
 
   (** Lookup is linear in the key length and the key's encoded cells. *)
   Lemma lookup_bigO : bigO
@@ -33064,7 +33068,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => N.of_nat ((length (snd (fst x)) + 1) * unit (snd x) +
       fold_right (fun c n => cell_bits V.encode c + n) 0 (snd (fst x))))
     (fun x => T_lookup (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [[f k] db] Hwf. cbn [fst snd] in *.
+    pose proof (T_lookup_le f k db Hwf) as Htime.
+    rewrite Nat2N.inj_add, Nat2N.inj_mul, N.mul_add_distr_l, N.mul_assoc. lia.
+  Qed.
 
   (** Initialization is linear in the declarations and the permutation sizes, with the
       layout work of insertion sorting. *)
@@ -33075,7 +33084,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         (fold_right (fun d n => Pos.size_nat (name d) + n) 0 (fst x) +
          fold_right (fun s n => Pos.size_nat (fst s) + n) 0 (snd x))))
     (fun x => T_init (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [ds sl] _. cbn [fst snd].
+    pose proof (T_init_le ds sl) as Htime.
+    rewrite Nat2N.inj_add, Nat2N.inj_mul, N.mul_add_distr_l, N.mul_assoc. lia.
+  Qed.
+
+  (** The two-cell allowance is at most twice the arity measure. *)
+  Lemma arity_linear_scale : forall (c s u : N) n,
+    (c * s * N.of_nat (n + 2) * u <=
+      2 * c * (N.of_nat (n + 1) * s * u))%N.
+  Proof.
+    intros c s u n.
+    replace (2 * c * (N.of_nat (n + 1) * s * u))%N with
+      (c * s * (2 * N.of_nat (n + 1)) * u)%N by ring.
+    apply N.mul_le_mono_r. apply N.mul_le_mono_l. lia.
+  Qed.
 
   (** Insertion, without its share of the deferred rebuild, is linear in the arity and the
       number of slots of its function. *)
@@ -33085,7 +33110,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(f, k, o, db) := x in
       N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (put f k o db)))
     (fun x => let '(f, k, o, db) := x in T_put f k o db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := ((32 * 4096) *
+      (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf + V.c_key + V.c_val +
+        DatabaseUseMap.c_map + 1))%N).
+    intros [[[f k] o] db] [Hwf Hfit]. cbn beta iota zeta.
+    eapply N.le_trans; [exact (T_put_recorded_unit db f k o Hwf Hfit) |].
+    rewrite !Nat2N.inj_mul.
+    set (cost := (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf + V.c_key + V.c_val +
+      DatabaseUseMap.c_map + 1)%N).
+    replace ((32 * 4096) * cost)%N with (2 * ((16 * 4096) * cost))%N by ring.
+    eapply N.le_trans; [apply arity_linear_scale | apply N.le_add_r].
+  Qed.
 
   (** Constructor allocation, without its share of the deferred rebuild, has the same class. *)
   Lemma make_bigO : bigO
@@ -33094,7 +33130,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(f, k, db) := x in
       N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (snd (make f k db))))
     (fun x => let '(f, k, db) := x in T_make f k db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := ((32 * 4096) *
+      (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf + V.c_key + V.c_val +
+        DatabaseUseMap.c_map + 1))%N).
+    intros [[f k] db] [Hwf Hfit]. cbn beta iota zeta.
+    eapply N.le_trans; [exact (T_make_recorded_execution db f k Hwf Hfit) |].
+    rewrite !Nat2N.inj_mul.
+    eapply N.le_trans; [apply arity_linear_scale |].
+    eapply N.le_trans; [| apply N.le_add_r].
+    apply N.mul_le_mono_r. lia.
+  Qed.
 
   (** Union, without queued work, is linear in the bit steps of one identifier operation. *)
   Lemma union_bigO : bigO
@@ -33102,7 +33148,45 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       let '(i, j, db) := x in wf db /\ allocated db i /\ allocated db j)
     (fun x => let '(i, j, db) := x in N.of_nat (unit db))
     (fun x => let '(i, j, db) := x in T_union i j db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [[i j] db] [Hwf [Hi Hj]]. cbn beta iota zeta.
+    pose proof (T_union_unit_bound i j db (proj1 (F1_inv_wf db) Hwf) Hi Hj) as Htime.
+    lia.
+  Qed.
+
+  (** Squaring the two-cell allowance costs at most four times the arity square. *)
+  Lemma arity_square_bound : forall n,
+    (N.of_nat ((n + 2) * (n + 2)) <=
+      4 * N.of_nat ((n + 1) * (n + 1)))%N.
+  Proof.
+    intro n. rewrite !Nat2N.inj_mul.
+    replace (4 * (N.of_nat (n + 1) * N.of_nat (n + 1)))%N with
+      ((2 * N.of_nat (n + 1)) * (2 * N.of_nat (n + 1)))%N by ring.
+    apply N.mul_le_mono; lia.
+  Qed.
+
+  (** The arity square comparison is preserved by the spending and slot factors. *)
+  Lemma arity_square_scale : forall (c u s h : N) n,
+    (u * (c * N.of_nat ((n + 2) * (n + 2)) * s * h) <=
+      4 * c * (u * N.of_nat ((n + 1) * (n + 1)) * s * h))%N.
+  Proof.
+    intros c u s h n.
+    replace (u * (c * N.of_nat ((n + 2) * (n + 2)) * s * h))%N with
+      ((u * c * s * h) * N.of_nat ((n + 2) * (n + 2)))%N by ring.
+    replace (4 * c * (u * N.of_nat ((n + 1) * (n + 1)) * s * h))%N with
+      ((u * c * s * h) * (4 * N.of_nat ((n + 1) * (n + 1))))%N by ring.
+    apply N.mul_le_mono_l. apply arity_square_bound.
+  Qed.
+
+  (** Removing the old potential leaves at most the operation's allocated budget. *)
+  Lemma amortized_le_budget : forall T u after before budget,
+    (T + N.of_nat u * after <= N.of_nat u * (budget + before))%N ->
+    (amortized T u after before <= N.of_nat u * budget)%N.
+  Proof.
+    intros T u after before budget Htime. unfold amortized.
+    rewrite N.mul_add_distr_l in Htime. lia.
+  Qed.
 
   (** Insertion pays its own clock and the rebuild credit of its new use entries. *)
   Lemma put_amort_bigO : bigO
@@ -33115,7 +33199,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(B, f, k, o, db) := x in
       amortized (T_put f k o db) (unit (put f k o db))
         (potential B (put f k o db)) (potential B db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := (4 * c_db)%N).
+    intros [[[[B f] k] o] db] [Hwf [Hfit Hids]]. cbn beta iota zeta.
+    eapply N.le_trans.
+    - apply amortized_le_budget. exact (T_put_amort B f k o db Hwf Hfit Hids).
+    - pose proof (arity_square_scale c_db (N.of_nat (unit (put f k o db)))
+        (N.of_nat (slots_of db f + 1)) (N.of_nat (N.to_nat (N.log2 B) + 1))
+        (length k)) as Hscale.
+      repeat rewrite Nat2N.inj_mul in Hscale.
+      repeat rewrite Nat2N.inj_mul.
+      eapply N.le_trans; [exact Hscale | apply N.le_add_r].
+  Qed.
 
   (** Constructor allocation has the same amortized class as insertion. *)
   Lemma make_amort_bigO : bigO
@@ -33128,7 +33223,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(B, f, k, db) := x in
       amortized (T_make f k db) (unit (snd (make f k db)))
         (potential B (snd (make f k db))) (potential B db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := (4 * c_db)%N).
+    intros [[[B f] k] db] [Hwf [Hfit Hids]]. cbn beta iota zeta.
+    eapply N.le_trans.
+    - apply amortized_le_budget. exact (T_make_amort B f k db Hwf Hfit Hids).
+    - pose proof (arity_square_scale c_db (N.of_nat (unit (snd (make f k db))))
+        (N.of_nat (slots_of db f + 1)) (N.of_nat (N.to_nat (N.log2 B) + 1))
+        (length k)) as Hscale.
+      repeat rewrite Nat2N.inj_mul in Hscale.
+      repeat rewrite Nat2N.inj_mul.
+      eapply N.le_trans; [exact Hscale | apply N.le_add_r].
+  Qed.
 
   (** Union is constant at the spending unit, because it only queues rebuild work. *)
   Lemma union_amort_bigO : bigO
@@ -33139,7 +33245,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(B, i, j, db) := x in
       amortized (T_union i j db) (unit (union i j db))
         (potential B (union i j db)) (potential B db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [[[B i] j] db] [Hwf [Hi [Hj Hids]]]. cbn beta iota zeta.
+    eapply N.le_trans.
+    - apply amortized_le_budget. exact (T_union_amort B i j db Hwf Hi Hj Hids).
+    - nia.
+  Qed.
 
   (** Rebuilding is linear in the pending equalities at the spending unit. *)
   Lemma rebuild_amort_bigO : bigO
@@ -33149,16 +33261,38 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (fun x => let '(B, db) := x in
       amortized (T_rebuild db) (unit (rebuild db))
         (potential B (rebuild db)) (potential B db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [B db] [Hwf Hids]. cbn beta iota zeta.
+    eapply N.le_trans.
+    - apply amortized_le_budget. exact (T_rebuild_amort B db Hwf Hids).
+    - rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   (** Slot lookup is logarithmic in the slot number. *)
   Lemma index_bigO : bigO (fun _ => True)
     (fun x : N * bool * t => N.of_nat (N.to_nat (N.log2 (fst (fst x))) + 1))
     (fun x => T_index (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db).
+    intros [[s new] db] _. cbn [fst snd].
+    pose proof (T_index_le s new db) as Htime. lia.
+  Qed.
+
+  (** Advancing only resets the indexes and the change flag. *)
+  Lemma T_advance_const : forall db, (T_advance db <= c_db)%N.
+  Proof.
+    intro db. pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_advance. time_unfold @T_runtime_set_indexes.
+    time_unfold @T_runtime_set_changed. time_unfold @T_database_set_runtime.
+    time_simpl. time_cbn. nia.
+  Qed.
 
   (** Advancing is constant, because it empties the new-row indexes with one store. *)
   Lemma advance_bigO : bigO (fun _ => True) (fun _ : t => 0%N) T_advance.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_db). intros db _.
+    rewrite N.mul_0_r, N.add_0_l. apply T_advance_const.
+  Qed.
 
 End DatabaseT.
