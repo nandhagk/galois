@@ -4,9 +4,9 @@
     For example, two reads select a sum and a side contribution.
 
     Groups:
-    - Nested: a query that reads twice, and the fuel that it needs.
-    - Return: a query that returns at once.
-    - Bulk: side contributions and continuations that return values.
+    - [NestedTests] A query that reads twice, and the fuel that it needs.
+    - [ReturnTests] A query that returns at once.
+    - [BulkTests] Side contributions and continuations that return values.
 
     Builds on: Fixpoint.Query. *)
 
