@@ -10,6 +10,26 @@ Import List.ListNotations.
 
 Open Scope Z_scope.
 
+(** Sixty-four-bit addition normalizes a negative word and a value above the modulus. *)
+Example eval_add_width64_raw_values :
+  eval_op bvadd [(64%positive, -1); (64%positive, 2 ^ 70)] =
+    Some (64%positive, 2 ^ 64 - 1) /\
+  eval_op bvadd [(64%positive, 2 ^ 70); (64%positive, -1)] =
+    Some (64%positive, 2 ^ 64 - 1).
+Proof.
+  vm_compute. repeat split.
+Qed.
+
+(** Unsigned comparison orders the normalized values zero and the all-ones word. *)
+Example eval_ult_width64_raw_values :
+  eval_op bvult [(64%positive, -1); (64%positive, 2 ^ 70)] =
+    Some (1%positive, 0) /\
+  eval_op bvult [(64%positive, 2 ^ 70); (64%positive, -1)] =
+    Some (1%positive, 1).
+Proof.
+  vm_compute. repeat split.
+Qed.
+
 (** Normalization fixes in-range endpoints and wraps raw values outside the range. *)
 Example normalization_boundaries :
   normalize_word (8%positive, 0) = (8%positive, 0) /\

@@ -9,6 +9,16 @@ From Galois.Bits Require Import Word Fun.
 
 Open Scope Z_scope.
 
+(** Addition and unsigned comparison normalize both raw sixty-four-bit operands. *)
+Example raw_width64_operations :
+  wadd 64%positive (-1) (2 ^ 70) = 2 ^ 64 - 1 /\
+  wadd 64%positive (2 ^ 70) (-1) = 2 ^ 64 - 1 /\
+  wult 64%positive (-1) (2 ^ 70) = false /\
+  wult 64%positive (2 ^ 70) (-1) = true.
+Proof.
+  vm_compute. repeat split.
+Qed.
+
 (** Arithmetic handles ordinary inputs, overflow, negative integers and above-modulus inputs. *)
 Example arithmetic_value_boundaries :
   wadd 8%positive 2 3 = 5 /\ wadd 8%positive 255 1 = 0 /\
