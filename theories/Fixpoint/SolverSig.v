@@ -2,6 +2,10 @@
 
     A solver returns a candidate, exhausts fuel, or rejects a policy.
     For example, certification checks a [Solved] candidate before exposing soundness.
+
+    Main results
+    - [run_least] A solved widening-free candidate lies below every post-solution.
+
     Builds on: Fixpoint.PolicySig, Fixpoint.SystemSig and Base.MapSig. *)
 
 From Stdlib Require Import NArith.
