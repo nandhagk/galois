@@ -2,6 +2,19 @@
 
     Backward transfers refine operand masks from a known result mask.
     For example, a known sum can refine the first operand when the second is fixed.
+
+    Main results
+    - [tnum_refine_sound] Refining a mask by a constraint keeps every concrete value it describes,
+      with [tnum_refine_equation], [tnum_refine_length], [tnum_refine_refines] and
+      [tnum_project_sound].
+    - [tnum_and_back_sound] Each backward bitwise or arithmetic operation is sound, as
+      [tnum_or_back_sound], [tnum_xor_back_sound], [tnum_add_back_sound] and [tnum_sub_back_sound]
+      state.
+    - [tnum_back_shift_sound] Backward shifts, extension, comparison and concatenation are sound,
+      with [tnum_back_sext_sound], [tnum_order_back_sound], [tnum_back_variable_shift_sound] and
+      [tnum_concat_back_sound].
+    - [tnum_backward_raw_sound] The dispatching backward transfer is sound for every operator.
+
     Builds on: KnownBitsSig and the bit-vector operations. *)
 
 From Stdlib Require Import ZArith NArith List Bool Lia.
