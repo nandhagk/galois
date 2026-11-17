@@ -3286,13 +3286,21 @@ Module WtoT <: WTO_ALL.
 
   Lemma heads_bigO : bigO (fun _ : wto => True)
     (fun w => N.of_nat (length (wto_order w))) T_heads.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_wto. intros w _.
+    eapply N.le_trans; [apply T_heads_le|].
+    rewrite Nat2N.inj_add. nia.
+  Qed.
 
   Lemma ranks_bigO : bigO (fun _ : wto => True)
     (fun w => N.of_nat ((length (wto_order w) + 1) *
       (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1)))
     T_ranks.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_wto. intros w _.
+    eapply N.le_trans; [apply T_ranks_le|].
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   Lemma check_bigO : bigO (fun _ : prepared * list positive * wto => True)
     (fun '(g, roots, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
