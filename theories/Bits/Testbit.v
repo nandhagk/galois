@@ -2,6 +2,30 @@
 
     The bit equations connect modular words to integer arithmetic and Boolean operations.
     For example, complement flips each bit below the width and clears every higher bit.
+
+    Main results
+    - [testbit_wrap] Wrapping preserves exactly the bits below the width, with [msb_testbit],
+      [word_ext], [word_bits_high], [word_of_bits], [msb_half], [signed_msb], [signed_bits] and
+      [all_ones_bits].
+    - [testbit_wand] Bit [i] of a bitwise result is the Boolean operation on bit [i] of the
+      operands, with [testbit_wor], [testbit_wxor], [testbit_wnot], [testbit_wshl],
+      [testbit_wlshr], [testbit_washr], [testbit_wnot_full], [testbit_wand_full] and
+      [testbit_wor_full].
+    - [wand_is_word] Every word operation returns a word, as [wor_is_word], [wxor_is_word],
+      [wnot_is_word], [ones_is_word], [count_is_word], [log2_word], [word_div_is_word],
+      [wudiv_is_word], [wurem_is_word], [wsdiv_is_word], [wsrem_is_word], [wsmod_is_word],
+      [wshl_is_word], [wlshr_is_word], [washr_is_word], [wclz_is_word], [wctz_is_word] and
+      [wpopcnt_is_word] state.
+    - [wshl_big] A shift by at least the width gives zero, or the sign fill for [washr_big], and a
+      zero shift amount fixes a word, as [wshl_0] states.
+    - [wand_comm] The bitwise operations are commutative, associative and idempotent where
+      applicable, with [wand_assoc], [wor_comm], [wor_assoc], [wxor_comm], [wxor_assoc],
+      [wxor_self], [wand_idem], [wnot_involutive], [wnot_wand], [wnot_wor], [wand_wnot],
+      [lnot_value] and [wnot_lnot].
+    - [wadd_comm] Wrapped addition, negation and multiplication obey the commutative ring laws, with
+      [wadd_assoc], [wadd_0_r], [wneg_wnot], [wadd_wneg], [wsub_wneg], [wmul_comm], [wmul_assoc],
+      [wmul_1_r] and [wmul_wadd_distr].
+
     Builds on: Word and Fun. *)
 
 From Stdlib Require Import ZArith Bool Lia Ring.
