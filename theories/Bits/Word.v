@@ -5,7 +5,7 @@
     Builds on: Stdlib integer arithmetic and Argent time derivation. *)
 
 From Stdlib Require Import ZArith NArith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 
 Open Scope Z_scope.
 
@@ -407,4 +407,13 @@ Proof.
   time_unfold T_msb. change (Z.size_nat (Zpos w)) with (Pos.size_nat w) in Hsubtract.
   rewrite !Nat2N.inj_add, !Nat2N.inj_mul, !Nat2N.inj_pow in *.
   time_cbn_all. nia.
+Qed.
+
+(** Modulus construction is linear in the width. *)
+Theorem modulus_bigO : bigO (X := width) (fun _ => True)
+  (fun w => N.of_nat (Pos.to_nat w)) (fun w => T_modulus w).
+Proof.
+  apply bigO_intro with (c := 8%N). intros w _.
+  pose proof (modulus_time_le w) as Hmodulus.
+  rewrite Nat2N.inj_add in Hmodulus. time_cbn_all. lia.
 Qed.
