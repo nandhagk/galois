@@ -1340,10 +1340,15 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
+  (** Widening pays for the state sizes and the units times the parameter size. *)
   Lemma widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
     (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
     (fun '(p, a, b) => T_widen p a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_lat; intros [[p a] b] _.
+    pose proof (T_widen_le p a b) as Hbound.
+    repeat rewrite Nat2N.inj_add in Hbound |- *; nia.
+  Qed.
   Lemma narrow_bigO : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_narrow (fst ab) (snd ab)).

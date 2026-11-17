@@ -2573,25 +2573,45 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     repeat rewrite Nat2N.inj_add in *; nia.
   Qed.
 
+  (** Inclusion is linear in both partition sizes for the fixed cap. *)
   Lemma leb_bigO : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_leb (fst ab) (snd ab)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_lat; intros [a b] _.
+    pose proof (T_leb_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 
+  (** Joining is linear in both partition sizes for the fixed cap. *)
   Lemma join_bigO : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_join (fst ab) (snd ab)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_lat; intros [a b] _.
+    pose proof (T_join_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 
+  (** Widening pays for the state sizes and the units times the parameter size. *)
   Lemma widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
     (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
     (fun '(p, a, b) => T_widen p a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_lat; intros [[p a] b] _.
+    pose proof (T_widen_le p a b) as Hbound.
+    repeat rewrite Nat2N.inj_add in Hbound |- *; nia.
+  Qed.
 
+  (** Merging is linear in the token width and the partition size. *)
   Lemma merge_bigO : bigO (X := Tk.t * t) (fun _ => True)
     (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
     (fun ka => T_merge (fst ka) (snd ka)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_partition; intros [k a] _.
+    pose proof (T_merge_le k a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 
   Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
   Proof. Admitted. (* STUB *)
