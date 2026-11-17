@@ -151,6 +151,19 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Example popped_row_reuse_clears_only_its_dependencies :
+  let s := W.arm 2%positive (W.arm 100%positive (W.prepare true flat)) in
+  match W.step true flat s with
+  | inl next =>
+    (trie_get 1%positive (ws_live next), trie_get 2%positive (ws_armed next),
+     trie_get 100%positive (ws_armed next), C.look (ws_store next) 1%positive,
+     W.row_at next 1%positive)
+  | inr _ => (None, None, None, true, None)
+  end = (None, None, Some tt, false, Some 1%positive).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Module RowsProgram <: SYSTEM_OPS BoolOps.
   Definition prog := list positive.
   Definition key := positive.
