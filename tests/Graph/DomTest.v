@@ -69,6 +69,22 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** The reused read rejects a repeated vertex before rebuilding the parent map. *)
+Example rejects_repeated_vertex_within_budget :
+  DomCode.check (DigraphCode.prepare Line.graph) 1
+    (parent_map Line.parents) [1; 2; 2; 4] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A valid order still reaches and rejects an invalid parent map. *)
+Example rejects_root_parent_after_valid_read :
+  DomCode.check (DigraphCode.prepare Line.graph) 1
+    (PTrieCode.set 1 4 (parent_map Line.parents)) [1; 2; 3; 4] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example ancestor_queries :
   let t := DomCode.tree (DigraphCode.prepare Line.graph) 1
     (parent_map Line.parents) [1; 2; 3; 4] in

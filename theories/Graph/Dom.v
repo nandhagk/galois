@@ -250,6 +250,15 @@ Definition dom_rebuild (width : nat) (r : positive) (m : ptrie positive)
   end.
 TimeFun dom_rebuild.
 
+(** A previously checked order supplies the positions for the parent-map check. *)
+Definition dom_map_check_pos (info : dom_scan_data) (r : positive) (m : ptrie positive)
+    (o : list positive) (pos : ptrie N) : bool :=
+  match fold_left (dom_rebuild (dom_width info) r m pos) o (Some Empty) with
+  | None => false
+  | Some built => dom_map_eq built m
+  end.
+TimeFun dom_map_check_pos.
+
 Definition dom_map_check_known (info : dom_scan_data) (r : positive) (m : ptrie positive)
     (o : list positive) : bool :=
   match dom_read_known info r o with
@@ -261,6 +270,24 @@ Definition dom_map_check_known (info : dom_scan_data) (r : positive) (m : ptrie 
     end
   end.
 TimeFun dom_map_check_known.
+
+(** Reusing a successful read leaves the parent-map check unchanged. *)
+Local Lemma dom_map_check_known_pos : forall info r m o pos,
+  dom_read_known info r o = Some pos ->
+  dom_map_check_known info r m o = dom_map_check_pos info r m o pos.
+Proof.
+  intros info r m o pos Hread. unfold dom_map_check_known. now rewrite Hread.
+Qed.
+
+(** The reused-position phase costs no more than reading the order and then checking it. *)
+Local Lemma dom_time_map_check_pos : forall info r m o pos,
+  dom_read_known info r o = Some pos ->
+  (T_dom_map_check_pos info r m o pos <= T_dom_map_check_known info r m o)%N.
+Proof.
+  intros info r m o pos Hread.
+  unfold T_dom_map_check_pos, T_dom_map_check_known. time_simpl.
+  rewrite Hread. time_simpl. lia.
+Qed.
 
 Definition dom_map_check (g : prepared) (r : positive) (m : ptrie positive)
     (o : list positive) := dom_map_check_known (dom_scan g) r m o.
@@ -1833,6 +1860,19 @@ Proof.
 Qed.
 
 
+(** The original phase composition specifies the checker independently of order reuse. *)
+Local Definition dom_check_spec (g : prepared) (r : positive) (m : ptrie positive)
+    (o : list positive) : bool :=
+  let info := dom_scan g in
+  match dom_read_known info r o with
+  | None => false
+  | Some pos =>
+    if dom_map_check_known info r m o then
+      let sizes := dom_sizes m o in
+      dom_sizes_ok m pos sizes o && dom_edges g r m o pos sizes
+    else false
+  end.
+
 Module DomCode <: DOM_OPS.
   Definition build := dom_build_candidate.
 
@@ -1842,7 +1882,7 @@ Module DomCode <: DOM_OPS.
     match dom_read_known info r o with
     | None => false
     | Some pos =>
-      if dom_map_check_known info r m o then
+      if dom_map_check_pos info r m o pos then
         let sizes := dom_sizes m o in
         dom_sizes_ok m pos sizes o && dom_edges g r m o pos sizes
       else false
@@ -1871,11 +1911,21 @@ Module DomCode <: DOM_OPS.
     end.
 End DomCode.
 
+(** Reading the order once preserves acceptance for every candidate. *)
+Local Lemma dom_check_agrees : forall g r m o,
+  DomCode.check g r m o = dom_check_spec g r m o.
+Proof.
+  intros g r m o. unfold DomCode.check, dom_check_spec.
+  destruct (dom_read_known (dom_scan g) r o) as [pos|] eqn:Hread; [|reflexivity].
+  now rewrite (dom_map_check_known_pos (dom_scan g) r m o pos Hread).
+Qed.
+
 (** All accepted phases combine into the semantic low-high certificate. *)
 Local Lemma dom_check_certificate : forall g r m o,
   DomCode.check g r m o = true -> dom_cert (base g) r m o.
 Proof.
-  intros g r m o Hcheck. unfold DomCode.check in Hcheck.
+  intros g r m o Hcheck. rewrite dom_check_agrees in Hcheck.
+  unfold dom_check_spec in Hcheck.
   destruct (dom_read_known (dom_scan g) r o) as [pos |] eqn:Hread;
     [| discriminate Hcheck].
   destruct (dom_map_check_known (dom_scan g) r m o) eqn:Hmap;
@@ -2143,7 +2193,8 @@ Proof.
   destruct Hpreorder as [Hunique [Hhead [Hroot [Hparents [Hdomain Hcontiguous]]]]].
   assert (Hordered : forall v p, trie_get v m = Some p -> order_before o p v).
   { intros v p Hparent. exact (dom_cert_parent_before (base g) r m o v p Hcert Hparent). }
-  pose proof Hcheck as Hphases. unfold DomCode.check in Hphases.
+  pose proof Hcheck as Hphases. rewrite dom_check_agrees in Hphases.
+  unfold dom_check_spec in Hphases.
   destruct (dom_read_known (dom_scan g) r o) as [pos |] eqn:Hread;
     [| discriminate Hphases].
   destruct (dom_map_check_known (dom_scan g) r m o); [| discriminate Hphases].
@@ -4729,7 +4780,8 @@ Module DomT <: DOM_ALL.
     (T_tree g r m o <= k_tree * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   Proof.
-    intros g r m o Hcheck. unfold check in Hcheck.
+    intros g r m o Hcheck. change (DomCode.check g r m o = true) in Hcheck.
+    rewrite dom_check_agrees in Hcheck. unfold dom_check_spec in Hcheck.
     destruct (dom_read_known (dom_scan g) r o) as [pos|] eqn:Hread;
       [|discriminate Hcheck].
     destruct (dom_map_check_known (dom_scan g) r m o) eqn:Hmap;
@@ -4925,6 +4977,8 @@ Module DomT <: DOM_ALL.
     time_simpl.
     destruct (dom_read_known (dom_scan g) r o) as [pos|] eqn:Hread.
     - pose proof (F2c_read g r o pos Hread) as [_ [_ [Hhead Hrest]]].
+      pose proof (dom_time_map_check_pos (dom_scan g) r m o pos Hread) as Hmap_time.
+      rewrite <- (dom_map_check_known_pos (dom_scan g) r m o pos Hread).
       destruct o as [|h rest]; [discriminate|]. cbn in Hhead. injection Hhead as Hhead.
       subst h.
       unfold dom_read. cbn beta iota zeta.
