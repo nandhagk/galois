@@ -19907,3 +19907,357 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (T1_widen p a b) as Htime. cbn [fst snd]. lia.
   Qed.
 End PolyT.
+
+(** The direct-row fast path admits a separate bound without a normality premise. *)
+Module PolyPresent (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
+    (F : LINEARIZE_T X L N) (C : LINCERT_T X).
+  Module Core := PolyT X L N F C.
+
+  (** Comparing signed coefficient lists preserves their total coefficient at each key. *)
+  Lemma poly_fast_coeff_coef : forall xs negative ys x,
+    Core.poly_fast_coeff negative xs ys = true ->
+    C.coef_of x ys =
+      (if negative then (- C.coef_of x xs)%Z else C.coef_of x xs).
+  Proof.
+    intro xs. induction xs as [|[y a] xs IH]; intros negative ys x Hsame;
+      destruct ys as [|[z b] ys]; cbn [Core.poly_fast_coeff] in Hsame; try discriminate.
+    - destruct negative; reflexivity.
+    - destruct (X.eqb_spec y z) as [Hequal|Hdifferent]; [subst z|discriminate].
+      destruct (Z.eqb (if negative then (-a)%Z else a) b) eqn:Hcoef;
+        [|discriminate].
+      apply Z.eqb_eq in Hcoef. subst b.
+      rewrite !Core.coef_of_cons, (IH negative ys x Hsame).
+      destruct negative, (X.eqb x y); lia.
+  Qed.
+
+  (** Literal coefficient lists match without any normalization premise. *)
+  Lemma poly_fast_coeff_refl : forall xs, Core.poly_fast_coeff false xs xs = true.
+  Proof.
+    intro xs. induction xs as [|[x a] xs IH]; [reflexivity|].
+    cbn [Core.poly_fast_coeff]. rewrite Core.poly_key_eqb_refl, Z.eqb_refl. exact IH.
+  Qed.
+
+  (** Negating every coefficient supplies the reverse equality direction. *)
+  Lemma poly_fast_coeff_negate : forall xs,
+    Core.poly_fast_coeff true xs (poly_scale_coef (-1)%Z xs) = true.
+  Proof.
+    intro xs. induction xs as [|[x a] xs IH]; [reflexivity|].
+    cbn [Core.poly_fast_coeff poly_scale_coef map fst snd].
+    rewrite Core.poly_key_eqb_refl.
+    replace (-1 * a)%Z with (-a)%Z by ring. rewrite Z.eqb_refl. exact IH.
+  Qed.
+
+  (** The checked direction supplies coefficient equality and the target's numeric relation. *)
+  Lemma poly_match_direction_data : forall negative p c,
+    Core.poly_match_direction negative p c = true ->
+    (forall x, (if negative then (- C.coef_of x (lhs p))%Z
+      else C.coef_of x (lhs p)) = C.coef_of x (lhs c)) /\
+    match lrel c with
+    | RLe => ((if negative then (- rhs p)%Z else rhs p) <= rhs c)%Z
+    | REq => lrel p = REq /\ (if negative then (- rhs p)%Z else rhs p) = rhs c
+    end.
+  Proof.
+    intros negative p c Hmatch. unfold Core.poly_match_direction in Hmatch.
+    destruct (Core.poly_fast_coeff negative (lhs p) (lhs c)) eqn:Hcoeff; [|discriminate].
+    split.
+    - intro x. symmetry. now apply poly_fast_coeff_coef.
+    - destruct (lrel c).
+      + destruct (lrel p) eqn:Hrel; [|discriminate].
+        split; [reflexivity|now apply Z.eqb_eq].
+      + now apply Z.leb_le.
+  Qed.
+
+  (** A selected multiplier is admissible and directly entails the requested row. *)
+  Lemma poly_match_row_data : forall p c m,
+    Core.poly_match_row p c = Some m ->
+    (lrel p = RLe -> (0 <= m)%Z) /\
+    (forall x, (m * C.coef_of x (lhs p))%Z = C.coef_of x (lhs c)) /\
+    match lrel c with
+    | RLe => (m * rhs p <= rhs c)%Z
+    | REq => lrel p = REq /\ (m * rhs p)%Z = rhs c
+    end.
+  Proof.
+    intros p c m Hresult. unfold Core.poly_match_row in Hresult.
+    destruct (Core.poly_match_direction false p c) eqn:Hpositive.
+    - injection Hresult as Hsame. subst m.
+      destruct (poly_match_direction_data false p c Hpositive) as [Hcoeff Hbound].
+      split; [lia|]. split.
+      + intro x. specialize (Hcoeff x). cbn in Hcoeff. lia.
+      + destruct (lrel c); cbn in Hbound; intuition lia.
+    - destruct (lrel p) eqn:Hrel; [|discriminate].
+      destruct (Core.poly_match_direction true p c) eqn:Hnegative; [|discriminate].
+      injection Hresult as Hsame. subst m.
+      destruct (poly_match_direction_data true p c Hnegative) as [Hcoeff Hbound].
+      split; [intro Hle; congruence|]. split.
+      + intro x. specialize (Hcoeff x). cbn in Hcoeff. lia.
+      + destruct (lrel c); cbn in Hbound; intuition lia.
+  Qed.
+
+  (** A zero unit multiplier gives the all-zero certificate vector. *)
+  Lemma poly_unit_zero : forall n i, poly_unit i n 0%Z = repeat 0%Z n.
+  Proof.
+    intro n. induction n as [|n IH]; intro i; [reflexivity|].
+    destruct i; cbn [poly_unit repeat]; now rewrite IH.
+  Qed.
+
+  (** Selecting one source yields its exact signed coefficient and right-hand side. *)
+  Lemma poly_unit_data : forall P i p m,
+    nth_error P i = Some p -> (lrel p = RLe -> (0 <= m)%Z) ->
+    C.admissible P (poly_unit i (length P) m) /\
+    (forall x, C.comb_coef P (poly_unit i (length P) m) x =
+      (m * C.coef_of x (lhs p))%Z) /\
+    C.comb_rhs P (poly_unit i (length P) m) = (m * rhs p)%Z /\
+    (lrel p = REq -> C.comb_eq P (poly_unit i (length P) m) = true).
+  Proof.
+    intro P. induction P as [|q P IH]; intros [|i] p m Hnth Hsign;
+      cbn [nth_error] in Hnth; try discriminate.
+    - injection Hnth as Hsame. subst q. cbn [length poly_unit].
+      rewrite poly_unit_zero. split.
+      + apply Core.poly_admissible_cons. split; [exact Hsign|apply Core.poly_zero_admissible].
+      + split.
+        * intro x. rewrite Core.poly_comb_coef_cons.
+          change (m * C.coef_of x (lhs p) +
+            Core.poly_sum P (repeat 0%Z (length P)) (fun r => C.coef_of x (lhs r)) =
+            m * C.coef_of x (lhs p))%Z.
+          rewrite Core.poly_sum_zero. ring.
+        * split.
+          -- rewrite Core.poly_comb_rhs_cons.
+             change (m * rhs p + Core.poly_sum P (repeat 0%Z (length P)) rhs = m * rhs p)%Z.
+             rewrite Core.poly_sum_zero. ring.
+          -- intro Hrel. rewrite Core.poly_comb_eq_cons, Hrel, Core.poly_comb_eq_zero. reflexivity.
+    - destruct (IH i p m Hnth Hsign) as [Hadmissible [Hcoeff [Hrhs Hequal]]].
+      cbn [length poly_unit]. split.
+      + apply Core.poly_admissible_cons. split; [lia|exact Hadmissible].
+      + split.
+        * intro x. rewrite Core.poly_comb_coef_cons, Hcoeff. ring.
+        * split.
+          -- rewrite Core.poly_comb_rhs_cons, Hrhs. ring.
+          -- intro Hrel. rewrite Core.poly_comb_eq_cons, (Hequal Hrel).
+             destruct (lrel q); reflexivity.
+  Qed.
+
+  (** A returned row index identifies the matching original source. *)
+  Lemma poly_find_row_selected : forall P c i m,
+    Core.poly_find_row P c = Some (i, m) ->
+    exists p, nth_error P i = Some p /\ Core.poly_match_row p c = Some m.
+  Proof.
+    intro P. induction P as [|p P IH]; intros c i m Hresult; [discriminate|].
+    cbn [Core.poly_find_row] in Hresult.
+    destruct (Core.poly_match_row p c) as [a|] eqn:Hhead.
+    - injection Hresult as Hindex Hmult. subst i a. exists p. auto.
+    - destruct (Core.poly_find_row P c) as [[j a]|] eqn:Htail; [|discriminate].
+      injection Hresult as Hindex Hmult. subst i a.
+      destruct (IH c j m Htail) as [q [Hnth Hmatch]]. exists q. auto.
+  Qed.
+
+  (** Every syntactic match passes the public certificate checker. *)
+  Lemma poly_find_row_checked : forall P c i m,
+    Core.poly_find_row P c = Some (i, m) ->
+    C.check_entails P c (Cert (poly_unit i (length P) m) 1 false) = true.
+  Proof.
+    intros P c i m Hfind.
+    destruct (poly_find_row_selected P c i m Hfind) as [p [Hnth Hmatch]].
+    destruct (poly_match_row_data p c m Hmatch) as [Hsign [Hcoeff Hbound]].
+    destruct (poly_unit_data P i p m Hnth Hsign) as [Ha [Hsum [Hrhs Heq]]].
+    apply C.check_entails_complete; [exact Ha|lia| |].
+    - intro x. rewrite Hsum, Hcoeff. ring.
+    - rewrite Hrhs. destruct (lrel c).
+      + destruct Hbound as [Hp Hbound]. split; [now apply Heq|lia].
+      + lia.
+  Qed.
+
+  (** Any matching source makes the first-match scan succeed. *)
+  Lemma poly_find_row_available : forall P c p m,
+    In p P -> Core.poly_match_row p c = Some m ->
+    exists i a, Core.poly_find_row P c = Some (i, a).
+  Proof.
+    intro P. induction P as [|p P IH]; intros c q m Hin Hmatch; [contradiction|].
+    cbn [Core.poly_find_row]. destruct (Core.poly_match_row p c) as [a|] eqn:Hhead.
+    - exists 0, a. reflexivity.
+    - destruct Hin as [Heq|Hin]; [subst q; congruence|].
+      destruct (IH c q m Hin Hmatch) as [i [a Htail]]. rewrite Htail.
+      exists (S i), a. reflexivity.
+  Qed.
+
+  (** A matching source avoids the elimination engine after its checked unit certificate. *)
+  Lemma poly_fast_available : forall P c p m,
+    In p P -> Core.poly_match_row p c = Some m -> exists k, Core.poly_fast P c = Some k.
+  Proof.
+    intros P c p m Hin Hmatch.
+    destruct (poly_find_row_available P c p m Hin Hmatch) as [i [a Hfind]].
+    unfold Core.poly_fast. rewrite Hfind, (poly_find_row_checked P c i a Hfind). eauto.
+  Qed.
+
+  (** A row already in the source always has a checked direct certificate. *)
+  Lemma poly_fast_present : forall P c, In c P -> exists k, Core.poly_fast P c = Some k.
+  Proof.
+    intros P c Hin. apply poly_fast_available with (p := c) (m := 1%Z); [exact Hin|].
+    unfold Core.poly_match_row, Core.poly_match_direction. rewrite poly_fast_coeff_refl.
+    destruct (lrel c); rewrite ?Z.eqb_refl, ?Z.leb_refl; reflexivity.
+  Qed.
+
+  (** Both inequality directions used by Core.keep_row have a fast source match. *)
+  Lemma poly_fast_present_directions : forall P r, In r P -> lrel r = REq ->
+    (exists k, Core.poly_fast P (LCons X.t (lhs r) RLe (rhs r)) = Some k) /\
+    (exists k, Core.poly_fast P (poly_negate r) = Some k).
+  Proof.
+    intros P r Hin Hrel. split.
+    - apply poly_fast_available with (p := r) (m := 1%Z); [exact Hin|].
+      unfold Core.poly_match_row, Core.poly_match_direction. cbn [lhs lrel rhs].
+      rewrite poly_fast_coeff_refl, Z.leb_refl. reflexivity.
+    - destruct (Core.poly_match_direction false r (poly_negate r)) eqn:Hpositive.
+      + apply poly_fast_available with (p := r) (m := 1%Z); [exact Hin|].
+        unfold Core.poly_match_row. now rewrite Hpositive.
+      + apply poly_fast_available with (p := r) (m := (-1)%Z); [exact Hin|].
+        unfold Core.poly_match_row. rewrite Hpositive, Hrel.
+        unfold Core.poly_match_direction. cbn [poly_negate lhs lrel rhs].
+        rewrite poly_fast_coeff_negate, Z.leb_refl. reflexivity.
+  Qed.
+
+  Definition poly_present_entail_factor : N := (2 * Core.poly_fast_factor + 8)%N.
+
+  (** A present target pays for the raw scan and its checked unit certificate. *)
+  Lemma T_poly_present_entails_row : forall P c bits,
+    length (lhs c) <= Core.terms (Reached P) ->
+    Forall (fun p => C.row_key_bits p + C.row_bits p <= bits) P ->
+    C.row_key_bits c + C.row_bits c <= bits ->
+    (exists k, Core.poly_fast P c = Some k) ->
+    (Core.T_entails_row P c <= poly_present_entail_factor *
+      N.of_nat ((Core.terms (Reached P) + length P + 1) * (bits + 1)))%N.
+  Proof.
+    intros P c bits Hlength Hrows Hwidth [k Hfast].
+    pose proof (Core.T_poly_fast_le P c bits Hrows Hwidth) as Hscan.
+    set (work := N.of_nat ((Core.terms (Reached P) + length P + 1) * (bits + 1))).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. apply (time_of_nat_le 1). nia. }
+    assert (Hmeasure :
+      (N.of_nat ((Core.terms (Reached (c :: P)) + length P + 2) * (bits + 1)) <=
+        2 * work)%N).
+    { replace (2 * work)%N with
+        (N.of_nat (2 * ((Core.terms (Reached P) + length P + 1) * (bits + 1))))%N
+        by (unfold work; rewrite Nat2N.inj_mul; reflexivity).
+      apply time_of_nat_le.
+      change ((length (lhs c) + Core.terms (Reached P) + length P + 2) * (bits + 1) <=
+        2 * ((Core.terms (Reached P) + length P + 1) * (bits + 1))).
+      clear -Hlength. nia. }
+    assert (Hscan_total : (Core.T_poly_fast P c <= 2 * Core.poly_fast_factor * work)%N).
+    { eapply N.le_trans; [exact Hscan|].
+      replace (2 * Core.poly_fast_factor * work)%N with
+        (Core.poly_fast_factor * (2 * work))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hproducer :
+      (Core.T_entail_cert P c <= Core.T_poly_fast P c + 2)%N).
+    { time_unfold Core.T_entail_cert. rewrite Hfast. time_simpl. lia. }
+    time_unfold Core.T_entails_row. destruct (Core.entail_cert P c); time_simpl;
+      unfold poly_present_entail_factor;
+      clear -Hproducer Hscan_total Hpositive; clearbody work; nia.
+  Qed.
+
+  Definition poly_present_keep_factor : N := (2 * poly_present_entail_factor + 48)%N.
+
+  (** Both directions of a present equality use the same source row. *)
+  Lemma T_poly_present_keep_member : forall P r bits,
+    In r P -> Core.nell (Reached P) <= bits ->
+    (Core.T_keep_row P r <= poly_present_keep_factor *
+      N.of_nat ((Core.terms (Reached P) + length P + 1) * (bits + 1)))%N.
+  Proof.
+    intros P r bits Hr Hbits.
+    pose proof (Core.poly_raw_row_terms P r Hr) as Hlength.
+    assert (Hrows : Forall (fun p => C.row_key_bits p + C.row_bits p <= bits) P).
+    { eapply Forall_impl; [|apply Core.poly_raw_source_width]. intros p Hp.
+      change (C.row_key_bits p + C.row_bits p <= Core.nell (Reached P)) in Hp.
+      change (C.row_key_bits p + C.row_bits p <= bits). lia. }
+    assert (Hwidth : C.row_key_bits r + C.row_bits r <= bits).
+    { now apply (proj1 (Forall_forall _ _) Hrows). }
+    set (work := N.of_nat ((Core.terms (Reached P) + length P + 1) * (bits + 1))).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. apply (time_of_nat_le 1). nia. }
+    destruct (lrel r) eqn:Hrel.
+    - destruct (poly_fast_present_directions P r Hr Hrel) as [Hupper Hlower].
+      assert (Hupper_width :
+        C.row_key_bits (LCons X.t (lhs r) RLe (rhs r)) +
+          C.row_bits (LCons X.t (lhs r) RLe (rhs r)) <= bits).
+      { destruct r. exact Hwidth. }
+      assert (Hlower_width :
+        C.row_key_bits (poly_negate r) + C.row_bits (poly_negate r) <= bits).
+      { now rewrite Core.poly_negate_row_key_bits, Core.poly_negate_row_bits. }
+      pose proof (T_poly_present_entails_row P (LCons X.t (lhs r) RLe (rhs r)) bits
+        Hlength Hrows Hupper_width Hupper) as Hupper_time.
+      pose proof (T_poly_present_entails_row P (poly_negate r) bits
+        ltac:(now rewrite Core.poly_negate_row_length) Hrows Hlower_width Hlower) as Hlower_time.
+      pose proof (Core.T_poly_negate_bounded r (Core.terms (Reached P)) bits Hlength
+        ltac:(lia)) as Hnegate.
+      assert (Hnegate_total : (T_poly_negate r <= 40 * work)%N).
+      { eapply N.le_trans; [exact Hnegate|].
+        unfold work. rewrite Nat2N.inj_mul.
+        replace (40 * (N.of_nat (Core.terms (Reached P) + length P + 1) *
+          N.of_nat (bits + 1)))%N with
+          (40 * N.of_nat (Core.terms (Reached P) + length P + 1) * N.of_nat (bits + 1))%N
+          by ring.
+        apply N.mul_le_mono_r. apply N.mul_le_mono_l. lia. }
+      fold work in Hupper_time, Hlower_time.
+      time_unfold Core.T_keep_row. rewrite Hrel.
+      destruct (Core.entails_row P (LCons X.t (lhs r) RLe (rhs r))); time_simpl;
+        unfold poly_present_keep_factor;
+        clear -Hupper_time Hlower_time Hnegate_total Hpositive; clearbody work; nia.
+    - pose proof (T_poly_present_entails_row P r bits Hlength Hrows Hwidth
+        (poly_fast_present P r Hr)) as Hdirect.
+      fold work in Hdirect. time_unfold Core.T_keep_row. rewrite Hrel. time_simpl.
+      unfold poly_present_keep_factor.
+      clear -Hdirect Hpositive; clearbody work; nia.
+  Qed.
+
+  (** Every target row already in the source has the shared present-row clock bound. *)
+  Lemma T_poly_fast_present_le : forall P Q r,
+    incl Q P -> In r Q ->
+    (Core.T_keep_row P r <= poly_present_keep_factor *
+      N.of_nat ((Core.terms (Reached P) + length P + 1) *
+        (Core.nell (Reached P) + Core.nell (Reached Q) + 1)))%N.
+  Proof.
+    intros P Q r Hincl Hr. apply T_poly_present_keep_member; [now apply Hincl|lia].
+  Qed.
+
+  Definition poly_present_factor : N := (poly_present_keep_factor + 8)%N.
+
+  (** Each already-present target row contributes the direct source-scan bound. *)
+  Theorem leb_present_bigO : bigO
+    (fun x : Core.t * Core.t => match fst x, snd x with
+      | Unreached, _ => True
+      | Reached P, Reached Q => incl Q P
+      | Reached _, Unreached => False
+      end)
+    (fun x => N.of_nat ((length (Core.prows (snd x)) + 1) *
+      (Core.terms (fst x) + length (Core.prows (fst x)) + 1) *
+      (Core.nell (fst x) + Core.nell (snd x) + 1)))
+    (fun x => Core.T_leb (fst x) (snd x)).
+  Proof.
+    apply bigO_intro with (c := poly_present_factor).
+    intros [[|P] [|Q]] Hin; cbn [fst snd] in Hin |- *; try contradiction.
+    - time_unfold Core.T_leb. time_simpl. cbn [Core.prows Core.terms Core.nell Core.ell].
+      unfold poly_present_factor, poly_present_keep_factor, poly_present_entail_factor. nia.
+    - time_unfold Core.T_leb. time_simpl. cbn [Core.prows Core.terms Core.nell Core.ell].
+      unfold poly_present_factor, poly_present_keep_factor, poly_present_entail_factor. nia.
+    - set (bits := Core.nell (Reached P) + Core.nell (Reached Q)).
+      set (work := N.of_nat ((Core.terms (Reached P) + length P + 1) * (bits + 1))).
+      assert (Hpositive : (1 <= work)%N).
+      { unfold work. apply (time_of_nat_le 1). nia. }
+      assert (Hmember : forall r, In r Q ->
+        (Core.T_keep_row P r <= poly_present_keep_factor * work)%N).
+      { intros r Hr. apply T_poly_present_keep_member; [now apply Hin|unfold bits; lia]. }
+      pose proof (Core.poly_T_forallb_members _ (Core.keep_row P) (Core.T_keep_row P)
+        (poly_present_keep_factor * work)%N Q Hmember) as Hscan.
+      assert (Hclock : (Core.T_leb (Reached P) (Reached Q) <=
+        (poly_present_keep_factor * work + 2) * N.of_nat (length Q) + 4)%N).
+      { time_unfold Core.T_leb. time_simpl.
+        change (fun r : lcons X.t => Core.T_keep_row P r) with (Core.T_keep_row P). lia. }
+      change (Core.T_leb (Reached P) (Reached Q) <= poly_present_factor *
+        N.of_nat ((length Q + 1) * (Core.terms (Reached P) + length P + 1) * (bits + 1)) +
+        poly_present_factor)%N.
+      replace (N.of_nat
+        ((length Q + 1) * (Core.terms (Reached P) + length P + 1) * (bits + 1))) with
+        ((N.of_nat (length Q) + 1) * work)%N.
+      + unfold poly_present_factor. clear -Hclock Hpositive. clearbody work. nia.
+      + unfold work. rewrite !Nat2N.inj_mul, !Nat2N.inj_add.
+        change (N.of_nat 1) with 1%N. ring.
+  Qed.
+End PolyPresent.
