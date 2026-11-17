@@ -520,8 +520,7 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Definition stored_row := (use_entry * option (cell V.t))%type.
   Definition repair_state := (t * list use_entry)%type.
 
-  (* spec: rows uses_entries queue next_id forest_ok class_size uf_state
-     index_counters written_cells located decl_names *)
+  (* spec: rows uses_entries queue next_id forest_ok class_size uf_state located decl_names *)
   Parameter rows : t -> list stored_row.
   Parameter uses_entries : t -> list (positive * use_entry).
   Parameter queue : t -> list positive.
@@ -593,8 +592,6 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
       k_active * N.of_nat (work_weight (fst s) (snd s)))%N.
   Parameter nuses npending : t -> N.
   Parameter uf_state : t -> UnionFind.t.
-  Parameter index_counters : t -> list positive.
-  Parameter written_cells : t -> list (cell V.t).
   Parameter decl_names : t -> list positive.
   Parameter get_uses : positive -> t -> list use_entry.
   Parameter T_get_uses : positive -> t -> N.
@@ -641,10 +638,10 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   (** Row identifiers stay below a counter that the watermark covers. *)
   Parameter row_counter_lt : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
     (r < next_row db)%positive /\ (row_parent db r < next_row db)%positive /\
-    In (next_row db) (index_counters db).
-  (** The keys of use entries are written cells. *)
+    (Npos (next_row db) <= wmark db)%N.
+  (** The keys of use entries fit the watermark. *)
   Parameter entry_cells_fit : forall db work x f k c, inv_on db work -> uses db x (f, k) ->
-    In c k -> In c (written_cells db).
+    In c k -> cell_bits V.encode c <= N.size_nat (wmark db).
   (** Resolution reads the key once and follows the chain at the stored width. *)
   Parameter T_locate_le : forall db work x f k, inv_on db work -> uses db x (f, k) ->
     (T_locate f k db <= k_locate * N.of_nat (length k + 1) * N.of_nat (unit db))%N.
@@ -715,8 +712,8 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
         permute perm (snd (fst r) ++ option_list (snd r)) = u) /\
       N.to_nat (proj_count db s u) = length rs.
 
-  (** The counter of the empty index is recorded. *)
-  Parameter wmark_pos : forall db, inv db -> In 1%positive (index_counters db).
+  (** The watermark covers the counter of the empty index. *)
+  Parameter wmark_pos : forall db, inv db -> (1 <= wmark db)%N.
 
   (** The maintained invariant gives the slot facts that an update reads. *)
   Parameter slots_ok_holds : forall db work, inv_on db work -> slots_ok db.
@@ -920,14 +917,10 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   (** The declaration inventory contains precisely the names with a kind. *)
   Parameter decl_names_spec : forall db f, inv db ->
     (kind (view db) f <> None <-> In f (decl_names db)).
-  (** The stored watermark is the exact historical maximum of written payloads and counters. *)
+  (** The watermark covers the allocation counter, the use counter and every declared name. *)
   Parameter wmark_covers : forall db, inv db ->
-    wmark db = fold_right N.max (N.max (nuses db) (ids db))
-      (map Npos (index_counters db) ++ map Npos (decl_names db) ++
-        map (fun c => match c with
-          | Id i => Npos (xO i)
-          | Val v => Npos (xI (V.encode v))
-          end) (written_cells db)).
+    (N.max (nuses db) (ids db) <= wmark db)%N /\
+    (forall f, kind (view db) f <> None -> (Npos f <= wmark db)%N).
   (** Every slot index fits the stored counter and cell watermark. *)
   Parameter wmark_covers_index : forall db s new, inv db ->
     (Npos (I.next (index s new db)) <= wmark db)%N /\

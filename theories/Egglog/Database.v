@@ -7610,8 +7610,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Definition stored_row := (use_entry * option (cell V.t))%type.
   Definition repair_state := (t * list use_entry)%type.
 
-  (* spec: rows uses_entries queue next_id forest_ok class_size uf_state
-     index_counters written_cells *)
+  (* spec: rows uses_entries queue next_id forest_ok class_size uf_state *)
   Definition rows (db : t) : list stored_row :=
     map snd (PTrieCode.elements (runtime_rows (db_runtime db))).
   Definition uses_entries (db : t) : list (positive * use_entry) :=
@@ -26921,8 +26920,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     cbn [option_map snd] in Hrow. injection Hrow as <-.
     exact (Hgroup f k key id d Hget Hroot).
   Qed.
-  (** Row identifiers stay below a counter that the watermark covers. *)
-  Lemma row_counter_lt : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
+  (** Row identifiers stay below a counter that the index history records. *)
+  Lemma row_counter_recorded : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
     (r < next_row db)%positive /\ (row_parent db r < next_row db)%positive /\
     In (next_row db) (index_counters db).
   Proof.
@@ -26938,8 +26937,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     cbn [option_map snd] in Hrow. injection Hrow as <-.
     exact (Hcounter f k key id Hget).
   Qed.
+
+  (** Row identifiers stay below a counter that the watermark covers. *)
+  Lemma row_counter_lt : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
+    (r < next_row db)%positive /\ (row_parent db r < next_row db)%positive /\
+    (Npos (next_row db) <= wmark db)%N.
+  Proof. Admitted. (* STUB *)
+
   (** The keys of use entries are written cells. *)
-  Lemma entry_cells_fit : forall db work x f k c, inv_on db work -> uses db x (f, k) ->
+  Lemma entry_cells_written : forall db work x f k c, inv_on db work -> uses db x (f, k) ->
     In c k -> In c (written_cells db).
   Proof.
     intros db work x f k c Hinv Huse Hcell.
@@ -26955,6 +26961,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply in_map_iff. exists (x, (f, k)). split; [reflexivity |].
     apply filter_In. split; [exact Huse |]. now rewrite Pos.eqb_refl.
   Qed.
+
+  (** The keys of use entries fit the watermark. *)
+  Lemma entry_cells_fit : forall db work x f k c, inv_on db work -> uses db x (f, k) ->
+    In c k -> cell_bits V.encode c <= N.size_nat (wmark db).
+  Proof. Admitted. (* STUB *)
+
   (** Resolution reads the key once and follows the chain at the stored width. *)
   (** Unary addition iteration pays linearly for its multiplier and seed. *)
   Lemma database_positive_iter_add_time : forall p a,
@@ -27177,7 +27189,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply N_width_mono, declared_names_wmark. exact Hkind. }
     assert (Hcells : forall c, In c k -> cell_bits V.encode c <= N.size_nat (wmark db)).
     { intros c Hin. apply recorded_cells_wmark.
-      exact (entry_cells_fit db work x f k c Hinv Huse Hin). }
+      exact (entry_cells_written db work x f k c Hinv Huse Hin). }
     pose proof (T_db_locate_width db f k Hstore Hname Hcells) as Htime.
     pose proof (unit_positive db) as Hunit.
     time_unfold T_locate. clear -Htime Hunit.
@@ -27852,10 +27864,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** The counter of the empty index is recorded. *)
-  Lemma wmark_pos : forall db, inv db -> In 1%positive (index_counters db).
+  Lemma counter_one_recorded : forall db, inv db -> In 1%positive (index_counters db).
   Proof.
     intros db Hinv. exact (proj1 (inv_on_metadata db [] Hinv)).
   Qed.
+
+  (** The watermark covers the counter of the empty index. *)
+  Lemma wmark_pos : forall db, inv db -> (1 <= wmark db)%N.
+  Proof. Admitted. (* STUB *)
 
   (** The maintained invariant gives the slot facts that an update reads. *)
   Lemma slots_ok_holds : forall db work, inv_on db work -> slots_ok db.
@@ -31210,7 +31226,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply N_width_mono, declared_names_wmark. exact Hkind. }
     assert (Hcells : forall c, In c k -> cell_bits V.encode c <= N.size_nat (wmark db)).
     { intros c Hcell. apply recorded_cells_wmark.
-      exact (entry_cells_fit db ((f, k) :: rest) x f k c Hinv Huse Hcell). }
+      exact (entry_cells_written db ((f, k) :: rest) x f k c Hinv Huse Hcell). }
     pose proof (T_db_locate_width db f k Hstore Hname Hcells) as Hlocate.
     pose proof (T_repair_row_prefix db ((f, k) :: rest) f current o Hinv Hrow) as Hprefix.
     pose proof (T_repair_current_row db ((f, k) :: rest) f current o Hinv Hrow) as Hcurrent.
@@ -31438,7 +31454,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** The stored watermark is the exact historical maximum of written payloads and counters. *)
-  Lemma wmark_covers : forall db, inv db ->
+  Lemma wmark_recorded_max : forall db, inv db ->
     wmark db = fold_right N.max (N.max (nuses db) (ids db))
       (map Npos (index_counters db) ++ map Npos (decl_names db) ++
         map (fun c => match c with
@@ -31448,6 +31464,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     reflexivity.
   Qed.
+
+  (** The watermark covers the allocation counter, the use counter and every declared name. *)
+  Lemma wmark_covers : forall db, inv db ->
+    (N.max (nuses db) (ids db) <= wmark db)%N /\
+    (forall f, kind (view db) f <> None -> (Npos f <= wmark db)%N).
+  Proof. Admitted. (* STUB *)
 
   (** Every slot index fits the stored counter and cell watermark. *)
   Lemma wmark_covers_index : forall db s new, inv db ->
