@@ -232,20 +232,28 @@ Module StaleSizeTests.
     vm_compute. reflexivity.
   Qed.
 
+  (** A union-find with the single member 1. Key 2 is absent, so it is its own root. *)
+  Definition single_member := UnionFind.add 1%positive UnionFind.empty.
+
+  (** A rank function that gives the absent key 2 the rank one and every other key zero. *)
+  Definition deep_rank (x : positive) : nat :=
+    if Pos.eqb x 2%positive then 1%nat else 0%nat.
+
+  (** The rank function after linking 2 under 1, where key 1 takes one more than key 2. *)
+  Definition linked_rank (x : positive) : nat :=
+    if Pos.eqb x 1%positive
+    then Nat.max (deep_rank 1%positive) (S (deep_rank 2%positive))
+    else deep_rank x.
+
   (** The original link plan permits an absent losing root with an unconstrained rank. *)
   Example link_can_break_ranking :
-    let u := UnionFind.add 1%positive UnionFind.empty in
-    let rk := fun x => if Pos.eqb x 2%positive then 1%nat else 0%nat in
-    UnionFind.wf u /\ UnionFind.ranked u rk /\
-    UnionFind.is_root u 1%positive /\ UnionFind.is_root u 2%positive /\
+    UnionFind.wf single_member /\ UnionFind.ranked single_member deep_rank /\
+    UnionFind.is_root single_member 1%positive /\ UnionFind.is_root single_member 2%positive /\
     1%positive <> 2%positive /\
-    UnionFind.size_of u 2%positive <= UnionFind.size_of u 1%positive /\
-    ~ UnionFind.ranked (UnionFind.link 1%positive 2%positive u)
-      (fun x => if Pos.eqb x 1%positive
-        then Nat.max (rk 1%positive) (S (rk 2%positive)) else rk x).
+    UnionFind.size_of single_member 2%positive <= UnionFind.size_of single_member 1%positive /\
+    ~ UnionFind.ranked (UnionFind.link 1%positive 2%positive single_member) linked_rank.
   Proof.
-    cbv zeta. set (u := UnionFind.add 1%positive UnionFind.empty).
-    set (rk := fun x => if Pos.eqb x 2%positive then 1%nat else 0%nat).
+    set (u := single_member). set (rk := deep_rank).
     assert (Hwf : UnionFind.wf u).
     { apply UnionFind.wf_add, UnionFind.wf_empty. }
     assert (Hmember : forall x, UnionFind.mem u x -> x = 1%positive).
@@ -270,12 +278,3 @@ Module StaleSizeTests.
   Qed.
 
 End StaleSizeTests.
-
-(* BaseUnionFindTest.uf_compression_ranks compares ranks and max_rank. Union by size deletes those
-   stored fields. uf_exhausted and uf_exhausted_prefix exercise find_fuel with
-   caller budgets 0 and 1 and expect the current key 4 and intermediate key 3.
-   find now computes its fuel from the allocation count and exports no budget
-   argument. These budget observations retire with find_fuel.
-   uf_empty_find_ticks, uf_exhausted_ticks, uf_singleton_union_ticks,
-   uf_distinct_union_ticks and uf_pair_find_ticks retire with Cost.ticks.
-   The symbolic rank/link transport clients use the replaced by-rank internals. *)
