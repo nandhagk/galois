@@ -2,10 +2,35 @@
 
     Known-bit masks describe zeros and ones that hold across every represented word.
     For example, an eight-bit mask can record that the low nibble is zero.
+
+    Main results
+    - [tnum_not_sound] Bitwise negation retains each concrete result.
+    - [tnum_neg_sound] Arithmetic negation retains each concrete result.
+    - [tnum_add_sound] Addition retains each concrete result.
+    - [tnum_sub_sound] Subtraction retains each concrete result.
+    - [tnum_and_sound] Conjunction retains each concrete result.
+    - [tnum_or_sound] Disjunction retains each concrete result.
+    - [tnum_xor_sound] Exclusive disjunction retains each concrete result.
+    - [tnum_mul_with_sound] Every multiplier choice retains each concrete product.
+    - [tnum_variable_sound] An unknown shift or rotation retains each concrete result.
+    - [mul_complexity] Configured multiplication has quadratic asymptotic width work.
+    - [normalise_complexity] Normalization is linear in the width and the raw masks.
+    - [not_complexity] Bitwise negation is linear.
+    - [neg_complexity] Arithmetic negation is linear.
+    - [add_complexity] Addition is linear.
+    - [sub_complexity] Subtraction is linear.
+    - [and_complexity] Conjunction is linear.
+    - [or_complexity] Disjunction is linear.
+    - [xor_complexity] Exclusive disjunction is linear.
+    - [variable_complexity] Unknown shifts and rotations have the published quadratic class.
+    - [variable_shift_complexity] Unknown shifts take logarithmically many expansion steps of
+      linear cost.
+
     Builds on: KnownBitsSig, WordSig and the bit-vector operations. *)
 
 From Stdlib Require Import ZArith NArith Zpow_facts List Bool Lia.
-From Argent Require Import Time Tactics Std BigO Loop.
+From Argent Require Import Time Tactics Std Complexity Loop.
+Import ComplexityNotations.
 From Galois.Base Require Import Loop.
 From Galois.Bits Require Import Word Op Fun Testbit Arith.
 From Galois.Lattice Require Import LatticeSig.
@@ -8009,90 +8034,80 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
     clearbody budget. lia.
   Qed.
-  Lemma mul_complexity : bigO (fun _ => True)
-    (fun x : positive * (tnum * tnum) => N.of_nat
-      ((Pos.to_nat (fst x) + 1) ^ 2 + tnum_bits (fst (snd x)) +
-        tnum_bits (snd (snd x))))
-    (fun x => T_tnum_mul (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma mul_complexity :
+    T_tnum_mul w a b ∈ 𝑂(N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))
+      for (w, (a, b)).
   Proof.
     exists c_tnum. intros [w [a b]] _. cbn [fst snd].
     eapply N.le_trans; [exact (T_tnum_mul_le w a b)|].
     apply N.mul_le_mono_l. lia.
   Qed.
-  Lemma normalise_complexity : bigO (X := positive * tnum) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
-    (fun x => T_tnum_normalise (fst x) (snd x)).
+  Lemma normalise_complexity :
+    T_tnum_normalise w a ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + 1)) for (w, a).
   Proof.
     exists c_tnum. intros [w a] _. cbn [fst snd].
     pose proof (T_tnum_normalise_le w a) as Htime. nia.
   Qed.
-  Lemma not_complexity : bigO (X := positive * tnum) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
-    (fun x => T_tnum_not (fst x) (snd x)).
+  Lemma not_complexity :
+    T_tnum_not w a ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + 1)) for (w, a).
   Proof.
     exists c_tnum. intros [w a] _. cbn [fst snd].
     pose proof (T_tnum_not_le w a) as Htime. nia.
   Qed.
-  Lemma neg_complexity : bigO (X := positive * tnum) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
-    (fun x => T_tnum_neg (fst x) (snd x)).
+  Lemma neg_complexity :
+    T_tnum_neg w a ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + 1)) for (w, a).
   Proof.
     exists c_tnum. intros [w a] _. cbn [fst snd].
     pose proof (T_tnum_neg_le w a) as Htime. nia.
   Qed.
-  Lemma add_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
-      tnum_bits (snd (snd x)) + 1))
-    (fun x => T_tnum_add (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma add_complexity :
+    T_tnum_add w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))
+      for (w, (a, b)).
   Proof.
     exists c_tnum. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_tnum_add_le w a b) as Htime. nia.
   Qed.
-  Lemma sub_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
-      tnum_bits (snd (snd x)) + 1))
-    (fun x => T_tnum_sub (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma sub_complexity :
+    T_tnum_sub w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))
+      for (w, (a, b)).
   Proof.
     exists c_tnum. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_tnum_sub_le w a b) as Htime. nia.
   Qed.
-  Lemma and_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
-      tnum_bits (snd (snd x)) + 1))
-    (fun x => T_tnum_and (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma and_complexity :
+    T_tnum_and w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))
+      for (w, (a, b)).
   Proof.
     exists c_tnum. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_tnum_and_le w a b) as Htime. nia.
   Qed.
-  Lemma or_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
-      tnum_bits (snd (snd x)) + 1))
-    (fun x => T_tnum_or (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma or_complexity :
+    T_tnum_or w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))
+      for (w, (a, b)).
   Proof.
     exists c_tnum. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_tnum_or_le w a b) as Htime. nia.
   Qed.
-  Lemma xor_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
-      tnum_bits (snd (snd x)) + 1))
-    (fun x => T_tnum_xor (fst x) (fst (snd x)) (snd (snd x))).
+  Lemma xor_complexity :
+    T_tnum_xor w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))
+      for (w, (a, b)).
   Proof.
     exists c_tnum. intros [w [a b]] _. cbn [fst snd].
     pose proof (T_tnum_xor_le w a b) as Htime. nia.
   Qed.
-  Lemma variable_complexity : bigO (X := Op.op * (positive * (tnum * tnum))) (fun _ => True)
-    (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + 1) ^ 2 +
-      tnum_bits (fst (snd (snd x))) + tnum_bits (snd (snd (snd x)))))
-    (fun x => T_tnum_variable (fst x) (fst (snd x)) (fst (snd (snd x))) (snd (snd (snd x)))).
+  Lemma variable_complexity :
+    T_tnum_variable o w a b ∈ 𝑂(N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))
+      for (o, (w, (a, b))).
   Proof.
     exists c_tnum. intros [o [w [a b]]] _. cbn [fst snd].
     pose proof (T_tnum_variable_le o w a b) as Htime. nia.
   Qed.
-  Lemma variable_shift_complexity : bigO (X := Op.op * (positive * (tnum * tnum)))
-    (fun x => fst x = Op.bvshl \/ fst x = Op.bvlshr \/ fst x = Op.bvashr)
-    (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + tnum_bits (fst (snd (snd x))) +
-      tnum_bits (snd (snd (snd x))) + 1) * (Nat.log2 (Pos.to_nat (fst (snd x))) + 2)))
-    (fun x => T_tnum_variable (fst x) (fst (snd x)) (fst (snd (snd x))) (snd (snd (snd x)))).
+  Lemma variable_shift_complexity :
+    T_tnum_variable o w a b
+      ∈ 𝑂(N.of_nat ((Pos.to_nat w + tnum_bits a + tnum_bits b + 1) *
+        (Nat.log2 (Pos.to_nat w) + 2)))
+      for (o, (w, (a, b))) |
+      o = Op.bvshl \/ o = Op.bvlshr \/ o = Op.bvashr.
   Proof.
     exists c_tnum. intros [o [w [a b]]] Hshift. cbn [fst snd] in Hshift |- *.
     assert (Hrotation : tnum_rotation o = false)
