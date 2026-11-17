@@ -69,6 +69,19 @@ Proof.
     time_step.
 Qed.
 
+(** Rule numbering is linear in its output count and initial binary carry potential. *)
+Lemma path_number_bigO {N E F} :
+  bigO (X := positive * list (path_rule N E F)) (fun _ => True)
+    (fun '(next, rules) => (N.of_nat (length rules) + path_number_potential next)%N)
+    (fun '(next, rules) => T_path_number next rules).
+Proof.
+  apply bigO_intro with (c := 3%N).
+  intros [next rules] _.
+  pose proof (T_path_number_le next rules) as Htime.
+  change (T_path_number next rules <=
+    3 * (N.of_nat (length rules) + path_number_potential next) + 3)%N; nia.
+Qed.
+
 (** Propagating an empty collection of facts keeps it empty. *)
 Lemma path_fold_nil {E F} (flow : E -> F -> list F) : forall path,
   fold_left (fun facts e => flat_map (flow e) facts) path nil = nil.
