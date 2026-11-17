@@ -6278,6 +6278,61 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       (M.nodes m + sum_weight M.nodes (rows m))). cbn [Nat.pow]. nia.
   Qed.
 
+  (** The sparse skeleton and stored codes cover all finite-entry bit work. *)
+  Lemma code_work_entries : forall m,
+    code_work (code_work Z.size_nat) m <=
+      (skel m + entries (Reached m)) * (ell m + 1).
+  Proof.
+    intro m.
+    assert (Hsum : sum_weight (code_work Z.size_nat) (rows m) <=
+      sum_weight (fun row => M.nodes row + length (M.codes row) * (ell m + 1)) (rows m)).
+    { apply sum_weight_mono. intros row Hin.
+      apply rows_find in Hin. destruct Hin as [p Hrow].
+      pose proof (stored_row_bits_bound m p row Hrow) as Hbits.
+      unfold code_work. nia. }
+    assert (Hscale : forall rs : list (M.t Z),
+      sum_weight (fun row => length (M.codes row) * (ell m + 1)) rs =
+      sum_weight (fun row => length (M.codes row)) rs * (ell m + 1)).
+    { intro rs. induction rs as [|row rs IH]; [reflexivity|].
+      change (length (M.codes row) * (ell m + 1) +
+        sum_weight (fun r => length (M.codes r) * (ell m + 1)) rs =
+        (length (M.codes row) + sum_weight (fun r => length (M.codes r)) rs) * (ell m + 1)).
+      rewrite IH. ring. }
+    rewrite sum_weight_add, Hscale in Hsum.
+    unfold code_work at 1. rewrite stored_weight_rows.
+    change (M.nodes m + length (M.codes m) + sum_weight (code_work Z.size_nat) (rows m) <=
+      (M.nodes m + sum_weight M.nodes (rows m) +
+        (length (M.codes m) + sum_weight (fun row => length (M.codes row)) (rows m))) *
+      (ell m + 1)). nia.
+  Qed.
+
+  (** Lattice operations charge sparse structure, stored codes, labels, and entry bits. *)
+  Definition lattice_work (a b : t) : nat :=
+    (skels a + skels b + entries a + entries b + labs a + labs b + 1) *
+      (bs a + bs b + ells a + ells b + 1).
+
+  (** The sparse lattice budget also covers constant dispatch on empty states. *)
+  Lemma lattice_work_pos : forall a b, 1 <= lattice_work a b.
+  Proof.
+    intros a b. unfold lattice_work. nia.
+  Qed.
+
+  (** The two arguments contribute symmetrically to the lattice budget. *)
+  Lemma lattice_work_sym : forall a b, lattice_work a b = lattice_work b a.
+  Proof.
+    intros a b. unfold lattice_work. ring.
+  Qed.
+
+  (** The published sparse lattice budget covers both matrices' nested code work. *)
+  Lemma matrix_code_work_lattice : forall ma mb,
+    code_work (code_work Z.size_nat) ma + code_work (code_work Z.size_nat) mb + 1 <=
+      lattice_work (Reached ma) (Reached mb).
+  Proof.
+    intros ma mb. pose proof (code_work_entries ma) as Ha.
+    pose proof (code_work_entries mb) as Hb.
+    unfold lattice_work, skels, labs, bs, ells. nia.
+  Qed.
+
   (** A matrix traversal adds one outer sparse-map pass to the row bound. *)
   Definition matrix_time_factor : N := (M.c_map * (row_time_factor + 1) * 2 + 8)%N.
 
@@ -6341,6 +6396,65 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma matrix_time_factor_lat : (2 * matrix_time_factor + 8 <= c_lat)%N.
   Proof.
     unfold matrix_time_factor, row_time_factor, c_lat. nia.
+  Qed.
+
+  (** Inclusion scans the sparse matrices within the entry-based lattice budget. *)
+  Lemma T_leb_entries_le : forall a b,
+    (T_leb a b <= matrix_time_factor * N.of_nat (lattice_work a b))%N.
+  Proof.
+    intros a b.
+    assert (Hfactor : (8 <= matrix_time_factor)%N) by (unfold matrix_time_factor; nia).
+    assert (Hwork : (1 <= N.of_nat (lattice_work a b))%N).
+    { pose proof (lattice_work_pos a b). lia. }
+    destruct a as [|ma], b as [|mb].
+    - time_step.
+    - time_step.
+    - time_step.
+    - eapply N.le_trans; [apply T_leb_matrix_le|].
+      apply N.mul_le_mono_l, time_of_nat_le, matrix_code_work_lattice.
+  Qed.
+
+  (** Join merges the sparse matrices within the entry-based lattice budget. *)
+  Lemma T_join_entries_le : forall a b,
+    (T_join a b <= matrix_time_factor * N.of_nat (lattice_work a b))%N.
+  Proof.
+    intros a b.
+    assert (Hfactor : (8 <= matrix_time_factor)%N) by (unfold matrix_time_factor; nia).
+    assert (Hwork : (1 <= N.of_nat (lattice_work a b))%N).
+    { pose proof (lattice_work_pos a b). lia. }
+    destruct a as [|ma], b as [|mb].
+    - time_step.
+    - time_step.
+    - time_step.
+    - eapply N.le_trans; [apply T_join_matrix_le|].
+      apply N.mul_le_mono_l, time_of_nat_le, matrix_code_work_lattice.
+  Qed.
+
+  (** Widening pays for one comparison and at most one sparse merge. *)
+  Lemma T_widen_entries_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat (lattice_work a b))%N.
+  Proof.
+    intros p a b. pose proof (T_leb_entries_le b a) as Hcompare.
+    rewrite (lattice_work_sym b a) in Hcompare.
+    set (work := N.of_nat (lattice_work a b)) in *.
+    assert (Hwork : (1 <= work)%N).
+    { unfold work. pose proof (lattice_work_pos a b). lia. }
+    assert (Hmerge : forall ma mb, a = Reached ma -> b = Reached mb ->
+      (M.T_merge row_widen (fun x y => T_row_widen x y) ma mb <=
+        matrix_time_factor * work)%N).
+    { intros ma mb Ha Hb. subst a b. unfold work.
+      eapply N.le_trans; [apply T_widen_merge_le|].
+      apply N.mul_le_mono_l, time_of_nat_le, matrix_code_work_lattice. }
+    assert (Hbudget : ((2 * matrix_time_factor + 8) * work <= c_lat * work)%N).
+    { apply N.mul_le_mono_r. exact matrix_time_factor_lat. }
+    clearbody work. unfold T_widen. cbn beta iota zeta.
+    destruct (leb b a); cbn beta iota zeta.
+    - nia.
+    - destruct a as [|ma], b as [|mb]; cbn beta iota zeta.
+      + nia.
+      + nia.
+      + nia.
+      + specialize (Hmerge ma mb eq_refl eq_refl). nia.
   Qed.
 
   (** Comparison dispatch and sparse scanning fit the matrix coefficient. *)
@@ -12650,26 +12764,41 @@ Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
     rewrite Nat2N.inj_add, Nat2N.inj_mul. nia.
   Qed.
 
+  (** Inclusion is linear in sparse structure and stored entries times their bit width. *)
   Lemma leb_bigO : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
         labs (fst x) + labs (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
     (fun x => T_leb (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := matrix_time_factor). intros [a b] _.
+    cbn [fst snd]. pose proof (T_leb_entries_le a b) as Htime.
+    unfold lattice_work in Htime. lia.
+  Qed.
 
+  (** Join is linear in sparse structure and stored entries times their bit width. *)
   Lemma join_bigO : bigO (fun _ : t * t => True)
     (fun x => N.of_nat ((skels (fst x) + skels (snd x) + entries (fst x) + entries (snd x) +
         labs (fst x) + labs (snd x) + 1) *
       (bs (fst x) + bs (snd x) + ells (fst x) + ells (snd x) + 1)))
     (fun x => T_join (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := matrix_time_factor). intros [a b] _.
+    cbn [fst snd]. pose proof (T_join_entries_le a b) as Htime.
+    unfold lattice_work in Htime. lia.
+  Qed.
 
+  (** Widening is linear in sparse structure and stored entries times their bit width. *)
   Lemma widen_bigO : bigO (fun _ : wparam * t * t => True)
     (fun x => N.of_nat ((skels (snd (fst x)) + skels (snd x) +
         entries (snd (fst x)) + entries (snd x) + labs (snd (fst x)) + labs (snd x) + 1) *
       (bs (snd (fst x)) + bs (snd x) + ells (snd (fst x)) + ells (snd x) + 1)))
     (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_lat). intros [[p a] b] _.
+    cbn [fst snd]. pose proof (T_widen_entries_le p a b) as Htime.
+    unfold lattice_work in Htime. lia.
+  Qed.
 
   Lemma assign_fast_bigO : bigO (fun _ : X.t * term L.op X.t * t => True)
     (fun x => (N.of_nat (skels (snd x) +
