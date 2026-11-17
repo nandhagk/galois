@@ -107,19 +107,23 @@ Module OperationTests.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The union contains the member of the left set. *)
-  Example union_contains_left_member : PosSet.mem 1%positive (PosSet.union left_set right_set) = true.
+  Example union_contains_left_member :
+    PosSet.mem 1%positive (PosSet.union left_set right_set) = true.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The union contains the member that both sets share. *)
-  Example union_contains_shared_member : PosSet.mem 2%positive (PosSet.union left_set right_set) = true.
+  Example union_contains_shared_member :
+    PosSet.mem 2%positive (PosSet.union left_set right_set) = true.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The union contains the member of the right set. *)
-  Example union_contains_right_member : PosSet.mem 3%positive (PosSet.union left_set right_set) = true.
+  Example union_contains_right_member :
+    PosSet.mem 3%positive (PosSet.union left_set right_set) = true.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The union contains no member that neither set has. *)
-  Example union_omits_unknown_member : PosSet.mem 4%positive (PosSet.union left_set right_set) = false.
+  Example union_omits_unknown_member :
+    PosSet.mem 4%positive (PosSet.union left_set right_set) = false.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The union with an empty left set is the right set. *)
@@ -133,15 +137,18 @@ Module OperationTests.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The intersection drops the member that only the left set has. *)
-  Example intersection_drops_left_only_member : PosSet.mem 1%positive (PosSet.inter left_set right_set) = false.
+  Example intersection_drops_left_only_member :
+    PosSet.mem 1%positive (PosSet.inter left_set right_set) = false.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The intersection keeps the member that both sets share. *)
-  Example intersection_keeps_shared_member_checked : PosSet.mem 2%positive (PosSet.inter left_set right_set) = true.
+  Example intersection_keeps_shared_member_checked :
+    PosSet.mem 2%positive (PosSet.inter left_set right_set) = true.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The intersection drops the member that only the right set has. *)
-  Example intersection_drops_right_only_member : PosSet.mem 3%positive (PosSet.inter left_set right_set) = false.
+  Example intersection_drops_right_only_member :
+    PosSet.mem 3%positive (PosSet.inter left_set right_set) = false.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The intersection with an empty left set is empty. *)
@@ -155,15 +162,18 @@ Module OperationTests.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The difference drops the member that only the right set has, keeping the left member. *)
-  Example difference_keeps_left_member : PosSet.mem 1%positive (PosSet.diff left_set right_set) = true.
+  Example difference_keeps_left_member :
+    PosSet.mem 1%positive (PosSet.diff left_set right_set) = true.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The difference drops the member that both sets share. *)
-  Example difference_drops_shared_member : PosSet.mem 2%positive (PosSet.diff left_set right_set) = false.
+  Example difference_drops_shared_member :
+    PosSet.mem 2%positive (PosSet.diff left_set right_set) = false.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The difference drops the member that only the right set has. *)
-  Example difference_drops_right_only_member : PosSet.mem 3%positive (PosSet.diff left_set right_set) = false.
+  Example difference_drops_right_only_member :
+    PosSet.mem 3%positive (PosSet.diff left_set right_set) = false.
   Proof. vm_compute. reflexivity. Qed.
 
   (** The difference with an empty right set is the left set. *)
