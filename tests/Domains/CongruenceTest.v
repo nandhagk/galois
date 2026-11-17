@@ -30,6 +30,24 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** The normal-residue path agrees with reduction at the width boundary. *)
+Example p1_cong_norm_width_one :
+  map (Payload.congr_norm 1%positive) [C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot] =
+    [C 0 1; CBot; CBot; C 0 1; CBot; CBot].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Normal residues are unchanged at the two larger test widths. *)
+Example p1_cong_norm_normal :
+  map (fun w => map (Payload.congr_norm w)
+    [C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot]) [8%positive; 64%positive] =
+    [[C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot];
+     [C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot]].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example dom4_cong_negative_modulus : Payload.congr_norm 8%positive (C (-4) 6) = C 4 2.
 Proof.
   vm_compute. reflexivity.

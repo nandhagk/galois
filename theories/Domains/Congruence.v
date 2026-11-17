@@ -1297,13 +1297,23 @@ Qed.
 Module CongruenceCode (L : WORD_LANGUAGE_OPS) <: CONGRUENCE_OPS L.
   Definition p := congr.
   Definition wordb w z := (0 <=? z) && (z <? modulus w).
-  Definition congr_norm w c :=
+  Definition congr_norm_ref w c :=
     match c with
     | CBot => CBot
     | C m r =>
       let m' := Z.abs m in
       if m' =? 0 then if wordb w r then C 0 r else CBot else
         let r' := r mod m' in
+        if modulus w <=? m' then if wordb w r' then C 0 r' else CBot
+        else C m' r'
+    end.
+  Definition congr_norm w c :=
+    match c with
+    | CBot => CBot
+    | C m r =>
+      let m' := Z.abs m in
+      if m' =? 0 then if wordb w r then C 0 r else CBot else
+        let r' := if 0 <=? r then if r <? m' then r else r mod m' else r mod m' in
         if modulus w <=? m' then if wordb w r' then C 0 r' else CBot
         else C m' r'
     end.
@@ -1410,6 +1420,18 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     | C m r => is_word w z /\ (z - r) mod m = 0
     end.
 
+  (** Normal residues skip division without changing any normalization result. *)
+  Lemma congr_norm_eq : forall w c, congr_norm w c = congr_norm_ref w c.
+  Proof.
+    intros w [| m r]; [reflexivity |].
+    unfold congr_norm, congr_norm_ref.
+    destruct (Z.abs m =? 0); [reflexivity |].
+    destruct (0 <=? r) eqn:Hnonnegative; [| reflexivity].
+    destruct (r <? Z.abs m) eqn:Hsmall; [| reflexivity].
+    apply Z.leb_le in Hnonnegative. apply Z.ltb_lt in Hsmall.
+    rewrite Z.mod_small by lia. reflexivity.
+  Qed.
+
   Local Lemma cong_wordb_spec w z : wordb w z = true <-> is_word w z.
   Proof.
     unfold wordb. rewrite andb_true_iff, Z.leb_le, Z.ltb_lt. reflexivity.
@@ -1451,7 +1473,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Theorem cong_norm_gamma w c z : gamma_mod w (congr_norm w c) z <-> gamma_mod w c z.
   Proof.
     destruct c as [|m r]; [reflexivity|].
-    unfold congr_norm. destruct (Z.abs m =? 0) eqn:Hm.
+    rewrite !congr_norm_eq; unfold congr_norm_ref. destruct (Z.abs m =? 0) eqn:Hm.
     - apply Z.eqb_eq in Hm.
       assert (m = 0) by (destruct m; cbn in Hm; congruence). subst m.
       destruct (wordb w r) eqn:Hr; cbn [gamma_mod]; rewrite Z.mod_0_r.
@@ -1492,7 +1514,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
 
   Local Lemma cong_norm_canonical w c : strong_canonical w (congr_norm w c).
   Proof.
-    destruct c as [|m r]; [exact I|]. unfold congr_norm.
+    destruct c as [|m r]; [exact I|]. rewrite !congr_norm_eq; unfold congr_norm_ref.
     destruct (Z.abs m =? 0) eqn:Hm.
     - destruct (wordb w r) eqn:Hr; cbn; [left; split|exact I];
         [reflexivity|now apply cong_wordb_spec].
@@ -1506,7 +1528,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Local Lemma cong_canonical_fixed w c : strong_canonical w c -> congr_norm w c = c.
   Proof.
     destruct c as [|m r]; [reflexivity|].
-    intros [[-> Hword]|[[Hpositive Hsmall] Hr]]; unfold congr_norm.
+    intros [[-> Hword]|[[Hpositive Hsmall] Hr]]; rewrite !congr_norm_eq; unfold congr_norm_ref.
     - cbn. now rewrite (proj2 (cong_wordb_spec w r) Hword).
     - rewrite Z.abs_eq by lia. rewrite (proj2 (Z.eqb_neq m 0)) by lia.
       rewrite Z.mod_small by exact Hr.
@@ -1577,7 +1599,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     raw_leb (C m r) (congr_norm w (C m r)) = true /\
     raw_leb (congr_norm w (C m r)) (C m r) = true.
   Proof.
-    intros Hm Hword. unfold congr_norm. rewrite Z.abs_eq by lia.
+    intros Hm Hword. rewrite !congr_norm_eq; unfold congr_norm_ref. rewrite Z.abs_eq by lia.
     destruct (m =? 0) eqn:Hzero.
     - apply Z.eqb_eq in Hzero. subst m.
       rewrite (proj2 (cong_wordb_spec w r) Hword). split; apply cong_raw_leb_refl.
@@ -1652,7 +1674,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
 
   Local Lemma cong_norm_raw_lower w c : raw_leb (congr_norm w c) c = true.
   Proof.
-    destruct c as [|m r]; [reflexivity|]. unfold congr_norm.
+    destruct c as [|m r]; [reflexivity|]. rewrite !congr_norm_eq; unfold congr_norm_ref.
     assert (Hresidue : (m | r mod Z.abs m - r)).
     { eapply cong_divide_trans; [apply cong_abs_multiple|].
       destruct (cong_residue_difference (Z.abs m) r) as [k Hk]. exists (-k). nia. }
@@ -2365,10 +2387,52 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
       pose proof (integer_modulo_size r (Z.abs m)) as Hrembits.
       rewrite CongruenceCRT.integer_abs_size in Hrembits.
       pose proof (wordb_time_budget w (r mod Z.abs m) n ltac:(lia)) as Hremword.
+      pose proof (Z.T_leb_le 0 r) as Hnonnegative.
+      pose proof (Z.T_ltb_le r (Z.abs m)) as Hsmall.
+      assert (Hrsize : (N.of_nat (Z.size_nat r + 1) <= N.of_nat n)%N).
+      { apply time_of_nat_le. lia. }
       assert (Hwidth : (N.of_nat (Pos.to_nat w + 1) <= N.of_nat n)%N).
       { apply time_of_nat_le. lia. }
       time_unfold T_congr_norm. cbn beta zeta.
-      destruct (Z.abs m =? 0), (modulus w <=? Z.abs m); lia.
+      destruct (Z.abs m =? 0), (0 <=? r), (r <? Z.abs m),
+        (modulus w <=? Z.abs m); cbn beta iota zeta;
+        rewrite ?Nat2N.inj_add in Hrsize; time_cbn_all; lia.
+  Qed.
+
+  (** Canonical inputs take only comparisons and the word test during normalization. *)
+  Lemma normalization_time_linear : forall w a,
+    canonical w a ->
+    (T_congr_norm w a <=
+      128 * N.of_nat (Pos.to_nat w + congr_bits a + 1))%N.
+  Proof.
+    intros w [| m r] Hcanonical.
+    - time_unfold T_congr_norm. cbn [congr_bits].
+      rewrite Nat2N.inj_add. cbn [N.of_nat]. lia.
+    - cbn [canonical congr_bits] in *.
+      remember (Pos.to_nat w + (Z.size_nat m + Z.size_nat r) + 1)%nat as n eqn:Hn.
+      pose proof (Z.T_abs_le m) as Habs.
+      pose proof (eqb_time_budget n (Z.abs m) 0
+        ltac:(rewrite CongruenceCRT.integer_abs_size; lia)) as Hzero.
+      pose proof (Z.T_leb_le 0 r) as Hnonnegative.
+      pose proof (Z.T_ltb_le r (Z.abs m)) as Hsmall.
+      pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+      pose proof (WordTime.word_modulus_size_bound w) as Hmodsize.
+      pose proof (Z.T_leb_le (modulus w) (Z.abs m)) as Hlarge.
+      pose proof (wordb_time_budget w r n ltac:(lia)) as Hword.
+      assert (Hwidth : (N.of_nat (Pos.to_nat w + 1) <= N.of_nat n)%N).
+      { apply time_of_nat_le. lia. }
+      assert (Hrsize : (N.of_nat (Z.size_nat r + 1) <= N.of_nat n)%N).
+      { apply time_of_nat_le. lia. }
+      apply time_of_nat_le in Hmodsize.
+      rewrite !Nat2N.inj_add in *.
+      time_unfold T_congr_norm. cbn beta zeta.
+      destruct Hcanonical as [[-> Hr] | [Hm Hr]].
+      + cbn [Z.abs Z.eqb] in *. time_cbn_all. lia.
+      + rewrite Z.abs_eq in * by lia.
+        rewrite (proj2 (Z.eqb_neq m 0) ltac:(lia)).
+        rewrite (proj2 (Z.leb_le 0 r) ltac:(lia)).
+        rewrite (proj2 (Z.ltb_lt r m) ltac:(lia)).
+        destruct (modulus w <=? m); time_cbn_all; lia.
   Qed.
 
   (** Intersecting a class modulus with the word modulus preserves a quadratic budget. *)
@@ -2971,7 +3035,10 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     (fun x => canonical (fst x) (snd x))
     (fun x => N.of_nat (Pos.to_nat (fst x) + congr_bits (snd x) + 1))
     (fun x => T_congr_norm (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 128%N. intros [w a] Hcanonical. cbn [fst snd] in *.
+    pose proof (normalization_time_linear w a Hcanonical). nia.
+  Qed.
   (** Negation of a canonical payload is linear. *)
   Lemma congr_neg_lin_bigO : bigO (X := positive * congr)
     (fun x => canonical (fst x) (snd x))
