@@ -2,10 +2,15 @@
 
     Operators evaluate fixed-width words and literals retain their widths.
     For example, an eight-bit literal is wrapped before evaluation returns it.
+
+    Main results
+    - [eval_op_complexity] Concrete word evaluation has the published quadratic class.
+
     Builds on: LangSig and bit-vector operations. *)
 
 From Stdlib Require Import List ZArith NArith Bool Lia Ring.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Bits Require Import Word Fun Testbit Op Arith.
 From Galois.Domains Require Import LangSig WordSig.
 Import List.ListNotations.
@@ -1391,11 +1396,11 @@ Module WordTime.
   Qed.
 
   (** Concrete word evaluation is quadratic in operator widths and raw operand sizes. *)
-  Theorem eval_op_complexity : bigO (X := Op.op * list (positive * Z)) (fun _ => True)
-    (fun x => N.of_nat (((Op.op_widths (fst x) +
+  Theorem eval_op_complexity :
+    Op.T_eval_op o cs ∈ 𝑂(N.of_nat (((Op.op_widths o +
       fold_right Nat.add 0
-        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) (snd x)) + 1) ^ 2)%nat))
-    (fun x => Op.T_eval_op (fst x) (snd x)).
+        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) cs) + 1) ^ 2)%nat))
+    for (o, cs).
   Proof.
     exists 524288%N. intros [o xs] _. cbn [fst snd].
     pose proof (word_eval_time_bound o xs) as Htime. nia.
@@ -1530,11 +1535,11 @@ Module WordLanguageT <: WORD_LANGUAGE_T.
   Qed.
 
   (** Word-language evaluation retains its published quadratic work class. *)
-  Lemma eval_op_complexity : bigO (X := op * list (positive * Z)) (fun _ => True)
-    (fun x => N.of_nat (((Op.op_widths (fst x) +
+  Lemma eval_op_complexity :
+    T_eval_op o cs ∈ 𝑂(N.of_nat (((Op.op_widths o +
       fold_right Nat.add 0
-        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) (snd x)) + 1) ^ 2)%nat))
-    (fun x => T_eval_op (fst x) (snd x)).
+        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) cs) + 1) ^ 2)%nat))
+    for (o, cs).
   Proof.
     exists c_word. intros [o cs] _. cbn [fst snd].
     pose proof (T_eval_op_le o cs) as Htime. nia.
