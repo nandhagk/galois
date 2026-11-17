@@ -124,3 +124,28 @@ Example advance_keeps_other_nodes :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** The first column rejects every child of the smaller second-column pivot. *)
+Definition first_probe_miss_relation : JoinFixtureIndex.t :=
+  [(1, [(Val 2, 2); (Val 3, 3); (Val 5, 4)])]%positive.
+
+Definition later_probe_pivot_relation : JoinFixtureIndex.t :=
+  [(1, [(Val 7, 2); (Val 11, 3)])]%positive.
+
+Definition first_probe_miss_plan := JPlan 1 [[0]; [0]].
+
+(** The pivot must come after the column that rejects its candidates. *)
+Example first_probe_miss_uses_later_pivot :
+  FixtureJoin.choose_index first_probe_miss_plan
+    [first_probe_miss_relation; later_probe_pivot_relation] 0 [1; 1]%positive = Some 1.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Both pivot children fail the first probe, leaving the join empty. *)
+Example run_first_probe_miss :
+  FixtureJoin.run first_probe_miss_plan
+    [first_probe_miss_relation; later_probe_pivot_relation] = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
