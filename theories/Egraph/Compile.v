@@ -7,7 +7,8 @@
     - [flatten_complete] A canonical view matches every represented left side whose condition
       holds.
     - [compile_complexity] Compilation is linear in the rewrites and the analysis rules.
-    - [compile_rule_complexity] Compiling one rewrite is in the linear class of its size.
+    - [compile_rule_complexity] Compiling one rewrite is in the linear class of its size, O(r) for
+      rewrite size r.
 
     Builds on: CompileSig. *)
 
@@ -3653,8 +3654,8 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
 
   (** Compilation is linear in the rewrite inventory and the appended rules. *)
   Lemma compile_complexity :
-    T_compile ds rws ans ∈ 𝑂(N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0%nat rws +
-      length ans + 1))
+    T_compile ds rws ans ∈
+      𝑂(N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0%nat rws + length ans + 1))
       for (ds, rws, ans).
   Proof.
     apply bigO_intro with (c := c_compile).
