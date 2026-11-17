@@ -4,12 +4,13 @@
     For example, resolver targets remain in their supplied order.
 
     Groups:
-    - Variables: the variable universe lists the variables in order, and an empty program has none.
-    - Ssa: the SSA inventories give entry parameters, guards and definitions.
-    - Points: the point projections give block parameters, edge arguments and definitions.
-    - Calls: the call inventory, resolved sites and call graph keep their order.
-    - Icfg: the edge kinds of the interprocedural graph.
-    - Effects: the effect flags and the reads and writes of each effect.
+    - [VariableTests] The variable universe lists the variables in order, and an empty program has
+      none.
+    - [SsaTests] The SSA inventories give entry parameters, guards and definitions.
+    - [PointTests] The point projections give block parameters, edge arguments and definitions.
+    - [CallTests] The call inventory, resolved sites and call graph keep their order.
+    - [IcfgTests] The edge kinds of the interprocedural graph.
+    - [EffectTests] The effect flags and the reads and writes of each effect.
 
     Builds on: Program presentation code and Base tries. *)
 
