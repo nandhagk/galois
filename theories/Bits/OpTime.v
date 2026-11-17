@@ -5,7 +5,8 @@
 
     Main results
     - [eval_op_linear_complexity] Linear operator evaluation is linear in metadata widths and
-      raw operand sizes.
+      raw operand sizes,
+      O(op widths + total operand size).
 
     Builds on: Word, Fun and Op. *)
 
