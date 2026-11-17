@@ -48,3 +48,12 @@ Example filters_unlisted_successors_and_rows :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Counting retains repeated listed rows while excluding unlisted successor occurrences. *)
+Example counted_rebuild_retains_repeated_rows :
+  let g := Prepared (Digraph [1; 1; 2] (PTrieCode.set 1 [2; 2; 99] Empty)) Empty 0%N 0%N in
+  (comps (SccCode.run g), nv (scc_graph_counted g), ne (scc_graph_counted g)) =
+    ([[2]; [1]], 3%N, 4%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
