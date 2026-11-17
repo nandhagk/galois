@@ -6441,45 +6441,72 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Lemma normalise_bigO : bigO (X := positive * tnum) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
     (fun x => T_tnum_normalise (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_tnum. intros [w a] _. cbn [fst snd].
+    pose proof (T_tnum_normalise_le w a) as Htime. nia.
+  Qed.
   Lemma not_bigO : bigO (X := positive * tnum) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
     (fun x => T_tnum_not (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_tnum. intros [w a] _. cbn [fst snd].
+    pose proof (T_tnum_not_le w a) as Htime. nia.
+  Qed.
   Lemma neg_bigO : bigO (X := positive * tnum) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
     (fun x => T_tnum_neg (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_tnum. intros [w a] _. cbn [fst snd].
+    pose proof (T_tnum_neg_le w a) as Htime. nia.
+  Qed.
   Lemma add_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_add (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_tnum. intros [w [a b]] _. cbn [fst snd].
+    pose proof (T_tnum_add_le w a b) as Htime. nia.
+  Qed.
   Lemma sub_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_sub (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_tnum. intros [w [a b]] _. cbn [fst snd].
+    pose proof (T_tnum_sub_le w a b) as Htime. nia.
+  Qed.
   Lemma and_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_and (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_tnum. intros [w [a b]] _. cbn [fst snd].
+    pose proof (T_tnum_and_le w a b) as Htime. nia.
+  Qed.
   Lemma or_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_or (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_tnum. intros [w [a b]] _. cbn [fst snd].
+    pose proof (T_tnum_or_le w a b) as Htime. nia.
+  Qed.
   Lemma xor_bigO : bigO (X := positive * (tnum * tnum)) (fun _ => True)
     (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
       tnum_bits (snd (snd x)) + 1))
     (fun x => T_tnum_xor (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_tnum. intros [w [a b]] _. cbn [fst snd].
+    pose proof (T_tnum_xor_le w a b) as Htime. nia.
+  Qed.
   Lemma variable_bigO : bigO (X := Op.op * (positive * (tnum * tnum))) (fun _ => True)
     (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + 1) ^ 2 +
       tnum_bits (fst (snd (snd x))) + tnum_bits (snd (snd (snd x)))))
     (fun x => T_tnum_variable (fst x) (fst (snd x)) (fst (snd (snd x))) (snd (snd (snd x)))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_tnum. intros [o [w [a b]]] _. cbn [fst snd].
+    pose proof (T_tnum_variable_le o w a b) as Htime. nia.
+  Qed.
   Lemma variable_shift_bigO : bigO (X := Op.op * (positive * (tnum * tnum)))
     (fun x => fst x = Op.bvshl \/ fst x = Op.bvlshr \/ fst x = Op.bvashr)
     (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + tnum_bits (fst (snd (snd x))) +
