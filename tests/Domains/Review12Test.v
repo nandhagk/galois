@@ -2,12 +2,12 @@
 
     These fixtures distinguish width classes and exercise the accepted view interface.
     For example, positive signs are singletons at width two and ranges at width three.
-    Builds on: Sign, ZLang and Interval. *)
+    Builds on: Sign, ZLang and Interval.
 
-(* Groups:
-   - Signs: symbolic and width-dependent comparisons of sign values.
-   - Constants: the shifted constant payload and the constant table.
-   - Congruence and tagged: dispatch through the congruence and tagged tables. *)
+    Groups:
+    - [SignTests] Symbolic and width-dependent comparisons of sign values.
+    - [ConstantTests] The shifted constant payload and the constant table.
+    - [DispatchTests] Dispatch through the congruence and tagged tables. *)
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Op Word.
@@ -103,13 +103,13 @@ Module SignTests.
       [1%positive; 2%positive; 3%positive; 4%positive; 8%positive; 64%positive] = true.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Equality of two positive signs at width two gives the table's sign result. *)
+  (** Two positive signs are singletons at width two, so their equality is exactly true. *)
   Example positive_equality_at_width_two :
     SignTable.sign_cmp bveq 2%positive (Sgn false false true) (Sgn false false true) =
       Sgn true false false.
   Proof. vm_compute. reflexivity. Qed.
 
-  (** Equality of two positive signs at width three gives the table's sign result. *)
+  (** Two positive signs are ranges at width three, so their equality may be true or false. *)
   Example positive_equality_at_width_three :
     SignTable.sign_cmp bveq 3%positive (Sgn false false true) (Sgn false false true) =
       Sgn true true false.
