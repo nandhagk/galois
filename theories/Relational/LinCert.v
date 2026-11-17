@@ -2,12 +2,25 @@
 
     The checker combines admissible rows and compares their summed coefficients.
     For example, opposite occurrences of one variable cancel before comparison.
+
+    Main results
+    - [check_entails_sound] Accepted certificates entail their integer conclusion.
+    - [check_empty_sound] Accepted contradictions exclude every integer model.
+    - [combine_spec] Admissible multipliers combine to the weighted sum of the rows.
+    - [check_entails_complete] Exact cut-free certificates are accepted.
+    - [check_empty_complete] Rational contradictions are accepted.
+    - [combine_complexity] Combination charges the rows with a nonzero multiplier.
+    - [check_entails_complexity] Entailment checking charges the nonzero rows, the certificate
+      scale and the conclusion.
+    - [check_empty_complexity] Contradiction checking charges the nonzero rows.
+
     Builds on: LinCertSig. *)
 
 From Stdlib Require Import List ZArith QArith Lia Bool Lqa.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Relational Require Import LinForm LinCertSig.
+Import ComplexityNotations.
 Local Open Scope nat_scope.
 
 (** Positive and negative contributions grow separately until the final subtraction. *)
@@ -2433,28 +2446,23 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     pose proof (csize_nz_le P ms) as Hsize. nia.
   Qed.
   (** Combination charges the rows with a nonzero multiplier. *)
-  Lemma combine_complexity : bigO (fun _ : list (lcons X.t) * list Z => True)
-    (fun x => N.of_nat (csize_nz (fst x) (snd x)))
-    (fun x => T_combine (fst x) (snd x)).
+  Lemma combine_complexity :
+    T_combine P ms ∈ 𝑂(N.of_nat (csize_nz P ms)) for (P, ms).
   Proof.
     apply bigO_intro with (c := c_lc). intros [P ms] _.
     pose proof (T_combine_le_nz P ms). cbn [fst snd]. nia.
   Qed.
   (** Entailment checking charges the nonzero rows, the certificate scale and the conclusion. *)
   Lemma check_entails_complexity :
-    bigO (fun _ : list (lcons X.t) * lcons X.t * cert => True)
-    (fun x => N.of_nat (csize_nz (fst (fst x)) (mults (snd x)) +
-      (Z.size_nat (scale (snd x)) + 1) *
-        (lsize (snd (fst x)) + cbits (fst (fst x)) (mults (snd x)) + 1)))
-    (fun x => T_check_entails (fst (fst x)) (snd (fst x)) (snd x)).
+    T_check_entails P c k ∈ 𝑂(N.of_nat (csize_nz P (mults k) +
+      (Z.size_nat (scale k) + 1) * (lsize c + cbits P (mults k) + 1))) for (P, c, k).
   Proof.
     apply bigO_intro with (c := c_lc). intros [[P c] k] _.
     pose proof (T_check_entails_le_nz P c k). cbn [fst snd]. nia.
   Qed.
   (** Contradiction checking charges the nonzero rows. *)
-  Lemma check_empty_complexity : bigO (fun _ : list (lcons X.t) * list Z => True)
-    (fun x => N.of_nat (csize_nz (fst x) (snd x)))
-    (fun x => T_check_empty (fst x) (snd x)).
+  Lemma check_empty_complexity :
+    T_check_empty P ms ∈ 𝑂(N.of_nat (csize_nz P ms)) for (P, ms).
   Proof.
     apply bigO_intro with (c := c_lc). intros [P ms] _.
     pose proof (T_check_empty_le_nz P ms). cbn [fst snd]. nia.

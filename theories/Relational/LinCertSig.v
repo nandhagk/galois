@@ -2,12 +2,25 @@
 
     Certificates combine input constraints to justify an output constraint.
     For example, nonnegative multipliers combine two upper bounds.
+
+    Main results
+    - [check_entails_sound] Accepted certificates entail their integer conclusion.
+    - [check_empty_sound] Accepted contradictions exclude every integer model.
+    - [combine_spec] Admissible multipliers combine to the weighted sum of the rows.
+    - [check_entails_complete] Exact cut-free certificates are accepted.
+    - [check_empty_complete] Rational contradictions are accepted.
+    - [combine_complexity] Combination charges the rows with a nonzero multiplier.
+    - [check_entails_complexity] Entailment checking charges the nonzero rows, the certificate
+      scale and the conclusion.
+    - [check_empty_complexity] Contradiction checking charges the nonzero rows.
+
     Builds on: KeySig and LinForm. *)
 
 From Stdlib Require Import List ZArith QArith.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Relational Require Import LinForm.
+Import ComplexityNotations.
 Local Open Scope nat_scope.
 
 Record cert := Cert {
@@ -129,20 +142,15 @@ Module Type LINCERT_TIME (X : KEY_T) (Import C : LINCERT X).
   Parameter T_check_empty_le : forall P ms,
     (T_check_empty P ms <= c_lc * N.of_nat ((csize P ms + 1)%nat))%N.
   (** Combination charges the rows with a nonzero multiplier. *)
-  Parameter combine_complexity : bigO (fun _ : list (lcons X.t) * list Z => True)
-    (fun x => N.of_nat (csize_nz (fst x) (snd x)))
-    (fun x => T_combine (fst x) (snd x)).
+  Parameter combine_complexity :
+    T_combine P ms ∈ 𝑂(N.of_nat (csize_nz P ms)) for (P, ms).
   (** Entailment checking charges the nonzero rows, the certificate scale and the conclusion. *)
   Parameter check_entails_complexity :
-    bigO (fun _ : list (lcons X.t) * lcons X.t * cert => True)
-    (fun x => N.of_nat (csize_nz (fst (fst x)) (mults (snd x)) +
-      (Z.size_nat (scale (snd x)) + 1) *
-        (lsize (snd (fst x)) + cbits (fst (fst x)) (mults (snd x)) + 1)))
-    (fun x => T_check_entails (fst (fst x)) (snd (fst x)) (snd x)).
+    T_check_entails P c k ∈ 𝑂(N.of_nat (csize_nz P (mults k) +
+      (Z.size_nat (scale k) + 1) * (lsize c + cbits P (mults k) + 1))) for (P, c, k).
   (** Contradiction checking charges the nonzero rows. *)
-  Parameter check_empty_complexity : bigO (fun _ : list (lcons X.t) * list Z => True)
-    (fun x => N.of_nat (csize_nz (fst x) (snd x)))
-    (fun x => T_check_empty (fst x) (snd x)).
+  Parameter check_empty_complexity :
+    T_check_empty P ms ∈ 𝑂(N.of_nat (csize_nz P ms)) for (P, ms).
 End LINCERT_TIME.
 
 Module Type LINCERT_T (X : KEY_T) := LINCERT X <+ LINCERT_TIME X.
