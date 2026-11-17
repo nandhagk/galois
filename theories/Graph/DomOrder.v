@@ -1441,7 +1441,7 @@ Proof.
     pose proof (dom_lt_compress_bounded bound semis st Hinv) as Hnext.
     now rewrite Hstep in Hnext. }
   specialize (Hrun Hgo Hstop Hinitial).
-  unfold dom_lt_eval. fold initial.
+  rewrite dom_cached_eval_agrees. unfold dom_lt_eval_spec. fold initial.
   destruct (loopN (dom_lt_compress_step semis) (N.double fuel + 3)%N initial)
     as [state|result].
   - split; [exact (proj1 Hrun)|exact Hvertex].
@@ -2712,7 +2712,8 @@ Proof.
     (fun st result Hshape Hstep =>
       dom_lt_compress_shape_stop before path root semis st result Hshape Hstep)
     Hinitial) as Hresult.
-  rewrite Hrun in Hresult. unfold dom_lt_eval. fold initial. rewrite Hrun. exact Hresult.
+  rewrite Hrun in Hresult. rewrite dom_cached_eval_agrees.
+  unfold dom_lt_eval_spec. fold initial. rewrite Hrun. exact Hresult.
 Qed.
 
 Lemma dom_lt_eval_level_credit bound fuel semis before start path root :
@@ -2749,6 +2750,46 @@ Proof.
     pose proof (Hcost state Hinv) as Htime. cbn beta. nia.
   - intros state result [Hstate Hinv] Hstep. now apply Hcost.
   - now split.
+Qed.
+
+(** Cached compression uses the same decreasing frame count after forgetting its score. *)
+Lemma dom_cached_compress_path_time before path root semis (Inv : dom_lt_walk -> Prop)
+    unit fuel initial :
+  NoDup (map N.to_nat path) ->
+  dom_cached_valid semis initial ->
+  dom_lt_compress_shape before path root (dom_cached_forget initial) ->
+  Inv (dom_cached_forget initial) ->
+  (forall state next, Inv state -> dom_lt_compress_step semis state = inl next -> Inv next) ->
+  (forall state, Inv (dom_cached_forget state) ->
+    (T_dom_cached_compress_step semis state <= unit)%N) ->
+  (T_loopN (dom_cached_compress_step semis) (T_dom_cached_compress_step semis)
+    fuel initial <=
+    c_loopN * ((unit + 1) *
+      N.of_nat (dom_lt_compress_frames (length path) (dom_cached_forget initial)) +
+      unit + N.of_nat (N.size_nat fuel) + 1))%N.
+Proof.
+  intros Hunique Hvalid Hshape Hinitial Hpreserve Hcost.
+  apply (T_loopN_le _ _ (dom_cached_compress_step semis)
+    (T_dom_cached_compress_step semis)
+    (fun state => dom_cached_valid semis state /\
+      dom_lt_compress_shape before path root (dom_cached_forget state) /\
+      Inv (dom_cached_forget state))
+    (fun state => ((unit + 1) *
+      N.of_nat (dom_lt_compress_frames (length path) (dom_cached_forget state)))%N)
+    unit fuel initial).
+  - intros state next [Hcache [Hstate Hinv]] Hstep.
+    destruct (dom_cached_step_simulates semis state Hcache) as [Hproject Hnext_cache].
+    rewrite Hstep in Hproject, Hnext_cache. cbn [dom_cached_result] in Hproject.
+    symmetry in Hproject.
+    destruct (dom_lt_compress_shape_step before path root semis
+      (dom_cached_forget state) (dom_cached_forget next)
+      Hunique Hstate Hproject) as [Hnext Hframes].
+    split.
+    + split; [exact Hnext_cache|]. split; [exact Hnext|].
+      now apply (Hpreserve (dom_cached_forget state) (dom_cached_forget next)).
+    + pose proof (Hcost state Hinv) as Htime. cbn beta. nia.
+  - intros state result [Hcache [Hstate Hinv]] Hstep. now apply Hcost.
+  - split; [exact Hvalid|]. split; [exact Hshape|exact Hinitial].
 Qed.
 
 (** * Shortcut domains and remaining forest credit *)
@@ -2826,7 +2867,7 @@ Proof.
     pose proof (dom_lt_compress_domain before semis state Hinv) as Hnext.
     now rewrite Hstep in Hnext. }
   specialize (Hrun Hgo Hstop Hinitial).
-  unfold dom_lt_eval. fold initial.
+  rewrite dom_cached_eval_agrees. unfold dom_lt_eval_spec. fold initial.
   destruct (loopN (dom_lt_compress_step semis) (N.double fuel + 3)%N initial)
     as [state|result]; [exact (proj1 Hrun)|exact Hrun].
 Qed.
@@ -2998,6 +3039,78 @@ Proof.
         time_simpl;
         clear -Hvertex_width Hkey_width Hkey_time Hlabel_time Hmin_time Hshort_set Hlabel_set;
         rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** Binary comparison reads at most the fresh score's representation width. *)
+Lemma dom_cached_time_leb left right :
+  (N.T_leb left right <= N.of_nat (N.size_nat left) + 3)%N.
+Proof.
+  pose proof (N.T_compare_le left right) as Hcompare.
+  time_unfold N.T_leb. destruct (N.compare left right); lia.
+Qed.
+
+(** A cached compression step keeps the original per-frame width bound. *)
+Lemma dom_cached_time_step bound width semis st :
+  dom_lt_trie_all (fun value => (value <= bound)%N) semis ->
+  (forall value, (value <= bound)%N -> N.size_nat value <= width) ->
+  dom_lt_walk_bounded bound (dom_cached_forget st) ->
+  (T_dom_cached_compress_step semis st <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hsemis Hwidth. destruct st as [links [vertex stack|root part stack] score].
+  - cbn [dom_cached_forget dom_lt_walk_bounded lt_walk_links lt_walk_phase].
+    intros [[Hshort Hlabels] [Hvertex Hstack]].
+    pose proof (Hwidth vertex Hvertex) as Hvertex_width.
+    pose proof (dom_lt_key_width vertex) as Hkey_width.
+    pose proof (dom_lt_time_key vertex) as Hkey_time.
+    unfold T_dom_cached_compress_step.
+    destruct (trie_get (dom_lt_key vertex) (lt_shortcut links)) as [parent|] eqn:Hget.
+    + pose proof (Hshort (dom_lt_key vertex) parent Hget) as Hparent.
+      pose proof (Hwidth parent Hparent) as Hparent_width.
+      pose proof (dom_lt_time_ltb parent vertex) as Hcompare.
+      destruct (N.ltb parent vertex); time_simpl;
+        clear -Hvertex_width Hkey_width Hkey_time Hparent_width Hcompare;
+        PTrieT.trie_get_le; rewrite !Nat2N.inj_add in *; nia.
+    + time_simpl.
+      clear -Hvertex_width Hkey_width Hkey_time. PTrieT.trie_get_le.
+      rewrite !Nat2N.inj_add in *. nia.
+  - cbn [dom_cached_forget dom_lt_walk_bounded lt_walk_links lt_walk_phase].
+    intros [[Hshort Hlabels] [Hroot [Hpart Hstack]]].
+    destruct stack as [|vertex stack].
+    + unfold T_dom_cached_compress_step.
+      destruct part; time_simpl; rewrite Nat2N.inj_add; nia.
+    + inversion Hstack as [|head tail Hvertex Htail]; subst head tail.
+      set (label := dom_lt_identity (lt_label links) vertex).
+      set (fresh := dom_lt_identity semis label).
+      assert (Hlabel : (label <= bound)%N).
+      { unfold label. now apply dom_lt_identity_bounded. }
+      assert (Hfresh : (fresh <= bound)%N).
+      { unfold fresh. now apply dom_lt_identity_bounded. }
+      pose proof (Hwidth vertex Hvertex) as Hvertex_width.
+      pose proof (Hwidth label Hlabel) as Hlabel_width.
+      pose proof (Hwidth fresh Hfresh) as Hfresh_width.
+      pose proof (dom_lt_key_width vertex) as Hkey_width.
+      pose proof (dom_lt_time_key vertex) as Hkey_time.
+      pose proof (dom_lt_time_identity (lt_label links) vertex) as Hlabel_time.
+      pose proof (dom_lt_time_identity semis label) as Hfresh_time.
+      pose proof (dom_cached_time_leb fresh score) as Hcompare.
+      pose proof (PTrieT.T_set_le N (dom_lt_key vertex) root (lt_shortcut links)) as Hshort_set.
+      change (PTrieCode.T_set (dom_lt_key vertex) root (lt_shortcut links) <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1))%N in Hshort_set.
+      assert (Hlabel_set : forall best, (PTrieCode.T_set (dom_lt_key vertex) best
+        (lt_label links) <= PTrieT.c_trie *
+          N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1))%N).
+      { intro best. apply PTrieT.T_set_le. }
+      destruct part as [previous|]; unfold T_dom_cached_compress_step; fold label fresh.
+      * destruct (N.leb fresh score);
+          [specialize (Hlabel_set label)|specialize (Hlabel_set previous)]; time_simpl;
+          clear -Hvertex_width Hlabel_width Hfresh_width Hkey_width Hkey_time
+            Hlabel_time Hfresh_time Hcompare Hshort_set Hlabel_set;
+          rewrite !Nat2N.inj_add in *; nia.
+      * destruct stack; time_simpl; specialize (Hlabel_set label);
+          clear -Hvertex_width Hlabel_width Hfresh_width Hkey_width Hkey_time
+            Hlabel_time Hfresh_time Hcompare Hshort_set Hlabel_set;
+          rewrite !Nat2N.inj_add in *; nia.
 Qed.
 
 (** Doubling a binary value adds at most one representation bit. *)
@@ -3245,6 +3358,35 @@ Proof.
       rewrite Hvalue. lia.
 Qed.
 
+(** Cached steps agree on known scores, and later score tables pay every remaining lookup. *)
+Lemma dom_cached_step_agree known left right st :
+  dom_lt_scores_agree known left right ->
+  dom_lt_walk_known known (dom_cached_forget st) ->
+  dom_cached_compress_step left st = dom_cached_compress_step right st /\
+    (dom_lt_clock_below left right ->
+      (T_dom_cached_compress_step left st <= T_dom_cached_compress_step right st)%N).
+Proof.
+  intros Hagree. destruct st as [links [vertex stack|root part stack] score].
+  - intro Hknown. split; [reflexivity|intros _; apply N.le_refl].
+  - cbn [dom_cached_forget dom_lt_walk_known lt_walk_links lt_walk_phase].
+    intros [Hlinks [Hpart Hstack]].
+    destruct stack as [|vertex stack]; [split; [reflexivity|intros _; apply N.le_refl]|].
+    inversion Hstack as [|head tail Hpresent Htail]; subst head tail.
+    pose proof (dom_lt_linked_label_known known links vertex Hlinks Hpresent) as Hlabel.
+    pose proof (Hagree (dom_lt_identity (lt_label links) vertex) Hlabel) as Hscore.
+    split.
+    + cbn [dom_cached_compress_step]. now rewrite Hscore.
+    + intro Hbelow.
+      pose proof (dom_lt_identity_clock_table left right
+        (dom_lt_identity (lt_label links) vertex) Hbelow) as Hclock.
+      unfold T_dom_cached_compress_step.
+      destruct part as [previous|]; destruct stack as [|next rest];
+        cbn [cached_links cached_phase cached_score]; rewrite ?Hscore;
+        time_simpl; try lia.
+      all: destruct (N.leb (dom_lt_identity right
+        (dom_lt_identity (lt_label links) vertex)) score); lia.
+Qed.
+
 (** Replay may use final semidominators once they agree on every already-linked label, and
     it costs at least as much when its score lookups read at least as many nodes. *)
 Lemma dom_lt_eval_agree known left right fuel before vertex :
@@ -3254,42 +3396,48 @@ Lemma dom_lt_eval_agree known left right fuel before vertex :
       (T_dom_lt_eval fuel left before vertex <= T_dom_lt_eval fuel right before vertex)%N).
 Proof.
   intros Hagree Hlinks.
-  set (initial := DomLtWalk
+  set (initial := DomCachedWalk
     (DomLtLinks (lt_shortcut before) (lt_label before) (LtEval vertex :: lt_operations before))
-    (DomLtDescend vertex [])).
-  assert (Hinitial : dom_lt_walk_known known initial).
-  { split; [exact Hlinks|constructor]. }
-  assert (Hpreserve : forall st next, dom_lt_walk_known known st ->
-    dom_lt_compress_step left st = inl next -> dom_lt_walk_known known next).
-  { intros st next Hst Hnext.
-    pose proof (dom_lt_compress_known known left st Hst) as Hknown. now rewrite Hnext in Hknown. }
-  assert (Hloop : forall T_left T_right : dom_lt_walk -> N,
-    (forall st, dom_lt_walk_known known st -> (T_left st <= T_right st)%N) ->
-    loopN (dom_lt_compress_step left) (N.double fuel + 3)%N initial =
-      loopN (dom_lt_compress_step right) (N.double fuel + 3)%N initial /\
-    (T_loopN (dom_lt_compress_step left) T_left (N.double fuel + 3)%N initial <=
-      T_loopN (dom_lt_compress_step right) T_right (N.double fuel + 3)%N initial)%N).
+    (DomLtDescend vertex []) 0%N).
+  set (Inv := fun st => dom_cached_valid left st /\
+    dom_lt_walk_known known (dom_cached_forget st)).
+  assert (Hinitial : Inv initial).
+  { split; [exact I|]. split; [exact Hlinks|constructor]. }
+  assert (Hpreserve : forall st next, Inv st ->
+    dom_cached_compress_step left st = inl next -> Inv next).
+  { intros st next [Hvalid Hknown] Hnext.
+    destruct (dom_cached_step_simulates left st Hvalid) as [Hstep Hvalid_next].
+    rewrite Hnext in Hstep, Hvalid_next. cbn [dom_cached_result] in Hstep.
+    pose proof (dom_lt_compress_known known left (dom_cached_forget st) Hknown) as Hknown_next.
+    rewrite <- Hstep in Hknown_next. split; assumption. }
+  assert (Hloop : forall T_left T_right : dom_cached_walk -> N,
+    (forall st, Inv st -> (T_left st <= T_right st)%N) ->
+    loopN (dom_cached_compress_step left) (N.double fuel + 3)%N initial =
+      loopN (dom_cached_compress_step right) (N.double fuel + 3)%N initial /\
+    (T_loopN (dom_cached_compress_step left) T_left (N.double fuel + 3)%N initial <=
+      T_loopN (dom_cached_compress_step right) T_right (N.double fuel + 3)%N initial)%N).
   { intros T_left T_right Hclock.
-    apply (dom_lt_binary_loop_agree (dom_lt_compress_step left) (dom_lt_compress_step right)
-      T_left T_right (dom_lt_walk_known known)); [|exact Hpreserve|exact Hinitial].
+    apply (dom_lt_binary_loop_agree (dom_cached_compress_step left)
+      (dom_cached_compress_step right) T_left T_right Inv);
+      [|exact Hpreserve|exact Hinitial].
     intros st Hst. split; [|exact (Hclock st Hst)].
-    exact (proj1 (dom_lt_compress_agree known left right st Hagree Hst)). }
-  destruct (Hloop (T_dom_lt_compress_step left) (T_dom_lt_compress_step left)
+    exact (proj1 (dom_cached_step_agree known left right st Hagree (proj2 Hst))). }
+  destruct (Hloop (T_dom_cached_compress_step left) (T_dom_cached_compress_step left)
     (fun st _ => N.le_refl _)) as [Hvalue _].
   split.
   - unfold dom_lt_eval. fold initial. now rewrite Hvalue.
   - intro Hbelow.
-    destruct (Hloop (T_dom_lt_compress_step left) (T_dom_lt_compress_step right)
-      (fun st Hst => proj2 (dom_lt_compress_agree known left right st Hagree Hst) Hbelow))
+    destruct (Hloop (T_dom_cached_compress_step left) (T_dom_cached_compress_step right)
+      (fun st Hst => proj2 (dom_cached_step_agree known left right st Hagree (proj2 Hst)) Hbelow))
       as [_ Htime].
     unfold T_dom_lt_eval. fold initial. time_simpl.
-    change (T_loopN (dom_lt_compress_step left)
-      (fun st => T_dom_lt_compress_step left st) (N.double fuel + 3)%N initial)
-      with (T_loopN (dom_lt_compress_step left) (T_dom_lt_compress_step left)
+    change (T_loopN (dom_cached_compress_step left)
+      (fun st => T_dom_cached_compress_step left st) (N.double fuel + 3)%N initial)
+      with (T_loopN (dom_cached_compress_step left) (T_dom_cached_compress_step left)
         (N.double fuel + 3)%N initial).
-    change (T_loopN (dom_lt_compress_step right)
-      (fun st => T_dom_lt_compress_step right st) (N.double fuel + 3)%N initial)
-      with (T_loopN (dom_lt_compress_step right) (T_dom_lt_compress_step right)
+    change (T_loopN (dom_cached_compress_step right)
+      (fun st => T_dom_cached_compress_step right st) (N.double fuel + 3)%N initial)
+      with (T_loopN (dom_cached_compress_step right) (T_dom_cached_compress_step right)
         (N.double fuel + 3)%N initial).
     rewrite Hvalue. lia.
 Qed.
@@ -3319,7 +3467,7 @@ Proof.
     pose proof (dom_lt_compress_known known semis st Hst) as Hknown.
     now rewrite Hnext in Hknown. }
   specialize (Hrun Hgo Hstop Hinitial).
-  unfold dom_lt_eval. fold initial.
+  rewrite dom_cached_eval_agrees. unfold dom_lt_eval_spec. fold initial.
   destruct (loopN (dom_lt_compress_step semis) (N.double fuel + 3)%N initial)
     as [st|result]; [exact (proj1 Hrun)|exact Hrun].
 Qed.
@@ -4352,25 +4500,25 @@ Proof.
   intros Hpath Hsemis Hwidth Hlinks Hstart Hfuel_width.
   pose proof (dom_lt_walk_path_natural before start path root Hpath) as Hnatural.
   pose proof (dom_gap_path_unique _ _ _ _ Hnatural) as Hunique.
-  set (initial := DomLtWalk
+  set (initial := DomCachedWalk
     (DomLtLinks (lt_shortcut before) (lt_label before) (LtEval start :: lt_operations before))
-    (DomLtDescend start [])).
+    (DomLtDescend start []) 0%N).
   set (unit := (128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N).
-  assert (Hshape : dom_lt_compress_shape before path root initial).
+  assert (Hshape : dom_lt_compress_shape before path root (dom_cached_forget initial)).
   { unfold initial. split; [reflexivity|]. exists path. split; [exact Hpath|reflexivity]. }
-  assert (Hinitial : dom_lt_walk_bounded bound initial).
+  assert (Hinitial : dom_lt_walk_bounded bound (dom_cached_forget initial)).
   { split; [exact Hlinks|]. split; [exact Hstart|constructor]. }
   assert (Hpreserve : forall state next, dom_lt_walk_bounded bound state ->
     dom_lt_compress_step semis state = inl next -> dom_lt_walk_bounded bound next).
   { intros state next Hinv Hstep.
     pose proof (dom_lt_compress_bounded bound semis state Hinv) as Hnext.
     now rewrite Hstep in Hnext. }
-  assert (Hcost : forall state, dom_lt_walk_bounded bound state ->
-    (T_dom_lt_compress_step semis state <= unit)%N).
-  { intros state Hinv. unfold unit. now apply (dom_lt_time_compress_step bound width). }
-  pose proof (dom_lt_compress_path_time before path root semis (dom_lt_walk_bounded bound)
-    unit (N.double fuel + 3)%N initial Hunique Hshape Hinitial Hpreserve Hcost) as Hloop.
-  set (loop_cost := T_loopN (dom_lt_compress_step semis) (T_dom_lt_compress_step semis)
+  assert (Hcost : forall state, dom_lt_walk_bounded bound (dom_cached_forget state) ->
+    (T_dom_cached_compress_step semis state <= unit)%N).
+  { intros state Hinv. unfold unit. now apply (dom_cached_time_step bound width). }
+  pose proof (dom_cached_compress_path_time before path root semis (dom_lt_walk_bounded bound)
+    unit (N.double fuel + 3)%N initial Hunique I Hshape Hinitial Hpreserve Hcost) as Hloop.
+  set (loop_cost := T_loopN (dom_cached_compress_step semis) (T_dom_cached_compress_step semis)
     (N.double fuel + 3)%N initial).
   change (loop_cost <= c_loopN * ((unit + 1) * N.of_nat (2 * length path - 0 + 1) +
     unit + N.of_nat (N.size_nat (N.double fuel + 3)) + 1))%N in Hloop.
@@ -4384,15 +4532,15 @@ Proof.
     N.of_nat (N.size_nat (N.double fuel) + 2) + 1)%N in Hsetup.
   pose proof (dom_lt_time_double fuel) as Hdouble.
   pose proof (dom_lt_result_branch
-    (loopN (dom_lt_compress_step semis) (N.double fuel + 3)%N initial)) as Hbranch.
+    (loopN (dom_cached_compress_step semis) (N.double fuel + 3)%N initial)) as Hbranch.
   unfold T_dom_lt_eval. fold initial. time_simpl.
-  change (T_loopN (dom_lt_compress_step semis)
-    (fun state => T_dom_lt_compress_step semis state) (N.double fuel + 3)%N initial)
+  change (T_loopN (dom_cached_compress_step semis)
+    (fun state => T_dom_cached_compress_step semis state) (N.double fuel + 3)%N initial)
     with loop_cost.
   unfold unit in Hloop. clearbody loop_cost.
   apply time_of_nat_le in Hactual_width, Hdouble_width, Hfuel_width.
   rewrite !Nat2N.inj_add, !Nat2N.inj_mul, !Nat2N.inj_add in *.
-  set (walk_result := loopN (dom_lt_compress_step semis) (N.double fuel + 3)%N initial) in *.
+  set (walk_result := loopN (dom_cached_compress_step semis) (N.double fuel + 3)%N initial) in *.
   set (branch_work := (match walk_result with inl _ => 1 | inr _ => 0 end)%N) in *.
   set (setup_work := N.T_add (N.double fuel) 3%N) in *.
   set (double_work := N.T_double fuel) in *.

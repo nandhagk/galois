@@ -46,13 +46,23 @@ Fixpoint dom_lt_key_fits (width : nat) (v : positive) : bool :=
   end.
 TimeFun dom_lt_key_fits.
 
-(** Unlisted roots are rejected before the filtered traversal can read their rows. *)
-Definition dom_lt_trace (g : prepared) (r : positive) : list event :=
+(** The reference traversal builds a separate table for its root membership test. *)
+Local Definition dom_lt_trace_spec (g : prepared) (r : positive) : list event :=
   let listed := fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty in
   if dom_lt_key_fits (graph_width (base g)) r then
     match trie_get r listed with
     | None => []
     | Some _ => prepared_search_trace (scc_graph g) [r]
+    end
+  else [].
+
+(** The filtered graph's rows also supply the root membership test. *)
+Definition dom_lt_trace (g : prepared) (r : positive) : list event :=
+  if dom_lt_key_fits (vertex_width (nodes g)) r then
+    let ready := scc_graph g in
+    match trie_get r (succ (base ready)) with
+    | None => []
+    | Some _ => prepared_search_trace ready [r]
     end
   else [].
 TimeFun dom_lt_trace.
@@ -126,7 +136,8 @@ Definition dom_lt_compress_step (semis : ptrie N) (st : dom_lt_walk)
   end.
 TimeFun dom_lt_compress_step.
 
-Definition dom_lt_eval (fuel : N) (semis : ptrie N) (links : dom_lt_links) (v : N)
+(** The reference evaluator retains the original uncached compression loop. *)
+Definition dom_lt_eval_spec (fuel : N) (semis : ptrie N) (links : dom_lt_links) (v : N)
     : dom_lt_links * N :=
   let links := DomLtLinks (lt_shortcut links) (lt_label links)
     (LtEval v :: lt_operations links) in
@@ -134,6 +145,58 @@ Definition dom_lt_eval (fuel : N) (semis : ptrie N) (links : dom_lt_links) (v : 
       (DomLtWalk links (DomLtDescend v [])) with
   | inr result => result
   | inl st => (lt_walk_links st, v)
+  end.
+
+(** Compression carries the selected label's score through its pending unwind frames. *)
+Record dom_cached_walk := DomCachedWalk {
+  cached_links : dom_lt_links;
+  cached_phase : dom_lt_walk_phase;
+  cached_score : N
+}.
+TimeFun cached_links.
+TimeFun cached_phase.
+TimeFun cached_score.
+
+(** The cached callback keeps the original frames and avoids repeated score lookups. *)
+Definition dom_cached_compress_step (semis : ptrie N) (st : dom_cached_walk)
+    : dom_cached_walk + (dom_lt_links * N) :=
+  let '(DomCachedWalk links phase previous_score) := st in
+  match phase with
+  | DomLtDescend v stack =>
+    match trie_get (dom_lt_key v) (lt_shortcut links) with
+    | Some p =>
+      if N.ltb p v then inl (DomCachedWalk links (DomLtDescend p (v :: stack)) 0%N)
+      else inl (DomCachedWalk links (DomLtUnwind v None stack) 0%N)
+    | None => inl (DomCachedWalk links (DomLtUnwind v None stack) 0%N)
+    end
+  | DomLtUnwind root part [] =>
+    inr (links, match part with None => root | Some best => best end)
+  | DomLtUnwind root part (v :: stack) =>
+    let label := dom_lt_identity (lt_label links) v in
+    let '(best, score) := match part with
+      | None =>
+        (* No score is needed when this is the last unwind frame. *)
+        (label, match stack with [] => 0%N | _ => dom_lt_identity semis label end)
+      | Some previous =>
+        let fresh := dom_lt_identity semis label in
+        let old := previous_score in
+        if N.leb fresh old then (label, fresh) else (previous, old)
+      end in
+    let links := DomLtLinks (PTrieCode.set (dom_lt_key v) root (lt_shortcut links))
+      (PTrieCode.set (dom_lt_key v) best (lt_label links)) (lt_operations links) in
+    inl (DomCachedWalk links (DomLtUnwind root (Some best) stack) score)
+  end.
+TimeFun dom_cached_compress_step.
+
+(** Evaluation carries scores while preserving the original binary-fuel budget. *)
+Definition dom_lt_eval (fuel : N) (semis : ptrie N) (links : dom_lt_links) (v : N)
+    : dom_lt_links * N :=
+  let links := DomLtLinks (lt_shortcut links) (lt_label links)
+    (LtEval v :: lt_operations links) in
+  match loopN (dom_cached_compress_step semis) (N.double fuel + 3)%N
+      (DomCachedWalk links (DomLtDescend v []) 0%N) with
+  | inr result => result
+  | inl st => (cached_links st, v)
   end.
 TimeFun dom_lt_eval.
 
@@ -319,6 +382,119 @@ Proof.
     + eapply Hstop; eassumption.
 Qed.
 
+(** Forgetting the score retains the original compression state. *)
+Definition dom_cached_forget (st : dom_cached_walk) : dom_lt_walk :=
+  match st with DomCachedWalk links phase _ => DomLtWalk links phase end.
+
+(** Projection retains both partial exhausted states and completed results. *)
+Definition dom_cached_result (result : dom_cached_walk + (dom_lt_links * N))
+    : dom_lt_walk + (dom_lt_links * N) :=
+  match result with
+  | inl next => inl (dom_cached_forget next)
+  | inr done => inr done
+  end.
+
+(** A cached score is required only while another pending frame can read it. *)
+Definition dom_cached_valid (semis : ptrie N) (st : dom_cached_walk) : Prop :=
+  match st with
+  | DomCachedWalk _ (DomLtUnwind _ (Some previous) (_ :: _)) score =>
+    score = dom_lt_identity semis previous
+  | _ => True
+  end.
+
+(** Choosing the fresh label on equal scores preserves the original minimum's tie rule. *)
+Local Lemma dom_cached_choice {A : Type} (left right : N) (first second : A) :
+  (if N.leb left right then first else second) =
+    (if N.ltb right left then second else first).
+Proof.
+  destruct (N.leb left right) eqn:Hle.
+  - apply N.leb_le in Hle.
+    assert (Hlt : N.ltb right left = false) by (apply N.ltb_ge; lia).
+    now rewrite Hlt.
+  - apply N.leb_gt in Hle.
+    assert (Hlt : N.ltb right left = true) by (apply N.ltb_lt; lia).
+    now rewrite Hlt.
+Qed.
+
+(** Every cached transition projects to the original transition and preserves its score. *)
+Lemma dom_cached_step_simulates semis st : dom_cached_valid semis st ->
+  dom_cached_result (dom_cached_compress_step semis st) =
+    dom_lt_compress_step semis (dom_cached_forget st) /\
+  match dom_cached_compress_step semis st with
+  | inl next => dom_cached_valid semis next
+  | inr _ => True
+  end.
+Proof.
+  destruct st as [links [vertex stack|root part stack] score].
+  - intros _. cbn [dom_cached_compress_step dom_cached_forget dom_lt_compress_step
+      lt_walk_phase lt_walk_links].
+    destruct (trie_get (dom_lt_key vertex) (lt_shortcut links)) as [parent|];
+      [destruct (N.ltb parent vertex)|]; split; (reflexivity || exact I).
+  - destruct stack as [|vertex stack].
+    + intros _. cbn [dom_cached_compress_step dom_cached_forget dom_lt_compress_step
+        dom_cached_result lt_walk_phase lt_walk_links]. split; [reflexivity|exact I].
+    + destruct part as [previous|].
+      * cbn [dom_cached_valid]. intro Hscore. subst score.
+        cbn [dom_cached_compress_step dom_cached_forget dom_lt_compress_step
+          lt_walk_phase lt_walk_links].
+        rewrite dom_cached_choice.
+        unfold dom_lt_minimum.
+        destruct (N.ltb (dom_lt_identity semis previous)
+          (dom_lt_identity semis (dom_lt_identity (lt_label links) vertex)));
+          cbn [dom_cached_result dom_cached_forget]; split; [reflexivity| |reflexivity|];
+          destruct stack; (exact I || reflexivity).
+      * intros _. cbn [dom_cached_compress_step dom_cached_forget dom_lt_compress_step
+          dom_cached_result lt_walk_phase lt_walk_links].
+        destruct stack; split; (reflexivity || exact I).
+Qed.
+
+Local Opaque dom_cached_compress_step dom_lt_compress_step.
+
+(** Projection commutes with both loops for arbitrary accessibility proofs. *)
+Local Lemma dom_cached_loop_acc semis fs (access : Acc loopN_lt fs) :
+  forall old_access : Acc loopN_lt (fst fs, dom_cached_forget (snd fs)),
+  dom_cached_valid semis (snd fs) ->
+  dom_cached_result
+    (Argent.Loop.loop loopN_lt (loopN_step (dom_cached_compress_step semis)) fs access) =
+  Argent.Loop.loop loopN_lt (loopN_step (dom_lt_compress_step semis))
+    (fst fs, dom_cached_forget (snd fs)) old_access.
+Proof.
+  induction access as [[fuel st] Hnext IH] using Acc_ind_dep.
+  intros [Hspec] Hvalid. cbn [fst snd] in *.
+  destruct fuel as [|fuel]; [reflexivity|].
+  pose proof (dom_cached_step_simulates semis st Hvalid) as [Hstep Hpreserve].
+  cbn [Argent.Loop.loop loopN_step].
+  destruct (dom_cached_compress_step semis st) as [next|result] eqn:Hcached.
+  - cbn [dom_cached_result] in Hstep. rewrite <- Hstep.
+    cbn [Acc_inv]. apply IH. exact Hpreserve.
+  - cbn [dom_cached_result] in Hstep. rewrite <- Hstep. reflexivity.
+Qed.
+
+(** Projection preserves every binary-fuel prefix, including exhaustion. *)
+Local Lemma dom_cached_loop_agrees semis fuel st : dom_cached_valid semis st ->
+  dom_cached_result (loopN (dom_cached_compress_step semis) fuel st) =
+    loopN (dom_lt_compress_step semis) fuel (dom_cached_forget st).
+Proof.
+  intro Hvalid. unfold loopN. apply dom_cached_loop_acc. exact Hvalid.
+Qed.
+
+(** Cached evaluation preserves the exact links, operation log and selected label for every fuel. *)
+Lemma dom_cached_eval_agrees fuel semis links vertex :
+  dom_lt_eval fuel semis links vertex = dom_lt_eval_spec fuel semis links vertex.
+Proof.
+  unfold dom_lt_eval, dom_lt_eval_spec.
+  set (recorded := DomLtLinks (lt_shortcut links) (lt_label links)
+    (LtEval vertex :: lt_operations links)).
+  pose proof (dom_cached_loop_agrees semis (N.double fuel + 3)%N
+    (DomCachedWalk recorded (DomLtDescend vertex []) 0%N) I) as Hagree.
+  cbn [dom_cached_forget] in Hagree. rewrite <- Hagree.
+  destruct (loopN (dom_cached_compress_step semis) (N.double fuel + 3)%N
+    (DomCachedWalk recorded (DomLtDescend vertex []) 0%N)) as [st|result]; [|reflexivity].
+  destruct st. reflexivity.
+Qed.
+
+Local Transparent dom_cached_compress_step dom_lt_compress_step.
+
 Local Opaque Argent.Loop.loop Acc_intro_generator.
 
 (** A binary-fuel loop preserves state invariants even when its fuel is exhausted. *)
@@ -375,7 +551,7 @@ Proof.
   { intros st result Hinv Hstep. pose proof (dom_lt_compress_operations semis st) as Hlog.
     rewrite Hstep in Hlog. now rewrite Hlog. }
   specialize (Hrun Hgo Hstop eq_refl).
-  unfold dom_lt_eval. fold recorded.
+  rewrite dom_cached_eval_agrees. unfold dom_lt_eval_spec. fold recorded.
   destruct (loopN (dom_lt_compress_step semis) (N.double fuel + 3)
     (DomLtWalk (DomLtLinks (lt_shortcut links) (lt_label links) recorded)
       (DomLtDescend v []))) as [st|[result chosen]]; exact Hrun.
@@ -545,6 +721,14 @@ Proof.
   change graph_max with Nat.max. intros [Heq|Hin].
   - subst x. apply Nat.le_max_l.
   - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+Qed.
+
+(** Listed vertex widths are bounded by the full graph width. *)
+Local Lemma dom_lt_vertex_width_le g :
+  vertex_width (nodes g) <= graph_width (base g).
+Proof.
+  destruct g as [[vs rows] predecessors vertices edges]. cbn [nodes base graph_width].
+  change graph_max with Nat.max. apply Nat.le_max_l.
 Qed.
 
 (** Taking a maximum examines no more than the first unary argument. *)
@@ -1213,6 +1397,44 @@ Proof.
   reflexivity.
 Qed.
 
+(** A key that fits the width is accepted by the bounded guard. *)
+Local Lemma dom_lt_key_fits_complete width v :
+  Pos.size_nat v <= width -> dom_lt_key_fits width v = true.
+Proof.
+  revert v. induction width as [|width IH]; intros [v|v|] Hwidth;
+    cbn [dom_lt_key_fits Pos.size_nat] in *; try lia; try reflexivity;
+    apply IH; lia.
+Qed.
+
+(** The filtered graph has a row exactly at each listed vertex. *)
+Local Lemma dom_lt_root_test g r :
+  (match trie_get r (succ (base (scc_graph g))) with
+  | Some _ => true
+  | None => false
+  end) = existsb (Pos.eqb r) (nodes g).
+Proof.
+  unfold scc_graph. cbn [base succ]. rewrite scc_rows_lookup, PTrie.get_empty.
+  destruct (existsb (Pos.eqb r) (nodes g)); reflexivity.
+Qed.
+
+(** Reusing the filtered rows preserves the original trace for every prepared record. *)
+Lemma dom_lt_trace_agrees g r : dom_lt_trace g r = dom_lt_trace_spec g r.
+Proof.
+  unfold dom_lt_trace, dom_lt_trace_spec. rewrite dom_lt_listed_lookup.
+  pose proof (dom_lt_root_test g r) as Hroot.
+  destruct (existsb (Pos.eqb r) (nodes g)) eqn:Hlisted.
+  - apply dom_lt_existsb_key in Hlisted.
+    assert (Hvertices : dom_lt_key_fits (vertex_width (nodes g)) r = true).
+    { apply dom_lt_key_fits_complete. now apply dom_time_width_member. }
+    assert (Hgraph : dom_lt_key_fits (graph_width (base g)) r = true).
+    { apply dom_lt_key_fits_complete. now apply dom_listed_key_width. }
+    rewrite Hvertices, Hgraph.
+    destruct (trie_get r (succ (base (scc_graph g)))); [reflexivity|discriminate Hroot].
+  - destruct (trie_get r (succ (base (scc_graph g)))); [discriminate Hroot|].
+    now destruct (dom_lt_key_fits (vertex_width (nodes g)) r);
+      destruct (dom_lt_key_fits (graph_width (base g)) r).
+Qed.
+
 (** A filtered search row is the listed source row with unlisted targets removed. *)
 Lemma dom_lt_filtered_row g u :
   succs (base (scc_graph g)) u =
@@ -1279,7 +1501,7 @@ Lemma dom_lt_trace_inventory g r :
   length (entered (dom_lt_trace g r)) <= graph_n (base g) /\
   length (entered (dom_lt_trace g r)) <= graph_e (base g) + 1.
 Proof.
-  unfold dom_lt_trace. rewrite dom_lt_listed_lookup.
+  rewrite dom_lt_trace_agrees. unfold dom_lt_trace_spec. rewrite dom_lt_listed_lookup.
   destruct (dom_lt_key_fits (graph_width (base g)) r); [|].
   2: { cbn [entered length]. split; [constructor|]. split; [intros v Hv; contradiction|lia]. }
   destruct (existsb (Pos.eqb r) (nodes g)) eqn:Hroot.
@@ -2021,7 +2243,8 @@ Lemma dom_lt_trace_events g r :
   length (dom_lt_trace g r) <= 2 * graph_n (base g) + graph_e (base g).
 Proof.
   pose proof (dom_lt_trace_inventory g r) as Htrace.
-  unfold dom_lt_trace in Htrace |- *. rewrite dom_lt_listed_lookup in Htrace |- *.
+  rewrite dom_lt_trace_agrees in Htrace |- *.
+  unfold dom_lt_trace_spec in Htrace |- *. rewrite dom_lt_listed_lookup in Htrace |- *.
   destruct (dom_lt_key_fits (graph_width (base g)) r); [|cbn; lia].
   destruct (existsb (Pos.eqb r) (nodes g)); [|cbn; lia].
   destruct Htrace as [Hunique [Hlisted [Hvertices Hedges]]].
@@ -2106,55 +2329,72 @@ Proof.
   clear -Htime. lia.
 Qed.
 
-(** The guarded trace pays its membership scan, width scan and filtered search. *)
+(** Scanning only the listed key widths fits the original graph observation budget. *)
+Local Lemma dom_time_lt_trace_width g :
+  (T_vertex_width (nodes g) <= 128 *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1)))%N.
+Proof.
+  pose proof (dom_time_vertex_width (nodes g) (graph_width (base g))
+    (dom_lt_vertex_width_le g)) as Hscan.
+  replace (length (nodes g)) with (graph_n (base g)) in Hscan by
+    (destruct g as [[vs rows] predecessors vertices edges]; reflexivity).
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+Qed.
+
+(** The guarded trace pays one filtered graph construction and one listed-width scan. *)
 Lemma dom_time_lt_trace g r :
   (T_dom_lt_trace g r <= (8 * (search_trace_coefficient + PTrieT.c_trie + 4096)) *
     N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))%N.
 Proof.
-  set (listed := fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty).
-  pose proof (dom_time_lt_listed g) as Hlisted.
-  pose proof (dom_time_graph_observations (base g)) as Hobservations.
-  pose proof (dom_time_lt_key_fits (graph_width (base g)) r) as Hguard.
-  unfold T_dom_lt_trace. time_simpl. fold listed.
-  destruct (dom_lt_key_fits (graph_width (base g)) r) eqn:Hfits.
-  - pose proof (dom_lt_key_fits_bound (graph_width (base g)) r Hfits) as Hroot_width.
+  pose proof (dom_time_lt_trace_width g) as Hscan.
+  pose proof (dom_time_lt_key_fits (vertex_width (nodes g)) r) as Hguard.
+  pose proof (dom_lt_vertex_width_le g) as Hwidth.
+  pose proof (scc_graph_time g) as Hfilter.
+  assert (Hguard_graph : (T_dom_lt_key_fits (vertex_width (nodes g)) r <=
+    N.of_nat (graph_width (base g)) + 1)%N) by lia.
+  unfold T_dom_lt_trace. time_simpl.
+  destruct (dom_lt_key_fits (vertex_width (nodes g)) r) eqn:Hfits.
+  - pose proof (dom_lt_key_fits_bound (vertex_width (nodes g)) r Hfits) as Hroot_width.
     assert (Hroot_bits : (N.of_nat (Pos.size_nat r) <=
       N.of_nat (graph_width (base g)))%N) by lia.
-    destruct (trie_get r listed) as [present|] eqn:Hroot.
+    destruct (trie_get r (succ (base (scc_graph g)))) as [row|] eqn:Hroot.
     + assert (Hr : In r (nodes g)).
-      { unfold listed in Hroot. rewrite dom_lt_listed_lookup in Hroot.
-        destruct (existsb (Pos.eqb r) (nodes g)) eqn:Hmember; [|discriminate Hroot].
-        now apply dom_lt_existsb_key. }
+      { pose proof (dom_lt_root_test g r) as Hmember. rewrite Hroot in Hmember.
+        apply dom_lt_existsb_key. now symmetry. }
       assert (Hroots : forall v, In v [r] -> In v (nodes g)).
       { intros v [<-|Hbad]; [exact Hr|contradiction]. }
       pose proof (scc_search_time g [r] Hroots) as Hsearch.
-      pose proof (scc_graph_time g) as Hfilter.
       cbn [length] in Hsearch.
       time_simpl.
       rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
-      eapply N.le_trans; [shelve|apply dom_lt_trace_budget].
-      * exact Hlisted.
-      * eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
-      * exact Hguard.
+      eapply N.le_trans; [shelve|apply dom_lt_trace_budget with (listed_work := 4%N)].
+      * nia.
+      * exact Hscan.
+      * exact Hguard_graph.
       * exact Hroot_bits.
       * now rewrite <- N.mul_assoc in Hfilter.
       * eapply N.le_trans; [apply N.le_add_l|exact Hsearch].
       Unshelve. PTrieT.trie_get_le. lia.
     + time_simpl. rewrite ?N.add_0_r.
       rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
-      eapply N.le_trans; [shelve|apply dom_lt_trace_missing_budget].
-      * exact Hlisted.
-      * eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
-      * exact Hguard.
+      eapply N.le_trans; [shelve|apply dom_lt_trace_budget with
+        (listed_work := 4%N) (search_work := 0%N)].
+      * nia.
+      * exact Hscan.
+      * exact Hguard_graph.
       * exact Hroot_bits.
+      * now rewrite <- N.mul_assoc in Hfilter.
+      * apply N.le_0_l.
       Unshelve. PTrieT.trie_get_le. lia.
   - time_simpl. rewrite ?N.add_0_r.
     rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
-    apply dom_lt_trace_rejected_budget.
-    + exact Hlisted.
-    + eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
-    + exact Hguard.
+    eapply N.le_trans; [shelve|apply dom_lt_trace_rejected_budget with (listed_work := 4%N)].
+    + nia.
+    + exact Hscan.
+    + exact Hguard_graph.
+    Unshelve. lia.
 Qed.
 
 (** Event count and callback cost scale to one layout-fold budget. *)
