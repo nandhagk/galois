@@ -6,10 +6,11 @@
     Main results
     - [build_correct] Every returned candidate is SSA and has the source result at every fuel
       and input.
-    - [build_complexity] SSA construction takes time linear in its build work times the
-      variable width, plus the operator bits.
-    - [produce_complexity] Producing a candidate is linear in the construction work times the
-      width.
+    - [build_complexity] SSA construction takes time linear in its build work times the variable
+      width, plus the operator bits, O(b (w + 1) + o + 1) for build work b, variable width w and
+      operator bits o.
+    - [produce_complexity] Producing a candidate is linear in the construction work times the width,
+      O(b (w + 1)) for construction work b and width w.
 
     Builds on: core point presentations, liveness, dominance frontiers and SSA validation. *)
 

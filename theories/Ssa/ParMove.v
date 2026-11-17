@@ -7,8 +7,10 @@
     Main results
     - [check_moves_sound] Accepted sequences agree with simultaneous assignment outside the
       fresh temporary.
-    - [seq_complexity] Sequentialisation is linear in the moves times the identifier width.
-    - [check_moves_complexity] Checking is linear in both sequences times the identifier width.
+    - [seq_complexity] Sequentialisation is linear in the moves times the identifier width,
+      O((m + 1)(w + 1)) for m moves and identifier width w.
+    - [check_moves_complexity] Checking is linear in both sequences times the identifier width,
+      O((m + 1)(w + 1)) for m moves in both sequences and identifier width w.
 
     Builds on: ParMoveSig and the canonical binary trie. *)
 

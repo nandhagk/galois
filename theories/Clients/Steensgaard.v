@@ -8,7 +8,7 @@
       congruence.
     - [seed_complexity] Seeding is linear in the constraints and initial pointers at the database
       unit.
-    - [compile_complexity] Compilation emits a fixed program, so its cost is a constant.
+    - [compile_complexity] Compilation emits a fixed program, so its cost is a constant, O(1).
     - [points_complexity] A points-to query is linear in the database unit and the bits of its
       two cells.
     - [solve_complexity] A solve costs its seed, the cube of the fixed program for planning, and
@@ -889,15 +889,15 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** A points-to query costs its two encoded cells and the database lookup unit. *)
-  Lemma points_complexity : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
-    (fun z => let '(db, x, a) := z in
-      N.of_nat (8 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
-    (fun z => let '(db, x, a) := z in T_points db x a).
+  Lemma points_complexity :
+    T_points db (x : positive) (a : positive) ∈
+      𝑂(N.of_nat (8 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
+      for (db, x, a) | D.wf db.
   Proof.
     apply (bigO_intro _ _ _ c_steensgaard).
     intros [[db x] a] Hwf; cbn [fst snd] in Hwf |- *.
     pose proof (T_points_le db x a Hwf) as Hpoints.
-    rewrite !Nat2N.inj_add in Hpoints |- *; nia.
+    rewrite !Nat2N.inj_add in Hpoints |- *; change V.t with positive in *; nia.
   Qed.
 
   (** Solving composes the seed and fixed-program plan with the engine's trace cost. *)

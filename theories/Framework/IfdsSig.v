@@ -9,12 +9,14 @@
     - [target_spec] Rule targets follow their destination edge or identity point.
     - [eval_spec] Boolean rules combine the caller and callee at a matched return.
     - [rows_complexity] Listing the rows is linear in their number, O(n) for n rows.
-    - [start_complexity] Starting a row is linear in the row budget at the empty value.
-    - [deps_complexity] Listing the dependencies of a row is linear in their number times
-      the key width.
-    - [target_complexity] The target of a listed row fits the row budget at the empty value.
-    - [sides_complexity] Listing the sides of a row is linear in their number times the key
-      width.
+    - [start_complexity] Starting a row is linear in the row budget at the empty value,
+      O(row_work p 0).
+    - [deps_complexity] Listing the dependencies of a row is linear in their number times the key
+      width, O((d + 1)(w + 1)) for d dependencies and key width w.
+    - [target_complexity] The target of a listed row fits the row budget at the empty value,
+      O(row_work p 0).
+    - [sides_complexity] Listing the sides of a row is linear in their number times the key width,
+      O((s + 1)(w + 1)) for s sides and key width w.
 
     Builds on: Program.IcfgSig, Base.Code and Fixpoint.SystemSig. *)
 

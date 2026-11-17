@@ -4,15 +4,25 @@
     For example, an internal edge propagates one fact without changing stack level.
 
     Main results
+    - [key_code_spec] The system encodes all three path-edge components.
+    - [rows_spec] The row inventory contains exactly the enabled finite rules.
+    - [target_spec] Rule targets follow their destination edge or identity point.
+    - [eval_spec] Boolean rules combine the caller and callee at a matched return.
+    - [path_rules_fast_agrees] The indexed builder preserves every rule occurrence and its
+      exact order.
+    - [path_rules_fast_time] The builder pays callback sums, site widths, cached pairs, matched
+      scans and output.
     - [path_number_complexity] Rule numbering is linear in its output count and initial binary
       carry potential, O(|rules| + potential(next)).
     - [rows_complexity] Listing the rows is linear in their number, O(n) for n rows.
-    - [start_complexity] Starting a row is linear in the row budget at the empty value.
-    - [deps_complexity] Listing the dependencies of a row is linear in their number times
-      the key width.
-    - [target_complexity] The target of a listed row fits the row budget at the empty value.
-    - [sides_complexity] Listing the sides of a row is linear in their number times the key
-      width.
+    - [start_complexity] Starting a row is linear in the row budget at the empty value,
+      O(row_work p 0).
+    - [deps_complexity] Listing the dependencies of a row is linear in their number times the key
+      width, O((d + 1)(w + 1)) for d dependencies and key width w.
+    - [target_complexity] The target of a listed row fits the row budget at the empty value,
+      O(row_work p 0).
+    - [sides_complexity] Listing the sides of a row is linear in their number times the key width,
+      O((s + 1)(w + 1)) for s sides and key width w.
 
     Builds on: Framework.IfdsSig and Fixpoint.Query. *)
 
@@ -83,10 +93,9 @@ Proof.
 Qed.
 
 (** Rule numbering is linear in its output count and initial binary carry potential. *)
-Lemma path_number_complexity {N E F} :
-  bigO (X := positive * list (path_rule N E F)) (fun _ => True)
-    (fun '(next, rules) => (N.of_nat (length rules) + path_number_potential next)%N)
-    (fun '(next, rules) => T_path_number next rules).
+Lemma path_number_complexity {K E F} :
+  @T_path_number K E F next rules ∈ 𝑂(N.of_nat (length rules) + path_number_potential next)
+    for (next, rules).
 Proof.
   apply bigO_intro with (c := 3%N).
   intros [next rules] _.

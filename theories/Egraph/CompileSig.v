@@ -9,7 +9,8 @@
     - [flatten_complete] A canonical view matches every represented left side whose condition
       holds.
     - [compile_complexity] Compilation is linear in the rewrites and the analysis rules.
-    - [compile_rule_complexity] Compiling one rewrite is in the linear class of its size.
+    - [compile_rule_complexity] Compiling one rewrite is in the linear class of its size, O(r) for
+      rewrite size r.
 
     Builds on: Egraph syntax, Egglog models and value signatures, and Argent asymptotic
     bounds. *)
@@ -111,8 +112,8 @@ Module Type COMPILE_TIME (V : VALUE_T) (Import C : COMPILE V).
       c_compile * N.of_nat (rewrite_size rw + 1) * N.of_nat (rewrite_size rw + 1))%N.
   (** Compilation is linear in the rewrites and the analysis rules. *)
   Parameter compile_complexity :
-    T_compile ds rws ans ∈ 𝑂(N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0%nat rws +
-      length ans + 1))
+    T_compile ds rws ans ∈
+      𝑂(N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0%nat rws + length ans + 1))
       for (ds, rws, ans).
 End COMPILE_TIME.
 

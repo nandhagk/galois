@@ -7,11 +7,13 @@
     - [calls_spec] The call inventory of a well-formed presentation retains function, site and
       resolver order.
     - [calls_complexity] Call enumeration is linear in its output, O(n) for n calls.
-    - [sites_of_complexity] Site lookup is linear in the function key and the returned sites.
-    - [caller_of_complexity] Caller lookup is linear in the site key.
-    - [resolve_complexity] Resolution is linear in the site key and the returned targets.
-    - [functions_complexity] The function inventory is linear in its output.
-    - [roots_complexity] The root inventory is linear in its output.
+    - [sites_of_complexity] Site lookup is linear in the function key and the returned sites,
+      O(|f| + k) for k sites.
+    - [caller_of_complexity] Caller lookup is linear in the site key, O(|s|) for site s.
+    - [resolve_complexity] Resolution is linear in the site key and the returned targets, O(|s| + k)
+      for k targets.
+    - [functions_complexity] The function inventory is linear in its output, O(n) for n functions.
+    - [roots_complexity] The root inventory is linear in its output, O(n) for n roots.
     - [call_graph_complexity] Call graphs have the aggregate inventory and bit-width bound.
 
     Builds on: Program.SemanticsSig and first-order graph data. *)

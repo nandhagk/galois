@@ -3163,7 +3163,6 @@ Proof.
   - rewrite <- length_rev. apply dom_size_budget_empty.
 Qed.
 
-(* BEGIN G2-G ANCHOR SUPPORT *)
 (** * Anchor interval bounds
 
     Distinct removed keys let each anchor transfer reuse the retired-cell budget.
@@ -4078,8 +4077,6 @@ Qed.
 Local Transparent dom_order_anchor_transfer T_dom_order_anchor_transfer
   dom_order_anchor_capacity_step T_dom_order_anchor_capacity_step
   dom_anchor_insert T_dom_anchor_insert dom_anchor_at_parent T_dom_anchor_at_parent.
-
-(* END G2-G ANCHOR SUPPORT *)
 
 (** The assembly proof keeps its already-bounded executable phases abstract. *)
 Local Opaque dom_lt_numeric_of dom_lt_semidominators dom_lt_buckets dom_lt_correct.

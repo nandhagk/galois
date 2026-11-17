@@ -6,7 +6,8 @@
     Main results
     - [prepare_complexity] Preparation has the published linear bit-cost bound,
       O((s + 1) (w + 1)) for s function size and width w.
-    - [live_in_complexity] The producer has the published output-sensitive bit-cost bound.
+    - [live_in_complexity] The producer has the published output-sensitive bit-cost bound,
+      O((s + l + 1)(w + 1)) for function size s, live-set size l and variable width w.
 
     Builds on: Ssa.Lang, Program variable and point presentations, and graph measures. *)
 

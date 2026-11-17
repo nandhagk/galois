@@ -4,8 +4,10 @@
     For example, a use propagates to predecessors until an edge defines its variable.
 
     Main results
-    - [live_driver_complexity] The liveness driver takes time linear in the function size plus
-      the live-set size, times the variable width.
+    - [live_in_complexity] The producer has the published output-sensitive bit-cost bound,
+      O((s + l + 1)(w + 1)) for function size s, live-set size l and variable width w.
+    - [live_driver_complexity] The liveness driver takes time linear in the function size plus the
+      live-set size, times the variable width, O((s + l + 1)(w + 1)).
 
     Builds on: LiveSig and positive tries. *)
 

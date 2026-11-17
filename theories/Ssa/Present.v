@@ -4,14 +4,16 @@
     For example, two arms aimed at the same block remain distinct.
 
     Main results
-    - [edges_complexity] Edge enumeration is linear in its output, in the block and the point
-      occurrence modules.
-    - [entries_complexity] Entry enumeration is linear in its output, in both modules.
-    - [out_complexity] Outgoing lookup is linear in the node key and returned edges, in both
-      modules.
-    - [inc_complexity] Incoming lookup is linear in the node key and returned edges, in both
-      modules.
-    - [nodes_complexity] Node enumeration is linear in its output, in both modules.
+    - [edges_complexity] Edge enumeration is linear in its output, O(n) for n edges, in [BlockCfgT]
+      and [PointCfgT].
+    - [entries_complexity] Entry enumeration is linear in its output, O(n) for n entries, in
+      [BlockCfgT] and [PointCfgT].
+    - [out_complexity] Outgoing lookup is linear in the node key and the returned edges,
+      O(|n| + k) for k edges, in [BlockCfgT] and [PointCfgT].
+    - [inc_complexity] Incoming lookup is linear in the node key and the returned edges,
+      O(|n| + k) for k edges, in [BlockCfgT] and [PointCfgT].
+    - [nodes_complexity] Node enumeration is linear in its output, O(n) for n nodes, in
+      [BlockCfgT] and [PointCfgT].
     - [prepare_complexity] The concrete preparation clock has the published asymptotic bound,
       O((s + 1) (w + 1)) for s function size and width w.
 
@@ -1229,7 +1231,6 @@ Module BlockCfg (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
   Qed.
 End BlockCfg.
 
-(* F2-100 retires the former edge, adjacency and parameter scan SIG-QUESTIONs. *)
 Module BlockCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     <: CFG_T Q PosKeyT BlockEdge.
   Include BlockCfg O Q.

@@ -6,7 +6,8 @@
     Main results
     - [destroy_correct] Destruction adds at most one block step per original edge and retains
       finite results.
-    - [destroy_complexity] Destruction has the published linear bit-cost bound.
+    - [destroy_complexity] Destruction has the published linear bit-cost bound, O(d (w + 1)) for
+      destruction work d and width w.
 
     Builds on: Lang, positive-key tries, ParMoveSig and DestroySig. *)
 

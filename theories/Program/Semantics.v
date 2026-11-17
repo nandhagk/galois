@@ -2,6 +2,11 @@
 
     Finite traced runs compose and step-local laws apply at reachable sources.
     For example, concatenating two runs retains their event order.
+
+    Main results
+    - [traced_run_app] Finite runs concatenate through the same intermediate state.
+    - [traced_run_one] Every individual step is a finite run with the same events.
+
     Builds on: Program.SemanticsSig and Stdlib.List. *)
 
 From Stdlib Require Import List.

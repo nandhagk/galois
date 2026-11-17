@@ -9,7 +9,8 @@
       every outcome.
     - [ematch_complete] A canonical database exposes every represented left side whose condition
       holds.
-    - [check_front_complexity] Checking is linear in the front-end syntax.
+    - [check_front_complexity] Checking is linear in the front-end syntax, O(f) for front-end size
+      f.
     - [add_expr_complexity] Adding an input costs its nodes at the identifier width, and its scaled
       credit.
     - [saturate_complexity] Saturation of accepted input costs its check, planning, loading, its

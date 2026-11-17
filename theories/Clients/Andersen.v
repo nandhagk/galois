@@ -8,7 +8,7 @@
     - [solve_exact] A saturated result is exactly the least inclusion solution.
     - [seed_complexity] Seeding is linear in the constraints and initial pointers at the database
       unit.
-    - [compile_complexity] Compilation emits a fixed program, so its cost is a constant.
+    - [compile_complexity] Compilation emits a fixed program, so its cost is a constant, O(1).
     - [points_complexity] A points-to query is linear in the database unit and the bits of its
       two cells.
     - [solve_complexity] A solve costs its seed, the cube of the fixed program for planning, and
@@ -1343,15 +1343,15 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Qed.
 
   (** A points-to lookup is linear in the database unit and the two value widths. *)
-  Lemma points_complexity : bigO (fun z : D.t * positive * positive => D.wf (fst (fst z)))
-    (fun z => let '(db, x, a) := z in
-      N.of_nat (3 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
-    (fun z => let '(db, x, a) := z in T_points db x a).
+  Lemma points_complexity :
+    T_points db (x : positive) (a : positive) ∈
+      𝑂(N.of_nat (3 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
+      for (db, x, a) | D.wf db.
   Proof.
     apply bigO_intro with (c := c_andersen).
     intros [[db x] a] Hwf; cbn [fst snd] in Hwf |- *.
     eapply N.le_trans; [apply T_points_le; exact Hwf |].
-    rewrite !Nat2N.inj_add; nia.
+    rewrite !Nat2N.inj_add; change V.t with positive; nia.
   Qed.
 
   (** Solving composes the seed, plan and run bounds under the final database budgets. *)

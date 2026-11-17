@@ -8,6 +8,10 @@
     - [make_spec] Make reuses a canonical constructor output or allocates a fresh identifier.
     - [index_all_complete] The full index contains every row in its slot.
     - [lookup_spec] Lookup canonicalizes its query and keeps the view and invariant.
+    - [project_slot_layout_correct] A prepared projection restores the requested order, including
+      repeated fitting positions.
+    - [T_project_slot_layout_le] Every prepared layout charges one tuple walk and the bit cost of
+      its original ranks.
     - [find_complexity] Find is linear in the bit steps of one identifier operation.
     - [lookup_complexity] Lookup is linear in the key length and the key's encoded cells.
     - [init_complexity] Initialization is linear in the declarations and the permutation sizes,
@@ -25,9 +29,9 @@
       rebuild work.
     - [rebuild_amort_complexity] Rebuilding is linear in the pending equalities at the spending
       unit.
-    - [index_complexity] Slot lookup is logarithmic in the slot number.
+    - [index_complexity] Slot lookup is logarithmic in the slot number, O(log s) for slot number s.
     - [advance_complexity] Advancing is constant, because it empties the new-row indexes with one
-      store.
+      store, O(1).
 
     Builds on: DatabaseSig. *)
 

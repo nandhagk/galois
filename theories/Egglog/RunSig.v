@@ -576,7 +576,8 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     D.canonical db -> D.changed db = false -> D.changed (round p cp true db) = false ->
     closed V.prim V.merge p (D.view db).
   (** A changed relational round adds a row absent from its starting view. *)
-  Parameter round_changed_adds_row : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+  Parameter round_changed_adds_row : forall p cp nv db, plans_ok p cp -> D.wf db ->
+    loaded p cp db ->
     relational_fragment p = true -> no_ids db ->
     D.changed (round p cp nv db) = true ->
     exists f k, row (D.view (round p cp nv db)) f k None /\ ~ row (D.view db) f k None.
