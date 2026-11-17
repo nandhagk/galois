@@ -2,12 +2,19 @@
 
     A constant domain records bottom, one concrete value or top.
     For example, joining distinct singleton values gives top.
+
+    Main results
+    - [eqb_spec] Equality testing reflects concrete equality.
+    - [forward_complexity] Generic constant transfer is bounded by the operator work,
+      O(work + 1) for the operator and its operands.
+
     Builds on: ValueSig and HarnessSig. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import Std BigO.
+From Argent Require Import Std Complexity.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig HarnessSig WordSig.
+Import ComplexityNotations.
 
 Inductive flat (A : Type) : Type :=
   | FBot
@@ -67,8 +74,8 @@ Module Type CONST_TIME (L : LANG_T) (E : VAL_EQ_T L) (Import D : CONST L E).
   (** Flat singleton construction takes constant time. *)
   Parameter T_abst_le : forall c, (T_abst c <= c_const)%N.
   (** Generic constant transfer has the published operator-work bound. *)
-  Parameter forward_complexity : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat)) (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Parameter forward_complexity :
+    (T_forward o xs ∈ 𝑂(N.of_nat ((work o xs)%nat)) for (o, xs))%N.
 End CONST_TIME.
 
 Module Type CONST_T (L : LANG_T) (E : VAL_EQ_T L) := CONST L E <+ CONST_TIME L E.
