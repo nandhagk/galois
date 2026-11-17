@@ -143,6 +143,122 @@ Proof.
 Qed.
 
 
+Definition p9_upper_x (b : Z) : lcons positive :=
+  LCons _ [(1%positive, 1)] RLe b.
+
+Definition p9_equal_x (b : Z) : lcons positive :=
+  LCons _ [(1%positive, 1)] REq b.
+
+Definition p9_row (c : lcons positive) (strict : bool) : poly_row positive :=
+  PolyRow _ c [] strict.
+
+Definition p9_view (r : poly_row positive) : lcons positive * bool :=
+  (poly_constraint r, poly_strict r).
+
+(** A lower right-hand side wins independently of its insertion position. *)
+Example parallel_selects_strongest :
+  (map p9_view (poly_parallel_merge PosKeyCode.encode
+      [p9_row (p9_upper_x 5) false; p9_row (p9_upper_x 3) false;
+       p9_row (p9_upper_x 4) false]),
+   map p9_view (poly_parallel_merge PosKeyCode.encode
+      [p9_row (p9_upper_x 4) false; p9_row (p9_upper_x 3) false;
+       p9_row (p9_upper_x 5) false])) =
+    ([(p9_upper_x 3, false)], [(p9_upper_x 3, false)]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Strictness wins an equal-bound tie in either insertion order. *)
+Example parallel_selects_strict_tie :
+  (map p9_view (poly_parallel_merge PosKeyCode.encode
+      [p9_row (p9_upper_x 3) false; p9_row (p9_upper_x 3) true]),
+   map p9_view (poly_parallel_merge PosKeyCode.encode
+      [p9_row (p9_upper_x 3) true; p9_row (p9_upper_x 3) false])) =
+    ([(p9_upper_x 3, true)], [(p9_upper_x 3, true)]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition p9_has_equality (b : Z) (rows : list (poly_row positive)) : bool :=
+  existsb (fun r => match lrel (poly_constraint r) with
+    | REq => Z.eqb (rhs (poly_constraint r)) b
+    | RLe => false
+    end) rows.
+
+(** Distinct equality bounds remain distinct rows even at the same left-hand side. *)
+Example parallel_preserves_distinct_equalities :
+  (let rows := poly_parallel_merge PosKeyCode.encode
+      [p9_row (p9_equal_x 2) false; p9_row (p9_equal_x 3) false] in
+   (length rows, p9_has_equality 2 rows, p9_has_equality 3 rows)) =
+    (2%nat, true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The named P5 producer supplies the previous entailment result for comparison. *)
+Definition p9_reference_entails_row (P : list (lcons positive)) (c : lcons positive) : bool :=
+  match FixturePoly.entail_engine_pruned (FixturePoly.poly_normal_rows P)
+      (poly_normal_row PosKeyCode.encode c) with
+  | Some _ => true
+  | None => false
+  end.
+
+Definition p9_source : list (lcons positive) :=
+  [LCons _ [(1%positive, 1); (3%positive, 1)] RLe 3;
+   LCons _ [(1%positive, 1); (3%positive, 1)] RLe 5;
+   LCons _ [(3%positive, -1)] RLe 0].
+
+(** Both source upper bounds mention z, so the public P1 scan cannot match x alone. *)
+Example parallel_engine_success :
+  (p9_reference_entails_row p9_source (p9_upper_x 4),
+    FixturePoly.entails_row p9_source (p9_upper_x 4)) =
+    (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The stronger retained row still does not imply a target below its bound. *)
+Example parallel_engine_failure :
+  (p9_reference_entails_row p9_source (p9_upper_x 2),
+    FixturePoly.entails_row p9_source (p9_upper_x 2)) =
+    (false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition p9_initial (P : list (lcons positive)) (c : lcons positive) :=
+  poly_initial PosKeyCode.encode
+    ((poly_negate (poly_normal_row PosKeyCode.encode c), true) ::
+      map (fun r => (r, false)) (FixturePoly.poly_normal_rows P)).
+
+(** The z stage produces two parallel x rows and retains only the tighter one. *)
+Example parallel_merges_first_stage :
+  (let rows := poly_step PosKeyCode.encode PosKeyCode.eqb 3%positive
+      (p9_initial p9_source (p9_upper_x 4)) in
+   let before := filter poly_keep rows in
+   let after := poly_parallel_post PosKeyCode.encode rows in
+   (length before, length after,
+    map (fun r => rhs (poly_constraint r))
+      (filter (fun r => Z.eqb
+        (poly_coefficient PosKeyCode.eqb 1%positive (poly_constraint r)) 1) after))) =
+    (3%nat, 2%nat, [3]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A source-only contradiction must remain available for a direct equality target. *)
+Definition p9_inconsistent_inequalities : list (lcons positive) :=
+  [LCons _ [(1%positive, 1)] RLe (-1);
+   LCons _ [(1%positive, -1)] RLe 0].
+
+Example parallel_policy_preserves_equality_from_inconsistency :
+  (p9_reference_entails_row p9_inconsistent_inequalities (p9_equal_x 0),
+    FixturePoly.entails_row p9_inconsistent_inequalities (p9_equal_x 0)) =
+    (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Opposite inequalities eliminate their common variable with exact multipliers. *)
 Example eliminate_opposite_rows :
   FixturePoly.fm_elim 1%positive
