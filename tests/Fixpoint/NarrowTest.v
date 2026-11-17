@@ -4,11 +4,10 @@
     For example, two passes propagate a decrease through a dependent row.
 
     Groups:
-    - Fixtures: a Boolean system with two rows, the old assignment and its observation.
-    - Passes: candidates and results of one, two, three and zero narrowing rounds.
-    - Discard: a candidate that fails the checker leaves the old assignment in place.
-    - Empty: a system with no rows keeps the old assignment.
-    - Wrapper: the certified analysis reports the outcome of its source.
+    - [PassTests] Candidates and results of one, two, three and zero narrowing rounds.
+    - [DiscardTests] A candidate that fails the checker leaves the old assignment in place.
+    - [EmptyTests] A system with no rows keeps the old assignment.
+    - [WrapperTests] The certified analysis reports the outcome of its source.
 
     Builds on: Fixpoint.Narrow and Fixpoint.Check. *)
 
