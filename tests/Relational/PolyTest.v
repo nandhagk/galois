@@ -37,6 +37,61 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** The preserved full-run producer supplies the comparison boolean for stopped searches. *)
+Definition full_run_entails_row (P : list (lcons positive)) (c : lcons positive) : bool :=
+  match FixturePoly.entail_engine_spec (FixturePoly.poly_normal_rows P)
+      (poly_normal_row PosKeyCode.encode c) with
+  | Some _ => true
+  | None => false
+  end.
+
+Definition stop_first_source : list (lcons positive) :=
+  [upper_x 3; LCons _ [(2%positive, 1)] RLe 4; LCons _ [(3%positive, 2)] RLe 10].
+
+Definition stop_first_target : lcons positive := LCons _ [(3%positive, 1)] RLe 6.
+
+(** Eliminating the first variable proves the target before either unrelated variable. *)
+Example entails_stops_after_first_variable :
+  (FixturePoly.entails_row stop_first_source stop_first_target,
+    full_run_entails_row stop_first_source stop_first_target) = (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The stopped result retains both unrelated rows after that first contradiction. *)
+Example stopped_run_retains_unvisited_rows :
+  map poly_constraint
+    (poly_run_stop PosKeyCode.encode PosKeyCode.eqb
+      (poly_variables PosKeyCode.encode (stop_first_target :: stop_first_source))
+      (poly_initial PosKeyCode.encode
+        ((poly_negate stop_first_target, true) ::
+          map (fun r => (r, false)) stop_first_source))) =
+    [upper_x 3; LCons _ [(2%positive, 1)] RLe 4; LCons _ [] RLe (-2)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition stop_chain_source : list (lcons positive) :=
+  [LCons _ [(1%positive, 1); (2%positive, -1)] RLe 0;
+   LCons _ [(2%positive, 1); (3%positive, -1)] RLe 0;
+   LCons _ [(3%positive, 1)] RLe 2].
+
+(** A chain requiring all variables agrees with the full-run entailment result. *)
+Example entails_stopped_full_chain :
+  (FixturePoly.entails_row stop_chain_source (upper_x 2),
+    full_run_entails_row stop_chain_source (upper_x 2)) = (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A failed stopped search has the same false result as the full-run producer. *)
+Example entails_stopped_chain_failure :
+  (FixturePoly.entails_row stop_chain_source (upper_x 1),
+    full_run_entails_row stop_chain_source (upper_x 1)) = (false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Opposite inequalities eliminate their common variable with exact multipliers. *)
 Example eliminate_opposite_rows :
   FixturePoly.fm_elim 1%positive

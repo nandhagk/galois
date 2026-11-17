@@ -177,6 +177,31 @@ Definition poly_contradiction {X} (r : poly_row X) : bool :=
 
 TimeFun poly_contradiction.
 
+(** Entailment stops as soon as one projected row is already contradictory. *)
+Fixpoint poly_run_stop {X} (encode : X -> positive) (eqb : X -> X -> bool)
+    (xs : list X) (P : list (poly_row X)) : list (poly_row X) :=
+  if existsb poly_contradiction P then P else
+  match xs with
+  | nil => P
+  | x :: xs => poly_run_stop encode eqb xs (poly_step encode eqb x P)
+  end.
+
+TimeFun poly_run_stop.
+
+(** A stopped run either completes the original run or retains a contradictory row. *)
+Lemma poly_run_stop_cases : forall A (encode : A -> positive) (eqb : A -> A -> bool)
+    xs rows,
+  poly_run_stop encode eqb xs rows = poly_run encode eqb xs rows \/
+  existsb poly_contradiction (poly_run_stop encode eqb xs rows) = true.
+Proof.
+  intros A encode eqb xs. induction xs as [|x xs IH]; intro rows.
+  - left. cbn [poly_run_stop poly_run]. now destruct (existsb poly_contradiction rows).
+  - cbn [poly_run_stop poly_run].
+    destruct (existsb poly_contradiction rows) eqn:Hstop.
+    + right. exact Hstop.
+    + apply IH.
+Qed.
+
 Definition poly_negate {X} (r : lcons X) : lcons X :=
   LCons X (poly_scale_coef (-1)%Z (lhs r)) RLe (- rhs r)%Z.
 
@@ -1374,10 +1399,16 @@ Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
       end
     end.
 
-  (** The complement is strict over Q; subtracting one would lose rational countermodels. *)
-  Definition entail_engine (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
+  (** Full elimination specifies the original entailment producer. *)
+  Definition entail_engine_spec (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
     find_certificate P c
       (poly_run X.encode X.eqb (poly_variables X.encode (c :: P))
+        (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))).
+
+  (** The strict rational complement is searched after the first contradictory stage. *)
+  Definition entail_engine (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
+    find_certificate P c
+      (poly_run_stop X.encode X.eqb (poly_variables X.encode (c :: P))
         (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))).
 
   (** Raw coefficient comparison preserves key order and stops at the first mismatch. *)
@@ -2603,6 +2634,16 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     cbn [poly_run]. apply IH. now apply poly_step_tracks.
   Qed.
 
+  (** Early exit retains the same combination invariant as every elimination prefix. *)
+  Lemma poly_run_stop_tracks : forall xs P rows,
+    Forall (poly_tracks P) rows ->
+    Forall (poly_tracks P) (poly_run_stop X.encode X.eqb xs rows).
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros P rows Htracks;
+      cbn [poly_run_stop]; destruct (existsb poly_contradiction rows); try exact Htracks.
+    apply IH. now apply poly_step_tracks.
+  Qed.
+
   (** Every tracked row has the exact public combination promised by its weights. *)
   Lemma poly_tracks_combine : forall P r, poly_tracks P r ->
     exists s, C.combine P (poly_multipliers r) = Some s /\
@@ -2784,6 +2825,19 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - now apply poly_step_target_strict with (target := target) (P := P).
   Qed.
 
+  (** Stopping preserves the positive target weight that witnesses strictness. *)
+  Lemma poly_run_stop_target_strict : forall xs target P rows,
+    lrel target = RLe -> Forall (poly_tracks (target :: P)) rows ->
+    Forall poly_target_strict rows ->
+    Forall poly_target_strict (poly_run_stop X.encode X.eqb xs rows).
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros target P rows Htarget Htracks Hstrict;
+      cbn [poly_run_stop]; destruct (existsb poly_contradiction rows); try exact Hstrict.
+    apply IH with (target := target) (P := P); [exact Htarget| |].
+    - now apply poly_step_tracks.
+    - now apply poly_step_target_strict with (target := target) (P := P).
+  Qed.
+
   Lemma poly_entailment_initial_tracks : forall c P,
     Forall (poly_tracks (poly_negate c :: P))
       (poly_initial X.encode
@@ -2812,6 +2866,28 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
         ((poly_negate c, true) :: map (fun r => (r, false)) P))).
   Proof.
     intros xs c P. apply poly_run_target_strict with (target := poly_negate c) (P := P).
+    - reflexivity.
+    - apply poly_entailment_initial_tracks.
+    - apply poly_initial_target_strict.
+  Qed.
+
+  (** Every row returned by stopped entailment tracks the complemented source system. *)
+  Lemma poly_entailment_stop_tracks : forall xs c P,
+    Forall (poly_tracks (poly_negate c :: P))
+      (poly_run_stop X.encode X.eqb xs (poly_initial X.encode
+        ((poly_negate c, true) :: map (fun r => (r, false)) P))).
+  Proof.
+    intros xs c P. apply poly_run_stop_tracks. apply poly_entailment_initial_tracks.
+  Qed.
+
+  (** Stopped entailment retains strictness for the complemented conclusion. *)
+  Lemma poly_entailment_stop_target_strict : forall xs c P,
+    Forall poly_target_strict
+      (poly_run_stop X.encode X.eqb xs (poly_initial X.encode
+        ((poly_negate c, true) :: map (fun r => (r, false)) P))).
+  Proof.
+    intros xs c P. apply poly_run_stop_target_strict
+      with (target := poly_negate c) (P := P).
     - reflexivity.
     - apply poly_entailment_initial_tracks.
     - apply poly_initial_target_strict.
@@ -3089,7 +3165,8 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     entail_engine P c = Some k -> poly_certificate_valid P c k.
   Proof.
     intros P c k Hresult. unfold entail_engine in Hresult.
-    eapply poly_find_certificate_valid; [apply poly_entailment_tracks|apply poly_entailment_target_strict|].
+    eapply poly_find_certificate_valid;
+      [apply poly_entailment_stop_tracks|apply poly_entailment_stop_target_strict|].
     exact Hresult.
   Qed.
 
@@ -3239,6 +3316,51 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
       + now apply IH with (r := r) (k := k).
   Qed.
 
+  (** Any tracked strict system searched unsuccessfully has no contradictory row. *)
+  Lemma poly_find_certificate_no_contradiction : forall P c rows,
+    lrel c = RLe -> Forall (poly_tracks (poly_negate c :: P)) rows ->
+    Forall poly_target_strict rows -> find_certificate P c rows = None ->
+    Forall (fun r => poly_contradiction r = false) rows.
+  Proof.
+    intros P c rows Htarget Htracks Hstrict Hnone.
+    apply Forall_forall. intros r Hin.
+    destruct (poly_contradiction r) eqn:Hcontra; [|reflexivity].
+    pose proof (proj1 (Forall_forall _ _) Htracks r Hin) as Hrowtracks.
+    pose proof (proj1 (Forall_forall _ _) Hstrict r Hin) as Hrowstrict.
+    destruct (poly_candidate_complete P c r Htarget Hrowtracks Hrowstrict Hcontra)
+      as [k Hcandidate].
+    destruct (poly_find_certificate_complete P c _ r k Hin Hcandidate) as [found Hfound].
+    rewrite Hnone in Hfound. discriminate.
+  Qed.
+
+  (** Failure rules out an early contradiction, so all requested variables were eliminated. *)
+  Lemma poly_entail_engine_failed_run : forall P c,
+    lrel c = RLe -> entail_engine P c = None ->
+    poly_run_stop X.encode X.eqb (poly_variables X.encode (c :: P))
+      (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P)) =
+    poly_run X.encode X.eqb (poly_variables X.encode (c :: P))
+      (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P)).
+  Proof.
+    intros P c Htarget Hnone. unfold entail_engine in Hnone.
+    pose proof (poly_find_certificate_no_contradiction P c _ Htarget
+      (poly_entailment_stop_tracks (poly_variables X.encode (c :: P)) c P)
+      (poly_entailment_stop_target_strict (poly_variables X.encode (c :: P)) c P)
+      Hnone) as Hsafe.
+    destruct (poly_run_stop_cases X.t X.encode X.eqb (poly_variables X.encode (c :: P))
+      (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P)))
+      as [Hrun|Hstop]; [exact Hrun|].
+    apply existsb_exists in Hstop as [r [Hin Hcontra]].
+    pose proof (proj1 (Forall_forall _ _) Hsafe r Hin) as Hfalse. congruence.
+  Qed.
+
+  (** The original full-run producer also fails whenever the stopped producer fails. *)
+  Lemma poly_entail_engine_failed_spec : forall P c,
+    lrel c = RLe -> entail_engine P c = None -> entail_engine_spec P c = None.
+  Proof.
+    intros P c Htarget Hnone. unfold entail_engine_spec.
+    rewrite <- (poly_entail_engine_failed_run P c Htarget Hnone). exact Hnone.
+  Qed.
+
   (** Search failure means the final projected system contains no contradictory row. *)
   Lemma poly_entailment_no_contradiction : forall P c,
     lrel c = RLe -> entail_engine P c = None ->
@@ -3246,17 +3368,11 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
       (poly_run X.encode X.eqb (poly_variables X.encode (c :: P))
         (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))).
   Proof.
-    intros P c Htarget Hnone. apply Forall_forall. intros r Hin.
-    destruct (poly_contradiction r) eqn:Hcontra; [|reflexivity].
-    pose proof (proj1 (Forall_forall _ _)
-      (poly_entailment_tracks (poly_variables X.encode (c :: P)) c P) r Hin) as Htracks.
-    pose proof (proj1 (Forall_forall _ _)
-      (poly_entailment_target_strict (poly_variables X.encode (c :: P)) c P) r Hin)
-      as Hstrict.
-    destruct (poly_candidate_complete P c r Htarget Htracks Hstrict Hcontra)
-      as [k Hcandidate].
-    destruct (poly_find_certificate_complete P c _ r k Hin Hcandidate) as [found Hfound].
-    unfold entail_engine in Hnone. rewrite Hnone in Hfound. discriminate.
+    intros P c Htarget Hnone.
+    rewrite <- (poly_entail_engine_failed_run P c Htarget Hnone).
+    eapply poly_find_certificate_no_contradiction;
+      [exact Htarget|apply poly_entailment_stop_tracks|
+       apply poly_entailment_stop_target_strict|exact Hnone].
   Qed.
 
   (** A valid lower endpoint can be intersected with the existing interval. *)
@@ -6482,6 +6598,19 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     length (poly_multipliers r) <= mlen /\
     Forall (fun z => Z.size_nat z <= bits + 1) (poly_multipliers r).
 
+  (** Increasing the arithmetic width preserves every component of a row envelope. *)
+  Lemma poly_row_envelope_width_mono : forall dim mlen keys bits bits' r,
+    bits <= bits' -> poly_row_envelope dim mlen keys bits r ->
+    poly_row_envelope dim mlen keys bits' r.
+  Proof.
+    intros dim mlen keys bits bits' r Hwidth (Hn & Hd & Hk & Hb & Hm & Hu).
+    unfold poly_row_envelope. repeat split; try assumption.
+    - lia.
+    - eapply Forall_impl; [|exact Hu]. intros z Hz.
+      change (Z.size_nat z <= bits + 1) in Hz.
+      change (Z.size_nat z <= bits' + 1). lia.
+  Qed.
+
   (** One row operation charges its coefficients and multiplier entries at the common width. *)
   Definition poly_clock_span (dim mlen keys bits : nat) : N :=
     (N.of_nat (dim + mlen + 1) * N.of_nat (keys + bits + 1)^2)%N.
@@ -7411,6 +7540,14 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       cbn [poly_width_after]; [exact Hbits|]. apply IH. lia.
   Qed.
 
+  (** The doubled-width recurrence always bounds its starting width. *)
+  Lemma poly_width_after_initial_le : forall fuel bits,
+    bits <= poly_width_after fuel bits.
+  Proof.
+    intro fuel. induction fuel as [|fuel IH]; intro bits; cbn [poly_width_after]; [lia|].
+    pose proof (IH (2 * bits + 1)). lia.
+  Qed.
+
   (** Fixed key widths fit inside the public combined-width recurrence. *)
   Lemma poly_width_after_fixed_keys : forall fuel keys bits,
     keys + poly_width_after fuel bits <= poly_width_after fuel (keys + bits).
@@ -7433,6 +7570,26 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - exact Hdim.
     - now apply poly_step_reduced.
     - now apply poly_step_envelopes with (vars := vars).
+  Qed.
+
+  (** A stopped run fits the same final envelope even when it uses fewer eliminations. *)
+  Lemma poly_run_stop_envelopes : forall xs vars rows dim mlen keys bits,
+    length vars <= dim -> Forall (poly_reduced_row vars) rows ->
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    Forall (poly_row_envelope dim mlen keys (poly_width_after (length xs) bits))
+      (poly_run_stop X.encode X.eqb xs rows).
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros vars rows dim mlen keys bits
+      Hdim Hreduced Henvelopes.
+    - cbn [poly_run_stop length poly_width_after].
+      now destruct (existsb poly_contradiction rows).
+    - cbn [poly_run_stop]. destruct (existsb poly_contradiction rows).
+      + eapply Forall_impl; [|exact Henvelopes]. intros r Hr.
+        eapply poly_row_envelope_width_mono; [apply poly_width_after_initial_le|exact Hr].
+      + cbn [length poly_width_after]. apply IH with (vars := vars).
+        * exact Hdim.
+        * now apply poly_step_reduced.
+        * now apply poly_step_envelopes with (vars := vars).
   Qed.
 
   (** Initialization supports every row on the declared variables of the original inputs. *)
@@ -8162,6 +8319,28 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       + rewrite Hdrop. right. apply poly_run_empty_rows.
   Qed.
 
+  (** A stopped run keeps an empty system empty. *)
+  Lemma poly_run_stop_empty_rows : forall xs,
+    poly_run_stop X.encode X.eqb xs [] = [].
+  Proof.
+    induction xs as [|x xs IH]; cbn [poly_run_stop existsb]; [reflexivity|].
+    change (poly_run_stop X.encode X.eqb xs [] = []). exact IH.
+  Qed.
+
+  (** A stopped run of one inequality retains that exact row or removes it. *)
+  Lemma poly_run_stop_single_inequality : forall xs r,
+    lrel (poly_constraint r) = RLe ->
+    poly_run_stop X.encode X.eqb xs [r] = [r] \/
+    poly_run_stop X.encode X.eqb xs [r] = [].
+  Proof.
+    intros xs. induction xs as [|x xs IH]; intros r Hrel.
+    - left. cbn [poly_run_stop]. now destruct (existsb poly_contradiction [r]).
+    - cbn [poly_run_stop]. destruct (existsb poly_contradiction [r]); [now left|].
+      destruct (poly_step_single_inequality x r Hrel) as [Hkeep | Hdrop].
+      + rewrite Hkeep. exact (IH r Hrel).
+      + rewrite Hdrop. right. apply poly_run_stop_empty_rows.
+  Qed.
+
   Lemma poly_entail_empty_units : forall xs c,
     Forall (fun r => poly_multipliers r = [1%Z])
       (poly_run X.encode X.eqb xs (poly_initial X.encode [(poly_negate c, true)])).
@@ -8171,6 +8350,20 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (poly_run X.encode X.eqb xs
         [PolyRow X.t (poly_normal_row X.encode (poly_negate c)) [1%Z] true])).
     destruct (poly_run_single_inequality xs
+      (PolyRow X.t (poly_normal_row X.encode (poly_negate c)) [1%Z] true)
+      eq_refl) as [Hkeep | Hdrop]; rewrite ?Hkeep, ?Hdrop; repeat constructor.
+  Qed.
+
+  (** A stopped empty-source search retains the sole initial unit multiplier when present. *)
+  Lemma poly_entail_stop_empty_units : forall xs c,
+    Forall (fun r => poly_multipliers r = [1%Z])
+      (poly_run_stop X.encode X.eqb xs (poly_initial X.encode [(poly_negate c, true)])).
+  Proof.
+    intros xs c.
+    change (Forall (fun r => poly_multipliers r = [1%Z])
+      (poly_run_stop X.encode X.eqb xs
+        [PolyRow X.t (poly_normal_row X.encode (poly_negate c)) [1%Z] true])).
+    destruct (poly_run_stop_single_inequality xs
       (PolyRow X.t (poly_normal_row X.encode (poly_negate c)) [1%Z] true)
       eq_refl) as [Hkeep | Hdrop]; rewrite ?Hkeep, ?Hdrop; repeat constructor.
   Qed.
@@ -9056,6 +9249,32 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - split; [cbn [length]; lia|constructor].
   Qed.
 
+  (** Stopping an empty-source search preserves its one-row shape and original width. *)
+  Lemma poly_entail_stop_empty_shape : forall xs c, normal [c] ->
+    length (poly_run_stop X.encode X.eqb xs
+      (poly_initial X.encode [(poly_negate c, true)])) <= 1 /\
+    Forall (fun r => C.row_bits (poly_constraint r) <= C.row_bits c /\
+      poly_multipliers r = [1%Z])
+      (poly_run_stop X.encode X.eqb xs
+        (poly_initial X.encode [(poly_negate c, true)])).
+  Proof.
+    intros xs c Hnormal. unfold normal in Hnormal. apply Forall_inv in Hnormal.
+    assert (Hbits : C.row_bits (poly_normal_row X.encode (poly_negate c)) <= C.row_bits c).
+    { eapply Nat.le_trans; [apply poly_normal_row_bits, poly_negate_row_normal; exact Hnormal|].
+      rewrite poly_negate_row_bits. reflexivity. }
+    change (length (poly_run_stop X.encode X.eqb xs
+      [PolyRow X.t (poly_normal_row X.encode (poly_negate c)) [1%Z] true]) <= 1 /\
+      Forall (fun r => C.row_bits (poly_constraint r) <= C.row_bits c /\
+        poly_multipliers r = [1%Z])
+        (poly_run_stop X.encode X.eqb xs
+          [PolyRow X.t (poly_normal_row X.encode (poly_negate c)) [1%Z] true])).
+    destruct (poly_run_stop_single_inequality xs
+      (PolyRow X.t (poly_normal_row X.encode (poly_negate c)) [1%Z] true)
+      eq_refl) as [Hkeep | Hdrop]; rewrite ?Hkeep, ?Hdrop.
+    - split; [reflexivity|]. constructor; [split; [exact Hbits|reflexivity]|constructor].
+    - split; [cbn [length]; lia|constructor].
+  Qed.
+
   (** A unit certificate uses the linear base of the recurrence for an empty source list. *)
   Lemma T_poly_entail_empty_tail : forall c, normal [c] ->
     (T_poly_run X.encode X.T_encode X.eqb X.T_eqb
@@ -9122,8 +9341,381 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite N.mul_add_distr_r. now apply N.add_le_mono.
   Qed.
 
+  (** The stopping scan charges only predicates on rows actually in its input. *)
+  Lemma poly_stop_T_existsb_members : forall A (f : A -> bool) (T_f : A -> N) k xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (List.T_existsb f T_f xs <= (k + 2) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A f T_f k xs. induction xs as [|x xs IH]; intro Hmember.
+    - time_unfold List.T_existsb. cbn [length]. lia.
+    - assert (Hx : (T_f x <= k)%N) by (apply Hmember; now left).
+      assert (Htail : (List.T_existsb f T_f xs <=
+        (k + 2) * N.of_nat (length xs) + 1)%N).
+      { apply IH. intros y Hy. apply Hmember. now right. }
+      time_unfold List.T_existsb. cbn [length]. time_simpl. nia.
+  Qed.
+
+
+  (** Contradiction detection is linear in the row count and current scalar width. *)
+  Lemma T_poly_stop_scan_bounded : forall rows bits,
+    Forall (fun r => C.row_bits (poly_constraint r) <= bits) rows ->
+    (List.T_existsb poly_contradiction T_poly_contradiction rows <=
+      32 * N.of_nat (length rows + 1) * N.of_nat (bits + 1))%N.
+  Proof.
+    intros rows bits Hrows.
+    pose proof (poly_stop_T_existsb_members (poly_row X.t)
+      poly_contradiction T_poly_contradiction (24 * N.of_nat (bits + 1))%N rows)
+      as Hscan.
+    assert (Hclock : (List.T_existsb poly_contradiction T_poly_contradiction rows <=
+      (24 * N.of_nat (bits + 1) + 2) * N.of_nat (length rows) + 1)%N).
+    { apply Hscan. intros r Hr. apply T_poly_contradiction_bounded.
+      exact (proj1 (Forall_forall _ _) Hrows r Hr). }
+    clear -Hclock. rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
+
+  Lemma poly_stop_scan_base_charge : forall count dim mlen keys bits,
+    (N.of_nat (count + 1) * N.of_nat (bits + 1) <=
+      N.of_nat (fmcost dim mlen 0 count (keys + bits)))%N.
+  Proof.
+    intros count dim mlen keys bits.
+    change (N.of_nat (count + 1) * N.of_nat (bits + 1) <=
+      N.of_nat ((count + 1) * (dim + mlen + 1) * (keys + bits + 1)))%N.
+    rewrite !Nat2N.inj_mul. apply N.mul_le_mono; [|lia].
+    assert (Hd : (1 <= N.of_nat (dim + mlen + 1))%N) by lia.
+    nia.
+  Qed.
+
+  Lemma poly_stop_scan_stage_charge : forall count dim mlen keys bits,
+    (N.of_nat (count + 1) * N.of_nat (bits + 1) <=
+      N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros count dim mlen keys bits. apply N.mul_le_mono.
+    - assert (Hcount : (1 <= N.of_nat (count + 1))%N) by lia.
+      rewrite N.pow_2_r. nia.
+    - unfold poly_clock_span. rewrite N.pow_2_r.
+      assert (Hwidth : (N.of_nat (bits + 1) <=
+        N.of_nat (keys + bits + 1) * N.of_nat (keys + bits + 1))%N) by nia.
+      eapply N.le_trans; [exact Hwidth|].
+      assert (Hd : (1 <= N.of_nat (dim + mlen + 1))%N) by lia.
+      nia.
+  Qed.
+
+  Lemma T_poly_stop_scan_envelope : forall rows count dim mlen keys bits,
+    length rows <= count ->
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    (List.T_existsb poly_contradiction T_poly_contradiction rows <=
+      32 * (N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits))%N.
+  Proof.
+    intros rows count dim mlen keys bits Hcount Henvelopes.
+    assert (Hbits : Forall (fun r => C.row_bits (poly_constraint r) <= bits) rows).
+    { eapply Forall_impl; [|exact Henvelopes].
+      intros r (Hn & Hd & Hk & Hb & Hm & Hu). exact Hb. }
+    pose proof (T_poly_stop_scan_bounded rows bits Hbits) as Hscan.
+    eapply N.le_trans; [exact Hscan|]. rewrite <- N.mul_assoc.
+    apply N.mul_le_mono_l.
+    eapply N.le_trans; [|apply poly_stop_scan_stage_charge].
+    apply N.mul_le_mono_r. lia.
+  Qed.
+
+  Definition poly_run_stop_factor : N := (poly_step_factor + 64)%N.
+
+  (** Prefix elimination and its stopping scans fit the full-run recurrence. *)
+  Lemma T_poly_run_stop_bounded : forall xs vars rows dim mlen keys bits,
+    length vars <= dim -> Forall (poly_reduced_row vars) rows ->
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    (T_poly_run_stop X.encode X.T_encode X.eqb X.T_eqb xs rows <=
+      poly_run_stop_factor * N.of_nat
+        (fmcost dim mlen (length xs) (length rows) (keys + bits)))%N.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros vars rows dim mlen keys bits
+      Hdim Hsupport Henvelopes.
+    - assert (Hbits : Forall (fun r => C.row_bits (poly_constraint r) <= bits) rows).
+      { eapply Forall_impl; [|exact Henvelopes].
+        intros r (Hn & Hd & Hk & Hb & Hm & Hu). exact Hb. }
+      pose proof (T_poly_stop_scan_bounded rows bits Hbits) as Hscan.
+      pose proof (poly_stop_scan_base_charge (length rows) dim mlen keys bits) as Hbase.
+      pose proof (poly_fmcost_positive dim mlen 0 (length rows) (keys + bits)) as Hpositive.
+      assert (Hscan_work : (List.T_existsb poly_contradiction T_poly_contradiction rows <=
+        32 * N.of_nat (fmcost dim mlen 0 (length rows) (keys + bits)))%N).
+      { eapply N.le_trans; [exact Hscan|]. rewrite <- N.mul_assoc.
+        now apply N.mul_le_mono_l. }
+      time_unfold (@T_poly_run_stop). time_simpl.
+      change (fun r : poly_row X.t => T_poly_contradiction r)
+        with (@T_poly_contradiction X.t). cbn [length].
+      destruct (existsb poly_contradiction rows); time_simpl;
+        clear -Hscan_work Hpositive; unfold poly_run_stop_factor; nia.
+    - assert (Hbits : Forall (fun r => C.row_bits (poly_constraint r) <= bits) rows).
+      { eapply Forall_impl; [|exact Henvelopes].
+        intros r (Hn & Hd & Hk & Hb & Hm & Hu). exact Hb. }
+      pose proof (T_poly_stop_scan_bounded rows bits Hbits) as Hscan.
+      pose proof (poly_stop_scan_stage_charge (length rows) dim mlen keys bits) as Hstage.
+      set (work := (N.of_nat (length rows + 1)^2 * poly_clock_span dim mlen keys bits)%N).
+      assert (Hscan_work : (List.T_existsb poly_contradiction T_poly_contradiction rows <=
+        32 * work)%N).
+      { eapply N.le_trans; [exact Hscan|]. unfold work. rewrite <- N.mul_assoc.
+        now apply N.mul_le_mono_l. }
+      assert (Hcharge : (1 <= work)%N) by (unfold work; apply poly_fm_charge_positive).
+      destruct (existsb poly_contradiction rows) eqn:Hstop.
+      + cbn [length]. rewrite poly_fmcost_clock_step. fold work.
+        time_unfold (@T_poly_run_stop). time_simpl.
+        change (fun r : poly_row X.t => T_poly_contradiction r)
+          with (@T_poly_contradiction X.t). cbn [length]. rewrite Hstop. time_simpl.
+        clear -Hscan_work Hcharge. clearbody work. unfold poly_run_stop_factor. nia.
+      + set (next := poly_step X.encode X.eqb x rows).
+        assert (Hnext_support : Forall (poly_reduced_row vars) next).
+        { unfold next. now apply poly_step_reduced. }
+        assert (Hnext_envelopes :
+          Forall (poly_row_envelope dim mlen keys (2 * bits + 1)) next).
+        { unfold next. now apply poly_step_envelopes with (vars := vars). }
+        pose proof (IH vars next dim mlen keys (2 * bits + 1)
+          Hdim Hnext_support Hnext_envelopes) as Hrun.
+        assert (Hnext_rows : length next <= (length rows)^2 / 4 + length rows).
+        { unfold next. apply poly_step_rows. }
+        pose proof (poly_fmcost_params_mono (length xs)
+          dim dim mlen mlen (length next) ((length rows)^2 / 4 + length rows)
+          (keys + (2 * bits + 1)) (2 * (keys + bits) + 1)
+          (Nat.le_refl _) (Nat.le_refl _) Hnext_rows ltac:(lia)) as Hfuture.
+        assert (Hrecursive :
+          (T_poly_run_stop X.encode X.T_encode X.eqb X.T_eqb xs next <=
+            poly_run_stop_factor * N.of_nat
+              (fmcost dim mlen (length xs) ((length rows)^2 / 4 + length rows)
+                (2 * (keys + bits) + 1)))%N).
+        { eapply N.le_trans; [exact Hrun|]. apply N.mul_le_mono_l. lia. }
+        pose proof (T_poly_step_bounded x rows dim mlen keys bits Henvelopes) as Hstep.
+        assert (Hhead : (T_poly_step X.encode X.T_encode X.eqb X.T_eqb x rows <=
+          poly_step_factor * work)%N).
+        { unfold work. rewrite N.mul_assoc. exact Hstep. }
+        cbn [length]. rewrite poly_fmcost_clock_step. fold work.
+        time_unfold (@T_poly_run_stop). time_simpl.
+        change (fun r : poly_row X.t => T_poly_contradiction r)
+          with (@T_poly_contradiction X.t). cbn [length]. rewrite Hstop. time_simpl.
+        change (fun u : X.t => X.T_encode u) with X.T_encode.
+        change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+        fold next. clear -Hrecursive Hhead Hscan_work Hcharge. clearbody work.
+        unfold poly_run_stop_factor in Hrecursive |- *. nia.
+  Qed.
+
+  Lemma poly_stop_terminal_envelope : forall rows dim mlen keys bits,
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    Forall (fun r => C.row_bits (poly_constraint r) <= keys + bits /\
+      length (poly_multipliers r) <= mlen /\
+      Forall (fun m => Z.size_nat m <= keys + bits + 1) (poly_multipliers r)) rows.
+  Proof.
+    intros rows dim mlen keys bits Henvelopes.
+    eapply Forall_impl; [|exact Henvelopes].
+    intros r (Hn & Hd & Hk & Hb & Hm & Hu). split; [lia|]. split; [exact Hm|].
+    eapply Forall_impl; [|exact Hu]. intros z Hz.
+    change (Z.size_nat z <= bits + 1) in Hz.
+    change (Z.size_nat z <= keys + bits + 1). lia.
+  Qed.
+
+  Definition poly_run_stop_search_factor : N :=
+    (poly_step_factor + poly_terminal_factor + 80)%N.
+
+  (** The spare stage pays for checking a contradiction at any stopping point. *)
+  Lemma T_poly_run_stop_search_bounded : forall xs P c vars rows dim mlen keys bits count,
+    length vars <= dim ->
+    Forall (poly_source_envelope dim (keys + bits)) (c :: P) ->
+    length P <= mlen -> mlen <= count -> length rows <= count ->
+    Forall (poly_reduced_row vars) rows ->
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    (T_poly_run_stop X.encode X.T_encode X.eqb X.T_eqb xs rows +
+      T_find_certificate P c (poly_run_stop X.encode X.eqb xs rows) <=
+      poly_run_stop_search_factor * N.of_nat
+        (fmcost dim mlen (S (length xs)) count (keys + bits)))%N.
+  Proof.
+    intro xs. induction xs as [|x xs IH];
+      intros P c vars rows dim mlen keys bits count
+        Hdim Hsource HP HM HR Hsupport Henvelopes;
+      assert (Hterminal_rows : Forall (fun r =>
+        C.row_bits (poly_constraint r) <= keys + bits /\
+        length (poly_multipliers r) <= mlen /\
+        Forall (fun m => Z.size_nat m <= keys + bits + 1) (poly_multipliers r)) rows).
+    1,3: (eapply poly_stop_terminal_envelope; exact Henvelopes).
+    all: pose proof (T_find_certificate_bounded P c rows count dim mlen (keys + bits)
+      Hsource HP HM HR Hterminal_rows) as Hterminal.
+    all: set (work := (N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits)%N).
+    all: assert (Hwork : (1 <= work)%N) by (unfold work; apply poly_fm_charge_positive).
+    all: assert (Hterminal_work : (T_find_certificate P c rows <=
+      poly_terminal_factor * work)%N).
+    1,3: (unfold work, poly_clock_span; rewrite !N.mul_assoc; exact Hterminal).
+    all: pose proof (T_poly_stop_scan_envelope rows count dim mlen keys bits
+      HR Henvelopes) as Hscan_work.
+    all: fold work in Hscan_work.
+    - cbn [length]. rewrite poly_fmcost_clock_step. fold work.
+      eapply N.le_trans with (m := (poly_run_stop_search_factor * work)%N).
+      2: { apply N.mul_le_mono_l. apply N.le_add_r. }
+      cbn [poly_run_stop]. destruct (existsb poly_contradiction rows) eqn:Hstop;
+        time_unfold (@T_poly_run_stop); time_simpl; rewrite Hstop; time_simpl;
+        change (fun r : poly_row X.t => T_poly_contradiction r)
+          with (@T_poly_contradiction X.t);
+        clear -Hterminal_work Hscan_work Hwork; clearbody work;
+        unfold poly_run_stop_search_factor; nia.
+    - destruct (existsb poly_contradiction rows) eqn:Hstop.
+      + cbn [length]. rewrite poly_fmcost_clock_step. fold work.
+        eapply N.le_trans with (m := (poly_run_stop_search_factor * work)%N).
+        2: { apply N.mul_le_mono_l. apply N.le_add_r. }
+        cbn [poly_run_stop]. rewrite Hstop.
+        time_unfold (@T_poly_run_stop). time_simpl.
+        change (fun r : poly_row X.t => T_poly_contradiction r)
+          with (@T_poly_contradiction X.t). cbn [length]. rewrite Hstop. time_simpl.
+        clear -Hterminal_work Hscan_work Hwork. clearbody work.
+        unfold poly_run_stop_search_factor. nia.
+      + set (next := poly_step X.encode X.eqb x rows).
+        set (next_count := count^2 / 4 + count).
+        assert (Hnext_count : length next <= next_count).
+        { unfold next, next_count. eapply Nat.le_trans; [apply poly_step_rows|].
+          now apply poly_rows_recurrence_mono. }
+        assert (Hnext_mlen : mlen <= next_count).
+        { unfold next_count. clear -HM. lia. }
+        assert (Hnext_support : Forall (poly_reduced_row vars) next).
+        { unfold next. now apply poly_step_reduced. }
+        assert (Hnext_envelopes :
+          Forall (poly_row_envelope dim mlen keys (2 * bits + 1)) next).
+        { unfold next. now apply poly_step_envelopes with (vars := vars). }
+        assert (Hnext_source : Forall (poly_source_envelope dim (keys + (2 * bits + 1)))
+          (c :: P)).
+        { eapply Forall_impl; [|exact Hsource]. intros r Hr.
+          clear -Hr. eapply poly_source_envelope_mono; [exact Hr|lia|lia]. }
+        pose proof (IH P c vars next dim mlen keys (2 * bits + 1) next_count
+          Hdim Hnext_source HP Hnext_mlen Hnext_count Hnext_support Hnext_envelopes)
+          as Hrecursive.
+        pose proof (poly_fmcost_params_mono (S (length xs))
+          dim dim mlen mlen next_count next_count
+          (keys + (2 * bits + 1)) (2 * (keys + bits) + 1)
+          (Nat.le_refl _) (Nat.le_refl _) (Nat.le_refl _) ltac:(lia)) as Hfuture.
+        assert (Hrecursive_total :
+          (T_poly_run_stop X.encode X.T_encode X.eqb X.T_eqb xs next +
+            T_find_certificate P c (poly_run_stop X.encode X.eqb xs next) <=
+            poly_run_stop_search_factor * N.of_nat
+              (fmcost dim mlen (S (length xs)) next_count (2 * (keys + bits) + 1)))%N).
+        { eapply N.le_trans; [exact Hrecursive|]. apply N.mul_le_mono_l.
+          clear -Hfuture. lia. }
+        pose proof (T_poly_step_bounded x rows dim mlen keys bits Henvelopes) as Hstep.
+        assert (Hhead : (T_poly_step X.encode X.T_encode X.eqb X.T_eqb x rows <=
+          poly_step_factor * work)%N).
+        { eapply N.le_trans; [exact Hstep|]. unfold work. rewrite N.mul_assoc.
+          apply N.mul_le_mono_r, N.mul_le_mono_l, N.pow_le_mono_l. clear -HR. lia. }
+        cbn [length]. rewrite poly_fmcost_clock_step. fold work next_count.
+        cbn [poly_run_stop]. rewrite Hstop. fold next.
+        time_unfold (@T_poly_run_stop). time_simpl.
+        change (fun r : poly_row X.t => T_poly_contradiction r)
+          with (@T_poly_contradiction X.t). cbn [length]. rewrite Hstop. time_simpl.
+        change (fun u : X.t => X.T_encode u) with X.T_encode.
+        change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+        fold next. clear -Hrecursive_total Hhead Hscan_work Hwork. clearbody work.
+        unfold poly_run_stop_search_factor in Hrecursive_total |- *. nia.
+  Qed.
+
+  Lemma T_poly_entail_stop_nonempty_tail : forall P c,
+    normal P -> normal [c] -> P <> [] ->
+    (T_poly_run_stop X.encode X.T_encode X.eqb X.T_eqb
+        (poly_variables X.encode (c :: P))
+        (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P)) +
+      T_find_certificate P c
+        (poly_run_stop X.encode X.eqb (poly_variables X.encode (c :: P))
+          (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))) <=
+      poly_run_stop_search_factor * N.of_nat (poly_entail_budget P c))%N.
+  Proof.
+    intros P c HP Hc Hnonempty.
+    set (dim := n P + length (lhs c)).
+    set (mlen := length P + 1).
+    set (keys := poly_entail_keys P c).
+    set (bits := poly_entail_bits P c).
+    set (vars := poly_entail_vars P c).
+    set (xs := poly_variables X.encode (c :: P)).
+    set (rows := poly_initial X.encode
+      ((poly_negate c, true) :: map (fun r => (r, false)) P)).
+    assert (Hdim : length vars <= dim) by apply poly_entail_vars_length.
+    assert (Hsource : Forall (poly_source_envelope dim (keys + bits)) (c :: P)).
+    { pose proof (poly_entail_source_envelopes P c HP) as Hsource.
+      rewrite <- poly_entail_width in Hsource. exact Hsource. }
+    assert (Hlength : length rows = mlen).
+    { unfold rows, mlen. rewrite poly_initial_length. cbn [length].
+      rewrite length_map. lia. }
+    assert (Hsupport : Forall (poly_reduced_row vars) rows)
+      by apply poly_entail_initial_reduced.
+    assert (Henvelopes : Forall (poly_row_envelope dim mlen keys bits) rows)
+      by now apply poly_entail_initial_envelopes.
+    pose proof (T_poly_run_stop_search_bounded xs P c vars rows dim mlen keys bits mlen
+      Hdim Hsource ltac:(unfold mlen; lia) (Nat.le_refl _) ltac:(lia)
+      Hsupport Henvelopes) as Hrun.
+    pose proof (poly_entail_spare_fuel P c Hnonempty) as Hfuel.
+    pose proof (poly_fmcost_fuel_mono (S (length xs)) dim Hfuel
+      dim mlen mlen (keys + bits)) as Hbudget.
+    eapply N.le_trans; [exact Hrun|]. apply N.mul_le_mono_l.
+    unfold poly_entail_budget. fold dim mlen.
+    rewrite <- poly_entail_width. fold keys bits.
+    clear -Hbudget. lia.
+  Qed.
+
+  Lemma T_poly_entail_stop_empty_tail : forall c, normal [c] ->
+    (T_poly_run_stop X.encode X.T_encode X.eqb X.T_eqb
+        (poly_variables X.encode [c])
+        (poly_initial X.encode [(poly_negate c, true)]) +
+      T_find_certificate [] c
+        (poly_run_stop X.encode X.eqb (poly_variables X.encode [c])
+          (poly_initial X.encode [(poly_negate c, true)])) <=
+      (poly_run_stop_factor + poly_terminal_factor) *
+        N.of_nat (poly_entail_budget [] c))%N.
+  Proof.
+    intros c Hc.
+    assert (HP : normal []) by constructor.
+    set (dim := n [] + length (lhs c)).
+    set (keys := poly_entail_keys [] c).
+    set (bits := poly_entail_bits [] c).
+    set (vars := poly_entail_vars [] c).
+    set (xs := poly_variables X.encode [c]).
+    set (rows := poly_initial X.encode [(poly_negate c, true)]).
+    assert (Hdim : length vars <= dim) by apply poly_entail_vars_length.
+    assert (Hsupport : Forall (poly_reduced_row vars) rows)
+      by apply poly_entail_initial_reduced.
+    assert (Henvelopes : Forall (poly_row_envelope dim 1 keys bits) rows)
+      by now apply poly_entail_initial_envelopes.
+    assert (Hlength : length rows = 1) by reflexivity.
+    assert (Hbudget : poly_entail_budget [] c = fmcost dim 1 dim 1 (keys + bits)).
+    { unfold poly_entail_budget. fold dim. rewrite <- poly_entail_width. reflexivity. }
+    pose proof (T_poly_run_stop_bounded xs vars rows dim 1 keys bits
+      Hdim Hsupport Henvelopes) as Hrun. rewrite Hlength in Hrun.
+    pose proof (poly_entail_fuel [] c) as Hfuel.
+    pose proof (poly_fmcost_fuel_mono (length xs) dim Hfuel
+      dim 1 1 (keys + bits)) as Hrun_budget.
+    assert (Hrun_total : (T_poly_run_stop X.encode X.T_encode X.eqb X.T_eqb xs rows <=
+      poly_run_stop_factor * N.of_nat (poly_entail_budget [] c))%N).
+    { eapply N.le_trans; [exact Hrun|]. apply N.mul_le_mono_l.
+      rewrite Hbudget. clear -Hrun_budget. lia. }
+    assert (Hsource : poly_source_envelope dim (keys + bits) c).
+    { pose proof (poly_entail_source_envelopes [] c HP) as Hsource.
+      rewrite <- poly_entail_width in Hsource. exact (Forall_inv Hsource). }
+    destruct (poly_entail_stop_empty_shape xs c Hc) as [Hcount Hshape].
+    assert (Hterminal_rows : Forall (fun r =>
+      C.row_bits (poly_constraint r) <= keys + bits /\
+      poly_multipliers r = [1%Z]) (poly_run_stop X.encode X.eqb xs rows)).
+    { eapply Forall_impl; [|exact Hshape]. intros r [Hb Hm]. split; [|exact Hm].
+      unfold bits, poly_entail_bits. cbn [map fold_right]. lia. }
+    pose proof (T_find_certificate_empty_bounded c (poly_run_stop X.encode X.eqb xs rows)
+      1 dim (keys + bits) Hsource Hcount Hterminal_rows) as Hterminal.
+    assert (Hterminal_base : (T_find_certificate [] c (poly_run_stop X.encode X.eqb xs rows) <=
+      poly_terminal_factor * N.of_nat (fmcost dim 1 0 1 (keys + bits)))%N).
+    { change (T_find_certificate [] c (poly_run_stop X.encode X.eqb xs rows) <=
+        poly_terminal_factor * N.of_nat (2 * (dim + 1 + 1) * (keys + bits + 1)))%N.
+      replace (dim + 1 + 1) with (dim + 2) by lia.
+      rewrite !Nat2N.inj_mul. change (N.of_nat 2) with 2%N.
+      rewrite !N.mul_assoc. exact Hterminal. }
+    pose proof (poly_fmcost_fuel_mono 0 dim (Nat.le_0_l _)
+      dim 1 1 (keys + bits)) as Hterminal_budget.
+    assert (Hterminal_total : (T_find_certificate [] c (poly_run_stop X.encode X.eqb xs rows) <=
+      poly_terminal_factor * N.of_nat (poly_entail_budget [] c))%N).
+    { eapply N.le_trans; [exact Hterminal_base|]. apply N.mul_le_mono_l.
+      rewrite Hbudget. clear -Hterminal_budget. lia. }
+    change (T_poly_run_stop X.encode X.T_encode X.eqb X.T_eqb xs rows +
+      T_find_certificate [] c (poly_run_stop X.encode X.eqb xs rows) <=
+      (poly_run_stop_factor + poly_terminal_factor) * N.of_nat (poly_entail_budget [] c))%N.
+    rewrite N.mul_add_distr_r. now apply N.add_le_mono.
+  Qed.
+
   Definition poly_entail_factor : N :=
-    (poly_setup_factor + poly_run_search_factor + poly_run_factor +
+    (poly_setup_factor + poly_run_stop_search_factor + poly_run_stop_factor +
       poly_terminal_factor + 8)%N.
 
   (** Normal-input certificate production follows its frozen cost envelope. *)
@@ -9141,13 +9733,13 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     change (T_poly_negate c + ListDef.T_map (fun r => (r, false)) (fun _ => 1%N) P +
       T_poly_variables X.encode X.T_encode (c :: P) +
       T_poly_initial X.encode X.T_encode input <= poly_setup_factor * work)%N in Hsetup.
-    assert (Htail : (T_poly_run X.encode X.T_encode X.eqb X.T_eqb xs rows +
-      T_find_certificate P c (poly_run X.encode X.eqb xs rows) <=
-      (poly_run_search_factor + poly_run_factor + poly_terminal_factor) * work)%N).
+    assert (Htail : (T_poly_run_stop X.encode X.T_encode X.eqb X.T_eqb xs rows +
+      T_find_certificate P c (poly_run_stop X.encode X.eqb xs rows) <=
+      (poly_run_stop_search_factor + poly_run_stop_factor + poly_terminal_factor) * work)%N).
     { destruct P as [|p P].
-      - eapply N.le_trans; [apply T_poly_entail_empty_tail; exact Hc|].
+      - eapply N.le_trans; [apply T_poly_entail_stop_empty_tail; exact Hc|].
         fold work. apply N.mul_le_mono_r. lia.
-      - eapply N.le_trans; [apply T_poly_entail_nonempty_tail; [exact HP|exact Hc|discriminate]|].
+      - eapply N.le_trans; [apply T_poly_entail_stop_nonempty_tail; [exact HP|exact Hc|discriminate]|].
         fold work. apply N.mul_le_mono_r. lia. }
     time_unfold T_entail_engine. time_simpl.
     change (fun x : X.t => X.T_encode x) with X.T_encode.
@@ -18792,7 +19384,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       ((poly_negate c', true) :: map (fun r => (r, false)) P')).
     unfold entail_engine in Hresult.
     change (find_certificate P' c'
-      (poly_run X.encode X.eqb (poly_variables X.encode (c' :: P')) initial) = Some k)
+      (poly_run_stop X.encode X.eqb (poly_variables X.encode (c' :: P')) initial) = Some k)
       in Hresult.
     assert (HP : normal P') by apply poly_normal_rows_normal.
     assert (Hc : normal [c']).
@@ -18802,7 +19394,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       by apply poly_entail_initial_reduced.
     assert (Hinitial : Forall (poly_row_envelope dim mlen keys rowbits) initial)
       by (apply poly_entail_initial_envelopes; assumption).
-    pose proof (poly_run_envelopes
+    pose proof (poly_run_stop_envelopes
       (poly_variables X.encode (c' :: P')) vars initial dim mlen keys rowbits
       Hdim Hreduced Hinitial) as Hfinal.
     assert (Hweights : length (mults k) <= mlen /\
@@ -18810,12 +19402,12 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         poly_width_after fuel rowbits + 1) (mults k) /\
       Z.size_nat (scale k) <= poly_width_after fuel rowbits + 1).
     { apply (poly_returned_certificate_weights P' c'
-        (poly_run X.encode X.eqb (poly_variables X.encode (c' :: P')) initial)
+        (poly_run_stop X.encode X.eqb (poly_variables X.encode (c' :: P')) initial)
         k dim mlen keys
         (poly_width_after fuel rowbits)).
       - change (Forall (poly_row_envelope dim mlen keys
           (poly_width_after (length (poly_variables X.encode (c' :: P'))) rowbits))
-          (poly_run X.encode X.eqb (poly_variables X.encode (c' :: P')) initial)).
+          (poly_run_stop X.encode X.eqb (poly_variables X.encode (c' :: P')) initial)).
         exact Hfinal.
       - exact Hresult. }
     assert (Hwidth : keys + rowbits <= 2 * bits + 1).
@@ -18865,18 +19457,18 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     set (c' := poly_normal_row X.encode c).
     assert (Hnormal : normal [c']).
     { change (normal (poly_normal_rows [c])). apply poly_normal_rows_normal. }
-    pose proof (poly_entail_empty_shape (poly_variables X.encode [c']) c' Hnormal)
+    pose proof (poly_entail_stop_empty_shape (poly_variables X.encode [c']) c' Hnormal)
       as [_ Hshape].
     assert (Hunits : Forall (fun r => poly_multipliers r = [1%Z])
-      (poly_run X.encode X.eqb (poly_variables X.encode [c'])
+      (poly_run_stop X.encode X.eqb (poly_variables X.encode [c'])
         (poly_initial X.encode [(poly_negate c', true)]))).
     { eapply Forall_impl; [|exact Hshape]. intros r [_ Hunit]. exact Hunit. }
     unfold entail_cert, entail_engine in Hresult.
     change (find_certificate [] c'
-      (poly_run X.encode X.eqb (poly_variables X.encode [c'])
+      (poly_run_stop X.encode X.eqb (poly_variables X.encode [c'])
         (poly_initial X.encode [(poly_negate c', true)])) = Some k) in Hresult.
     now apply poly_empty_returned_unit with (c := c') (rows :=
-      poly_run X.encode X.eqb (poly_variables X.encode [c'])
+      poly_run_stop X.encode X.eqb (poly_variables X.encode [c'])
         (poly_initial X.encode [(poly_negate c', true)])); assumption.
   Qed.
   (** Original normal rows fit twice the raw global bit width used by FM. *)
