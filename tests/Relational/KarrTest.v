@@ -57,6 +57,30 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example shared_basis_skips_rows_already_present :
+  Equalities.leb (Reached [same; x1; y1]) (Reached [y1; same]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example shared_basis_recognizes_absent_consequences :
+  let xy := LCons _ [(1%positive, 1); (2%positive, -1)] REq 0 in
+  let yz := LCons _ [(2%positive, 1); (3%positive, -1)] REq 0 in
+  let xz := LCons _ [(1%positive, 1); (3%positive, -1)] REq 0 in
+  Equalities.leb (Reached [xy; yz]) (Reached [xz]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example shared_basis_rejects_an_absent_nonconsequence :
+  let xy := LCons _ [(1%positive, 1); (2%positive, -1)] REq 0 in
+  let yz := LCons _ [(2%positive, 1); (3%positive, -1)] REq 0 in
+  let shifted := LCons _ [(1%positive, 1); (3%positive, -1)] REq 1 in
+  Equalities.leb (Reached [xy; yz]) (Reached [shifted]) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example infeasible_left_is_below_unrelated_rows :
   Equalities.leb (Reached [x0; x1]) (Reached [y1]) = true.
 Proof.
@@ -368,6 +392,172 @@ Qed.
 Example wide_query_of_a_rational_source_has_an_exact_endpoint :
   Equalities.range_linear [LCons _ [(1%positive, 2)] REq 3]
     (Lin _ [(1%positive, 1024)] 5) = (Fin 1541, Fin 1541).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The shared basis rejects a contradictory source before producing a finite endpoint. *)
+Example range_rejects_a_contradictory_source :
+  Equalities.range_linear
+    [LCons _ [(1%positive, 1)] REq 0; LCons _ [(1%positive, 1)] REq 1]
+    (Lin _ [(1%positive, 1)] 0) = (NegInf, PosInf).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A rational endpoint without an exact integer quotient remains unbounded. *)
+Example range_rejects_an_inexact_integer_endpoint :
+  Equalities.range_linear [LCons _ [(1%positive, 2)] REq 3]
+    (Lin _ [(1%positive, 1)] 0) = (NegInf, PosInf).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A shared contradiction basis also covers coordinates introduced only by the target. *)
+Example one_basis_contradiction_covers_target_only_variables :
+  Equalities.leb
+    (Reached
+      [LCons _ [(1%positive, 1)] REq 0; LCons _ [(1%positive, 1)] REq 1])
+    (Reached [LCons _ [(2%positive, 1)] REq 7]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The same basis certifies a missing affine consequence after the contradiction scan. *)
+Example one_basis_retains_an_absent_consequence :
+  Equalities.leb
+    (Reached
+      [LCons _ [(1%positive, 1)] REq 2; LCons _ [(2%positive, 1)] REq 3])
+    (Reached [LCons _ [(1%positive, 1); (2%positive, 1)] REq 5]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An independent target remains unprovable when the shared basis is consistent. *)
+Example one_basis_rejects_an_absent_nonconsequence :
+  Equalities.leb
+    (Reached [LCons _ [(1%positive, 1)] REq 2])
+    (Reached [LCons _ [(2%positive, 1)] REq 3]) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A literal target is discharged before constructing the shared basis. *)
+Example one_basis_retains_the_syntactic_filter :
+  Equalities.leb
+    (Reached [LCons _ [(1%positive, 1)] REq 2])
+    (Reached [LCons _ [(1%positive, 1)] REq 2]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A four-variable chain supplies the first widening fixture. *)
+Definition widening_chain_rows : list (lcons positive) :=
+  [LCons _ [(1%positive, 1); (2%positive, -1)] REq 0;
+   LCons _ [(2%positive, 1); (3%positive, -1)] REq 0;
+   LCons _ [(3%positive, 1); (4%positive, -1)] REq 0].
+
+(** Three absent consequences describe the same equality space. *)
+Definition widening_consequence_rows : list (lcons positive) :=
+  [LCons _ [(1%positive, 1); (3%positive, -1)] REq 0;
+   LCons _ [(2%positive, 1); (4%positive, -1)] REq 0;
+   LCons _ [(1%positive, 1); (4%positive, -1)] REq 0].
+
+(** Widening retains the first state after the shared basis proves reverse inclusion. *)
+Example widening_retains_an_equivalent_chain :
+  Equalities.widen 4%nat (Reached widening_chain_rows) (Reached widening_consequence_rows) =
+    Reached widening_chain_rows.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The opposite direction takes the same shared inclusion path with absent rows. *)
+Example widening_retains_equivalent_consequences :
+  Equalities.widen 4%nat (Reached widening_consequence_rows) (Reached widening_chain_rows) =
+    Reached widening_consequence_rows.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The three-dimensional point hull divides every output by its common coefficient factor. *)
+Example affine_hull_divides_common_coefficient_factors :
+  Equalities.affine_hull
+    [LCons _ [(1%positive, 1)] REq 0;
+     LCons _ [(2%positive, 1)] REq 0;
+     LCons _ [(3%positive, 1)] REq 0]
+    [LCons _ [(1%positive, 1)] REq 2;
+     LCons _ [(2%positive, 1)] REq 4;
+     LCons _ [(3%positive, 1)] REq 6] =
+    [LCons _ [(2%positive, 1); (1%positive, -2)] REq 0;
+     LCons _ [(1%positive, -3); (3%positive, 1)] REq 0].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Fused exact division preserves every row field and the public elimination results. *)
+Example fused_division_accepts_negative_divisor :
+  karr_divide_fused (-2) (KRow [6; -4] 10 [2; -6] 2) =
+    KRow [-3; 2] (-5) [-1; 3] (-1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A nonzero remainder in a later weight restores the complete original row. *)
+Example fused_division_keeps_an_inexact_weight :
+  karr_divide_fused 2 (KRow [2; -4] 6 [3; 0] 10) = KRow [2; -4] 6 [3; 0] 10.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The zero-divisor guard retains the original row without attempting division. *)
+Example fused_division_keeps_a_zero_divisor :
+  karr_divide_fused 0 (KRow [2; -4] 6 [8; 0] 10) = KRow [2; -4] 6 [8; 0] 10.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A triangular system exercises exact division during successive elimination stages. *)
+Definition fused_triangular_equalities : list (lcons positive) :=
+  [LCons _ [(1%positive, 2); (2%positive, 1)] REq 0;
+   LCons _ [(2%positive, 2); (3%positive, 1)] REq 0;
+   LCons _ [(3%positive, 2)] REq 0].
+
+(** Fused elimination preserves coefficients, multiplier vectors, scales, and row order. *)
+Example fused_basis_keeps_fraction_free_rows :
+  Equalities.equality_basis [1; 2; 3]%positive fused_triangular_equalities =
+    [KRow [2; 1; 0] 0 [1; 0; 0] 0;
+     KRow [0; 4; 2] 0 [0; 2; 0] 0;
+     KRow [0; 0; 8] 0 [0; 0; 4] 0].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Projection through the fused basis retains the original complete integer result. *)
+Example fused_projection_keeps_integer_row :
+  Equalities.project 1%positive
+    [LCons _ [(1%positive, 1); (2%positive, 1)] REq 0;
+     LCons _ [(1%positive, 1); (2%positive, -1)] REq 0] =
+    [LCons _ [(2%positive, -2)] REq 0].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The origin supplies the first point state for the fused hull fixture. *)
+Definition fused_hull_origin : list (lcons positive) :=
+  [LCons _ [(1%positive, 1)] REq 0;
+   LCons _ [(2%positive, 1)] REq 0;
+   LCons _ [(3%positive, 1)] REq 0].
+
+(** A point with even coordinates supplies the second state for the fused hull fixture. *)
+Definition fused_hull_even_point : list (lcons positive) :=
+  [LCons _ [(1%positive, 1)] REq 2;
+   LCons _ [(2%positive, 1)] REq 4;
+   LCons _ [(3%positive, 1)] REq 6].
+
+(** The fused hull keeps the entire gcd-normalized output of its specification. *)
+Example fused_hull_preserves_complete_output :
+  Equalities.affine_hull fused_hull_origin fused_hull_even_point =
+    Equalities.affine_hull_spec fused_hull_origin fused_hull_even_point.
 Proof.
   vm_compute. reflexivity.
 Qed.
