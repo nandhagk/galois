@@ -2,10 +2,25 @@
 
     Rules compose symbolic functions along balanced paths.
     For example, a return combines the caller, call, callee and return functions.
+
+    Main results
+    - [key_code_spec] The path-edge encoding retains all three components.
+    - [rows_spec] Rows contain exactly the enabled finite rules.
+    - [target_spec] Every rule writes its destination path edge.
+    - [eval_spec] Matched returns compose caller, call, callee and return effects in that order.
+    - [rows_complexity] Listing the rows is linear in their number, O(n) for n rows.
+    - [start_complexity] Starting a row is linear in the row budget at the empty value.
+    - [deps_complexity] Listing the dependencies of a row is linear in their number times
+      the key width.
+    - [target_complexity] The target of a listed row fits the row budget at the empty value.
+    - [sides_complexity] Listing the sides of a row is linear in their number times the key
+      width.
+
     Builds on: Framework.IdeSig and Framework.Ifds. *)
 
 From Stdlib Require Import List Bool NArith PArith Arith Lia.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
+Import ComplexityNotations.
 From Galois.Base Require Import KeySig Code.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -754,25 +769,24 @@ Module IdeT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     apply Hlook.
   Qed.
   (** Listing the rows is linear in their number. *)
-  Lemma rows_complexity : bigO (X := prog) (fun p => wf p)
-    (fun p => N.of_nat (length (rows p))) (fun p => T_rows p).
+  Lemma rows_complexity : T_rows p ∈ 𝑂(N.of_nat (length (rows p))) for p | wf p.
   Proof.
     apply bigO_intro with (c := c_sys); intros p Hwf.
     pose proof (T_rows_le p Hwf) as Htime.
     rewrite Nat2N.inj_add in Htime; nia.
   Qed.
   (** Starting a listed row fits the empty-value row budget. *)
-  Lemma start_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_start p r).
+  Lemma start_complexity :
+    T_start p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys); intros [p r] [Hwf Hin].
     pose proof (T_start_le p r Hwf Hin) as Htime.
     change (T_start p r <= c_sys * row_work p 0 + c_sys)%N; nia.
   Qed.
   (** Dependencies cost their number times the key width. *)
-  Lemma deps_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_deps p r).
+  Lemma deps_complexity :
+    T_deps p r ∈ 𝑂(N.of_nat ((length (deps p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys); intros [p r] [Hwf Hin].
     pose proof (T_deps_le p r Hwf Hin) as Htime.
@@ -781,17 +795,17 @@ Module IdeT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     rewrite Nat2N.inj_mul; nia.
   Qed.
   (** Finding the target fits the empty-value row budget. *)
-  Lemma target_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, _) => row_work p 0) (fun '(p, r) => T_target p r).
+  Lemma target_complexity :
+    T_target p r ∈ 𝑂(row_work p 0) for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys); intros [p r] [Hwf Hin].
     pose proof (T_target_le p r Hwf Hin) as Htime.
     change (T_target p r <= c_sys * row_work p 0 + c_sys)%N; nia.
   Qed.
   (** Side keys cost their number times the key width. *)
-  Lemma sides_complexity : bigO (X := prog * row) (fun '(p, r) => wf p /\ In r (rows p))
-    (fun '(p, r) => N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
-    (fun '(p, r) => T_sides p r).
+  Lemma sides_complexity :
+    T_sides p r ∈ 𝑂(N.of_nat ((length (sides p r) + 1) * (kw p + 1)))
+      for (p, r) | wf p /\ In r (rows p).
   Proof.
     apply bigO_intro with (c := c_sys); intros [p r] [Hwf Hin].
     pose proof (T_sides_le p r Hwf Hin) as Htime.
