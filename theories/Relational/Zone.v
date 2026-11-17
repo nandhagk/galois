@@ -7797,6 +7797,205 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     rewrite (Nat2N.inj_mul 4 units) in Hcast. exact Hcast.
   Qed.
 
+  (** One supported row allowance contains its full scalar payload. *)
+  Lemma linear_payload_le : forall n payload, payload <= (n + 1) * payload.
+  Proof.
+    intros n payload. nia.
+  Qed.
+
+  Lemma shift_linear_budget_tight : forall n payload factor,
+    1 <= payload -> 1 <= factor ->
+    n * (factor * payload) + 1 <= factor * ((n + 1) * payload).
+  Proof.
+    intros n payload factor Hpayload Hfactor. nia.
+  Qed.
+
+  Lemma shift_column_work_linear : forall target d m,
+    code_work (shift_column_work target d) m + 1 <=
+      3 * ((supp m + 1) *
+        (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)).
+  Proof.
+    intros target d m.
+    assert (Hsupport : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Hsupport) as Hnodes.
+    pose proof (codes_support_length (M.t Z) m m Hsupport) as Hcount.
+    assert (Hstored : stored_weight (shift_column_work target d) m <=
+      length (M.codes m) * (K.bits (Some target) + Z.size_nat d + ell m + 1)).
+    { apply stored_weight_uniform. intros p row Hrow.
+      unfold shift_column_work.
+      destruct (M.get (Some target) row) as [old|] eqn:Hentry; cbn [option_weight].
+      - pose proof (row_get_bits m p row (Some target) old Hrow Hentry). lia.
+      - lia. }
+    assert (Hstored' : stored_weight (shift_column_work target d) m <=
+      supp m * (K.bits (Some target) + Z.size_nat d + ell m + 1)).
+    { eapply Nat.le_trans; [exact Hstored|]. now apply Nat.mul_le_mono_r. }
+    set (payload := b m + ell m + K.bits (Some target) + Z.size_nat d + 1).
+    assert (Hpayload : 1 <= payload) by (unfold payload; lia).
+    assert (Hscalar : b m + ell m + K.bits (Some target) + Z.size_nat d + 3 <=
+      3 * payload) by (unfold payload; lia).
+    assert (Hwork : code_work (shift_column_work target d) m + 1 <=
+      supp m * (3 * payload) + 1).
+    { pose proof (Nat.mul_le_mono_l _ _ (supp m) Hscalar) as Hscaled.
+      unfold code_work. nia. }
+    eapply Nat.le_trans; [exact Hwork|].
+    apply shift_linear_budget_tight; lia.
+  Qed.
+
+  Lemma shift_selected_row_work_linear : forall target d m row,
+    M.get (Some target) (shift_columns target d m) = Some row ->
+    code_work (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat) row + 1 <=
+      4 * ((supp m + 1) *
+        (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)).
+  Proof.
+    intros target d m row Hrow.
+    set (next := shift_columns target d m). fold next in Hrow.
+    assert (Hsupport : forall p, In p (M.codes row) -> In p (support next)).
+    { intros p Hp. apply (row_lookup_support next (Some target) p).
+      rewrite Hrow. exact Hp. }
+    assert (Hbits : forall p z, M.find p row = Some z -> Z.size_nat z <= ell next).
+    { intros p z Hz. apply (row_lookup_bits next (Some target) p z).
+      rewrite Hrow. exact Hz. }
+    pose proof (code_work_bits_bound next row (Z.size_nat d) (ell next)
+      Hsupport Hbits) as Hrow_work.
+    destruct (shift_columns_sizes target d m) as [Hcount Hkeys].
+    pose proof (ell_shift_columns target d m) as Hell.
+    fold next in Hcount, Hkeys, Hell. rewrite Hcount, Hkeys in Hrow_work.
+    set (payload := b m + ell m + K.bits (Some target) + Z.size_nat d + 1).
+    assert (Hpayload : 1 <= payload) by (unfold payload; lia).
+    assert (Hscalar : b m + ell next + Z.size_nat d + 3 <= 4 * payload).
+    { unfold payload. lia. }
+    assert (Hwork : code_work (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat)
+      row + 1 <= supp m * (4 * payload) + 1).
+    { pose proof (Nat.mul_le_mono_l _ _ (supp m) Hscalar). lia. }
+    eapply Nat.le_trans; [exact Hwork|]. apply shift_linear_budget_tight; lia.
+  Qed.
+
+  Lemma T_shift_columns_linear : forall target d m,
+    (T_shift_columns target d m <= 64 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1) *
+        (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)))%N.
+  Proof.
+    intros target d m.
+    set (units := (supp m + 1) *
+      (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)).
+    change (T_shift_columns target d m <=
+      64 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N.
+    assert (Hpositive : 1 <= units).
+    { unfold units. eapply Nat.le_trans; [|apply linear_payload_le]. lia. }
+    pose proof (time_of_nat_le _ _ Hpositive) as Hwork.
+    pose proof (shift_column_work_linear target d m) as Hdata.
+    change (code_work (shift_column_work target d) m + 1 <= 3 * units) in Hdata.
+    pose proof (time_of_nat_le _ _ Hdata) as HdataN.
+    rewrite (Nat2N.inj_mul 3 units) in HdataN.
+    set (work := N.of_nat units) in *.
+    change (1 <= work)%N in Hwork.
+    pose proof (T_merge_left_code_work (M.t Z) (M.t Z) (M.t Z)
+      (shift_column_row target d) (fun a b => T_shift_column_row target d a b)
+      (shift_column_work target d) m (8 * (M.c_map + 1))%N
+      (T_shift_column_row_le target d)) as Hmerge.
+    assert (Hmerge_work : (M.T_merge (shift_column_row target d)
+      (fun a b => T_shift_column_row target d a b) m M.empty <=
+      M.c_map * (8 * (M.c_map + 1) + 1) * 2 * (3 * work))%N).
+    { eapply N.le_trans; [exact Hmerge|].
+      apply N.mul_le_mono_l. exact HdataN. }
+    assert (Hcoefficient :
+      (M.c_map * (8 * (M.c_map + 1) + 1) * 2 * 3 + 1 <=
+        64 * (M.c_map + 1) * (M.c_map + 1))%N) by nia.
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    rewrite N.mul_add_distr_r, N.mul_1_l in Hbudget.
+    replace (M.c_map * (8 * (M.c_map + 1) + 1) * 2 * (3 * work))%N with
+      ((M.c_map * (8 * (M.c_map + 1) + 1) * 2 * 3) * work)%N
+      in Hmerge_work by ring.
+    unfold T_shift_columns. cbn beta iota zeta.
+    clearbody work. clear - Hmerge_work Hwork Hbudget. lia.
+  Qed.
+
+  Lemma T_shift_key_linear : forall target d m,
+    (T_shift target d m <= 256 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1) *
+        (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)))%N.
+  Proof.
+    intros target d m.
+    set (units := (supp m + 1) *
+      (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)).
+    change (T_shift target d m <=
+      256 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N.
+    set (next := shift_columns target d m).
+    assert (Hkey : K.bits (Some target) + 1 <= units).
+    { unfold units. eapply Nat.le_trans; [|apply linear_payload_le]. lia. }
+    assert (Hpositive : 1 <= units) by lia.
+    pose proof (time_of_nat_le _ _ Hkey) as HkeyN.
+    pose proof (time_of_nat_le _ _ Hpositive) as Hwork.
+    pose proof (T_shift_columns_linear target d m) as Hcolumns.
+    change (T_shift_columns target d m <=
+      64 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N in Hcolumns.
+    set (work := N.of_nat units) in *.
+    change (1 <= work)%N in Hwork.
+    assert (Hget : (M.T_get (Some target) next <= M.c_map * work)%N).
+    { eapply N.le_trans; [apply M.T_get_le|].
+      apply N.mul_le_mono_l. exact HkeyN. }
+    assert (Hcoefficient :
+      (64 * (M.c_map + 1) * (M.c_map + 1) + M.c_map +
+        M.c_map * (8 + 1) * 2 * 4 + M.c_map + 4 <=
+        256 * (M.c_map + 1) * (M.c_map + 1))%N) by nia.
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    repeat rewrite N.mul_add_distr_r in Hbudget.
+    destruct (M.get (Some target) next) as [row|] eqn:Hrow.
+    - assert (Hdata : code_work
+        (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat) row + 1 <= 4 * units).
+      { unfold units. apply shift_selected_row_work_linear. exact Hrow. }
+      pose proof (time_of_nat_le _ _ Hdata) as HdataN.
+      rewrite (Nat2N.inj_mul 4 units) in HdataN. fold work in HdataN.
+      pose proof (T_merge_left_code_work Z Z Z (shift_bound d)
+        (fun a b => T_shift_bound d a b)
+        (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat)
+        row 8%N (T_shift_bound_le d)) as Hmerge.
+      assert (Hmerge_work : (M.T_merge (shift_bound d)
+        (fun a b => T_shift_bound d a b) row M.empty <=
+        M.c_map * (8 + 1) * 2 * (4 * work))%N).
+      { eapply N.le_trans; [exact Hmerge|].
+        apply N.mul_le_mono_l. exact HdataN. }
+      assert (Hset : (M.T_set (Some target)
+        (M.merge (shift_bound d) row M.empty) next <= M.c_map * work)%N).
+      { eapply N.le_trans; [apply M.T_set_le|].
+        apply N.mul_le_mono_l. exact HkeyN. }
+      replace (M.c_map * (8 + 1) * 2 * (4 * work))%N with
+        ((M.c_map * (8 + 1) * 2 * 4) * work)%N in Hmerge_work by ring.
+      unfold T_shift. cbn beta iota zeta. fold next. rewrite Hrow.
+      cbn beta iota zeta. time_simpl.
+      clearbody work. clear - Hcolumns Hget Hset Hmerge_work Hbudget Hwork. lia.
+    - unfold T_shift. cbn beta iota zeta. fold next. rewrite Hrow.
+      cbn beta iota zeta. time_simpl.
+      clearbody work. clear - Hcolumns Hget Hbudget Hwork. lia.
+  Qed.
+
+  (** Self shifts are linear in supported rows and their bit budget. *)
+  Lemma T_shift_linear : forall x d m,
+    (T_shift x d m <= 1024 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1) *
+        (b m + ell m + X.bits x + Z.size_nat d + 1)))%N.
+  Proof.
+    intros x d m.
+    set (units := (supp m + 1) *
+      (b m + ell m + X.bits x + Z.size_nat d + 1)).
+    change (T_shift x d m <=
+      1024 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N.
+    assert (Hunits : (supp m + 1) *
+      (b m + ell m + K.bits (Some x) + Z.size_nat d + 1) <= 4 * units).
+    { unfold units. rewrite some_key_bits.
+      replace (4 * ((supp m + 1) *
+        (b m + ell m + X.bits x + Z.size_nat d + 1))) with
+        ((supp m + 1) * (4 * (b m + ell m + X.bits x + Z.size_nat d + 1))) by ring.
+      apply Nat.mul_le_mono_l. lia. }
+    eapply N.le_trans; [apply T_shift_key_linear|].
+    replace (1024 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N with
+      (256 * (M.c_map + 1) * (M.c_map + 1) * (4 * N.of_nat units))%N by ring.
+    apply N.mul_le_mono_l.
+    pose proof (time_of_nat_le _ _ Hunits) as Hcast.
+    rewrite (Nat2N.inj_mul 4 units) in Hcast. exact Hcast.
+  Qed.
+
   (** Two opposite refinements use one quadratic support and common bit allowance. *)
   Lemma T_refine_pair_small : forall i j a b s bits,
     Z.size_nat a <= bits -> Z.size_nat b <= bits ->
