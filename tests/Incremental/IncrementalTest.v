@@ -4,13 +4,13 @@
     For example, a changed constant row is recomputed after its old binding is invalidated.
 
     Groups:
-    - Fixtures: a Boolean witness lattice, a one-row system, the incremental solver on them,
-      and a graph system with its states.
-    - Demand: a demand solves the missing rows of a region, and a covered demand changes nothing.
-    - Edit: an edit drops the stored values that depend on the edited row.
-    - Graph: demands and edits on a graph of rows with reads, sides and moved targets.
-    - Metadata: the buckets and snapshots that a graph demand records.
-    - Discovery: encoded keys, the visits that discover missing keys, and the merges after them.
+    - [DemandTests] A demand solves the missing rows of a region, and a covered demand changes
+      nothing.
+    - [EditTests] An edit drops the stored values that depend on the edited row.
+    - [GraphTests] Demands and edits on a graph of rows with reads, sides and moved targets.
+    - [MetadataTests] The buckets and snapshots that a graph demand records.
+    - [DiscoveryTests] Encoded keys, the visits that discover missing keys, and the merges after
+      them.
 
     Builds on: Incremental, Restrict and Worklist. *)
 
