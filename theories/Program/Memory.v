@@ -4,8 +4,8 @@
     For example, an absent binding gives an empty effect sequence.
 
     Main results
-    - [effects_complexity] Effect lookup is linear in the edge key and the returned effect
-      sequence.
+    - [effects_complexity] Effect lookup is linear in the edge key and the returned effect sequence,
+      O(|e| + k) for k effects.
 
     Builds on: Program.MemorySig and Base.Trie. *)
 
