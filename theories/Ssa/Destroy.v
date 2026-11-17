@@ -315,8 +315,9 @@ Module DestroyCode (O : OPS)
     map (fun '(dst, src) => (dst, O.mov, [src])) sq.
 
   Definition moves_ok (par : moves) (tmp : positive) : bool :=
-    andb (distinct_vars (map fst par) Empty)
-      (negb (existsb (fun x => Pos.eqb tmp x) (map fst par ++ map snd par))).
+    if distinct_vars (map fst par) Empty then
+      negb (existsb (fun x => Pos.eqb tmp x) (map fst par ++ map snd par))
+    else false.
 
   Definition empty_params (table : ptrie (list positive)) (target : positive) : bool :=
     match trie_get target table with Some [] => true | _ => false end.
@@ -522,11 +523,19 @@ Module Destroy (O : OPS)
         intro Heq. subst y. contradiction.
   Qed.
 
+  (** Lazy freshness checking preserves the original conjunction. *)
+  Lemma moves_ok_andb par tmp :
+    moves_ok par tmp = andb (distinct_vars (map fst par) Empty)
+      (negb (existsb (fun x => Pos.eqb tmp x) (map fst par ++ map snd par))).
+  Proof.
+    reflexivity.
+  Qed.
+
   (** The explicit move precondition check establishes uniqueness and temporary freshness. *)
   Lemma moves_ok_sound : forall par tmp, moves_ok par tmp = true ->
     NoDup (map fst par) /\ ~ In tmp (map fst par ++ map snd par).
   Proof.
-    intros par tmp Hchecked. unfold moves_ok in Hchecked.
+    intros par tmp Hchecked. rewrite moves_ok_andb in Hchecked.
     apply andb_true_iff in Hchecked as [Hdistinct Hfresh].
     apply negb_true_iff in Hfresh. split.
     - exact (proj1 (distinct_vars_sound _ _ Hdistinct)).
@@ -3011,10 +3020,11 @@ Module DestroyT (O : OPS)
     pose proof (List.T_existsb_le (fun x => Pos.eqb tmp x)
       (fun x => (1 + Pos.T_eqb tmp x)%N) (N.of_nat w + 1)%N
       (map fst par ++ map snd par) Hcallback) as Hexists.
-    time_unfold T_moves_ok. unfold Datatypes.T_andb, Datatypes.T_negb.
+    time_unfold T_moves_ok. unfold Datatypes.T_negb.
     rewrite !length_map in Hdistinct, Happend.
     rewrite length_app, !length_map in Hexists.
-    rewrite !Nat2N.inj_add in *. nia.
+    destruct (distinct_vars (map fst par) Empty);
+      rewrite !Nat2N.inj_add in *; nia.
   Qed.
 
   (** The producer retains the common width of its input variables and temporary. *)

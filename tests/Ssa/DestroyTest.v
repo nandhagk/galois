@@ -107,3 +107,21 @@ Example duplicate_parameters_rejected : DS.destroy duplicate_parameters = None.
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example valid_move_preconditions :
+  DS.moves_ok [(1%positive, 2%positive); (2%positive, 1%positive)] 3%positive = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example duplicate_move_preconditions_rejected :
+  DS.moves_ok [(1%positive, 2%positive); (1%positive, 3%positive)] 4%positive = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example temporary_move_preconditions_rejected :
+  DS.moves_ok [(1%positive, 2%positive); (2%positive, 1%positive)] 2%positive = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
