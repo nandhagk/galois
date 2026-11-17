@@ -16,6 +16,21 @@ End Budget8.
 Module Raw := IntervalCode ZLangCode ThresholdsCode.
 Module Cut := CutIntervalCode Budget8 ZLangCode ThresholdsCode Raw.
 
+(** Each outward operation constructs its already-checked result directly. *)
+Example direct_cut_transfers :
+  cut_raw (Cut.join (Cut.cut (I (Fin 1) (Fin 4))) (Cut.cut (I (Fin 2) (Fin 9)))) =
+    I (Fin 1) (Fin 9) /\
+  cut_raw (Cut.meet (Cut.cut (I (Fin 1) (Fin 4))) (Cut.cut (I (Fin 2) (Fin 9)))) =
+    I (Fin 2) (Fin 4) /\
+  cut_raw (Cut.widen TLeaf (Cut.cut (I (Fin 1) (Fin 4))) (Cut.cut (I (Fin 2) (Fin 9)))) =
+    I (Fin 1) PosInf /\
+  cut_raw (Cut.narrow Cut.top (Cut.cut (I (Fin 2) (Fin 9)))) = I (Fin 2) (Fin 9) /\
+  cut_raw (Cut.forward ZAdd
+    [Cut.cut (I (Fin 1) (Fin 4)); Cut.cut (I (Fin 2) (Fin 9))]) = I (Fin 3) (Fin 13).
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
 Example bounded_and_malformed :
   cut_raw (Cut.cut (I (Fin (-12)) (Fin 24))) = I (Fin (-12)) (Fin 24) /\
   cut_interval_ok 8 (cut_raw (Cut.cut (I (Fin (-12)) (Fin 24)))) = true /\
