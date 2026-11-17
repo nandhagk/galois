@@ -178,9 +178,11 @@ Module Type UNION_FIND_PLAN (Import U : UNION_FIND_T).
     mem u w -> mem u l -> is_root u w -> is_root u l -> w <> l ->
     size_of u l <= size_of u w ->
     ranked (link w l u) (fun x => if Pos.eqb x w then Nat.max (rk w) (S (rk l)) else rk x).
-  (* T: time chain; T_find_le follows from T3, T4 and F4, T_union_le from T_find_le twice and T5 *)
+  (* Time chain: [T_find_le] follows from [T_walk_le], [T_compress_le] and [walk_path_spec],
+     and [T_union_le] from [T_find_le] twice and [T_link_le]. *)
   (** Reading a parent charges the queried positive key bits. *)
-  Parameter T_parent_of_le : forall x u, (T_parent_of x u <= k_get * N.of_nat (Pos.size_nat x + 1))%N.
+  Parameter T_parent_of_le : forall x u,
+    (T_parent_of x u <= k_get * N.of_nat (Pos.size_nat x + 1))%N.
   (** A member walk step charges the stored width budget. *)
   Parameter T_walk_step_le : forall u s, (wf u -> mem u (fst s) ->
     T_walk_step u s <= k_step * N.of_nat (width u + 1))%N.
