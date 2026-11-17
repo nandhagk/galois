@@ -202,6 +202,39 @@ Definition poly_upper (z : Z) (b : bnd) : bnd :=
 
 TimeFun poly_upper.
 
+(** Endpoint equality compares finite integers and distinguishes both infinities. *)
+Definition poly_bound_eqb (a b : bnd) : bool :=
+  match a, b with
+  | NegInf, NegInf => true
+  | PosInf, PosInf => true
+  | Fin x, Fin y => Z.eqb x y
+  | _, _ => false
+  end.
+
+TimeFun poly_bound_eqb.
+
+(** Equal endpoint pairs have identical lower and upper bounds. *)
+Definition poly_bounds_eqb (a b : bnd * bnd) : bool :=
+  if poly_bound_eqb (fst a) (fst b) then poly_bound_eqb (snd a) (snd b) else false.
+
+TimeFun poly_bounds_eqb.
+
+(** The endpoint equality test accepts only equal endpoints. *)
+Lemma poly_bound_eqb_eq : forall a b, poly_bound_eqb a b = true -> a = b.
+Proof.
+  intros [|x|] [|y|] H; cbn [poly_bound_eqb] in H;
+    try discriminate; try reflexivity.
+  apply Z.eqb_eq in H. now subst y.
+Qed.
+
+(** The pair equality test accepts only equal pairs of endpoints. *)
+Lemma poly_bounds_eqb_eq : forall a b, poly_bounds_eqb a b = true -> a = b.
+Proof.
+  intros [lo hi] [lo' hi']. unfold poly_bounds_eqb. cbn [fst snd].
+  destruct (poly_bound_eqb lo lo') eqn:Hlo; [|discriminate].
+  intro Hhi. apply poly_bound_eqb_eq in Hlo, Hhi. now subst lo' hi'.
+Qed.
+
 (** Positive division by one returns the original numerator and zero remainder. *)
 Lemma poly_pos_div_one : forall p, Z.pos_div_eucl p 1 = (Z.pos p, 0%Z).
 Proof.
@@ -1502,7 +1535,8 @@ Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
        if is_eq then poly_upper ((- b) / (- a))%Z (snd bounds) else snd bounds)
     else bounds.
 
-  Definition range_candidate (P : list (lcons X.t)) (f : lin X.t)
+  (** The original callback checks every projected row before updating its endpoints. *)
+  Definition range_candidate_spec (P : list (lcons X.t)) (f : lin X.t)
       (bounds : bnd * bnd) (r : poly_row (option X.t)) : bnd * bnd :=
     let c := poly_constraint r in
     if forallb (fun p => match fst p with None => true | Some _ => false end) (lhs c) then
@@ -1515,6 +1549,23 @@ Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
           range_update a (rhs c)
             (match lrel c with REq => true | RLe => false end) bounds
         else bounds
+      | nil => bounds
+      end
+    else bounds.
+
+  (** Only a projected row that changes an endpoint needs its certificate checked. *)
+  Definition range_candidate (P : list (lcons X.t)) (f : lin X.t)
+      (bounds : bnd * bnd) (r : poly_row (option X.t)) : bnd * bnd :=
+    let c := poly_constraint r in
+    if forallb (fun p => match fst p with None => true | Some _ => false end) (lhs c) then
+      let a := poly_coefficient tmp_eqb None c in
+      let next := range_update a (rhs c)
+        (match lrel c with REq => true | RLe => false end) bounds in
+      if poly_bounds_eqb next bounds then bounds else
+      let conclusion := LCons X.t (poly_scale_coef a (coef f)) (lrel c)
+        (rhs c - a * cst f)%Z in
+      match poly_multipliers r with
+      | _ :: ms => if C.check_entails P conclusion (Cert ms 1 false) then next else bounds
       | nil => bounds
       end
     else bounds.
@@ -3093,13 +3144,31 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
         lia.
   Qed.
 
+  (** Skipping a certificate check for an unchanged interval preserves the old result. *)
+  Lemma range_candidate_eq : forall P f bounds r,
+    range_candidate P f bounds r = range_candidate_spec P f bounds r.
+  Proof.
+    intros P f bounds r. unfold range_candidate, range_candidate_spec.
+    destruct (forallb _ _); [|reflexivity].
+    set (next := range_update (poly_coefficient tmp_eqb None (poly_constraint r))
+      (rhs (poly_constraint r))
+      (match lrel (poly_constraint r) with REq => true | RLe => false end) bounds).
+    destruct (poly_bounds_eqb next bounds) eqn:Hsame.
+    - apply poly_bounds_eqb_eq in Hsame. rewrite Hsame.
+      destruct (poly_multipliers r) as [|m ms]; [reflexivity|].
+      destruct (C.check_entails _ _ _); reflexivity.
+    - destruct (poly_multipliers r) as [|m ms]; [reflexivity|].
+      destruct (C.check_entails _ _ _); reflexivity.
+  Qed.
+
   (** A checked projected constraint gives a valid bound on the queried form. *)
   Lemma range_candidate_sound : forall P f bounds r v,
     Forall (sat v) P -> in_bnd (fst bounds) (snd bounds) (eval_lin v f) ->
     in_bnd (fst (range_candidate P f bounds r))
       (snd (range_candidate P f bounds r)) (eval_lin v f).
   Proof.
-    intros P f bounds r v Hmodels Hbounds. unfold range_candidate.
+    intros P f bounds r v Hmodels Hbounds.
+    rewrite range_candidate_eq. unfold range_candidate_spec.
     destruct (forallb (fun p => match fst p with None => true | Some _ => false end)
       (lhs (poly_constraint r))); [| exact Hbounds].
     destruct (poly_multipliers r) as [|m ms]; [exact Hbounds |].
@@ -8035,6 +8104,24 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       time_unfold List.T_fold_left. cbn [length]. time_simpl. nia.
   Qed.
 
+  (** A fold may restrict its callback clock to accumulators preserving an invariant. *)
+  Lemma poly_T_fold_left_invariant : forall (A B : Type) (f : B -> A -> B)
+      (T_f : B -> A -> N) k xs b (valid : B -> Prop),
+    valid b ->
+    (forall acc x, valid acc -> In x xs -> valid (f acc x)) ->
+    (forall acc x, valid acc -> In x xs -> (T_f acc x <= k)%N) ->
+    (List.T_fold_left f T_f xs b <= (k + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f T_f k xs. induction xs as [|x xs IH];
+      intros b valid Hb Hpreserve Hcallback.
+    - time_unfold List.T_fold_left. cbn [length]. lia.
+    - pose proof (Hcallback b x Hb (or_introl eq_refl)) as Hhead.
+      specialize (IH (f b x) valid (Hpreserve b x Hb (or_introl eq_refl))
+        (fun acc y Hacc Hy => Hpreserve acc y Hacc (or_intror Hy))
+        (fun acc y Hacc Hy => Hcallback acc y Hacc (or_intror Hy))).
+      time_unfold List.T_fold_left. cbn [length]. time_simpl. nia.
+  Qed.
+
   (** This named body matches the native variable collector's inner closure. *)
   Definition poly_variable_insert (m : ptrie X.t) (p : X.t * Z) : ptrie X.t :=
     PTrieCode.set (X.encode (fst p)) (fst p) m.
@@ -9776,6 +9863,36 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition poly_bounds_width (bits : nat) (bounds : bnd * bnd) : Prop :=
     poly_bound_bits (fst bounds) <= bits /\ poly_bound_bits (snd bounds) <= bits.
 
+  (** Enlarging the width allowance preserves the endpoint invariant. *)
+  Lemma poly_bounds_width_mono : forall bits wider bounds,
+    bits <= wider -> poly_bounds_width bits bounds -> poly_bounds_width wider bounds.
+  Proof.
+    intros bits wider bounds Hwidth [Hlo Hhi]. split; lia.
+  Qed.
+
+  (** Endpoint equality is linear in the first endpoint's width. *)
+  Lemma T_poly_bound_eqb_width : forall a b bits,
+    poly_bound_bits a <= bits ->
+    (T_poly_bound_eqb a b <= N.of_nat bits + 2)%N.
+  Proof.
+    intros [|x|] [|y|] bits Hbits; cbn [poly_bound_bits] in Hbits;
+      time_unfold T_poly_bound_eqb; time_simpl; try lia.
+    pose proof (Z.T_eqb_le x y). lia.
+  Qed.
+
+  (** Comparing two intervals is linear in the first interval's endpoint widths. *)
+  Lemma T_poly_bounds_eqb_width : forall a b bits,
+    poly_bounds_width bits a ->
+    (T_poly_bounds_eqb a b <= 16 * N.of_nat (bits + 1))%N.
+  Proof.
+    intros [lo hi] [lo' hi'] bits [Hlo Hhi]. cbn [fst snd] in Hlo, Hhi.
+    pose proof (T_poly_bound_eqb_width lo lo' bits Hlo) as Hlower.
+    pose proof (T_poly_bound_eqb_width hi hi' bits Hhi) as Hupper.
+    time_unfold T_poly_bounds_eqb. cbn [fst snd].
+    destruct (poly_bound_eqb lo lo'); time_simpl; rewrite Nat2N.inj_add;
+      change (N.of_nat 1) with 1%N; nia.
+  Qed.
+
   (** Every range-update endpoint fits the current bound or the incoming row's right-hand side. *)
   Lemma poly_range_update_width : forall a b is_eq bounds bits,
     Z.size_nat b <= bits -> poly_bounds_width bits bounds ->
@@ -9809,7 +9926,8 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     Z.size_nat (rhs (poly_constraint r)) <= bits -> poly_bounds_width bits bounds ->
     poly_bounds_width bits (range_candidate P f bounds r).
   Proof.
-    intros P f bounds r bits Hrhs Hbounds. unfold range_candidate.
+    intros P f bounds r bits Hrhs Hbounds.
+    rewrite range_candidate_eq. unfold range_candidate_spec.
     destruct (forallb _ _); [|exact Hbounds].
     destruct (poly_multipliers r) as [|m ms]; [exact Hbounds|].
     destruct (C.check_entails _ _ _); [|exact Hbounds].
@@ -11177,6 +11295,110 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         Hdim Hnext_mlen Hnext_count Hnext_support Hnext_envelopes
         ltac:(intros wider a r Hwide Hr; apply Hcallback with (wider := wider);
           [lia|exact Hr])) as Hrecursive.
+      pose proof (poly_fmcost_params_mono (S (length xs))
+        dim dim mlen mlen next_count next_count
+        (keys + (2 * bits + 1)) (2 * (keys + bits) + 1)
+        (Nat.le_refl _) (Nat.le_refl _) (Nat.le_refl _) ltac:(lia)) as Hfuture.
+      assert (Hrecursive_total :
+        (T_poly_run X.encode X.T_encode X.eqb X.T_eqb xs next +
+          List.T_fold_left f T_f (poly_run X.encode X.eqb xs next) acc <=
+          (poly_step_factor + factor + 16) * N.of_nat
+            (fmcost dim mlen (S (length xs)) next_count (2 * (keys + bits) + 1)))%N).
+      { eapply N.le_trans; [exact Hrecursive|]. apply N.mul_le_mono_l.
+        clear -Hfuture. lia. }
+      pose proof (T_poly_step_bounded x rows dim mlen keys bits Henvelopes) as Hstep.
+      set (work := (N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits)%N).
+      assert (Hhead : (T_poly_step X.encode X.T_encode X.eqb X.T_eqb x rows <=
+        poly_step_factor * work)%N).
+      { eapply N.le_trans; [exact Hstep|]. unfold work. rewrite N.mul_assoc.
+        apply N.mul_le_mono_r, N.mul_le_mono_l, N.pow_le_mono_l. lia. }
+      assert (Hwork : (1 <= work)%N) by (unfold work; apply poly_fm_charge_positive).
+      change (T_poly_run X.encode X.T_encode X.eqb X.T_eqb (x :: xs) rows +
+        List.T_fold_left f T_f (poly_run X.encode X.eqb xs next) acc <=
+        (poly_step_factor + factor + 16) * N.of_nat
+          (fmcost dim mlen (S (S (length xs))) count (keys + bits)))%N.
+      rewrite poly_fmcost_clock_step. fold next_count work.
+      time_unfold (@T_poly_run). fold next. time_simpl.
+      change (fun u : X.t => X.T_encode u) with X.T_encode.
+      change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+      set (future := N.of_nat
+        (fmcost dim mlen (S (length xs)) next_count (2 * (keys + bits) + 1))) in *.
+      clear -Hrecursive_total Hhead Hwork. clearbody work future.
+      rewrite !N.mul_add_distr_l. nia.
+  Qed.
+
+  (** A terminal fold can carry an accumulator invariant as row widths grow. *)
+  Lemma T_poly_run_fold_invariant : forall (A : Type)
+    (f : A -> poly_row X.t -> A) (T_f : A -> poly_row X.t -> N) factor
+    (valid : nat -> A -> Prop) xs vars rows dim mlen keys bits count acc,
+    length vars <= dim -> mlen <= count -> length rows <= count ->
+    Forall (poly_reduced_row vars) rows ->
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    valid bits acc ->
+    (forall lo hi a, lo <= hi -> valid lo a -> valid hi a) ->
+    (forall wider a r, bits <= wider -> valid wider a ->
+      poly_row_envelope dim mlen keys wider r ->
+      valid wider (f a r) /\
+      (T_f a r <= factor * N.of_nat (mlen + 1) *
+        N.of_nat (dim + mlen + 1) * N.of_nat (keys + wider + 1)^2)%N) ->
+    (T_poly_run X.encode X.T_encode X.eqb X.T_eqb xs rows +
+      List.T_fold_left f T_f (poly_run X.encode X.eqb xs rows) acc <=
+      (poly_step_factor + factor + 16) * N.of_nat
+        (fmcost dim mlen (S (length xs)) count (keys + bits)))%N.
+  Proof.
+    intros A f T_f factor valid xs. induction xs as [|x xs IH];
+      intros vars rows dim mlen keys bits count acc Hdim HM HR Hsupport Henvelopes
+        Hacc Hmono Hcallback.
+    - pose proof (poly_T_fold_left_invariant (poly_row X.t) A f T_f
+        (factor * N.of_nat (mlen + 1) * N.of_nat (dim + mlen + 1) *
+          N.of_nat (keys + bits + 1)^2)%N rows acc (valid bits) Hacc) as Hfold.
+      assert (Hhead : forall a r, valid bits a -> In r rows ->
+        valid bits (f a r) /\
+        (T_f a r <= factor * N.of_nat (mlen + 1) *
+          N.of_nat (dim + mlen + 1) * N.of_nat (keys + bits + 1)^2)%N).
+      { intros a r Ha Hr. apply Hcallback; [lia|exact Ha|].
+        exact (proj1 (Forall_forall _ _) Henvelopes r Hr). }
+      specialize (Hfold (fun a r Ha Hr => proj1 (Hhead a r Ha Hr))
+        (fun a r Ha Hr => proj2 (Hhead a r Ha Hr))).
+      set (span := poly_clock_span dim mlen keys bits).
+      set (work := (N.of_nat (count + 1)^2 * span)%N).
+      assert (Hspan : (1 <= span)%N) by (unfold span; apply poly_span_positive).
+      assert (Hwork : (1 <= work)%N) by (unfold work, span; apply poly_fm_charge_positive).
+      assert (Hcallback_count : (N.of_nat (mlen + 1) * N.of_nat (length rows) <=
+        N.of_nat (count + 1)^2)%N).
+      { rewrite N.pow_2_r. apply N.mul_le_mono; lia. }
+      assert (Hrows_work : (N.of_nat (length rows) <= work)%N).
+      { unfold work. rewrite N.pow_2_r. nia. }
+      assert (Hfold_work : (List.T_fold_left f T_f rows acc <= (factor + 2) * work)%N).
+      { replace (factor * N.of_nat (mlen + 1) * N.of_nat (dim + mlen + 1) *
+          N.of_nat (keys + bits + 1)^2)%N with
+          (factor * N.of_nat (mlen + 1) * span)%N in Hfold
+          by (unfold span, poly_clock_span; ring).
+        assert (Hscaled : (factor * N.of_nat (mlen + 1) * span * N.of_nat (length rows) <=
+          factor * work)%N).
+        { unfold work. nia. }
+        clear -Hfold Hscaled Hrows_work Hwork. clearbody work. nia. }
+      cbn [length poly_run]. rewrite poly_fmcost_clock_step. fold span work.
+      eapply N.le_trans with (m := ((poly_step_factor + factor + 16) * work)%N).
+      2: { apply N.mul_le_mono_l. apply N.le_add_r. }
+      time_unfold (@T_poly_run). time_cbn.
+      clear -Hfold_work Hwork. clearbody work. nia.
+    - set (next := poly_step X.encode X.eqb x rows).
+      set (next_count := count^2 / 4 + count).
+      assert (Hnext_count : length next <= next_count).
+      { pose proof (poly_step_rows X.t X.encode X.eqb x rows) as Hrows.
+        pose proof (poly_rows_recurrence_mono (length rows) count HR).
+        unfold next, next_count. lia. }
+      assert (Hnext_mlen : mlen <= next_count) by (unfold next_count; lia).
+      assert (Hnext_support : Forall (poly_reduced_row vars) next).
+      { unfold next. now apply poly_step_reduced. }
+      assert (Hnext_envelopes : Forall (poly_row_envelope dim mlen keys (2 * bits + 1)) next).
+      { unfold next. now apply poly_step_envelopes with (vars := vars). }
+      pose proof (IH vars next dim mlen keys (2 * bits + 1) next_count acc
+        Hdim Hnext_mlen Hnext_count Hnext_support Hnext_envelopes
+        (Hmono bits (2 * bits + 1) acc ltac:(lia) Hacc) Hmono
+        ltac:(intros wider a r Hwide Ha Hr; apply Hcallback with (wider := wider);
+          [lia|exact Ha|exact Hr])) as Hrecursive.
       pose proof (poly_fmcost_params_mono (S (length xs))
         dim dim mlen mlen next_count next_count
         (keys + (2 * bits + 1)) (2 * (keys + bits) + 1)
@@ -13246,22 +13468,25 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
   (** Candidate dispatch adds fixed projections to its scan, arithmetic, check, and update. *)
   Lemma T_poly_range_candidate_frame : forall P f bounds
-      (r : poly_row (option X.t)) pre branch,
+      (r : poly_row (option X.t)) pre update branch,
     let c := poly_constraint r in
     let a := poly_coefficient tmp_eqb None c in
+    let next := range_update a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds in
     let conclusion := LCons X.t (poly_scale_coef a (coef f)) (lrel c)
       (rhs c - a * cst f)%Z in
     (T_poly_scale_coef a (coef f) + Z.T_mul a (cst f) +
       Z.T_sub (rhs c) (a * cst f) <= pre)%N ->
+    (T_range_update a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds +
+      T_poly_bounds_eqb next bounds <= update)%N ->
     (forall head ms, poly_multipliers r = head :: ms ->
-      (C.T_check_entails P conclusion (Cert ms 1 false) +
-        T_range_update a (rhs c)
-          (match lrel c with REq => true | RLe => false end) bounds <= branch)%N) ->
+      (C.T_check_entails P conclusion (Cert ms 1 false) <= branch)%N) ->
     (T_range_candidate P f bounds r <=
       List.T_forallb poly_range_result_key T_poly_range_result_key (lhs c) +
-      T_poly_coefficient tmp_eqb T_tmp_eqb None c + pre + branch + 32)%N.
+      T_poly_coefficient tmp_eqb T_tmp_eqb None c + pre + update + branch + 32)%N.
   Proof.
-    intros P f bounds r pre branch c a conclusion Hpre Hbranch.
+    intros P f bounds r pre update branch c a next conclusion Hpre Hupdate Hbranch.
     time_unfold T_range_candidate. time_simpl.
     change (fun p : option X.t * Z =>
       match fst p with Some _ => false | None => true end) with poly_range_result_key.
@@ -13270,10 +13495,15 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     | |- context [List.T_forallb poly_range_result_key ?Tf ?xs] =>
         change Tf with T_poly_range_result_key
     end.
-    unfold conclusion, a, c in *.
+    unfold conclusion, next, a, c in *.
     destruct (forallb poly_range_result_key (lhs (poly_constraint r)));
-      time_simpl; try nia.
-    destruct (poly_multipliers r) as [|head ms] eqn:Hmult; time_simpl; try nia.
+      time_simpl; try lia.
+    destruct (poly_bounds_eqb
+      (range_update (poly_coefficient tmp_eqb None (poly_constraint r))
+        (rhs (poly_constraint r))
+        (match lrel (poly_constraint r) with REq => true | RLe => false end) bounds)
+      bounds); time_simpl; try lia.
+    destruct (poly_multipliers r) as [|head ms] eqn:Hmult; time_simpl; try lia.
     pose proof (Hbranch head ms eq_refl) as Hsuffix.
     destruct (C.check_entails P
       (LCons X.t
@@ -13281,7 +13511,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         (lrel (poly_constraint r))
         (rhs (poly_constraint r) -
           poly_coefficient tmp_eqb None (poly_constraint r) * cst f)%Z)
-      (Cert ms 1 false)); time_simpl; nia.
+      (Cert ms 1 false)); time_simpl; clear -Hpre Hupdate Hsuffix; lia.
   Qed.
 
   Definition poly_range_candidate_factor : N :=
@@ -13293,12 +13523,13 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     Forall (poly_source_envelope dim bits) P ->
     length (coef f) <= dim -> F.form_bits f <= bits ->
     RangeCore.poly_row_envelope dim (mlen + 1) keys bits r ->
+    poly_bounds_width bits bounds ->
     (T_range_candidate P f bounds r <= poly_range_candidate_factor *
       N.of_nat ((mlen + 1) * (dim + mlen + 1) *
         (keys + bits + 1) * (keys + bits + 1)))%N.
   Proof.
     intros P f bounds r dim mlen keys bits Hmlen HP Hsource Hform Hformbits
-      (Hnormal & Hdim & Hkeys & Hbits & Hmultlen & Hmultbits).
+      (Hnormal & Hdim & Hkeys & Hbits & Hmultlen & Hmultbits) Hbounds.
     set (c := poly_constraint r).
     set (a := poly_coefficient tmp_eqb None c).
     set (width := keys + bits + 1).
@@ -13319,7 +13550,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     destruct Hcharges as [Hscale_work [Hsquare_work [Hlinear_work Hcheck_work]]].
     assert (Hwork : (1 <= work)%N).
     { unfold work. assert (Hnat : 1 <= stage).
-      { pose proof Hsquare_work. nia. }
+      { clear -Hsquare_work. clearbody stage. nia. }
       lia. }
     assert (Hrowdim : length (lhs c) <= dim) by exact Hdim.
     assert (Hentry : (N.of_nat (length (lhs c) + 1) <= work)%N).
@@ -13394,13 +13625,24 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     assert (Hpre : (T_poly_scale_coef a (coef f) + Z.T_mul a (cst f) +
       Z.T_sub (rhs c) (a * cst f) <= 36 * work)%N)
       by (clear -Hscale_total Hmultiply_total Hsubtract_total; lia).
+    assert (Hnext : poly_bounds_width bits (range_update a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds)).
+    { apply poly_range_update_width; assumption. }
+    pose proof (T_poly_bounds_eqb_width _ bounds bits Hnext) as Hequal.
+    assert (Hequal_total : (T_poly_bounds_eqb (range_update a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds) bounds <= 16 * work)%N).
+    { eapply N.le_trans; [exact Hequal|]. apply N.mul_le_mono_l.
+      unfold work. apply time_of_nat_le. eapply Nat.le_trans; [|exact Hsquare_work]. nia. }
+    assert (Hupdate_frame : (T_range_update a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds +
+      T_poly_bounds_eqb (range_update a (rhs c)
+        (match lrel c with REq => true | RLe => false end) bounds) bounds <=
+      4112 * work)%N) by (clear -Hupdate_total Hequal_total; nia).
     assert (Hbranch : forall head ms, poly_multipliers r = head :: ms ->
       (C.T_check_entails P
         (LCons X.t (poly_scale_coef a (coef f)) (lrel c)
-          (rhs c - a * cst f)%Z) (Cert ms 1 false) +
-        T_range_update a (rhs c)
-          (match lrel c with REq => true | RLe => false end) bounds <=
-        (128 * C.c_lc + 4096) * work)%N).
+          (rhs c - a * cst f)%Z) (Cert ms 1 false) <=
+        (128 * C.c_lc) * work)%N).
     { intros head ms Hmult.
       assert (Hms : length ms <= mlen).
       { rewrite Hmult in Hmultlen. cbn [length] in Hmultlen. lia. }
@@ -13425,16 +13667,17 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
           with (128 * ((mlen + 1) * (dim + mlen + 1) * (bits + 1) * (bits + 1)))
           by (cbn [Nat.pow]; ring).
         now apply Nat.mul_le_mono_l. }
-      clear -Hcheck_total Hupdate_total. nia. }
+      exact Hcheck_total. }
     pose proof (T_poly_range_candidate_frame P f bounds r
-      (36 * work) ((128 * C.c_lc + 4096) * work) Hpre Hbranch) as Hframe.
+      (36 * work) (4112 * work) (128 * C.c_lc * work)
+      Hpre Hupdate_frame Hbranch) as Hframe.
     cbn zeta in Hframe. fold c in Hframe.
     eapply N.le_trans; [exact Hframe|].
     unfold poly_range_candidate_factor.
     fold c width stage work.
     change (List.T_forallb poly_range_result_key T_poly_range_result_key (lhs c) +
       T_poly_coefficient tmp_eqb T_tmp_eqb None c + 36 * work +
-      (128 * C.c_lc + 4096) * work + 32 <=
+      4112 * work + 128 * C.c_lc * work + 32 <=
       (128 * C.c_lc + RangeCore.poly_coef_factor + 4200) * work)%N.
     clear -Hscan_total Hcoefficient_total Hwork. clearbody work.
     nia.
@@ -13446,14 +13689,15 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     P <> [] -> Forall (poly_source_envelope dim bits) P ->
     length (coef f) <= dim -> F.form_bits f <= bits ->
     RangeCore.poly_row_envelope dim (length P + 1) keys bits r ->
+    poly_bounds_width bits bounds ->
     (T_range_candidate P f bounds r <= poly_range_candidate_factor *
       N.of_nat (length P + 2) * N.of_nat (dim + length P + 2) *
         N.of_nat (keys + bits + 1)^2)%N.
   Proof.
-    intros P f bounds r dim keys bits Hnonempty Hsource Hform Hbits Hr.
+    intros P f bounds r dim keys bits Hnonempty Hsource Hform Hbits Hr Hbounds.
     pose proof (T_poly_range_candidate_bounded P f bounds r dim (length P)
       keys bits ltac:(destruct P; [contradiction|cbn; lia])
-      ltac:(lia) Hsource Hform Hbits Hr) as Hcandidate.
+      ltac:(lia) Hsource Hform Hbits Hr Hbounds) as Hcandidate.
     set (width := keys + bits + 1).
     assert (Hstage : (length P + 1) * (dim + length P + 1) * width * width <=
       (length P + 2) * (dim + length P + 2) * width * width).
@@ -13476,11 +13720,12 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     RangeCore.poly_row_envelope dim 1 keys bits r ->
     (poly_coefficient tmp_eqb None (poly_constraint r) = 0%Z \/
       poly_coefficient tmp_eqb None (poly_constraint r) = 1%Z) ->
+    poly_bounds_width bits bounds ->
     (T_range_candidate [] f bounds r <= poly_range_empty_candidate_factor *
       N.of_nat (dim + 2) * N.of_nat (keys + bits + 1))%N.
   Proof.
     intros f bounds r dim keys bits Hform_length Hform
-      (Hnormal & Hdim & Hkeys & Hbits & Hmlen & Hmult) Hunit.
+      (Hnormal & Hdim & Hkeys & Hbits & Hmlen & Hmult) Hunit Hbounds.
     unfold RangeKey.t in *.
     set (c := poly_constraint r). fold c in Hnormal, Hdim, Hkeys, Hbits, Hunit.
     set (a := poly_coefficient tmp_eqb None c). fold a in Hunit.
@@ -13567,41 +13812,35 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       { unfold work. rewrite <- Nat2N.inj_mul, <- (Nat2N.inj_mul 32).
         clear -Hmeasure. lia. }
       clear -Hcheck Htransport. nia. }
-    time_unfold T_range_candidate. time_simpl.
-    change (fun p : option X.t * Z =>
-      match fst p with Some _ => false | None => true end) with poly_range_result_key.
-    change (fun u v : option X.t => T_tmp_eqb u v) with T_tmp_eqb.
-    lazymatch goal with
-    | |- context [List.T_forallb poly_range_result_key ?Tf ?xs] =>
-        change Tf with T_poly_range_result_key
-    end.
-    unfold conclusion, a, c in *.
-    destruct (forallb poly_range_result_key (lhs (poly_constraint r))); time_simpl.
-    - destruct (poly_multipliers r) as [|m ms] eqn:Hmultipliers; time_simpl.
-      + replace (poly_range_empty_candidate_factor * N.of_nat (dim + 2) *
-          N.of_nat (keys + bits + 1))%N with (poly_range_empty_candidate_factor * work)%N
-          by (unfold work; ring).
-        unfold poly_range_empty_candidate_factor.
-        clear -Hcoefficient_total Hscan_total Hscale_total Hmultiply_total Hsubtract_total
-          Hpositive. clearbody work. nia.
-      + assert (Htail : ms = []).
-        { destruct ms; [reflexivity|cbn [length] in Hmlen; lia]. }
-        subst ms. destruct (C.check_entails []
-          (LCons X.t (poly_scale_coef (poly_coefficient tmp_eqb None (poly_constraint r)) (coef f))
-            (lrel (poly_constraint r))
-            (rhs (poly_constraint r) - poly_coefficient tmp_eqb None (poly_constraint r) * cst f)%Z)
-          (Cert [] 1 false)); time_simpl.
-        all: replace (poly_range_empty_candidate_factor * N.of_nat (dim + 2) *
-          N.of_nat (keys + bits + 1))%N with (poly_range_empty_candidate_factor * work)%N
-          by (unfold work; ring).
-        all: unfold poly_range_empty_candidate_factor;
-          clear -Hcoefficient_total Hscan_total Hscale_total Hmultiply_total Hsubtract_total
-            Hupdate_total Hcheck_total Hpositive; clearbody work; nia.
-    - replace (poly_range_empty_candidate_factor * N.of_nat (dim + 2) *
-        N.of_nat (keys + bits + 1))%N with (poly_range_empty_candidate_factor * work)%N
-        by (unfold work; ring).
-      unfold poly_range_empty_candidate_factor. clear -Hscan_total Hpositive.
-      clearbody work. nia.
+    assert (Hnext : poly_bounds_width bits (range_update a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds)).
+    { apply poly_range_update_width; assumption. }
+    pose proof (T_poly_bounds_eqb_width _ bounds bits Hnext) as Hequal.
+    assert (Hequal_total : (T_poly_bounds_eqb (range_update a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds) bounds <= 16 * work)%N).
+    { eapply N.le_trans; [exact Hequal|]. now apply N.mul_le_mono_l. }
+    assert (Hpre : (T_poly_scale_coef a (coef f) + Z.T_mul a (cst f) +
+      Z.T_sub (rhs c) (a * cst f) <= 60 * work)%N)
+      by (clear -Hscale_total Hmultiply_total Hsubtract_total; lia).
+    assert (Hupdate_frame : (T_range_update a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds +
+      T_poly_bounds_eqb (range_update a (rhs c)
+        (match lrel c with REq => true | RLe => false end) bounds) bounds <=
+      144 * work)%N) by (clear -Hupdate_total Hequal_total; nia).
+    assert (Hbranch : forall head ms, poly_multipliers r = head :: ms ->
+      (C.T_check_entails [] conclusion (Cert ms 1 false) <= 32 * C.c_lc * work)%N).
+    { intros head ms Hms. assert (Htail : ms = []).
+      { rewrite Hms in Hmlen. destruct ms; [reflexivity|cbn [length] in Hmlen; lia]. }
+      now subst ms. }
+    pose proof (T_poly_range_candidate_frame [] f bounds r
+      (60 * work) (144 * work) (32 * C.c_lc * work)
+      Hpre Hupdate_frame Hbranch) as Hframe.
+    cbn zeta in Hframe. fold c in Hframe.
+    replace (poly_range_empty_candidate_factor * N.of_nat (dim + 2) *
+      N.of_nat (keys + bits + 1))%N with (poly_range_empty_candidate_factor * work)%N
+      by (unfold work; ring).
+    eapply N.le_trans; [exact Hframe|]. unfold poly_range_empty_candidate_factor.
+    clear -Hcoefficient_total Hscan_total Hpositive. clearbody work. nia.
   Qed.
 
   (** Duplicate surplus consumes fuel before the actual elimination columns. *)
@@ -13734,16 +13973,24 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       unfold stage. rewrite <- Nat2N.inj_mul. clear -Hnat. lia. }
     assert (Hstage_positive : (1 <= stage)%N).
     { unfold stage. pose proof (poly_fmcost_positive (dim + 1) 1 fuel 1 (bits + initial_bits)). lia. }
-    assert (Hcandidate : forall bounds,
+    assert (Hcandidate : forall bounds, poly_bounds_width final_bits bounds ->
       (T_range_candidate [] f bounds r <= poly_range_empty_candidate_factor * stage)%N).
-    { intro bounds. eapply N.le_trans.
+    { intros bounds Hbounds. eapply N.le_trans.
       - apply (T_poly_range_empty_candidate f bounds r (dim + 1) bits final_bits);
-          [unfold dim; lia|exact Hform_final|exact Hr|exact Hunit].
+          [unfold dim; lia|exact Hform_final|exact Hr|exact Hunit|exact Hbounds].
       - rewrite <- N.mul_assoc. now apply N.mul_le_mono_l. }
-    pose proof (poly_T_fold_left_members (poly_row (option X.t)) (bnd * bnd)
+    assert (Hrhs : Z.size_nat (rhs (poly_constraint r)) <= final_bits).
+    { destruct Hr as (_ & _ & _ & Hbits & _).
+      eapply Nat.le_trans; [apply RangeCore.poly_row_rhs_bits|exact Hbits]. }
+    pose proof (poly_T_fold_left_invariant (poly_row (option X.t)) (bnd * bnd)
       (range_candidate [] f) (T_range_candidate [] f)
       (poly_range_empty_candidate_factor * stage)%N [r] (NegInf, PosInf)
-      ltac:(intros acc q [Hq|Hq]; [subst q; apply Hcandidate|contradiction])) as Hfold.
+      (poly_bounds_width final_bits)
+      ltac:(split; cbn [poly_bound_bits fst snd]; lia)
+      ltac:(intros acc q Hacc [Hq|Hq];
+        [subst q; apply poly_range_candidate_width; assumption|contradiction])
+      ltac:(intros acc q Hacc [Hq|Hq];
+        [subst q; now apply Hcandidate|contradiction])) as Hfold.
     change (List.T_fold_left (range_candidate [] f) (T_range_candidate [] f)
       [r] (NegInf, PosInf) <= (poly_range_empty_candidate_factor * stage + 1) * 1 + 1)%N in Hfold.
     assert (Hfold_total : (List.T_fold_left (range_candidate [] f) (T_range_candidate [] f)
@@ -13842,34 +14089,40 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     { exact (poly_range_initial_envelopes P f). }
     assert (Hsources : Forall (poly_source_envelope (dim + 1) keys) rows).
     { exact (poly_range_sources_envelope P f). }
-    eapply RangeCore.T_poly_run_fold_bounded with
+    eapply RangeCore.T_poly_run_fold_invariant with
+      (valid := poly_bounds_width)
       (vars := poly_range_fixed_support P f) (count := mlen).
     - exact Hsupport.
     - lia.
     - rewrite <- Hinitial_length. apply Nat.le_refl.
     - exact Hreduced.
     - exact Henvelopes.
-    - intros wider bounds r Hwide Hr.
-      assert (Hsource_wide : Forall (poly_source_envelope (dim + 1) wider) rows).
-      { eapply Forall_impl; [|exact Hsources].
-        intros q Hq. eapply poly_source_envelope_mono; [exact Hq|lia|].
-        unfold initial_bits, keys in *. lia. }
-      assert (Hrow : RangeCore.poly_row_envelope
-        (dim + 1) (length rows + 1) keys wider r).
-      { replace (length rows + 1) with mlen
+    - split; cbn [poly_bound_bits fst snd]; lia.
+    - exact poly_bounds_width_mono.
+    - intros wider bounds r Hwide Hbounds Hr. split.
+      + apply poly_range_candidate_width; [|exact Hbounds].
+        destruct Hr as (_ & _ & _ & Hbits & _).
+        eapply Nat.le_trans; [apply RangeCore.poly_row_rhs_bits|exact Hbits].
+      + assert (Hsource_wide : Forall (poly_source_envelope (dim + 1) wider) rows).
+        { eapply Forall_impl; [|exact Hsources].
+          intros q Hq. eapply poly_source_envelope_mono; [exact Hq|lia|].
+          unfold initial_bits, keys in *. lia. }
+        assert (Hrow : RangeCore.poly_row_envelope
+          (dim + 1) (length rows + 1) keys wider r).
+        { replace (length rows + 1) with mlen
+            by (unfold rows, mlen; rewrite length_map; lia).
+          exact Hr. }
+        assert (Hformbits : F.form_bits f <= wider)
+          by (unfold initial_bits, keys in *; lia).
+        pose proof (T_poly_range_candidate_recurrence rows f bounds r
+          (dim + 1) keys wider
+          ltac:(unfold rows; destruct P; [contradiction|discriminate])
+          Hsource_wide ltac:(lia) Hformbits Hrow Hbounds) as Hcandidate.
+        replace (length rows + 2) with (mlen + 1) in Hcandidate
           by (unfold rows, mlen; rewrite length_map; lia).
-        exact Hr. }
-      assert (Hformbits : F.form_bits f <= wider)
-        by (unfold initial_bits, keys in *; lia).
-      pose proof (T_poly_range_candidate_recurrence rows f bounds r
-        (dim + 1) keys wider
-        ltac:(unfold rows; destruct P; [contradiction|discriminate])
-        Hsource_wide ltac:(lia) Hformbits Hrow) as Hcandidate.
-      replace (length rows + 2) with (mlen + 1) in Hcandidate
-        by (unfold rows, mlen; rewrite length_map; lia).
-      replace (dim + 1 + length rows + 2) with (dim + 1 + mlen + 1)
-        in Hcandidate by (unfold rows, mlen; rewrite length_map; lia).
-      exact Hcandidate.
+        replace (dim + 1 + length rows + 2) with (dim + 1 + mlen + 1)
+          in Hcandidate by (unfold rows, mlen; rewrite length_map; lia).
+        exact Hcandidate.
   Qed.
 
   Definition poly_range_nonempty_factor : N :=

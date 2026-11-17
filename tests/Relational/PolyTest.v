@@ -169,6 +169,30 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** A weaker second candidate leaves the first finite upper endpoint unchanged. *)
+Example range_skips_weaker_upper_candidate :
+  FixturePoly.range_linear [upper_x 3; upper_x 5]
+    (Lin _ [(1%positive, 1)] 0) = (NegInf, Fin 3).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A stronger second candidate is still checked and tightens the upper endpoint. *)
+Example range_accepts_stronger_upper_candidate :
+  FixturePoly.range_linear [upper_x 5; upper_x 3]
+    (Lin _ [(1%positive, 1)] 0) = (NegInf, Fin 3).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An equality candidate retains both endpoints before redundant bounds are skipped. *)
+Example range_skips_bounds_after_equality :
+  FixturePoly.range_linear [equal_x 3; upper_x 5; lower_x 1]
+    (Lin _ [(1%positive, 1)] 0) = (Fin 3, Fin 3).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Range checking merges repeated keys and removes canceled source variables once. *)
 Example range_repeated_source_keys :
   FixturePoly.range_linear
