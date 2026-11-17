@@ -4,8 +4,8 @@
     For example, an absent binding gives an empty effect sequence.
     Builds on: Program.MemorySig and Base.Trie. *)
 
-From Stdlib Require Import List NArith.
-From Argent Require Import Time Tactics Std.
+From Stdlib Require Import List NArith Lia.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig Trie Code.
 From Galois.Program Require Import CfgSig SemanticsSig MemorySig.
 Import Code.List.
@@ -17,6 +17,9 @@ End MEMORY_DATA.
 Module Type MEMORY_DATA_TIME (P : TYPE) (R : KEY_T)
     (Import D : MEMORY_DATA P R).
   Parameter T_effect_table : P.t -> N.
+  Parameter c_effect_table : N.
+  (** Reading the stored effect table has bounded cost. *)
+  Parameter T_effect_table_le : forall p, (T_effect_table p <= c_effect_table)%N.
 End MEMORY_DATA_TIME.
 
 Module Type MEMORY_DATA_T (P : TYPE) (R : KEY_T) :=
@@ -44,6 +47,30 @@ Module MemoryT (P : TYPE) (N : KEY_T) (E : TYPE)
     (A : ALIAS_T R) (D : MEMORY_DATA_T P R) <: MEMORY_T P N E C R A.
   Include Memory P N EKey C R A D.
   TimeFun effects.
+
+  Definition c_effects : N := (EKey.c_key + D.c_effect_table + 3)%N.
+
+  (** Effect lookup pays for the encoded edge key and the stored effect table. *)
+  Lemma T_effects_le : forall p e,
+    (T_effects p e <= c_effects *
+      N.of_nat (EKey.bits e + length (effects p e) + 1))%N.
+  Proof.
+    intros p e. pose proof (D.T_effect_table_le p) as Htable.
+    pose proof (EKey.T_encode_le e) as Hencode.
+    unfold c_effects. time_unfold T_effects. PTrieT.trie_get_le.
+    time_simpl; time_cbn; unfold EKey.bits in *; nia.
+  Qed.
+
+  (** Effect lookup is linear in the edge key and the returned effect sequence. *)
+  Lemma effects_bigO : bigO (X := P.t * E.t) (fun _ => True)
+    (fun '(p, e) => N.of_nat (EKey.bits e + length (effects p e)))
+    (fun '(p, e) => T_effects p e).
+  Proof.
+    apply bigO_intro with (c := c_effects).
+    intros [p e] _. pose proof (T_effects_le p e) as Heffects.
+    cbn beta iota zeta in *. rewrite Nat2N.inj_add in Heffects. nia.
+  Qed.
+
   TimeFun reads.
   TimeFun writes.
 End MemoryT.

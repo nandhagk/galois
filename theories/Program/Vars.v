@@ -259,17 +259,29 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
   (** Edge uses are linear in the edge key and the returned variables. *)
   Lemma uses_bigO : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(p, e) => N.of_nat (E.bits e + length (uses p e))) (fun '(p, e) => T_uses p e).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_vars).
+    intros [p e] _; pose proof (T_uses_le p e) as Htime.
+    rewrite Nat2N.inj_add in Htime; nia.
+  Qed.
 
   (** Edge definitions are linear in the edge key and the returned variables. *)
   Lemma defs_bigO : bigO (X := P.t * E.t) (fun _ => True)
     (fun '(p, e) => N.of_nat (E.bits e + length (defs p e))) (fun '(p, e) => T_defs p e).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_vars).
+    intros [p e] _; pose proof (T_defs_le p e) as Htime.
+    rewrite Nat2N.inj_add in Htime; nia.
+  Qed.
 
   (** Exit observations are linear in the node key and the returned variables. *)
   Lemma exits_bigO : bigO (X := P.t * N.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (N.bits n + length (exits p n))) (fun '(p, n) => T_exits p n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_vars).
+    intros [p n] _; pose proof (T_exits_le p n) as Htime.
+    rewrite Nat2N.inj_add in Htime; nia.
+  Qed.
 
   (** The named preparation table is the executable occurrence scan. *)
   Lemma F3_seen : forall p,

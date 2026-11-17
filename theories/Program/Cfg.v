@@ -541,7 +541,11 @@ Module CfgT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_BASE_T P N E).
       (fold_right Nat.max 0%nat (List.map N.bits (C.entries p ++
         flat_map (fun e => C.src p e :: C.dst p e :: nil) (C.edges p))) + 1)))
     T_prepare.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cfg_prep).
+    intros p _. pose proof (T_prepare_le p) as Hprepare.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
   End Timed.
   Include Timed.
 End CfgT.

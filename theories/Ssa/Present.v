@@ -1274,21 +1274,46 @@ Module BlockCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite !Nat2N.inj_add. time_cbn.
     unfold PosKeyT.bits, PosKeyT.encode, PosKeyCode.encode; PTrieT.trie_get_le; nia.
   Qed.
+  (** Edge enumeration is linear in its output. *)
   Lemma edges_bigO : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (edges p))) T_edges.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cfg). intros p _.
+    pose proof (T_edges_le p) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
+  (** Entry enumeration is linear in its output. *)
   Lemma entries_bigO : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (entries p))) T_entries.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cfg). intros p _.
+    pose proof (T_entries_le p) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
+  (** Outgoing lookup is linear in the node key and returned edges. *)
   Lemma out_bigO : bigO (X := Q.t * PosKeyT.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (PosKeyT.bits n + length (out p n))) (fun '(p, n) => T_out p n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
+    pose proof (T_out_le p n) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
+  (** Incoming lookup is linear in the node key and returned edges. *)
   Lemma inc_bigO : bigO (X := Q.t * PosKeyT.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (PosKeyT.bits n + length (inc p n))) (fun '(p, n) => T_inc p n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
+    pose proof (T_inc_le p n) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
+  (** Node enumeration is linear in its output. *)
   Lemma nodes_bigO : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (nodes p))) T_nodes.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cfg_adj). intros p _.
+    pose proof (T_nodes_le p) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
 End BlockCfgT.
 
 Module PointCfgCode (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
@@ -1414,21 +1439,46 @@ Module PointCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     PTrieT.trie_get_le. change (Pos.size_nat (PointKey.encode n)) with (PointKey.bits n) in *.
     rewrite !Nat2N.inj_add in *; nia.
   Qed.
+  (** Edge enumeration is linear in its output. *)
   Lemma edges_bigO : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (edges p))) T_edges.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cfg). intros p _.
+    pose proof (T_edges_le p) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
+  (** Entry enumeration is linear in its output. *)
   Lemma entries_bigO : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (entries p))) T_entries.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cfg). intros p _.
+    pose proof (T_entries_le p) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
+  (** Outgoing lookup is linear in the node key and returned edges. *)
   Lemma out_bigO : bigO (X := Q.t * PointKey.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (PointKey.bits n + length (out p n))) (fun '(p, n) => T_out p n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
+    pose proof (T_out_le p n) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
+  (** Incoming lookup is linear in the node key and returned edges. *)
   Lemma inc_bigO : bigO (X := Q.t * PointKey.t) (fun _ => True)
     (fun '(p, n) => N.of_nat (PointKey.bits n + length (inc p n))) (fun '(p, n) => T_inc p n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cfg_adj). intros [p n] _.
+    pose proof (T_inc_le p n) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
+  (** Node enumeration is linear in its output. *)
   Lemma nodes_bigO : bigO (fun _ : Q.t => True)
     (fun p => N.of_nat (length (nodes p))) T_nodes.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cfg_adj). intros p _.
+    pose proof (T_nodes_le p) as Htime.
+    rewrite Nat2N.inj_add in Htime. nia.
+  Qed.
 End PointCfgT.
 
 Module PresentVarsData (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
