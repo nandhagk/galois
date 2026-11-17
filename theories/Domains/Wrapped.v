@@ -247,6 +247,15 @@ Definition wrapped_mul (w : width) (a b : wrapped) : wrapped :=
   if wrapped_size w unsigned <=? wrapped_size w signed then unsigned else signed.
 TimeFun wrapped_mul.
 
+(** A cover with at most one value cannot be improved by the signed multiplication pass. *)
+Definition wrapped_mul_fast (w : width) (a b : wrapped) : wrapped :=
+  let unsigned := wrapped_mul_both_parts w (half w) (wrapped_parts w a) (wrapped_parts w b) in
+  let usize := wrapped_size w unsigned in
+  if usize <=? 1 then unsigned else
+  let signed := wrapped_mul_both_parts w 0 (wrapped_signed_parts w a) (wrapped_signed_parts w b) in
+  if usize <=? wrapped_size w signed then unsigned else signed.
+TimeFun wrapped_mul_fast.
+
 Definition wrapped_pole_cut (w : width) (a : itv) : itv * itv :=
   (WrappedScalar.interval_meet a (I (Fin 0) (Fin (half w - 1))),
    WrappedScalar.interval_meet a (I (Fin (half w)) (Fin (modulus w - 1)))).
@@ -545,7 +554,7 @@ Module WrappedCode (L : WORD_LANGUAGE_OPS) <: WRAPPED_OPS L.
   Definition wrapped_not := wrapped_not.
   Definition wrapped_add := wrapped_add.
   Definition wrapped_sub := wrapped_sub.
-  Definition wrapped_mul := wrapped_mul.
+  Definition wrapped_mul := wrapped_mul_fast.
   Definition wrapped_udiv := wrapped_udiv.
   Definition wrapped_urem := wrapped_urem.
   Definition wrapped_split := wrapped_split.
@@ -1402,6 +1411,119 @@ Proof.
   - right; left. apply wrapped_mul_parts_sound; now apply wrapped_mul_cut_sound.
   - right; right; left. apply wrapped_mul_parts_sound; now apply wrapped_mul_cut_sound.
   - right; right; right. apply wrapped_mul_parts_sound; now apply wrapped_mul_cut_sound.
+Qed.
+
+(** An empty left pair makes every multiplication piece empty. *)
+Local Lemma wrapped_mul_both_parts_bottom_left w pole b :
+  wrapped_mul_both_parts w pole (IBot, IBot) b = WBot.
+Proof.
+  reflexivity.
+Qed.
+
+(** An empty right interval makes an individual product empty. *)
+Local Lemma wrapped_mul_piece_bottom_right w a :
+  wrapped_mul_piece w a IBot = WBot.
+Proof.
+  destruct a as [|[|lo|] [|hi|]]; reflexivity.
+Qed.
+
+(** An empty right pair makes all four products empty. *)
+Local Lemma wrapped_mul_parts_bottom_right w a :
+  wrapped_mul_parts w a (IBot, IBot) = WBot.
+Proof.
+  unfold wrapped_mul_parts. cbn [fst snd].
+  rewrite !wrapped_mul_piece_bottom_right. reflexivity.
+Qed.
+
+(** Cutting an empty right pair leaves the complete multiplication pass empty. *)
+Local Lemma wrapped_mul_both_parts_bottom_right w pole a :
+  wrapped_mul_both_parts w pole a (IBot, IBot) = WBot.
+Proof.
+  unfold wrapped_mul_both_parts.
+  cbn [wrapped_mul_cut WrappedScalar.interval_meet fst snd].
+  rewrite !wrapped_mul_parts_bottom_right. reflexivity.
+Qed.
+
+(** A bottom operand makes the unsigned multiplication pass bottom. *)
+Local Lemma wrapped_mul_unsigned_bottom w a b :
+  a = WBot \/ b = WBot ->
+  wrapped_mul_both_parts w (half w) (wrapped_parts w a) (wrapped_parts w b) = WBot.
+Proof.
+  intros [-> | ->].
+  - change (wrapped_mul_both_parts w (half w) (IBot, IBot) (wrapped_parts w b) = WBot).
+    apply wrapped_mul_both_parts_bottom_left.
+  - change (wrapped_mul_both_parts w (half w) (wrapped_parts w a) (IBot, IBot) = WBot).
+    apply wrapped_mul_both_parts_bottom_right.
+Qed.
+
+(** Every nonbottom arc has a word member, even when its stored endpoints are raw. *)
+Local Lemma wrapped_nonempty w a :
+  a <> WBot -> exists z, wrapped_gamma w a z.
+Proof.
+  intro Hnonempty. destruct a as [| |lo hi].
+  - contradiction.
+  - exists 0. apply zero_is_word.
+  - exists (wrap w lo). split; [apply wrap_is_word|].
+    rewrite wrapped_offset_word, wrapped_offset_self.
+    pose proof (wrapped_offset_range w lo hi). lia.
+Qed.
+
+(** An arc that represents a word has positive cardinality. *)
+Local Lemma wrapped_gamma_size_pos w a z :
+  wrapped_gamma w a z -> 0 < wrapped_size w a.
+Proof.
+  intro Hmember. destruct a as [| |lo hi].
+  - contradiction.
+  - apply modulus_pos.
+  - cbn [wrapped_size]. pose proof (wrapped_offset_range w lo hi). lia.
+Qed.
+
+(** A zero- or one-value unsigned cover is no larger than the signed cover. *)
+Local Lemma wrapped_mul_small_unsigned w a b :
+  let unsigned :=
+    wrapped_mul_both_parts w (half w) (wrapped_parts w a) (wrapped_parts w b) in
+  let signed :=
+    wrapped_mul_both_parts w 0 (wrapped_signed_parts w a) (wrapped_signed_parts w b) in
+  wrapped_size w unsigned <= 1 -> wrapped_size w unsigned <= wrapped_size w signed.
+Proof.
+  cbn beta iota zeta.
+  set (u := wrapped_mul_both_parts w (half w) (wrapped_parts w a) (wrapped_parts w b)).
+  set (v := wrapped_mul_both_parts w 0 (wrapped_signed_parts w a) (wrapped_signed_parts w b)).
+  intro Hsmall. pose proof (wrapped_size_bounds w v) as Hv.
+  destruct (Z.eq_dec (wrapped_size w u) 0) as [Hzero|Hnonzero].
+  - lia.
+  - assert (Ha : a <> WBot).
+    { intro Hbottom.
+      assert (Hempty : u = WBot).
+      { unfold u. apply wrapped_mul_unsigned_bottom. now left. }
+      apply Hnonzero. rewrite Hempty. reflexivity. }
+    assert (Hb : b <> WBot).
+    { intro Hbottom.
+      assert (Hempty : u = WBot).
+      { unfold u. apply wrapped_mul_unsigned_bottom. now right. }
+      apply Hnonzero. rewrite Hempty. reflexivity. }
+    destruct (wrapped_nonempty w a Ha) as [x Hx].
+    destruct (wrapped_nonempty w b Hb) as [y Hy].
+    pose proof (wrapped_mul_both_parts_sound w 0
+      (wrapped_signed_parts w a) (wrapped_signed_parts w b) (signed w x) (signed w y)
+      (wrapped_signed_parts_sound w a x Hx) (wrapped_signed_parts_sound w b y Hy)) as Hmember.
+    fold v in Hmember. pose proof (wrapped_gamma_size_pos w v _ Hmember) as Hpositive.
+    lia.
+Qed.
+
+(** Skipping the signed pass on a smallest cover preserves the original result exactly. *)
+Lemma wrapped_mul_fast_agrees : forall w a b,
+  wrapped_mul_fast w a b = wrapped_mul w a b.
+Proof.
+  intros w a b. unfold wrapped_mul_fast, wrapped_mul. cbn beta iota zeta.
+  set (u := wrapped_mul_both_parts w (half w) (wrapped_parts w a) (wrapped_parts w b)).
+  set (v := wrapped_mul_both_parts w 0 (wrapped_signed_parts w a) (wrapped_signed_parts w b)).
+  destruct (wrapped_size w u <=? 1) eqn:Hsmall; [|reflexivity].
+  apply Z.leb_le in Hsmall.
+  pose proof (wrapped_mul_small_unsigned w a b Hsmall) as Horder.
+  assert (Htest : (wrapped_size w u <=? wrapped_size w v) = true).
+  { apply Z.leb_le. exact Horder. }
+  now rewrite Htest.
 Qed.
 
 Theorem wrapped_mul_sound w a b x y :
@@ -2566,6 +2688,58 @@ Proof.
 Qed.
 TimeBound wrapped_mul_time.
 
+(** The point shortcut retains the quadratic budget for raw multiplication inputs. *)
+Lemma wrapped_mul_fast_time : forall w a b,
+  (T_wrapped_mul_fast w a b <= 17592186044416 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
+Proof.
+  intros w a b.
+  pose proof (wrapped_parts_bits w a) as [Ha0 Ha1].
+  pose proof (wrapped_parts_bits w b) as [Hb0 Hb1].
+  pose proof (wrapped_signed_parts_bits w a) as [Hsa0 Hsa1].
+  pose proof (wrapped_signed_parts_bits w b) as [Hsb0 Hsb1].
+  pose proof (WordTime.word_half_size_bound w) as Hhalfbits.
+  pose proof (WordTime.word_half_time_bound w) as Hhalftime.
+  pose proof (wrapped_parts_time w a) as Hpartsa.
+  pose proof (wrapped_parts_time w b) as Hpartsb.
+  pose proof (wrapped_signed_parts_time w a) as Hsigneda.
+  pose proof (wrapped_signed_parts_time w b) as Hsignedb.
+  set (pa := wrapped_parts w a) in *.
+  set (pb := wrapped_parts w b) in *.
+  set (sa := wrapped_signed_parts w a) in *.
+  set (sb := wrapped_signed_parts w b) in *.
+  assert (Hunsigned : (T_wrapped_mul_both_parts w (half w) pa pb <=
+    618475290624 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+  { exact (WordTime.time_square_scale _ _ _ (Pos.to_nat w + 1) 6
+      (wrapped_mul_both_parts_time w (half w) pa pb) ltac:(lia)). }
+  assert (Hsigned : (T_wrapped_mul_both_parts w 0 sa sb <=
+    1391569403904 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+  { exact (WordTime.time_square_scale _ _ _ (Pos.to_nat w + 1) 9
+      (wrapped_mul_both_parts_time w 0 sa sb) ltac:(cbn [Z.size_nat]; lia)). }
+  pose proof (wrapped_mul_both_parts_bits w (half w) pa pb) as Hubits.
+  pose proof (wrapped_mul_both_parts_bits w 0 sa sb) as Hvbits.
+  set (u := wrapped_mul_both_parts w (half w) pa pb) in *.
+  set (v := wrapped_mul_both_parts w 0 sa sb) in *.
+  pose proof (wrapped_size_time w u) as Hucard.
+  pose proof (wrapped_size_time w v) as Hvcard.
+  pose proof (wrapped_size_bits w u) as Hucardbits.
+  pose proof (Std.Z.T_leb_le (wrapped_size w u) (wrapped_size w v)) as Hcompare.
+  pose proof (Std.Z.T_leb_le (wrapped_size w u) 1) as Hsmall.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+    ltac:(lia) ltac:(lia)) as Hwidth.
+  set (square := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b)).
+  change (T_wrapped_mul_fast w a b <= 17592186044416 * budget)%N.
+  assert (Hbudget : (square + N.of_nat (wrapped_bits a) + N.of_nat (wrapped_bits b) = budget)%N).
+  { unfold square, budget. rewrite !Nat2N.inj_add. reflexivity. }
+  apply time_of_nat_le in Hubits, Hvbits, Hucardbits.
+  rewrite Nat2N.inj_mul in Hubits, Hvbits.
+  time_unfold T_wrapped_mul_fast. cbn beta iota zeta. time_simpl. fold pa pb sa sb u v.
+  clearbody pa pb sa sb u v square budget.
+  destruct (wrapped_size w u <=? 1), (wrapped_size w u <=? wrapped_size w v);
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_mul_fast_time.
 
 (** Extracting one finite interval inspects only its constructors. *)
 Lemma wrapped_interval_list_time : forall a, (T_wrapped_interval_list a <= 4)%N.
@@ -3498,7 +3672,8 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
     change (eval_op bvmul [(w, x); (w, y)] = Some (w, z)) in Heval.
     rewrite (eval_op_fun2 bvmul w x y BMul eq_refl) in Heval.
     cbn [eval_binary_tag] in Heval. inversion Heval; subst z.
-    rewrite !pgamma_wrapped in *. now apply wrapped_mul_sound.
+    rewrite !pgamma_wrapped in *.
+    unfold wrapped_mul. rewrite wrapped_mul_fast_agrees. now apply wrapped_mul_sound.
   Qed.
 End Wrapped.
 
@@ -3730,7 +3905,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     (T_wrapped_mul w a b <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof.
-    intros w a b. pose proof (wrapped_mul_time w a b) as Htime.
+    intros w a b. pose proof (wrapped_mul_fast_time w a b) as Htime.
     pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
       (Nat.le_refl _) (ltac:(lia))) as Hfloor.
     time_unfold T_wrapped_mul. cbn beta iota zeta. time_simpl.
@@ -3801,7 +3976,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     exists 17592186044416%N. intros [w [a b]] _.
     change (T_wrapped_mul w a b <= 17592186044416 *
       (N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b) + 1))%N.
-    pose proof (wrapped_mul_time w a b) as Htime.
+    pose proof (wrapped_mul_fast_time w a b) as Htime.
     set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b)) in *.
     clearbody budget.
     time_unfold T_wrapped_mul. cbn beta iota zeta. time_simpl. lia.
@@ -3994,7 +4169,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     intros w a b. repeat split.
     - apply wrapped_add_bits.
     - apply wrapped_add_bits.
-    - apply wrapped_mul_bits.
+    - unfold wrapped_mul. rewrite wrapped_mul_fast_agrees. apply wrapped_mul_bits.
     - apply wrapped_neg_bits.
   Qed.
   (** Every split piece has endpoints within the word width. *)

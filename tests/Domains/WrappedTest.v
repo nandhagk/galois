@@ -170,6 +170,42 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example wrapped_mul_fast_points_64 :
+  W.wrapped_mul 64%positive (WItv 2 2) (WItv 3 3) = WItv 6 6.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mul_fast_zero_64 :
+  W.wrapped_mul 64%positive WFull (WItv 0 0) = WItv 0 0.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mul_fast_negative_point :
+  W.wrapped_mul w8 (WItv 255 255) (WItv 2 2) = WItv 254 254.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mul_fast_raw_point :
+  W.wrapped_mul 4%positive (WItv 16 0) (WItv 3 3) = WItv 0 0.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mul_fast_raw_point_width_one :
+  W.wrapped_mul 1%positive (WItv (-1) (-1)) (WItv 3 3) = WItv 1 1.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_mul_fast_empty_right :
+  W.wrapped_mul 64%positive (WItv 2 5) WBot = WBot.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Module WF := Wrapped WordLanguage.
 Example wrapped_rank_progress :
   Nat.ltb (WF.pwrank tt w8 (WItv 8 13)) (WF.pwrank tt w8 (WItv 10 11)) = true.

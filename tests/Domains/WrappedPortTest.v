@@ -96,6 +96,12 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example wrapped_port_mul_fast_zero :
+  fwd bvmul [(w8, WFull); (w8, WItv 0 0)] w8 = WItv 0 0.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example wrapped_unsigned_zero_divisor :
   fwd bvudiv [(w8, WItv 1 3); (w8, WItv 0 0)] w8 = WItv 255 255.
 Proof.
