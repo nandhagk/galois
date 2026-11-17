@@ -4,9 +4,9 @@
     For example, each self-dependent function needs a widening head.
 
     Groups:
-    - Heads: the schedule marks the recursive functions as heads.
-    - Edges: a self-call gives one call edge for each of its resolved targets.
-    - Reach: the prepared search reaches the nodes of a cyclic graph as expected.
+    - [HeadTests] The schedule marks the recursive functions as heads.
+    - [EdgeTests] A self-call gives one call edge for each of its resolved targets.
+    - [ReachTests] The prepared search reaches the nodes of a cyclic graph as expected.
 
     Builds on: Framework.SummarySolverTest and Fixpoint.Schedule. *)
 
