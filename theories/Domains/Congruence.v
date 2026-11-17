@@ -1547,6 +1547,20 @@ Proof.
   time_unfold T_pow2_gcd_at. destruct (m =? 0); time_cbn_all; lia.
 Qed.
 
+(** A nonnegative left shift consists of constant-cost doubling steps. *)
+Lemma congruence_shiftl_time : forall z k, 0 <= k ->
+  (Std.Z.T_shiftl z k <= 8 * N.of_nat (Z.to_nat k + 1))%N.
+Proof.
+  intros z [| p | p] Hk; [| | lia].
+  - time_unfold Std.Z.T_shiftl. time_cbn. nia.
+  - pose proof (Std.Pos.T_iter_le (Z.mul 2) (fun x => Std.Z.T_mul 2 x) (fun _ => True)
+      3 z p (fun _ _ => I) (fun x _ => Std.Z.T_mul_two_le x) I) as Hiter.
+    time_unfold Std.Z.T_shiftl. time_cbn. cbn [Z.to_nat].
+    rewrite Nat2N.inj_add.
+    change (N.of_nat (Pos.to_nat p)) with (N.of_nat (N.to_nat (N.pos p))).
+    rewrite N2Nat.id. nia.
+Qed.
+
 (** Masking a class can reuse the modulus that selected its gcd. *)
 Definition wrap_class_at (M g r : Z) : congr :=
   if M <=? g then C 0 (Z.land r (M - 1)) else C g (Z.land r (g - 1)).
@@ -1663,11 +1677,18 @@ Module CongruenceCode (L : WORD_LANGUAGE_OPS) <: CONGRUENCE_OPS L.
     end.
   Definition congr_project source target a :=
     match congr_norm source a with CBot => CBot | C m r => wrap_class target m r end.
+  Definition congr_shl_ref w a b :=
+    match congr_norm w a, congr_norm w b with
+    | CBot, _ | _, CBot => CBot
+    | C m r, C 0 k =>
+      if Zpos w <=? k then C 0 0 else wrap_class_ref w (m * 2 ^ k) (r * 2 ^ k)
+    | _, _ => C 1 0
+    end.
   Definition congr_shl w a b :=
     match congr_norm w a, congr_norm w b with
     | CBot, _ | _, CBot => CBot
     | C m r, C 0 k =>
-      if Zpos w <=? k then C 0 0 else wrap_class w (m * 2 ^ k) (r * 2 ^ k)
+      if Zpos w <=? k then C 0 0 else wrap_class w (Z.shiftl m k) (Z.shiftl r k)
     | _, _ => C 1 0
     end.
   Definition congr_urem w a b :=
@@ -1885,6 +1906,20 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
       + destruct (wordb w (r mod Z.abs m)) eqn:Hr; cbn;
           [left; split|exact I]; [reflexivity|now apply cong_wordb_spec].
       + apply Z.leb_gt in Hlarge. right. split; [lia|apply Z.mod_pos_bound; lia].
+  Qed.
+
+  (** Normalized exact shift counts are nonnegative, so shifting replaces multiplication. *)
+  Lemma congr_shl_eq : forall w a b, congr_shl w a b = congr_shl_ref w a b.
+  Proof.
+    intros w a b. unfold congr_shl, congr_shl_ref.
+    destruct (congr_norm w a) as [| m r]; [reflexivity |].
+    destruct (congr_norm w b) as [| n k] eqn:Hb; [reflexivity |].
+    destruct n as [| n | n]; try reflexivity.
+    destruct (Zpos w <=? k); [reflexivity |].
+    pose proof (cong_norm_canonical w b) as Hcanonical. rewrite Hb in Hcanonical.
+    destruct Hcanonical as [[Hzero Hword] | [Hm Hr]]; [| lia].
+    destruct Hword as [Hk Hupper].
+    rewrite wrap_class_eq, !Z.shiftl_mul_pow2 by exact Hk. reflexivity.
   Qed.
 
   Local Lemma cong_canonical_fixed w c : strong_canonical w c -> congr_norm w c = c.
@@ -2501,7 +2536,8 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     intros w a b x y Ha Hb.
     rewrite normalized_wshl by (eapply gamma_word; eassumption).
     rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a x)) in Ha.
-    apply (proj2 (cong_norm_gamma w b y)) in Hb. unfold congr_shl.
+    apply (proj2 (cong_norm_gamma w b y)) in Hb.
+    rewrite congr_shl_eq. unfold congr_shl_ref.
     destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n k]; try contradiction.
     destruct n as [|n|n]; try (apply cong_top_sound; apply wshl_is_word).
     destruct Ha as [Hwordx Hx], Hb as [Hwordy Hy].
@@ -2509,7 +2545,8 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     rewrite wshl_value, (wrap_id w k Hwordy), (wrap_id w x Hwordx).
     destruct (Zpos w <=? k).
     - split; [apply zero_is_word|reflexivity].
-    - apply cong_wrap_class_sound. apply cong_mod_divide. apply cong_mod_divide in Hx.
+    - rewrite <- wrap_class_eq. apply cong_wrap_class_sound.
+      apply cong_mod_divide. apply cong_mod_divide in Hx.
       destruct Hx as [i Hi]. exists i. nia.
   Qed.
   (** Remainder transfer retains unsigned remainder, including a zero divisor. *)
@@ -3199,8 +3236,8 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   Proof.
     intros w a b.
     pose proof (Pos2Nat.is_pos w) as Hwidth.
-    rewrite congr_add_eq, congr_sub_eq.
-    unfold congr_add_ref, congr_sub_ref, congr_mul, congr_shl, congr_urem.
+    rewrite congr_add_eq, congr_sub_eq, congr_shl_eq.
+    unfold congr_add_ref, congr_sub_ref, congr_mul, congr_shl_ref, congr_urem.
     destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s];
       cbn [congr_bits]; try (repeat split; lia).
     repeat split; try rewrite wrap_class_eq; try apply normalized_bits.
@@ -3273,6 +3310,49 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     rewrite !Nat2N.inj_mul in Hmask, Hsubtract.
     change (N.of_nat 6) with 6%N in Hmask.
     change (N.of_nat 4) with 4%N in Hsubtract. lia.
+  Qed.
+
+  (** Shifting adds linear work after normalizing the operands. *)
+  Lemma congr_shl_time_tail : forall w a b,
+    (T_congr_shl w a b <= T_congr_norm w a + T_congr_norm w b +
+      4096 * N.of_nat (Pos.to_nat w + 1))%N.
+  Proof.
+    intros w a b. time_unfold T_congr_shl.
+    destruct (congr_norm w a) as [| m r] eqn:Haform;
+      destruct (congr_norm w b) as [| p s] eqn:Hbform; cbn beta iota zeta;
+      try (rewrite Nat2N.inj_add; cbn [N.of_nat]; lia).
+    destruct p; cbn beta iota zeta;
+      try (rewrite Nat2N.inj_add; cbn [N.of_nat]; lia).
+    pose proof (Z.T_leb_le (Zpos w) s) as Hcompare.
+    assert (Hwidthbits :
+      (N.of_nat (Z.size_nat (Zpos w)) <= N.of_nat (Pos.to_nat w + 1))%N).
+    { apply time_of_nat_le. change (Z.size_nat (Zpos w)) with (Pos.size_nat w).
+      pose proof (WordTime.positive_size_value w). lia. }
+    destruct (Zpos w <=? s) eqn:Hlarge.
+    - rewrite Nat2N.inj_add in *. cbn [N.of_nat] in *. lia.
+    - apply Z.leb_gt in Hlarge.
+      pose proof (cong_norm_canonical w b) as Hcanonical. rewrite Hbform in Hcanonical.
+      destruct Hcanonical as [[Hzero Hword] | [Hm Hr]]; [| lia].
+      destruct Hword as [Hs Hbound].
+      pose proof (normalized_bits w a) as Habits. rewrite Haform in Habits.
+      cbn [congr_bits] in Habits.
+      assert (Hpowerword : is_word w (2 ^ s)).
+      { unfold is_word, modulus. split.
+        - apply Z.pow_nonneg. lia.
+        - apply Z.pow_lt_mono_r; lia. }
+      pose proof (WordTime.word_size_bound w (2 ^ s) Hpowerword) as Hpowerbits.
+      pose proof (WordTime.integer_mul_size m (2 ^ s)) as Hmbits.
+      pose proof (WordTime.integer_mul_size r (2 ^ s)) as Hrbits.
+      rewrite <- Z.shiftl_mul_pow2 in Hmbits, Hrbits by exact Hs.
+      pose proof (congruence_shiftl_time m s Hs) as Hshiftm.
+      pose proof (congruence_shiftl_time r s Hs) as Hshiftr.
+      pose proof (wrap_class_time_linear w (Z.shiftl m s) (Z.shiftl r s)
+        (5 * (Pos.to_nat w + 1)) ltac:(lia)) as Hwrap.
+      assert (Hcount : (Z.to_nat s + 1 <= Pos.to_nat w + 1)%nat).
+      { apply Nat2Z.inj_le. rewrite !Nat2Z.inj_add, Z2Nat.id by exact Hs.
+        rewrite positive_nat_Z. lia. }
+      apply time_of_nat_le in Hcount.
+      rewrite Nat2N.inj_mul in Hwrap. change (N.of_nat 5) with 5%N in Hwrap. lia.
   Qed.
 
   (** Projection adds work linear in the source and target widths. *)
@@ -3391,43 +3471,13 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   Proof.
     intros w a b.
     remember (Pos.to_nat w + congr_bits a + congr_bits b + 1)%nat as n eqn:Hn.
-    pose proof (normalization_time_budget w a n ltac:(lia)) as Hnorma.
-    pose proof (normalization_time_budget w b n ltac:(lia)) as Hnormb.
-    assert (Hpositive : (1 <= n)%nat) by lia.
-    pose proof (linear_le_square n Hpositive) as Hlinear.
-    assert (Hone : (1 <= N.of_nat n)%N).
-    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
-    unfold c_congruence. time_unfold T_congr_shl.
-    destruct (congr_norm w a) as [|m r] eqn:Haform;
-      destruct (congr_norm w b) as [|p s] eqn:Hbform; cbn beta iota zeta; try lia.
-    destruct p; cbn beta iota zeta; try lia.
-    pose proof (Z.T_leb_le (Zpos w) s) as Hcompare.
-    assert (Hwidthbits : (N.of_nat (Z.size_nat (Zpos w)) <= N.of_nat n)%N).
-    { apply time_of_nat_le. change (Z.size_nat (Zpos w)) with (Pos.size_nat w).
-      pose proof (WordTime.positive_size_value w). lia. }
-    destruct (Zpos w <=? s) eqn:Hlarge; [lia|].
-    apply Z.leb_gt in Hlarge.
-    pose proof (cong_norm_canonical w b) as Hcanonical. rewrite Hbform in Hcanonical.
-    destruct Hcanonical as [[Hm Hword]|[Hm Hr]]; [|lia].
-    destruct Hword as [Hs Hbound].
-    pose proof (normalized_bits w a) as Habits. rewrite Haform in Habits.
-    cbn [congr_bits] in Habits.
-    assert (Hpowerword : is_word w (2 ^ s)).
-    { unfold is_word, modulus. split.
-      - apply Z.pow_nonneg. lia.
-      - apply Z.pow_lt_mono_r; lia. }
-    pose proof (WordTime.word_size_bound w (2 ^ s) Hpowerword) as Hpowerbits.
-    pose proof (WordTime.word_pow_two_time_bound s Hs) as Hpower.
-    assert (Hexponent : (N.of_nat (Z.to_nat s) <= N.of_nat n)%N).
-    { apply time_of_nat_le. apply Nat2Z.inj_le.
-      rewrite Z2Nat.id by exact Hs. rewrite Hn, !Nat2Z.inj_add, positive_nat_Z. lia. }
-    pose proof (WordTime.integer_mul_size m (2 ^ s)) as Hmbits.
-    pose proof (WordTime.integer_mul_size r (2 ^ s)) as Hrbits.
-    pose proof (mul_time_budget (3 * n) m (2 ^ s) ltac:(lia)) as Hmulm.
-    pose proof (mul_time_budget (3 * n) r (2 ^ s) ltac:(lia)) as Hmulr.
-    pose proof (wrap_class_time_budget w (m * 2 ^ s) (r * 2 ^ s) (5 * n)
-      ltac:(lia)) as Hwrap.
-    rewrite !Nat.pow_mul_l, !Nat2N.inj_mul in *. cost_constants. lia.
+    pose proof (normalization_time_budget w a n ltac:(lia)) as Ha.
+    pose proof (normalization_time_budget w b n ltac:(lia)) as Hb.
+    pose proof (congr_shl_time_tail w a b) as Htail.
+    pose proof (linear_le_square n ltac:(lia)) as Hlinear.
+    assert (Hwidth : (N.of_nat (Pos.to_nat w + 1) <= N.of_nat n)%N).
+    { apply time_of_nat_le. lia. }
+    unfold c_congruence. lia.
   Qed.
   (** Remainder transfer has the published quadratic arithmetic bound. *)
   Lemma T_congr_urem_le : forall w a b,
@@ -3545,7 +3595,13 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     (fun x => N.of_nat
       (Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1))
     (fun x => T_congr_shl (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 8192%N. intros [w [a b]] [Ha Hb]. cbn [fst snd] in *.
+    pose proof (normalization_time_linear w a Ha) as Hnorma.
+    pose proof (normalization_time_linear w b Hb) as Hnormb.
+    pose proof (congr_shl_time_tail w a b) as Htail.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
+  Qed.
   (** Projection of a canonical payload is linear in both widths. *)
   Lemma congr_project_lin_bigO : bigO (X := positive * (positive * congr))
     (fun x => (fst (snd x) <= fst x)%positive /\ canonical (fst x) (snd (snd x)))
