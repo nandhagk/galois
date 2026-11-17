@@ -7,10 +7,12 @@
     - [out_spec] Outgoing adjacency lists exactly the edges with the requested source.
     - [inc_spec] Incoming adjacency lists exactly the edges with the requested destination.
     - [edges_complexity] Edge enumeration is linear in its output, O(n) for n edges.
-    - [entries_complexity] Entry enumeration is linear in its output.
-    - [out_complexity] Outgoing lookup is linear in the node key and the returned edges.
-    - [inc_complexity] Incoming lookup is linear in the node key and the returned edges.
-    - [nodes_complexity] Node enumeration is linear in its output.
+    - [entries_complexity] Entry enumeration is linear in its output, O(n) for n entries.
+    - [out_complexity] Outgoing lookup is linear in the node key and the returned edges, O(|n| + k)
+      for k edges.
+    - [inc_complexity] Incoming lookup is linear in the node key and the returned edges, O(|n| + k)
+      for k edges.
+    - [nodes_complexity] Node enumeration is linear in its output, O(n) for n nodes.
     - [prepare_complexity] Preparation is linear in the entries and edges times the widest
       endpoint key.
 
