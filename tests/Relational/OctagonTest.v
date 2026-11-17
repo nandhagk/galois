@@ -605,3 +605,19 @@ Example fast_unbounded_interval_unchanged :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Public assignment preserves a foreign odd unary rather than tightening the whole matrix. *)
+Example assign_keeps_odd_unrelated_entry :
+  match Oct.assign 1%positive (Node (ZConst 0%Z) []) (Reached strong_odd_matrix) with
+  | Reached m => Oct.entry m positive_y negative_y
+  | Unreached => None
+  end = Some 1%Z.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The strong-but-not-tight counterexample also satisfies every map well-formedness condition. *)
+Example strong_odd_matrix_wf : OctTime.dbm_wf strong_odd_matrix.
+Proof.
+  unfold strong_odd_matrix. repeat apply OctTime.put_wf. apply OctTime.dbm_empty_wf.
+Qed.
