@@ -428,3 +428,30 @@ Example interval_word_shift_lshr_negative_high_endpoint : Ops.interval_lshr 8%po
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example interval_shared_sign_constants :
+  map (interval_sign 8%positive)
+    [I (Fin 1) (Fin 4); I (Fin 252) (Fin 255); I (Fin 127) (Fin 128)] =
+    [Some false; Some true; None].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_shared_signed_constants :
+  interval_signed 8%positive (I (Fin 252) (Fin 255)) = Some (-4, -1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_shared_negation_modulus :
+  interval_neg 8%positive (I (Fin 252) (Fin 255)) = I (Fin 1) (Fin 4).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_shared_signed_division_constants :
+  interval_sdiv 8%positive (I (Fin 252) (Fin 252)) (I (Fin 2) (Fin 2)) =
+    I (Fin 254) (Fin 254).
+Proof.
+  vm_compute. reflexivity.
+Qed.

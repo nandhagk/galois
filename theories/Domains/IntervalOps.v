@@ -97,11 +97,21 @@ Definition interval_mul (w : width) (a b : itv) : itv :=
   | _, _ => interval_top w
   end.
 
-Definition interval_neg (w : width) (a : itv) : itv :=
+Definition interval_neg_ref (w : width) (a : itv) : itv :=
   match interval_finite_helper a with
   | Some (lo, hi) =>
     if Z.eqb hi 0 then I (Fin 0) (Fin 0)
     else if Z.ltb 0 lo then interval_checked w (modulus w - hi) (modulus w - lo)
+    else interval_top w
+  | None => interval_top w
+  end.
+
+Definition interval_neg (w : width) (a : itv) : itv :=
+  match interval_finite_helper a with
+  | Some (lo, hi) =>
+    if Z.eqb hi 0 then I (Fin 0) (Fin 0)
+    else if Z.ltb 0 lo then
+      let M := modulus w in interval_checked w (M - hi) (M - lo)
     else interval_top w
   | None => interval_top w
   end.
@@ -241,7 +251,7 @@ Definition interval_lshr (w : width) (a b : itv) : itv :=
   | _, _ => interval_top w
   end.
 
-Definition interval_sign (w : width) (a : itv) : option bool :=
+Definition interval_sign_ref (w : width) (a : itv) : option bool :=
   match interval_finite_helper a with
   | Some (lo, hi) =>
     if Z.ltb hi (half w) then Some false
@@ -249,11 +259,31 @@ Definition interval_sign (w : width) (a : itv) : option bool :=
   | None => None
   end.
 
-Definition interval_signed (w : width) (a : itv) : option (Z * Z) :=
+Definition interval_sign (w : width) (a : itv) : option bool :=
+  match interval_finite_helper a with
+  | Some (lo, hi) =>
+    let h := half w in
+    if Z.ltb hi h then Some false
+    else if Z.leb h lo then Some true else None
+  | None => None
+  end.
+
+Definition interval_signed_ref (w : width) (a : itv) : option (Z * Z) :=
   match interval_finite_helper a with
   | Some (lo, hi) =>
     if Z.ltb hi (half w) then Some (lo, hi)
     else if Z.leb (half w) lo then Some (lo - modulus w, hi - modulus w)
+    else None
+  | None => None
+  end.
+
+Definition interval_signed (w : width) (a : itv) : option (Z * Z) :=
+  match interval_finite_helper a with
+  | Some (lo, hi) =>
+    let h := half w in
+    if Z.ltb hi h then Some (lo, hi)
+    else if Z.leb h lo then
+      let M := modulus w in Some (lo - M, hi - M)
     else None
   | None => None
   end.
@@ -452,6 +482,24 @@ End IntervalOpsCode.
 Module IntervalOpsSound (T : THRESHOLDS) (Scalar : INTERVAL_SCALAR_OPS T).
   Include IntervalOpsCode T Scalar.
   Include Scalar.
+
+  (** Sharing width-dependent constants preserves the original endpoint formulas. *)
+  Lemma interval_neg_agrees : forall w a, interval_neg w a = interval_neg_ref w a.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Sharing the signed midpoint preserves the sign test. *)
+  Lemma interval_sign_agrees : forall w a, interval_sign w a = interval_sign_ref w a.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Sharing width constants preserves conversion to signed endpoints. *)
+  Lemma interval_signed_agrees : forall w a, interval_signed w a = interval_signed_ref w a.
+  Proof.
+    reflexivity.
+  Qed.
 
   (** Bit shifts preserve the old product endpoints even for malformed raw intervals. *)
   Lemma interval_shl_agrees : forall w a b, interval_shl w a b = interval_shl_ref w a b.
