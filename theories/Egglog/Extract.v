@@ -8545,12 +8545,20 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       exact (extraction_step_amort cs db s next Hwf Hcanonical Hinventory Hreach Hstep).
   Qed.
 
+  (** Inventory construction is linear in the layout bits times the slot logarithm. *)
   Lemma inventory_bigO : bigO (fun _ => True)
     (fun x : list decl * list (positive * list nat) =>
       N.of_nat ((layout_bits (fst x) (snd x) + 1) * (Nat.log2 (length (snd x)) + 1)))
     (fun x => T_inventory (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_ex).
+    intros [ds sl] _.
+    cbn beta iota zeta delta [fst snd].
+    eapply N.le_trans; [exact (T_inventory_le ds sl)|].
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 
+  (** Best-row search charges its inventory, incidences and heap at the database widths. *)
   Lemma best_bigO : bigO
     (fun x : list (positive * (N * nat)) * D.t =>
       D.wf (snd x) /\ D.canonical (snd x) /\ ctor_inventory (fst x) (snd x))
@@ -8558,16 +8566,31 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       (R (snd x) + 1) * (Nat.log2 (R (snd x)) + 1)) * (D.unit (snd x) + 1) *
       (cost_width (snd x) + 1)))
     (fun x => T_best (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_ex).
+    intros [cs db] [Hwf [Hcanonical Hinventory]].
+    cbn beta iota zeta delta [fst snd] in *.
+    eapply N.le_trans; [exact (T_best_le cs db Hwf Hcanonical Hinventory)|].
+    rewrite !Nat2N.inj_mul.
+    nia.
+  Qed.
 
+  (** Certificate checking is linear in the certificate size at its database and cost widths. *)
   Lemma check_dag_bigO : bigO
     (fun x : D.t * positive * extraction_dag V.t => D.wf (fst (fst x)))
     (fun x => let '(db, c, g) := x in
       N.of_nat ((cert_size V.encode g + Pos.size_nat c + 1) * (D.unit db + 1) *
         (match check_dag db c g with Some n => N.size_nat n | None => 0 end + 1)))
     (fun x => let '(db, c, g) := x in T_check_dag db c g).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_ex).
+    intros [[db c] g] Hwf.
+    cbn beta iota zeta delta [fst snd] in *.
+    eapply N.le_trans; [exact (T_check_dag_le db c g Hwf)|].
+    rewrite !Nat2N.inj_mul. nia.
+  Qed.
 
+  (** Extraction adds one incidence traversal to the best-row search budget. *)
   Lemma extract_bigO : bigO
     (fun x : list (positive * (N * nat)) * D.t * positive =>
       let '(cs, db, _) := x in D.wf db /\ D.canonical db /\ ctor_inventory cs db)
@@ -8575,6 +8598,13 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       N.of_nat ((inventory_bits cs + 2 * ((R db + 1) * (a db + 1)) +
         (R db + 1) * (Nat.log2 (R db) + 1)) * (D.unit db + 1) * (cost_width db + 1)))
     (fun x => let '(cs, db, c) := x in T_extract cs db c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_ex).
+    intros [[cs db] c] [Hwf [Hcanonical Hinventory]].
+    cbn beta iota zeta.
+    pose proof (T_extract_le cs db c Hwf Hcanonical Hinventory) as Hextract.
+    pose proof (T_best_le cs db Hwf Hcanonical Hinventory) as Hbest.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
+  Qed.
 
 End ExtractT.
