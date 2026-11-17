@@ -1788,40 +1788,72 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     unfold c_env, c_state. lia.
   Qed.
 
+  (** Inclusion is linear in the combined environment sizes. *)
   Lemma leb_bigO : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_leb (fst ab) (snd ab)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_lat). intros [a b] _.
+    change (T_leb a b <= c_lat * N.of_nat (size a + size b) + c_lat)%N.
+    pose proof (T_leb_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Join is linear in the combined environment sizes. *)
   Lemma join_bigO : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_join (fst ab) (snd ab)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_lat). intros [a b] _.
+    change (T_join a b <= c_lat * N.of_nat (size a + size b) + c_lat)%N.
+    pose proof (T_join_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Widening charges environment sizes and the parameter work of each binding. *)
   Lemma widen_bigO : bigO (X := wparam * t * t) (fun _ => True)
     (fun '(p, a, b) => N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)))
     (fun '(p, a, b) => T_widen p a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_lat). intros [[p a] b] _.
+    change (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p)) + c_lat)%N.
+    pose proof (T_widen_le p a b) as Hbound.
+    rewrite !Nat2N.inj_add in Hbound |- *. nia.
+  Qed.
 
+  (** Assignment is linear in its annotation and insertion work. *)
   Lemma assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
     (fun '(x, e, s) => N.of_nat (assign_work x e s))
     (fun '(x, e, s) => T_assign x e s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_state). intros [[x e] s] _.
+    change (T_assign x e s <= c_state * N.of_nat (assign_work x e s) + c_state)%N.
+    pose proof (T_assign_le x e s) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
+  (** Havoc is linear in its environment and encoded-key work. *)
   Lemma havoc_bigO : bigO (X := X.t * t) (fun _ => True)
     (fun '(x, s) => N.of_nat (havoc_work x s))
     (fun '(x, s) => T_havoc x s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_state). intros [x s] _.
+    change (T_havoc x s <= c_state * N.of_nat (havoc_work x s) + c_state)%N.
+    pose proof (T_havoc_le x s) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
-  Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
-    (fun '(gd, es, s) => N.of_nat (assume_work gd es s))
-    (fun '(gd, es, s) => T_assume gd es s).
-  Proof. Admitted. (* STUB *)
-
+  (** Evaluation is linear in the work of one annotation pass. *)
   Lemma eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
     (fun '(e, s) => N.of_nat (eval_work e s))
     (fun '(e, s) => T_eval e s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    eapply bigO_intro with (c := c_state). intros [e s] _.
+    change (T_eval e s <= c_state * N.of_nat (eval_work e s) + c_state)%N.
+    pose proof (T_eval_le e s) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
 
   Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
   Proof. Admitted. (* STUB *)
@@ -2295,6 +2327,18 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_l.
     rewrite Nat2N.inj_add. lia.
   Qed.
+
+  (** Assumption is linear in its annotation, guard and refinement work. *)
+  Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
+    (fun '(gd, es, s) => N.of_nat (assume_work gd es s))
+    (fun '(gd, es, s) => T_assume gd es s).
+  Proof.
+    eapply bigO_intro with (c := c_state). intros [[gd es] s] _.
+    change (T_assume gd es s <= c_state * N.of_nat (assume_work gd es s) + c_state)%N.
+    pose proof (T_assume_le gd es s) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
+
   Definition models (m : M.t V.t) (st : X.t -> L.val) : Prop :=
     forall x, V.gamma (read m x) (st x).
   Fixpoint ann_models (st : X.t -> L.val) (n : ann L.op X.t V.t)
