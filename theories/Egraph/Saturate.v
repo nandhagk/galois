@@ -4125,7 +4125,19 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     (fun x : list decl * list (rewrite V.t) * list (rule V.t) * list (fexpr V.t) =>
       let '(ds, rws, ans, es) := x in N.of_nat (front_size ds rws ans es + 1))
     (fun x => let '(ds, rws, ans, es) := x in T_check_front ds rws ans es).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_sat).
+    intros [[[ds rws] ans] es] _. cbn beta iota zeta.
+    pose proof (T_check_front_le ds rws ans es) as Hcheck. lia.
+  Qed.
+
+  (** Dropping final credit preserves a bound by work plus initial credit. *)
+  Lemma amortized_bigO_bound : forall t pending c work credit : N,
+    (t + pending <= c * work + credit ->
+      t <= (c + 1) * (work + credit) + (c + 1))%N.
+  Proof.
+    intros t pending c work credit Hcost. nia.
+  Qed.
 
   (** Adding an input costs its nodes at the identifier width, and its scaled credit. *)
   Lemma add_expr_bigO : bigO
@@ -4137,7 +4149,13 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
       (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1) *
         N.of_nat (expr_work e) + N.of_nat U * D.potential B db)%N)
     (fun x => let '(_, _, _, e, db) := x in T_add_expr e db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := (c_sat + 1)%N).
+    intros [[[[B U] ds] e] db] [Hwf [Hexpr [Hids HU]]]. cbn beta iota zeta.
+    apply amortized_bigO_bound with
+      (pending := (N.of_nat U * D.potential B (snd (add_expr e db)))%N).
+    rewrite !N.mul_assoc. exact (T_add_expr_amort B U ds e db Hwf Hexpr Hids HU).
+  Qed.
 
   (** Saturation of accepted input costs its check, planning, loading, its inputs and its
       run. *)
