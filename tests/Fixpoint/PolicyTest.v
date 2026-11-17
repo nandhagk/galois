@@ -4,8 +4,7 @@
     For example, a head with zero delay widens on its first strict contribution.
 
     Groups:
-    - Fixtures: a Boolean lattice and two policies, one unheaded and one delayed.
-    - Update: the value and counter that one contribution leaves.
+    - [UpdateTests] The value and counter that one contribution leaves.
 
     Builds on: PolicyCode, PolicySig and Trie. *)
 

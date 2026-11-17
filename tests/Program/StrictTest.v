@@ -4,11 +4,12 @@
     For example, neither arm of a diamond dominates its join.
 
     Groups:
-    - Diamond: only the entry edge of the left arm dominates; the join and the entry have none.
-    - Line: the ancestors of the last node of a line come in order.
-    - Loop: the preheader edges dominate the loop header.
-    - Repeated: repeated edges give no dominator, and an empty walk stops at the boundary.
-    - Ssa: the SSA tables record the guard of an edge and the parameter definition.
+    - [DiamondTests] Only the entry edge of the left arm dominates; the join and the entry have
+      none.
+    - [LineTests] The ancestors of the last node of a line come in order.
+    - [LoopTests] The preheader edges dominate the loop header.
+    - [RepeatedTests] Repeated edges give no dominator, and an empty walk stops at the boundary.
+    - [SsaTests] The SSA tables record the guard of an edge and the parameter definition.
 
     Builds on: Program.Ssa and graph fixtures. *)
 

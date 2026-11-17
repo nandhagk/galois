@@ -4,8 +4,8 @@
     For example, two occurrences of false stay before true in the outgoing list.
 
     Groups:
-    - Adjacency: outgoing lists keep duplicate edges in their order.
-    - Enumeration: a program without entries has no edges.
+    - [AdjacencyTests] Outgoing lists keep duplicate edges in their order.
+    - [EnumerationTests] A program without entries has no edges.
 
     Builds on: Program.Cfg. *)
 

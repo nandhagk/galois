@@ -4,10 +4,10 @@
     For example, a boundary at node one propagates backward to node zero.
 
     Groups:
-    - Seeds: the rows of each direction come out in their fixed order.
-    - Diamond: forward and backward analyses of the diamond give their fixed values.
-    - Candidates: candidates are accepted or rejected, and one step runs out of fuel.
-    - Duplicates: duplicate listed edges give the rows and values that the listing implies.
+    - [SeedsTests] The rows of each direction come out in their fixed order.
+    - [DiamondTests] Forward and backward analyses of the diamond give their fixed values.
+    - [CandidateTests] Candidates are accepted or rejected, and one step runs out of fuel.
+    - [DuplicateTests] Duplicate listed edges give the rows and values that the listing implies.
 
     Builds on: Framework.Dense and Fixpoint.Worklist. *)
 

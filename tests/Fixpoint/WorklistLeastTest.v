@@ -4,9 +4,7 @@
     For example, repeated side contributions stay below every accepting post-solution.
 
     Groups:
-    - Fixtures: a Boolean lattice with its laws, and a system with repeated side contributions.
-    - Leastness contract: the certificate's laws and the bound that an importing client gets.
-    - Solver: the concrete solver results on the system, with and without fuel.
+    - [SolverTests] The concrete solver results on the system, with and without fuel.
 
     Builds on: WorklistLeast, Worklist, Policy and Heap. *)
 

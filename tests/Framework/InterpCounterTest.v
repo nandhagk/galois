@@ -4,8 +4,10 @@
     For example, assignment followed by a guard yields the singleton interval two.
 
     Groups:
-    - Actions: the order of the actions decides whether the guard passes, and havoc keeps unreachable states.
-    - Loop: the counter loop starts from the top interval, and the candidates for it are checked.
+    - [ActionsTests] The order of the actions decides whether the guard passes, and havoc keeps
+      unreachable states.
+    - [LoopTests] The counter loop starts from the top interval, and the candidates for it are
+      checked.
 
     Builds on: Framework.Interp and Fixpoint.Certified. *)
 

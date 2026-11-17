@@ -67,98 +67,53 @@ Module CheckTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** The checker rejects a path whose parent of 3 is 1 instead of 2. *)
-  Example rejects_wrong_path_parent :
-    DomCode.check (DigraphCode.prepare Line.graph) 1
-      (parent_map [(2, 1); (3, 1); (4, 3)]) [1; 2; 3; 4] = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
+  (** A graph whose vertex 1024 is a successor of 2 but is not listed as a vertex. *)
+  Definition wide_graph := fixture_graph [1; 2] [(1, 2); (2, 1024)].
 
-  (** The checker rejects parents that form a cycle. *)
-  Example rejects_parent_cycle :
-    DomCode.check (DigraphCode.prepare Line.graph) 1
-      (parent_map [(2, 3); (3, 2); (4, 3)]) [1; 2; 3; 4] = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The checker rejects a parent map with no binding for vertex 3. *)
-  Example rejects_missing_binding :
-    DomCode.check (DigraphCode.prepare Line.graph) 1
-      (parent_map [(2, 1); (4, 3)]) [1; 2; 3; 4] = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The checker rejects a parent binding for a vertex that is not in the graph. *)
-  Example rejects_unknown_child :
-    DomCode.check (DigraphCode.prepare Line.graph) 1
-      (PTrieCode.set 9 1 (parent_map Line.parents)) [1; 2; 3; 4] = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The checker rejects a valid parent map when the order has no high witness for it. *)
-  Example rejects_order_without_high_witness :
-    DomCode.check (DigraphCode.prepare Diamond.graph) 1
-      (parent_map Diamond.parents) [1; 2; 3; 4] = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The checker rejects an order that lists a vertex twice. *)
-  Example rejects_duplicate_order_entry :
-    DomCode.check (DigraphCode.prepare Line.graph) 1
-      (parent_map Line.parents) [1; 2; 2; 3; 4] = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The checker rejects a repeated vertex in the order, before it rebuilds the parent map. *)
-  Example rejects_repeated_vertex_within_budget :
-    DomCode.check (DigraphCode.prepare Line.graph) 1
-      (parent_map Line.parents) [1; 2; 2; 4] = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The checker rejects a root with a parent, even when the order is valid. *)
-  Example rejects_root_parent_after_valid_read :
-    DomCode.check (DigraphCode.prepare Line.graph) 1
-      (PTrieCode.set 1 4 (parent_map Line.parents)) [1; 2; 3; 4] = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A wide candidate key that the graph does not list is rejected as a parent key. *)
-  Definition wide_graph := DigraphCode.prepare (fixture_graph [1; 2] [(1, 2); (2, 1024)]).
-
-  Example rejects_unlisted_wide_parent_key :
-    DomCode.check wide_graph 1 (parent_map [(1024, 1)]) [1; 1024] = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A parent that is a wide vertex outside the order is rejected. *)
-  Example rejects_unlisted_wide_parent_value :
-    DomCode.check wide_graph 1 (parent_map [(2, 1024)]) [1; 2] = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A child whose subtree is not contiguous in the order is rejected by the size check. *)
-  Definition split_subtree_graph :=
-    DigraphCode.prepare (fixture_graph [1; 2; 3; 4] [(1, 2); (1, 3); (2, 4)]).
+  (** A graph whose subtree of vertex 2 is split by vertex 3 in the order [1; 2; 3; 4]. *)
+  Definition split_subtree_graph := fixture_graph [1; 2; 3; 4] [(1, 2); (1, 3); (2, 4)].
 
   Definition split_subtree_parents := parent_map [(2, 1); (3, 1); (4, 2)].
 
   Definition split_subtree_order := [1; 2; 3; 4].
 
+  (** Each case is a graph, a parent map and an order that the checker rejects at root 1. *)
+  Definition rejected_cases : list (digraph * ptrie positive * list positive) :=
+    [ (* The parent of 3 is 1 instead of 2. *)
+      (Line.graph, parent_map [(2, 1); (3, 1); (4, 3)], [1; 2; 3; 4]);
+      (* The parents of 2 and 3 form a cycle. *)
+      (Line.graph, parent_map [(2, 3); (3, 2); (4, 3)], [1; 2; 3; 4]);
+      (* There is no binding for vertex 3. *)
+      (Line.graph, parent_map [(2, 1); (4, 3)], [1; 2; 3; 4]);
+      (* Vertex 9 has a parent but is not in the graph. *)
+      (Line.graph, PTrieCode.set 9 1 (parent_map Line.parents), [1; 2; 3; 4]);
+      (* The parent map is valid, but the order has no high witness for it. *)
+      (Diamond.graph, parent_map Diamond.parents, [1; 2; 3; 4]);
+      (* The order lists vertex 2 twice. *)
+      (Line.graph, parent_map Line.parents, [1; 2; 2; 3; 4]);
+      (* The order repeats a vertex before the parent map is rebuilt. *)
+      (Line.graph, parent_map Line.parents, [1; 2; 2; 4]);
+      (* The root has a parent, although the order is valid. *)
+      (Line.graph, PTrieCode.set 1 4 (parent_map Line.parents), [1; 2; 3; 4]);
+      (* The parent key 1024 is not listed in the graph. *)
+      (wide_graph, parent_map [(1024, 1)], [1; 1024]);
+      (* The parent value 1024 is a wide vertex outside the order. *)
+      (wide_graph, parent_map [(2, 1024)], [1; 2]);
+      (* The subtree of vertex 2 is not contiguous in the order. *)
+      (split_subtree_graph, split_subtree_parents, split_subtree_order) ].
+
+  (** The checker rejects every case of the table. *)
+  Example rejects_every_bad_certificate :
+    forallb (fun '(g, m, o) => negb (DomCode.check (DigraphCode.prepare g) 1 m o))
+      rejected_cases = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
   (** The known-vertex check alone accepts the parents of the split subtree. *)
   Example split_subtree_passes_known_check :
-    dom_map_check_known (dom_scan split_subtree_graph) 1 split_subtree_parents
-      split_subtree_order = true.
+    dom_map_check_known (dom_scan (DigraphCode.prepare split_subtree_graph)) 1
+      split_subtree_parents split_subtree_order = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -168,13 +123,6 @@ Module CheckTests.
     dom_info_sizes_ok split_subtree_parents
       (dom_info_sizes split_subtree_parents split_subtree_order
         (dom_positions split_subtree_order)) split_subtree_order = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** The full checker rejects the parents of the split subtree. *)
-  Example split_subtree_is_rejected :
-    DomCode.check split_subtree_graph 1 split_subtree_parents split_subtree_order = false.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -291,11 +239,14 @@ Module LowHighTests.
     vm_compute. reflexivity.
   Qed.
 
+  (** The links and label that an evaluation leaves after it runs out of fuel at once. *)
+  Definition exhausted_prefix :=
+    (DomLtLinks (lt_shortcut compression_chain) (lt_label compression_chain)
+      (LtEval 4%N :: lt_operations compression_chain), 4%N).
+
   (** Exhaustion just after the first score prefetch preserves the exact partial links. *)
   Example compression_preserves_exhausted_prefix :
-    dom_lt_eval 1%N compression_tied_semis compression_chain 4%N =
-      (DomLtLinks (lt_shortcut compression_chain) (lt_label compression_chain)
-        (LtEval 4%N :: lt_operations compression_chain), 4%N).
+    dom_lt_eval 1%N compression_tied_semis compression_chain 4%N = exhausted_prefix.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -308,13 +259,19 @@ Module ProducerTests.
 
   Local Open Scope positive_scope.
 
+  (** Each fixture graph with the parent list that its dominator tree must have. *)
+  Definition producer_fixtures : list (digraph * list (positive * positive)) :=
+    [(Line.graph, Line.parents); (Diamond.graph, Diamond.parents);
+      (JoinLoop.graph, JoinLoop.parents); (NestedLoop.graph, NestedLoop.parents);
+      (SelfLoop.graph, SelfLoop.parents); (Irreducible.graph, Irreducible.parents);
+      (Singleton.graph, Singleton.parents); (Unreachable.graph, Unreachable.parents)].
+
   (** The producer builds a certificate that the checker accepts for each fixture. *)
   Example producer_certificates_are_accepted :
-    forallb (fun g =>
-      let p := DigraphCode.prepare g in
+    forallb (fun c =>
+      let p := DigraphCode.prepare (fst c) in
       let '(m, o) := DomCode.build p 1 in DomCode.check p 1 m o)
-      [Line.graph; Diamond.graph; JoinLoop.graph; NestedLoop.graph; SelfLoop.graph;
-        Irreducible.graph; Singleton.graph; Unreachable.graph] = true.
+      producer_fixtures = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -330,25 +287,26 @@ Module ProducerTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** A long backedge path gets its parent chain compressed into the expected parents. *)
+  (** A path of eight vertices with a backedge from 8 to 2. *)
   Definition compression_loop_graph := fixture_graph [1; 2; 3; 4; 5; 6; 7; 8]
     [(1, 2); (2, 3); (3, 4); (4, 5); (5, 6); (6, 7); (7, 8); (8, 2)].
 
+  (** The certificate of the loop graph, a parent map that follows the path and its order. *)
+  Definition compression_loop_certificate :=
+    (parent_map [(2, 1); (3, 2); (4, 3); (5, 4); (6, 5); (7, 6); (8, 7)],
+      [1; 2; 3; 4; 5; 6; 7; 8]).
+
+  (** A long backedge path gets its parent chain compressed into the expected parents. *)
   Example producer_compresses_long_backedge_path :
-    DomCode.build (DigraphCode.prepare compression_loop_graph) 1 =
-      (parent_map [(2, 1); (3, 2); (4, 3); (5, 4); (6, 5); (7, 6); (8, 7)],
-        [1; 2; 3; 4; 5; 6; 7; 8]).
+    DomCode.build (DigraphCode.prepare compression_loop_graph) 1 = compression_loop_certificate.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
   (** The producer gives the parent map of each fixture, in fixture order. *)
   Example producer_parent_maps_of_fixtures :
-    map (fun g => fst (DomCode.build (DigraphCode.prepare g) 1))
-      [Line.graph; Diamond.graph; JoinLoop.graph; NestedLoop.graph; SelfLoop.graph;
-        Irreducible.graph; Singleton.graph; Unreachable.graph] =
-    map parent_map [Line.parents; Diamond.parents; JoinLoop.parents; NestedLoop.parents;
-      SelfLoop.parents; Irreducible.parents; Singleton.parents; Unreachable.parents].
+    map (fun c => fst (DomCode.build (DigraphCode.prepare (fst c)) 1)) producer_fixtures =
+      map (fun c => parent_map (snd c)) producer_fixtures.
   Proof.
     vm_compute. reflexivity.
   Qed.

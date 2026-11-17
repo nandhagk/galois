@@ -4,7 +4,7 @@
     For example, a definition whose two operands are both 1 evaluates to 2.
 
     Groups:
-    - Operands: a sparse definition evaluates its operands and gives the numeric result.
+    - [OperandTests] A sparse definition evaluates its operands and gives the numeric result.
 
     Builds on: Framework.Sparse and Fixpoint.Query. *)
 

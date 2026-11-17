@@ -4,11 +4,12 @@
     For example, one plus one reaches a join parameter as the 32-bit value two.
 
     Groups:
-    - Numeric: the numeric program gives its constants by node, and the fuel bounds the solution.
-    - Checks: candidates for the numeric and diamond systems are accepted or rejected.
-    - Values: the constant domain adds, guards and orders its values as stated.
-    - Trees: the supplied dominator trees pass the tree checker.
-    - Identity: a system whose seeds are top gives top at every node.
+    - [NumericTests] The numeric program gives its constants by node, and the fuel bounds the
+      solution.
+    - [CheckTests] Candidates for the numeric and diamond systems are accepted or rejected.
+    - [ValueTests] The constant domain adds, guards and orders its values as stated.
+    - [TreeTests] The supplied dominator trees pass the tree checker.
+    - [IdentityTests] A system whose seeds are top gives top at every node.
 
     Builds on: Framework.Sparse, Domains.Const and Fixpoint.Certified. *)
 
@@ -172,12 +173,6 @@ Module CheckTests.
 
   (** The empty candidate fails the checker for program 0. *)
   Example empty_candidate_rejected : C.check 0 PTrieCode.empty = false.
-  Proof.
-    vm_compute; reflexivity.
-  Qed.
-
-  (** The numeric candidate passes the checker for program 0 a second time. *)
-  Example numeric_checker_accepts_candidate : C.check 0 candidate = true.
   Proof.
     vm_compute; reflexivity.
   Qed.

@@ -4,10 +4,9 @@
     For example, selecting [1; 2; 0; 1] preserves both the order and the repeated row.
 
     Groups:
-    - Fixtures: a pair lattice, a direct system, the restriction and its seed bindings.
-    - Rows: the rows that a restriction keeps and appends, in order.
-    - Outputs: the reads, side contributions and acceptance of the restricted rows.
-    - Footprint: the finite closure of a run over a footprint.
+    - [RowTests] The rows that a restriction keeps and appends, in order.
+    - [OutputTests] The reads, side contributions and acceptance of the restricted rows.
+    - [FootprintTests] The finite closure of a run over a footprint.
 
     Builds on: Incremental.Restrict and Fixpoint.Query. *)
 

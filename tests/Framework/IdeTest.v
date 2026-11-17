@@ -4,10 +4,13 @@
     For example, reversing the call and return changes the observed affine result.
 
     Groups:
-    - Composition: a matched return gives its affine value, and the composed function applies to 4.
-    - Translation: the affine rules agree with the reference, and the affine checker accepts the jump.
-    - Roots: the affine rules list their seeds, roots, steps and returns.
-    - Unchecked: a bad micro lattice and a flow without facts are still checked by the enumerated rows.
+    - [CompositionTests] A matched return gives its affine value, and the composed function applies
+      to 4.
+    - [TranslationTests] The affine rules agree with the reference, and the affine checker accepts
+      the jump.
+    - [RootTests] The affine rules list their seeds, roots, steps and returns.
+    - [UncheckedTests] A bad micro lattice and a flow without facts are still checked by the
+      enumerated rows.
 
     Builds on: Framework.Ide and Framework.IfdsTest. *)
 

@@ -4,13 +4,12 @@
     For example, the cycle obtains its seed through a side contribution.
 
     Groups:
-    - Fixtures: a Boolean lattice, a cycle system, a policy and the solver instances.
-    - Check: the checker accepts and rejects complete assignments.
-    - Solver: the solver's results on the cycle, with and without enough fuel.
-    - Lookup: a lookup of a bound key and of a missing key.
-    - Step: one worklist step after a popped row is reused.
-    - Wide: the update of a key whose number is 2^39.
-    - Rows: the preparation of a system with 200 row occurrences.
+    - [CheckTests] The checker accepts and rejects complete assignments.
+    - [SolverTests] The solver's results on the cycle, with and without enough fuel.
+    - [LookupTests] A lookup of a bound key and of a missing key.
+    - [StepTests] One worklist step after a popped row is reused.
+    - [WideTests] The update of a key whose number is 2^39.
+    - [RowTests] The preparation of a system with 200 row occurrences.
 
     Builds on: Fixpoint.Worklist and Fixpoint.Certified. *)
 

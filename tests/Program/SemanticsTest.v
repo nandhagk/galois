@@ -4,8 +4,8 @@
     For example, a counter starts at zero, and one step from zero reaches one.
 
     Groups:
-    - Counter: the counter starts at zero, steps to its successor, and rejects other states.
-    - Completion: one step from state zero completes, and visible administration is rejected.
+    - [CounterTests] The counter starts at zero, steps to its successor, and rejects other states.
+    - [CompletionTests] A step from state one with no action completes, and a visible action is rejected.
 
     Builds on: Program.SemanticsSig. *)
 
@@ -67,12 +67,12 @@ End CounterTests.
 
 Module CompletionTests.
 
-  (** A step from state zero with one visible action reaches two. *)
+  (** A step takes state zero with one visible action to one, and state one with none to two. *)
   Definition completion_stepb s (l : list unit) t :=
     (Nat.eqb s 0 && Nat.eqb (length l) 1 && Nat.eqb t 1) ||
     (Nat.eqb s 1 && Nat.eqb (length l) 0 && Nat.eqb t 2).
 
-  (** One step from state zero completes to state one. *)
+  (** A step from state one with no visible action completes to state two. *)
   Example one_step_completes : completion_stepb 1 [] 2 = true.
   Proof.
     vm_compute; reflexivity.

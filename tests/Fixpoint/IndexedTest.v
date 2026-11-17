@@ -4,9 +4,8 @@
     For example, the cycle seed contributes once per row occurrence.
 
     Groups:
-    - Fixtures: the prepared index of the cycle system.
-    - Rows: the rows that the index returns for each key, and for an empty system.
-    - Certification: a bad solver's candidate is rejected by the checker.
+    - [RowTests] The rows that the index returns for each key, and for an empty system.
+    - [CertificationTests] A bad solver's candidate is rejected by the checker.
 
     Builds on: Fixpoint.Indexed and Fixpoint.WorklistTest. *)
 

@@ -11,7 +11,6 @@
     - [RootTests] The candidate roots that a check accepts.
     - [CoverageTests] The length and membership coverage of a candidate.
     - [WideKeyTests] Candidate vertices and edges beyond the graph's listed vertices.
-    - [ParallelEdgeTests] Candidates for a graph with parallel edges.
     - [StaleCacheTests] Counted rebuilding with stale cached counts.
 
     Builds on: graph fixtures, preparation and weak topological orders. *)
@@ -142,91 +141,44 @@ Module CheckerTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** An order that leaves out a reachable vertex is rejected. *)
-  Example rejects_order_missing_a_vertex :
-    WtoCode.check (DigraphCode.prepare Line.graph) [1]
-      (WVertex 1 (WVertex 2 (WVertex 3 WNil))) = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
+  (** Two parallel edges from 1 to 2 and an edge back. *)
+  Definition parallel_graph := fixture_graph [1; 2] [(1, 2); (1, 2); (2, 1)].
 
-  (** An order that does not place the target of an edge is rejected. *)
-  Example rejects_order_missing_an_edge_target :
-    WtoCode.check (DigraphCode.prepare Unreachable.graph) [1]
-      (WVertex 1 (WVertex 2 (WVertex 4 WNil))) = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
+  (** Each case is a graph, its roots and an order that the checker rejects. *)
+  Definition rejected_cases : list (digraph * list positive * wto) :=
+    [ (* A reachable vertex, 4, is missing. *)
+      (Line.graph, [1], WVertex 1 (WVertex 2 (WVertex 3 WNil)));
+      (* The target 3 of the edge from 2 is not placed. *)
+      (Unreachable.graph, [1], WVertex 1 (WVertex 2 (WVertex 4 WNil)));
+      (* The ranked source 3 has no successor 4 in the order. *)
+      (Unreachable.graph, [2], WVertex 2 (WVertex 3 WNil));
+      (* Vertex 1 is listed twice. *)
+      (Singleton.graph, [1], WVertex 1 (WVertex 1 WNil));
+      (* The target 3 of the edge from 2 comes before its source. *)
+      (Line.graph, [1], WVertex 1 (WVertex 3 (WVertex 2 (WVertex 4 WNil))));
+      (* The self-loop on 1 has no loop header. *)
+      (SelfLoop.graph, [1], WVertex 1 WNil);
+      (* Vertex 9 is not in the graph. *)
+      (Singleton.graph, [1], WVertex 1 (WVertex 9 WNil));
+      (* Vertex 5 is not reached from any root. *)
+      (Unreachable.graph, [1], WVertex 1 (WVertex 2 (WVertex 3 (WVertex 4 (WVertex 5 WNil)))));
+      (* The inner head 2 is already closed when vertices 3 and 4 arrive. *)
+      (NestedLoop.graph, [1], WLoop 1 (WLoop 2 WNil (WVertex 3 (WVertex 4 WNil))) WNil);
+      (* The parallel edges between 1 and 2 form a cycle with no header. *)
+      (parallel_graph, [1], WVertex 1 (WVertex 2 WNil)) ].
 
-  (** A ranked source without its successor in the order is rejected. *)
-  Example rejects_source_without_its_successor :
-    WtoCode.check (DigraphCode.prepare Unreachable.graph) [2]
-      (WVertex 2 (WVertex 3 WNil)) = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** An order that lists a vertex twice is rejected. *)
-  Example rejects_duplicate_vertex :
-    WtoCode.check (DigraphCode.prepare Singleton.graph) [1]
-      (WVertex 1 (WVertex 1 WNil)) = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** An order that places an edge's target before its source is rejected. *)
-  Example rejects_backward_edge :
-    WtoCode.check (DigraphCode.prepare Line.graph) [1]
-      (WVertex 1 (WVertex 3 (WVertex 2 (WVertex 4 WNil)))) = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A self-loop that has no loop header in the order is rejected. *)
-  Example rejects_self_loop_without_header :
-    WtoCode.check (DigraphCode.prepare SelfLoop.graph) [1] (WVertex 1 WNil) = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** An order that names a vertex outside the graph is rejected. *)
-  Example rejects_unknown_vertex :
-    WtoCode.check (DigraphCode.prepare Singleton.graph) [1]
-      (WVertex 1 (WVertex 9 WNil)) = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** An order that names a vertex that no root reaches is rejected. *)
-  Example rejects_unreachable_vertex :
-    WtoCode.check (DigraphCode.prepare Unreachable.graph) [1]
-      (WVertex 1 (WVertex 2 (WVertex 3 (WVertex 4 (WVertex 5 WNil))))) = false.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** An inner loop head that is already closed when its vertices arrive is rejected. *)
-  Example rejects_closed_inner_head :
-    WtoCode.check (DigraphCode.prepare NestedLoop.graph) [1]
-      (WLoop 1 (WLoop 2 WNil (WVertex 3 (WVertex 4 WNil))) WNil) = false.
+  (** The checker rejects every case of the table. *)
+  Example rejects_every_bad_order :
+    forallb (fun '(g, roots, candidate) =>
+      negb (WtoCode.check (DigraphCode.prepare g) roots candidate)) rejected_cases = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
   (** Parallel edges into a headed loop are accepted by its loop order. *)
-  Definition parallel_graph := fixture_graph [1; 2] [(1, 2); (1, 2); (2, 1)].
-
   Example headed_parallel_edges_are_accepted :
     WtoCode.check (DigraphCode.prepare parallel_graph) [1]
       (WLoop 1 (WVertex 2 WNil) WNil) = true.
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** Parallel edges into an unheaded cycle are rejected. *)
-  Example rejects_unheaded_parallel_edges :
-    WtoCode.check (DigraphCode.prepare parallel_graph) [1]
-      (WVertex 1 (WVertex 2 WNil)) = false.
   Proof.
     vm_compute. reflexivity.
   Qed.

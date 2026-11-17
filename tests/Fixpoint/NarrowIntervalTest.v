@@ -4,9 +4,8 @@
     For example, the second checked pass restricts the shifted row to one through five.
 
     Groups:
-    - Fixtures: intervals, a two-row system over them, the old assignment and a coarse solver.
-    - Pass: one narrowing pass reads the old endpoints and passes the full check.
-    - Wrapped: the certified result lowers the endpoints and keeps the checked values.
+    - [PassTests] One narrowing pass reads the old endpoints and passes the full check.
+    - [WrappedTests] The certified result lowers the endpoints and keeps the checked values.
 
     Builds on: Fixpoint.Narrow and Fixpoint.Certified. *)
 

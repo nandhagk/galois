@@ -4,8 +4,9 @@
     For example, assigning two before testing the guard keeps the state reachable.
 
     Groups:
-    - Actions: the order of the actions on an edge decides whether the guard rejects the state.
-    - Havoc: havoc on an unreachable state leaves it unreachable.
+    - [ActionsTests] The order of the actions on an edge decides whether the guard rejects the
+      state.
+    - [HavocTests] Havoc on an unreachable state leaves it unreachable.
 
     Builds on: Framework.Interp and States.Env. *)
 
