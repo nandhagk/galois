@@ -91,6 +91,8 @@ Module OperandTests.
   Example operands_add_to_two :
     eval_query (A.resume tt) look (S (length (A.deps tt (SparseDef 1))))
       (A.start tt (SparseDef 1)) = Some (2, []).
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End OperandTests.
