@@ -4,8 +4,8 @@
     arithmetic. For example, unsigned division by zero gives the all-ones word.
     Builds on: Word. *)
 
-From Stdlib Require Import ZArith List Lia.
-From Argent Require Import Time Std.
+From Stdlib Require Import ZArith NArith List Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word.
 Open Scope Z_scope.
 
@@ -365,3 +365,137 @@ TimeFun wult.
 TimeFun wule.
 TimeFun wslt.
 TimeFun wsle.
+
+(** * Linear operation contracts *)
+
+(** Integer negation preserves magnitude bit length. *)
+Lemma integer_opp_size : forall z, Z.size_nat (- z) = Z.size_nat z.
+Proof.
+  intro z. destruct z; reflexivity.
+Qed.
+
+(** Magnitude bit length gives a strict symmetric power-of-two bound. *)
+Local Lemma integer_magnitude_bound : forall z,
+  (- (2 ^ Z.of_nat (Z.size_nat z)) < z < 2 ^ Z.of_nat (Z.size_nat z))%Z.
+Proof.
+  intro z. destruct z as [|p|p]; [cbn; lia| |]; cbn [Z.size_nat];
+    pose proof (Pos.size_nat_upper p) as Hupper;
+    apply Nat2Z.inj_lt in Hupper;
+    rewrite positive_nat_Z, Nat2Z.inj_pow in Hupper; lia.
+Qed.
+
+(** Addition needs at most one bit beyond the combined operand magnitude budget. *)
+Lemma integer_add_size_le : forall x y,
+  (Z.size_nat (x + y) <= Z.size_nat x + Z.size_nat y + 1)%nat.
+Proof.
+  intros x y. apply integer_abs_size_le.
+  pose proof (integer_magnitude_bound x) as Hx.
+  pose proof (integer_magnitude_bound y) as Hy.
+  assert (Hxp : (0 < 2 ^ Z.of_nat (Z.size_nat x))%Z) by
+    (apply Z.pow_pos_nonneg; lia).
+  assert (Hyp : (0 < 2 ^ Z.of_nat (Z.size_nat y))%Z) by
+    (apply Z.pow_pos_nonneg; lia).
+  rewrite !Nat2Z.inj_add. change (Z.of_nat 1%nat) with 1%Z.
+  rewrite !Z.pow_add_r by lia. rewrite Z.pow_1_r. nia.
+Qed.
+
+(** Subtraction uses the same combined magnitude budget as addition. *)
+Lemma integer_sub_size_le : forall x y,
+  (Z.size_nat (x - y) <= Z.size_nat x + Z.size_nat y + 1)%nat.
+Proof.
+  intros x y. pose proof (integer_add_size_le x (- y)) as Hsize.
+  rewrite integer_opp_size in Hsize. exact Hsize.
+Qed.
+
+(** Complement charges wrapping and two subtractions on values bounded by the word width. *)
+Theorem wnot_time_le : forall w x,
+  (T_wnot w x <= 128 * N.of_nat (Pos.to_nat w + Z.size_nat x + 1))%N.
+Proof.
+  intros w x. pose proof (wrap_time_le w x) as Hwrap.
+  pose proof (modulus_time_le w) as Hmodulus.
+  pose proof (Z.T_sub_le (modulus w) 1) as Hones.
+  pose proof (Z.T_sub_le (modulus w - 1) (wrap w x)) as Hsub.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w x)) as Hsize.
+  pose proof (time_of_nat_le _ _ (modulus_size_le w)) as Hmodsize.
+  pose proof (time_of_nat_le _ _
+    (Z.size_nat_mono (modulus w - 1) (modulus w)
+      ltac:(pose proof (modulus_pos w); lia))) as Honessize.
+  time_unfold T_wnot.
+  rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+Qed.
+
+(** Modular negation preserves the raw magnitude budget before wrapping. *)
+Theorem wneg_time_le : forall w x,
+  (T_wneg w x <= 64 * N.of_nat (Pos.to_nat w + Z.size_nat x + 1))%N.
+Proof.
+  intros w x. pose proof (wrap_time_le w (- x)) as Hwrap.
+  pose proof (Z.T_opp_le x) as Hopp. rewrite integer_opp_size in Hwrap.
+  time_unfold T_wneg.
+  rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+Qed.
+
+(** Modular addition charges a linear width and combined raw operand size budget. *)
+Theorem wadd_time_le : forall w x y,
+  (T_wadd w x y <=
+    128 * N.of_nat (Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1))%N.
+Proof.
+  intros w x y. pose proof (Z.T_add_le x y) as Hadd.
+  pose proof (wrap_time_le w (x + y)) as Hwrap.
+  pose proof (time_of_nat_le _ _ (integer_add_size_le x y)) as Hsize.
+  time_unfold T_wadd.
+  rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+Qed.
+
+(** Modular subtraction charges a linear width and combined raw operand size budget. *)
+Theorem wsub_time_le : forall w x y,
+  (T_wsub w x y <=
+    128 * N.of_nat (Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1))%N.
+Proof.
+  intros w x y. pose proof (Z.T_sub_le x y) as Hsub.
+  pose proof (wrap_time_le w (x - y)) as Hwrap.
+  pose proof (time_of_nat_le _ _ (integer_sub_size_le x y)) as Hsize.
+  time_unfold T_wsub.
+  rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+Qed.
+
+(** Bitwise conjunction normalizes both inputs before traversing at most their word bits. *)
+Theorem wand_time_le : forall w x y,
+  (T_wand w x y <=
+    128 * N.of_nat (Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1))%N.
+Proof.
+  intros w x y. pose proof (wrap_time_le w x) as Hx.
+  pose proof (wrap_time_le w y) as Hy.
+  pose proof (Z.T_land_le (wrap w x) (wrap w y)) as Hland.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w x)) as Hsx.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w y)) as Hsy.
+  time_unfold T_wand.
+  rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+Qed.
+
+(** Bitwise disjunction normalizes both inputs before traversing at most their word bits. *)
+Theorem wor_time_le : forall w x y,
+  (T_wor w x y <=
+    128 * N.of_nat (Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1))%N.
+Proof.
+  intros w x y. pose proof (wrap_time_le w x) as Hx.
+  pose proof (wrap_time_le w y) as Hy.
+  pose proof (Z.T_lor_le (wrap w x) (wrap w y)) as Hlor.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w x)) as Hsx.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w y)) as Hsy.
+  time_unfold T_wor.
+  rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+Qed.
+
+(** Exclusive disjunction normalizes both inputs before traversing at most their word bits. *)
+Theorem wxor_time_le : forall w x y,
+  (T_wxor w x y <=
+    128 * N.of_nat (Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1))%N.
+Proof.
+  intros w x y. pose proof (wrap_time_le w x) as Hx.
+  pose proof (wrap_time_le w y) as Hy.
+  pose proof (Z.T_lxor_le (wrap w x) (wrap w y)) as Hlxor.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w x)) as Hsx.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w y)) as Hsy.
+  time_unfold T_wxor.
+  rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+Qed.

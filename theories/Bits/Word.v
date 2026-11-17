@@ -5,7 +5,7 @@
     Builds on: Stdlib integer arithmetic and Argent time derivation. *)
 
 From Stdlib Require Import ZArith NArith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 
 Open Scope Z_scope.
 
@@ -282,4 +282,181 @@ Proof.
     N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N).
   { apply time_of_nat_le. rewrite Nat.pow_2_r. nia. }
   lia.
+Qed.
+
+(** Every normalized word fits its declared bit width. *)
+Lemma word_size_le : forall w z, is_word w z -> (Z.size_nat z <= Pos.to_nat w)%nat.
+Proof.
+  intros w z Hword. apply integer_size_le.
+  rewrite positive_nat_Z. exact Hword.
+Qed.
+
+(** Wrapping always produces a value within its declared bit width. *)
+Lemma wrap_size_le : forall w z, (Z.size_nat (wrap w z) <= Pos.to_nat w)%nat.
+Proof.
+  intros w z. apply word_size_le, wrap_is_word.
+Qed.
+
+(** Half the modulus fits within the declared word width. *)
+Lemma half_size_le : forall w, (Z.size_nat (half w) <= Pos.to_nat w)%nat.
+Proof.
+  intro w. apply word_size_le. unfold is_word.
+  pose proof (half_pos w). pose proof (modulus_half w). lia.
+Qed.
+
+(** A symmetric power-of-two interval bounds the magnitude bit length. *)
+Lemma integer_abs_size_le : forall z n,
+  (- (2 ^ Z.of_nat n) < z < 2 ^ Z.of_nat n)%Z -> (Z.size_nat z <= n)%nat.
+Proof.
+  intros z n. destruct z as [|p|p]; intros Hrange; cbn [Z.size_nat]; try lia.
+  - apply (integer_size_le (Zpos p) n). lia.
+  - apply (integer_size_le (Zpos p) n). lia.
+Qed.
+
+(** Signed interpretation has at most the declared width many magnitude bits. *)
+Lemma signed_size_le : forall w z, (Z.size_nat (signed w z) <= Pos.to_nat w)%nat.
+Proof.
+  intros w z. apply integer_abs_size_le. rewrite positive_nat_Z.
+  fold (modulus w). pose proof (wrap_is_word w z) as Hrange.
+  pose proof (half_pos w) as Hhalf. pose proof (modulus_half w) as Hmodulus.
+  unfold signed, is_word in *.
+  destruct (wrap w z <? half w) eqn:Hcompare.
+  - apply Z.ltb_lt in Hcompare. lia.
+  - apply Z.ltb_ge in Hcompare. lia.
+Qed.
+
+(** A positive integer's bit length does not exceed its numeric value. *)
+Lemma positive_size_value : forall w, (Pos.size_nat w <= Pos.to_nat w)%nat.
+Proof.
+  intro w. induction w as [w IH|w IH|]; cbn [Pos.size_nat];
+    rewrite ?Pos2Nat.inj_xI, ?Pos2Nat.inj_xO, ?Pos2Nat.inj_1; lia.
+Qed.
+
+(** The half modulus is linear in the width. *)
+Theorem half_time_le : forall w,
+  (T_half w <= 32 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intro w. pose proof (pow_two_time_le (Zpos w - 1) ltac:(lia)) as Hpow.
+  pose proof (Z.T_sub_le (Zpos w) 1) as Hsub.
+  assert (Hwidth : (N.of_nat (Pos.size_nat w) <= N.of_nat (Pos.to_nat w))%N).
+  { apply time_of_nat_le. apply positive_size_value. }
+  assert (Hexponent : (N.of_nat (Z.to_nat (Zpos w - 1)) <=
+    N.of_nat (Pos.to_nat w))%N).
+  { apply time_of_nat_le. apply Nat2Z.inj_le.
+    rewrite Z2Nat.id by lia. rewrite positive_nat_Z. lia. }
+  time_unfold T_half. change (Z.size_nat (Zpos w)) with (Pos.size_nat w) in Hsub.
+  rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+Qed.
+
+(** Signed reading is at most quadratic in the width and the raw integer size. *)
+Theorem signed_time_quad_le : forall w z,
+  (T_signed w z <= 128 * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+Proof.
+  intros w z. pose proof (wrap_time_quad_le w z) as Hwrap.
+  pose proof (half_time_le w) as Hhalf.
+  pose proof (modulus_time_le w) as Hmodulus.
+  pose proof (Z.T_ltb_le (wrap w z) (half w)) as Hcompare.
+  pose proof (Z.T_sub_le (wrap w z) (modulus w)) as Hsubtract.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w z)) as Hsize.
+  pose proof (time_of_nat_le _ _ (modulus_size_le w)) as Hmodsize.
+  time_unfold T_signed. destruct (wrap w z <? half w)%Z;
+    rewrite !Nat2N.inj_add, !Nat2N.inj_pow in *; time_cbn_all; nia.
+Qed.
+
+(** Bit lookup reads the positive input's bits while decrementing its index. *)
+Lemma positive_testbit_time_bound : forall p n,
+  (Pos.T_testbit p n <=
+    N.of_nat ((Pos.size_nat p + 1) * (N.size_nat n + 2)))%N.
+Proof.
+  intro p. induction p as [p IH|p IH|]; intros [|n];
+    time_unfold Pos.T_testbit; cbn [Pos.size_nat N.size_nat].
+  all: try (specialize (IH (Pos.pred_N n)); pose proof (Pos.T_pred_N_le n) as Hpred;
+    assert (Hsize : (N.of_nat (N.size_nat (Pos.pred_N n)) <=
+      N.of_nat (Pos.size_nat n))%N) by
+      (apply time_of_nat_le; apply N.size_nat_pred_N)).
+  all: rewrite ?Nat2N.inj_mul, ?Nat2N.inj_add in *; time_cbn_all; nia.
+Qed.
+
+(** Nonnegative integer bit lookup is bounded by the input and index bit lengths. *)
+Lemma integer_testbit_time_bound : forall a n, (0 <= a)%Z -> (0 <= n)%Z ->
+  (Z.T_testbit a n <=
+    4 * N.of_nat ((Z.size_nat a + 1) * (Z.size_nat n + 1)))%N.
+Proof.
+  intros a n Ha Hn. destruct a as [|a|a], n as [|n|n]; try lia;
+    time_unfold Z.T_testbit; cbn [Z.size_nat]; time_simpl; time_cbn; try lia.
+  pose proof (positive_testbit_time_bound a (Npos n)) as Hbit.
+  cbn [N.size_nat] in Hbit.
+  rewrite ?Nat2N.inj_mul, ?Nat2N.inj_add in *; time_cbn_all; nia.
+Qed.
+
+(** Reading the sign bit is at most quadratic in the width and the raw integer size. *)
+Theorem msb_time_quad_le : forall w z,
+  (T_msb w z <= 128 * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+Proof.
+  intros w z. pose proof (wrap_time_quad_le w z) as Hwrap.
+  pose proof (Z.T_sub_le (Zpos w) 1) as Hsubtract.
+  pose proof (integer_testbit_time_bound (wrap w z) (Zpos w - 1)
+    (proj1 (wrap_is_word w z)) ltac:(lia)) as Hbit.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w z)) as Hsize.
+  pose proof (time_of_nat_le _ _ (positive_size_value w)) as Hwidth.
+  assert (Hindex : (N.of_nat (Z.size_nat (Zpos w - 1)) <=
+    N.of_nat (Pos.to_nat w))%N).
+  { apply time_of_nat_le. eapply Nat.le_trans.
+    - apply (Z.size_nat_mono (Zpos w - 1) (Zpos w)). lia.
+    - apply positive_size_value. }
+  time_unfold T_msb. change (Z.size_nat (Zpos w)) with (Pos.size_nat w) in Hsubtract.
+  rewrite !Nat2N.inj_add, !Nat2N.inj_mul, !Nat2N.inj_pow in *.
+  time_cbn_all. nia.
+Qed.
+
+(** Modulus construction is linear in the width. *)
+Theorem modulus_bigO : bigO (X := width) (fun _ => True)
+  (fun w => N.of_nat (Pos.to_nat w)) (fun w => T_modulus w).
+Proof.
+  apply bigO_intro with (c := 8%N). intros w _.
+  pose proof (modulus_time_le w) as Hmodulus.
+  rewrite Nat2N.inj_add in Hmodulus. time_cbn_all. lia.
+Qed.
+
+(** Wrapping has the linear class in the width and the raw integer size. *)
+Theorem wrap_bigO : bigO (X := width * Z) (fun _ => True)
+  (fun x => N.of_nat (Pos.to_nat (fst x) + Z.size_nat (snd x)))
+  (fun x => T_wrap (fst x) (snd x)).
+Proof.
+  apply bigO_intro with (c := 32%N). intros [w z] _. cbn [fst snd].
+  pose proof (wrap_time_le w z) as Hwrap.
+  rewrite Nat2N.inj_add in Hwrap. time_cbn_all. lia.
+Qed.
+
+(** Signed reading is linear in the width and the raw integer size. *)
+Theorem signed_time_le : forall w z,
+  (T_signed w z <= 128 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+Proof.
+  intros w z. pose proof (wrap_time_le w z) as Hwrap.
+  pose proof (half_time_le w) as Hhalf.
+  pose proof (modulus_time_le w) as Hmodulus.
+  pose proof (Z.T_ltb_le (wrap w z) (half w)) as Hcompare.
+  pose proof (Z.T_sub_le (wrap w z) (modulus w)) as Hsubtract.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w z)) as Hsize.
+  pose proof (time_of_nat_le _ _ (modulus_size_le w)) as Hmodsize.
+  time_unfold T_signed. destruct (wrap w z <? half w)%Z;
+    rewrite !Nat2N.inj_add in *; time_cbn_all; lia.
+Qed.
+
+(** Reading the sign bit costs the word size times the bit length of the width. *)
+Theorem msb_time_le : forall w z,
+  (T_msb w z <= 128 * N.of_nat
+    ((Pos.to_nat w + Z.size_nat z + 1) * (Pos.size_nat w + 1)))%N.
+Proof.
+  intros w z. pose proof (wrap_time_le w z) as Hwrap.
+  pose proof (Z.T_sub_le (Zpos w) 1) as Hsubtract.
+  pose proof (integer_testbit_time_bound (wrap w z) (Zpos w - 1)
+    (proj1 (wrap_is_word w z)) ltac:(lia)) as Hbit.
+  pose proof (time_of_nat_le _ _ (wrap_size_le w z)) as Hsize.
+  assert (Hindex : (N.of_nat (Z.size_nat (Zpos w - 1)) <=
+    N.of_nat (Pos.size_nat w))%N).
+  { apply time_of_nat_le. apply (Z.size_nat_mono (Zpos w - 1) (Zpos w)). lia. }
+  time_unfold T_msb. change (Z.size_nat (Zpos w)) with (Pos.size_nat w) in Hsubtract.
+  rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *.
+  time_cbn_all. nia.
 Qed.
