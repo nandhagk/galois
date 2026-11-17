@@ -291,6 +291,23 @@ Proof.
   reflexivity.
 Qed.
 
+(** Complement the clipped facts within the prepared mask using one XOR. *)
+Definition tnum_mask_flat_m (mask : Z) (a : tnum) : Z :=
+  Z.lxor mask (tnum_wrap_m mask (Z.lor (zeros a) (ones a))).
+TimeFun tnum_mask_flat_m.
+
+(** XOR with the prepared mask complements exactly the clipped known facts. *)
+Lemma tnum_mask_flat_m_agrees : forall mask a,
+  tnum_mask_flat_m mask a = tnum_mask_m mask a.
+Proof.
+  intros mask a. unfold tnum_mask_flat_m, tnum_mask_m, tnum_wnot_m, tnum_wor_m,
+    tnum_wrap_m. apply Z.bits_inj'; intros i Hi.
+  rewrite !Z.lxor_spec, !Z.land_spec, !Z.lnot_spec, !Z.lor_spec,
+    !Z.land_spec, !Z.lor_spec by exact Hi.
+  destruct (Z.testbit mask i); rewrite ?Bool.andb_true_r, ?Bool.andb_false_r;
+    reflexivity.
+Qed.
+
 Definition tnum_constant_m (mask : Z) (a : tnum) : option Z :=
   if tnum_wrap_m mask (zeros a) =? tnum_wnot_m mask (ones a) then Some (tnum_min_m mask a) else None.
 TimeFun tnum_constant_m.
@@ -403,6 +420,24 @@ Proof.
   reflexivity.
 Qed.
 
+(** Share the endpoint sum and compute each uncertainty set with one bounded mask. *)
+Definition tnum_adc_flat_m (mask : Z) (a b : tnum) (initial : bool) : tnum :=
+  let carry := Z.b2z initial in
+  let v := tnum_min_m mask a + tnum_min_m mask b + carry in
+  let s := tnum_max_m mask a + tnum_max_m mask b + carry in
+  let u := Z.lor (Z.lxor v s) (Z.lor (tnum_mask_flat_m mask a) (tnum_mask_flat_m mask b)) in
+  Tnum (tnum_wrap_m mask (Z.lnot (Z.lor v u)))
+    (tnum_wrap_m mask (Z.land v (Z.lnot u))).
+TimeFun tnum_adc_flat_m.
+
+(** Sharing endpoint arithmetic and flattening uncertainty masks preserves carry transfer. *)
+Lemma tnum_adc_flat_m_agrees : forall mask a b initial,
+  tnum_adc_flat_m mask a b initial = tnum_adc_m mask a b initial.
+Proof.
+  intros mask a b initial. unfold tnum_adc_flat_m, tnum_adc_m, tnum_adc_uncertain_m.
+  now rewrite !tnum_mask_flat_m_agrees.
+Qed.
+
 Definition tnum_add_m (mask : Z) (a b : tnum) : tnum := tnum_adc_m mask a b false.
 TimeFun tnum_add_m.
 
@@ -452,6 +487,43 @@ Lemma tnum_neg_fast_m_time_le : forall mask a,
 Proof.
   intros mask a. time_unfold T_tnum_neg_fast_m. time_unfold T_tnum_neg_m.
   time_cbn. rewrite tnum_const_m_zero. lia.
+Qed.
+
+(** Addition uses the flattened carry transfer with an initially clear carry. *)
+Definition tnum_add_flat_m (mask : Z) (a b : tnum) : tnum :=
+  tnum_adc_flat_m mask a b false.
+TimeFun tnum_add_flat_m.
+
+(** The flattened carry transfer preserves addition's masks. *)
+Lemma tnum_add_flat_m_agrees : forall mask a b,
+  tnum_add_flat_m mask a b = tnum_add_m mask a b.
+Proof.
+  intros mask a b. unfold tnum_add_flat_m, tnum_add_m. apply tnum_adc_flat_m_agrees.
+Qed.
+
+(** Subtraction complements its second operand before the flattened carry transfer. *)
+Definition tnum_sub_flat_m (mask : Z) (a b : tnum) : tnum :=
+  tnum_adc_flat_m mask a (tnum_not_m mask b) true.
+TimeFun tnum_sub_flat_m.
+
+(** The flattened carry transfer preserves subtraction's masks. *)
+Lemma tnum_sub_flat_m_agrees : forall mask a b,
+  tnum_sub_flat_m mask a b = tnum_sub_m mask a b.
+Proof.
+  intros mask a b. unfold tnum_sub_flat_m, tnum_sub_m. apply tnum_adc_flat_m_agrees.
+Qed.
+
+(** Negation combines the prepared zero constant with the flattened subtraction. *)
+Definition tnum_neg_flat_m (mask : Z) (a : tnum) : tnum :=
+  tnum_sub_flat_m mask (Tnum mask 0) a.
+TimeFun tnum_neg_flat_m.
+
+(** Reusing zero and flattening subtraction preserve negation's masks. *)
+Lemma tnum_neg_flat_m_agrees : forall mask a,
+  tnum_neg_flat_m mask a = tnum_neg_m mask a.
+Proof.
+  intros mask a. unfold tnum_neg_flat_m, tnum_neg_m.
+  now rewrite tnum_sub_flat_m_agrees, tnum_const_m_zero.
 Qed.
 
 (** A supplied mask removes the repeated all-ones construction from wrapping. *)
@@ -4659,6 +4731,19 @@ Proof.
 Qed.
 TimeBound tnum_mask_m_bound.
 
+(** Clipping the known facts before XOR retains a linear bound on their raw storage. *)
+Lemma tnum_mask_flat_m_bound : forall w a,
+  (T_tnum_mask_flat_m (Z.ones (Zpos w)) a <=
+    512 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. pose proof (tnum_lor_bits (zeros a) (ones a)) as Hlor.
+  pose proof (tnum_word_bits w _ (tnum_ones_word w)) as Hmask.
+  pose proof (tnum_wrap_bits w (Z.lor (zeros a) (ones a))) as Hwrapped.
+  time_unfold T_tnum_mask_flat_m. time_cbn. rewrite ?tnum_wrap_m_eq. time_pose.
+  unfold tnum_bits. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_mask_flat_m_bound.
+
 (** Testing subset inclusion reads both raw masks linearly. *)
 Lemma tnum_subset_time : forall w x y,
   (T_tnum_subset w x y <=
@@ -5241,6 +5326,42 @@ Proof.
 Qed.
 TimeBound tnum_adc_m_bound.
 
+(** Sharing the endpoint sum and flattening uncertainty retains the carry-transfer budget. *)
+Lemma tnum_adc_flat_m_bound : forall w a b c,
+  (T_tnum_adc_flat_m (Z.ones (Zpos w)) a b c <=
+    8192 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b c.
+  pose proof (tnum_min_bits w a). pose proof (tnum_min_bits w b).
+  pose proof (tnum_max_bits w a). pose proof (tnum_max_bits w b).
+  pose proof (tnum_mask_bits w a). pose proof (tnum_mask_bits w b).
+  pose proof (tnum_b2z_bits c).
+  pose proof (tnum_sum_bits (tnum_min w a) (tnum_min w b)).
+  pose proof (tnum_sum_bits (tnum_max w a) (tnum_max w b)).
+  pose proof (tnum_carry_sum_bits w (tnum_min w a) (tnum_min w b) c
+    (tnum_min_word w a) (tnum_min_word w b)).
+  pose proof (tnum_carry_sum_bits w (tnum_max w a) (tnum_max w b) c
+    (tnum_max_word w a) (tnum_max_word w b)).
+  pose proof (tnum_lxor_bits
+    (tnum_min w a + tnum_min w b + Z.b2z c)
+    (tnum_max w a + tnum_max w b + Z.b2z c)).
+  pose proof (tnum_lor_bits (tnum_mask w a) (tnum_mask w b)).
+  pose proof (tnum_adc_uncertain_bits w a b c).
+  pose proof (tnum_lor_bits (tnum_min w a + tnum_min w b + Z.b2z c)
+    (tnum_adc_uncertain w a b c)).
+  pose proof (tnum_lnot_bits (tnum_adc_uncertain w a b c)).
+  pose proof (tnum_lnot_bits (Z.lor
+    (tnum_min w a + tnum_min w b + Z.b2z c) (tnum_adc_uncertain w a b c))).
+  pose proof (tnum_land_bits (tnum_min w a + tnum_min w b + Z.b2z c)
+    (Z.lnot (tnum_adc_uncertain w a b c))).
+  time_unfold T_tnum_adc_flat_m. time_cbn.
+  rewrite ?tnum_min_m_eq, ?tnum_max_m_eq,
+    ?tnum_mask_flat_m_agrees, ?tnum_mask_m_eq.
+  fold (tnum_adc_uncertain w a b c). time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_adc_flat_m_bound.
+
 (** Addition is linear in width and the stored input masks. *)
 Lemma tnum_add_time : forall w a b,
   (T_tnum_add w a b <=
@@ -5258,6 +5379,16 @@ Proof.
   intros w a b. eapply N.le_trans; [apply tnum_add_m_time|apply tnum_add_time].
 Qed.
 TimeBound tnum_add_m_bound.
+
+(** Flattened addition retains the published linear budget. *)
+Lemma tnum_add_flat_m_bound : forall w a b,
+  (T_tnum_add_flat_m (Z.ones (Zpos w)) a b <=
+    16384 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. time_unfold T_tnum_add_flat_m. time_cbn. time_pose.
+  rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_add_flat_m_bound.
 
 (** Subtraction first normalizes the complemented second operand. *)
 Lemma tnum_sub_time : forall w a b,
@@ -5278,6 +5409,17 @@ Proof.
   intros w a b. eapply N.le_trans; [apply tnum_sub_m_time|apply tnum_sub_time].
 Qed.
 TimeBound tnum_sub_m_bound.
+
+(** Flattened subtraction retains the published linear budget. *)
+Lemma tnum_sub_flat_m_bound : forall w a b,
+  (T_tnum_sub_flat_m (Z.ones (Zpos w)) a b <=
+    32768 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. pose proof (tnum_not_bits w b) as Hnot.
+  time_unfold T_tnum_sub_flat_m. time_cbn. rewrite ?tnum_not_m_eq. time_pose.
+  rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_sub_flat_m_bound.
 
 (** Negation constructs zero and performs one subtraction. *)
 Lemma tnum_neg_time : forall w a,
@@ -5308,6 +5450,18 @@ Proof.
     [apply tnum_neg_fast_m_time_le|apply tnum_neg_m_bound].
 Qed.
 TimeBound tnum_neg_fast_m_bound.
+
+(** Flattened negation retains the published linear budget. *)
+Lemma tnum_neg_flat_m_bound : forall w a,
+  (T_tnum_neg_flat_m (Z.ones (Zpos w)) a <=
+    131072 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. pose proof (tnum_const_bits w 0) as Hzero.
+  rewrite <- (tnum_const_m_eq w 0), tnum_const_m_zero in Hzero.
+  time_unfold T_tnum_neg_flat_m. time_cbn. time_pose.
+  rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_neg_flat_m_bound.
 
 (** Conjunction reads both stored masks linearly. *)
 Lemma tnum_and_time : forall w a b,

@@ -344,3 +344,52 @@ Example tnum_fast_neg_boundaries :
 Proof.
   vm_compute. repeat split; reflexivity.
 Qed.
+
+(** Flattened addition preserves unit overflow, uncertain carries, and full-width constants. *)
+Example tnum_flat_add_constants :
+  tnum_add_flat_m (Z.ones 1) (Tnum 0 1) (Tnum 0 1) = Tnum 1 0 /\
+  tnum_add_flat_m (Z.ones 8) (Tnum 240 7) (Tnum 254 1) = Tnum 231 0 /\
+  tnum_add_flat_m (Z.ones 8) (Tnum 240 15) (Tnum 170 85) = Tnum 155 100 /\
+  tnum_add_flat_m (Z.ones 64) (Tnum (2 ^ 64 - 16) 15) (Tnum (2 ^ 64 - 86) 85) =
+    Tnum (2 ^ 64 - 101) 100.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Flattened subtraction preserves wrapped constants and an uncertain borrow boundary. *)
+Example tnum_flat_sub_constants :
+  tnum_sub_flat_m (Z.ones 1) (Tnum 1 0) (Tnum 0 1) = Tnum 0 1 /\
+  tnum_sub_flat_m (Z.ones 8) (Tnum 246 8) (Tnum 254 1) = Tnum 240 0 /\
+  tnum_sub_flat_m (Z.ones 8) (Tnum 240 15) (Tnum 170 85) = Tnum 69 186 /\
+  tnum_sub_flat_m (Z.ones 64) (Tnum 240 15) (Tnum 170 85) = Tnum 69 186.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Prepared zero and flattened carries preserve negation at every tested width. *)
+Example tnum_flat_neg_constants :
+  tnum_neg_flat_m (Z.ones 1) (Tnum 0 1) = Tnum 0 1 /\
+  tnum_neg_flat_m (Z.ones 8) (Tnum 240 15) = Tnum 14 241 /\
+  tnum_neg_flat_m (Z.ones 64) (Tnum (2 ^ 64 - 16) 15) = Tnum 14 (2 ^ 64 - 15).
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Flattened arithmetic clips oversized masks and preserves complete uncertainty. *)
+Example tnum_flat_arithmetic_boundaries :
+  tnum_add_flat_m (Z.ones 8) (Tnum (-16) 257) (Tnum 254 1) = Tnum 225 0 /\
+  tnum_sub_flat_m (Z.ones 8) (Tnum (-16) 257) (Tnum 254 1) = Tnum 241 0 /\
+  tnum_neg_flat_m (Z.ones 8) (Tnum (-16) 257) = Tnum 0 241 /\
+  tnum_add_flat_m (Z.ones 8) (Tnum 0 0) (Tnum 0 0) = Tnum 0 0 /\
+  tnum_sub_flat_m (Z.ones 8) (Tnum 0 0) (Tnum 0 0) = Tnum 0 0 /\
+  tnum_neg_flat_m (Z.ones 8) (Tnum 0 0) = Tnum 0 0.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** A set initial carry contributes exactly one to a fully known byte sum. *)
+Example tnum_flat_adc_initial_carry :
+  tnum_adc_flat_m (Z.ones 8) (Tnum 240 15) (Tnum 170 85) true = Tnum 154 101.
+Proof.
+  vm_compute. reflexivity.
+Qed.
