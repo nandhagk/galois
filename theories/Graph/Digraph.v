@@ -313,6 +313,23 @@ Proof.
   time_unfold @T_graph_n. cbn [graph_n]. rewrite Nat2N.inj_add. lia.
 Qed.
 
+(** Counting source occurrences pays one call and their list traversal. *)
+Lemma graph_n_clock g :
+  T_graph_n g = (1 + Datatypes.T_length (verts g))%N.
+Proof.
+  destruct g. time_unfold @T_graph_n. reflexivity.
+Qed.
+
+(** Counting edge occurrences exposes the shared row reads and unary additions. *)
+Lemma graph_e_clock g :
+  T_graph_e g =
+    (1 + List.T_fold_right (fun v n => (length (succs g v) + n)%nat)
+      (fun v n => 1 + ((T_succs g v + Datatypes.T_length (succs g v)) +
+        Nat.T_add (length (succs g v)) n))%N 0%nat (verts g))%N.
+Proof.
+  destruct g. time_unfold @T_graph_e. reflexivity.
+Qed.
+
 Module DigraphT <: DIGRAPH_T.
   Include Digraph.
   TimeFun add_pred.

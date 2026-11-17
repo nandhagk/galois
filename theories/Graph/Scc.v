@@ -2120,6 +2120,172 @@ Proof.
   clear - Hcount Hlisted Hlength Hvertices Hfst Hsnd. nia.
 Qed.
 
+(** Every binary increment pays at least its initial call. *)
+Local Lemma scc_succ_clock_positive p : (1 <= Std.Pos.T_succ p)%N.
+Proof.
+  destruct p; time_unfold Std.Pos.T_succ; lia.
+Qed.
+
+(** Each unary successor pays a conversion call and a binary increment. *)
+Local Lemma scc_of_succ_nat_clock_lower n :
+  (2 * N.of_nat n + 1 <= Key.Pos.T_of_succ_nat n)%N.
+Proof.
+  induction n as [|n IH].
+  - time_unfold Key.Pos.T_of_succ_nat. reflexivity.
+  - pose proof (scc_succ_clock_positive (Pos.of_succ_nat n)) as Hsucc.
+    time_unfold Key.Pos.T_of_succ_nat.
+    cbn [Pos.of_succ_nat]. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** Converting a unary count pays at least twice its value. *)
+Local Lemma scc_of_nat_clock_lower n :
+  (2 * N.of_nat n <= TimeHelpers.N.T_of_nat n)%N.
+Proof.
+  destruct n as [|n].
+  - time_unfold TimeHelpers.N.T_of_nat. cbn. lia.
+  - pose proof (scc_of_succ_nat_clock_lower n) as Hcount.
+    time_unfold TimeHelpers.N.T_of_nat. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** The length traversal pays once for every constructor, including the empty list. *)
+Local Lemma scc_length_clock_lower {A} (xs : list A) :
+  (N.of_nat (length xs) + 1 <= Datatypes.T_length xs)%N.
+Proof.
+  induction xs as [|x xs IH]; time_unfold @Datatypes.T_length;
+    cbn [length]; rewrite ?Nat2N.inj_succ; lia.
+Qed.
+
+(** A filter pays a traversal call and its predicate call for every occurrence. *)
+Local Lemma scc_filter_clock_lower {A} (test : A -> bool) T_test xs :
+  (forall x, (1 <= T_test x)%N) ->
+  (2 * N.of_nat (length xs) + 1 <= List.T_filter test T_test xs)%N.
+Proof.
+  intros Htest. induction xs as [|x xs IH].
+  - time_unfold @List.T_filter. cbn [length]. lia.
+  - pose proof (Htest x). time_unfold @List.T_filter.
+    destruct (test x); cbn [length]; rewrite Nat2N.inj_succ; lia.
+Qed.
+
+(** The membership fold pays its traversal and callback without any trie lower bound. *)
+Local Lemma scc_listed_clock_lower vs listed :
+  (2 * N.of_nat (length vs) + 1 <=
+    List.T_fold_left (fun acc v => PTrieCode.set v true acc)
+      (fun acc v => 1 + PTrieCode.T_set v true acc)%N vs listed)%N.
+Proof.
+  revert listed. induction vs as [|v vs IH]; intro listed.
+  - time_unfold @List.T_fold_left. cbn [length]. lia.
+  - specialize (IH (PTrieCode.set v true listed)).
+    time_unfold @List.T_fold_left. cbn beta. cbn [length].
+    rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** Counted rows retain enough filtering and conversion work to pay a cache recount. *)
+Local Lemma scc_count_rows_clock_lower row T_row read vs table count :
+  Forall (fun v =>
+    (read v + 2 * N.of_nat (length (row v)) + 3 <= T_row v)%N) vs ->
+  (fold_right (fun v n => (read v + n)%N) 0%N vs +
+    5 * N.of_nat (fold_right (fun v n => (length (row v) + n)%nat) 0%nat vs) +
+    5 * N.of_nat (length vs) + 1 <= T_scc_count_rows row T_row vs table count)%N.
+Proof.
+  intros Hrows. revert table count.
+  induction Hrows as [|v vs Hv Hrows IH]; intros table count.
+  - time_unfold @T_scc_count_rows. cbn [fold_right length]. lia.
+  - pose proof (scc_length_clock_lower (row v)) as Hlength.
+    pose proof (scc_of_nat_clock_lower (length (row v))) as Hconvert.
+    specialize (IH (PTrieCode.set v (row v) table) (N.of_nat (length (row v)) + count)%N).
+    time_unfold @T_scc_count_rows. cbn [fold_right length].
+    rewrite Nat2N.inj_add, Nat2N.inj_succ. lia.
+Qed.
+
+(** The unary edge sum shares each row read and adds twice the row length in list work. *)
+Local Lemma scc_cache_fold_clock_upper b vs :
+  (List.T_fold_right (fun v n => (length (succs b v) + n)%nat)
+    (fun v n => 1 + ((T_succs b v + Datatypes.T_length (succs b v)) +
+      Nat.T_add (length (succs b v)) n))%N 0%nat vs <=
+    fold_right (fun v n => (T_succs b v + n)%N) 0%N vs +
+    2 * N.of_nat (fold_right (fun v n => (length (succs b v) + n)%nat) 0%nat vs) +
+    4 * N.of_nat (length vs) + 1)%N.
+Proof.
+  induction vs as [|v vs IH].
+  - time_unfold @List.T_fold_right. cbn [fold_right length]. lia.
+  - pose proof (Datatypes.T_length_le (succs b v)) as Hlength.
+    pose proof (Nat.T_add_le (length (succs b v))
+      (fold_right (fun u n => (length (succs b u) + n)%nat) 0%nat vs)) as Hadd.
+    time_unfold @List.T_fold_right. cbn beta. cbn [fold_right length].
+    rewrite Nat2N.inj_add, Nat2N.inj_succ. lia.
+Qed.
+
+(** On an already rebuilt base, counted filtering pays for refreshing both count caches. *)
+Lemma scc_graph_counted_cache_clock g :
+  base (scc_graph g) = base g ->
+  (T_graph_n (base g) + TimeHelpers.N.T_of_nat (graph_n (base g)) +
+    T_graph_e (base g) + TimeHelpers.N.T_of_nat (graph_e (base g)) + 2 <=
+    T_scc_graph_counted g)%N.
+Proof.
+  intro Hbase.
+  set (listed := fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty).
+  set (row := fun v => filter
+    (fun u => match trie_get u listed with Some _ => true | None => false end)
+    (succs (base g) v)).
+  set (row_clock := fun v => (1 + ((1 + T_succs (base g) v) +
+    List.T_filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (fun u => 1 + T_trie_get u listed)%N (succs (base g) v)))%N).
+  assert (Hrows : Forall (fun v => row v = succs (base g) v) (nodes g)).
+  { apply Forall_forall. intros v Hin.
+    pose proof (scc_graph_succs_listed g v Hin) as Hrow.
+    rewrite Hbase in Hrow. unfold row.
+    rewrite Hrow at 2. apply filter_ext. intro u. unfold listed. apply scc_listed_test. }
+  assert (Hcost : Forall (fun v =>
+    (T_succs (base g) v + 2 * N.of_nat (length (row v)) + 3 <= row_clock v)%N)
+    (nodes g)).
+  { apply Forall_forall. intros v Hin. rewrite Forall_forall in Hrows.
+    rewrite (Hrows v Hin). unfold row_clock.
+    pose proof (scc_filter_clock_lower
+      (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (fun u => 1 + T_trie_get u listed)%N (succs (base g) v)
+      ltac:(intro u; change (1 <= 1 + T_trie_get u listed)%N; lia)) as Hfilter.
+    lia. }
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hedges : fold_right (fun v n => (length (succs (base g) v) + n)%nat)
+      0%nat (nodes g) = graph_e (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hmass : fold_right (fun v n => (length (row v) + n)%nat) 0%nat (nodes g) =
+      graph_e (base g)).
+  { rewrite <- Hedges. clearbody row. clear - Hrows. induction Hrows as [|v vs Hv Hrows IH];
+      cbn [fold_right]; [reflexivity|]. now rewrite Hv, IH. }
+  pose proof (scc_count_rows_clock_lower row row_clock (fun v => T_succs (base g) v)
+    (nodes g) Empty 0 Hcost) as Hcount.
+  pose proof (scc_cache_fold_clock_upper (base g) (nodes g)) as Hfold.
+  pose proof (scc_listed_clock_lower (nodes g) Empty) as Hlisted.
+  pose proof (graph_of_nat_time (graph_e (base g))) as Hconvert.
+  rewrite Hmass in Hcount. rewrite Hedges in Hfold.
+  assert (Hcache :
+    (List.T_fold_right (fun v n => (length (succs (base g) v) + n)%nat)
+      (fun v n => 1 + ((T_succs (base g) v + Datatypes.T_length (succs (base g) v)) +
+        Nat.T_add (length (succs (base g) v)) n))%N 0%nat (nodes g) +
+      TimeHelpers.N.T_of_nat (graph_e (base g)) <=
+      List.T_fold_left (fun acc v => PTrieCode.set v true acc)
+        (fun acc v => 1 + PTrieCode.T_set v true acc)%N (nodes g) Empty +
+      T_scc_count_rows row row_clock (nodes g) Empty 0)%N).
+  { destruct (nodes g) as [|v vs] eqn:Hvertices.
+    - rewrite ?Hvertices in Hedges. cbn [fold_right] in Hedges. rewrite <- Hedges.
+      time_unfold @List.T_fold_right. time_unfold @List.T_fold_left.
+      time_unfold @T_scc_count_rows. time_unfold TimeHelpers.N.T_of_nat. lia.
+    - rewrite ?Hvertices in Hcount, Hfold, Hlisted. cbn [length] in *.
+      rewrite Nat2N.inj_succ in *. lia. }
+  assert (Hvertices : verts (base g) = nodes g).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hfst : (1 <= Datatypes.T_fst (scc_count_rows row (nodes g) Empty 0))%N).
+  { destruct (scc_count_rows row (nodes g) Empty 0). reflexivity. }
+  assert (Hsnd : (1 <= Datatypes.T_snd (scc_count_rows row (nodes g) Empty 0))%N).
+  { destruct (scc_count_rows row (nodes g) Empty 0). reflexivity. }
+  rewrite graph_n_clock, graph_e_clock, Hvertices, <- Hnodes.
+  time_unfold @T_scc_graph_counted. unfold T_nodes, T_base.
+  cbn beta iota zeta. fold listed row row_clock.
+  clear - Hcache Hfst Hsnd. lia.
+Qed.
+
 (** Filtered trace construction includes preprocessing, root access, and the raw search clock. *)
 Lemma scc_trace_time g :
   (1 + T_scc_trace g <= (8 * (search_trace_coefficient + 4096)) *
