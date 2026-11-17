@@ -2,12 +2,19 @@
 
     Every finite endpoint fits a bit budget fixed for the extracted program.
     For example, cutting [0, 256] at eight bits gives [0, positive infinity].
+
+    Main results
+    - [cut_sound] Cutting retains every integer represented by the raw interval.
+    - [forward_complexity] Forward transfer is bounded by the operator work,
+      O(work + 1) for the operator and its operands.
+
     Builds on: IntervalSig, ThresholdsSig and ValueSig. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig.
+Import ComplexityNotations.
 
 Local Open Scope nat_scope.
 
@@ -145,9 +152,8 @@ Module Type CUT_INTERVAL_TIME (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   (** Each finite side contributes at most one plus the threshold count. *)
   Parameter rank_bound : forall q a, wrank q a <= 2 * (length (T.vals q) + 1).
   (** Forward transfer has the published operator-work class. *)
-  Parameter forward_complexity : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
-    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Parameter forward_complexity :
+    (T_forward o xs ∈ 𝑂(N.of_nat ((work o xs)%nat)) for (o, xs))%N.
 End CUT_INTERVAL_TIME.
 
 Module Type CUT_INTERVAL_T (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
