@@ -2,15 +2,22 @@
 
     A producer lists variables needed at each block entry for the SSA certificate.
     For example, an operand read before any assignment is live at its block's entry.
+
+    Main results
+    - [prepare_complexity] Preparation has the published linear bit-cost bound,
+      O((s + 1) (w + 1)) for s function size and width w.
+    - [live_in_complexity] The producer has the published output-sensitive bit-cost bound.
+
     Builds on: Ssa.Lang, Program variable and point presentations, and graph measures. *)
 
 From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import DigraphSig.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
 From Galois.Ssa Require Import Lang.
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Definition function_vars {K G} (p : func positive K G) : list positive :=
   inputs _ _ _ p ++ flat_map (fun item =>
@@ -86,8 +93,8 @@ Module Type LANG_PREPARE_TIME (O : OPS) (Q : TYPE) (Import R : LANG_PREPARE_OPS 
     (T_prepare p <= c_prepare * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
   (** Preparation has the published linear bit-cost bound. *)
-  Parameter prepare_complexity : bigO (fun _ : func positive O.K O.G => True)
-    (fun p => N.of_nat ((function_size p + 1) * (function_width p + 1))) T_prepare.
+  Parameter prepare_complexity :
+    T_prepare p ∈ 𝑂(N.of_nat ((function_size p + 1) * (function_width p + 1))) for p.
 End LANG_PREPARE_TIME.
 
 Module Type LANG_PREPARE_T (O : OPS) (Q : TYPE) :=
@@ -190,9 +197,9 @@ Module Type LIVE_TIME (O : OPS)
     (T_live_in p <= c_live * N.of_nat (function_size p + live_size p + 1) *
       N.of_nat (function_width p + 1))%N.
   (** The producer has the published output-sensitive bit-cost bound. *)
-  Parameter live_in_complexity : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
-    T_live_in.
+  Parameter live_in_complexity :
+    T_live_in p ∈ 𝑂(N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
+      for p.
 End LIVE_TIME.
 
 Module Type LIVE_T (O : OPS)
