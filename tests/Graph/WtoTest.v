@@ -155,6 +155,22 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Definition wide_unlisted_target := fixture_graph [1; 2] [(2, 1024)].
+
+Example accepts_narrow_candidate_with_wide_unreachable_edge :
+  WtoCode.check (DigraphCode.prepare wide_unlisted_target) [1]
+    (WVertex 1 WNil) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_wide_unlisted_candidate :
+  WtoCode.check (DigraphCode.prepare wide_unlisted_target) [1]
+    (WVertex 1 (WVertex 1024 WNil)) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example rejects_duplicate :
   WtoCode.check (DigraphCode.prepare Singleton.graph) [1]
     (WVertex 1 (WVertex 1 WNil)) = false.

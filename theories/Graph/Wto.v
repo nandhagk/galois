@@ -976,13 +976,32 @@ Proof.
   cbn [forallb]. now rewrite wto_edges_row_agrees, IH.
 Qed.
 
-(** The checker builds its own listed-row graph and never reads prepared caches. *)
-Definition wto_check_linear (g : prepared) (roots : list positive) (w : wto) : bool :=
+(** The original checker remains the reference for full acceptance equivalence. *)
+Definition wto_check_linear_spec (g : prepared) (roots : list positive) (w : wto) : bool :=
   let b := base g in
   let listed := listed_of g in
   if forallb (fun v => match trie_get v listed with Some _ => true | None => false end) roots
   then
     match wto_check_index (check_fuel g) (graph_width b) listed
+        [WtoCheckVisit w] 0%N Empty Empty [] with
+    | None => false
+    | Some (ranks, intervals, vs) =>
+      let ready := scc_graph g in
+      let live := entered (prepared_search_trace ready roots) in
+      let reached := fold_left (fun acc v => PTrieCode.set v true acc) live Empty in
+      forallb (fun v => match trie_get v reached with Some _ => true | None => false end) vs &&
+      forallb (fun v => match trie_get v ranks with Some _ => true | None => false end) live &&
+      wto_edges_ok b ranks intervals vs
+    end
+  else false.
+
+(** Listed source keys suffice to bound every candidate that can pass the index. *)
+Definition wto_check_linear (g : prepared) (roots : list positive) (w : wto) : bool :=
+  let b := base g in
+  let listed := listed_of g in
+  if forallb (fun v => match trie_get v listed with Some _ => true | None => false end) roots
+  then
+    match wto_check_index (check_fuel g) (vertex_width (nodes g)) listed
         [WtoCheckVisit w] 0%N Empty Empty [] with
     | None => false
     | Some (ranks, intervals, vs) =>
@@ -1824,6 +1843,118 @@ Proof.
     destruct v; cbn [Pos.size_nat wto_key_fits] in *; try lia; try reflexivity; apply IH; lia.
 Qed.
 
+Lemma wto_key_fits_width width v : wto_key_fits width v = true -> Pos.size_nat v <= width.
+Proof.
+  revert v. induction width as [|width IH]; intro v; destruct v;
+    cbn [wto_key_fits Pos.size_nat]; try discriminate; intros Hfit; try lia;
+    specialize (IH _ Hfit); lia.
+Qed.
+
+(** Omitting edge occurrences can only reduce the maximum key width. *)
+Lemma vertex_width_le_graph_width g :
+  vertex_width (nodes g) <= graph_width (base g).
+Proof.
+  destruct g as [[vertices adjacency] predecessors n e].
+  cbn [nodes base graph_width]. rewrite search_graph_max. apply Nat.le_max_l.
+Qed.
+
+(** A key that passes a smaller width guard also passes any larger guard. *)
+Lemma wto_key_fits_mono small large v :
+  small <= large -> wto_key_fits small v = true -> wto_key_fits large v = true.
+Proof.
+  intros Hwidth Hfits. apply wto_key_fits_complete.
+  pose proof (wto_key_fits_width small v Hfits). lia.
+Qed.
+
+(** The smaller guard examines no more key bits than the larger guard. *)
+Lemma wto_key_fits_clock_mono small large v :
+  small <= large -> (T_wto_key_fits small v <= T_wto_key_fits large v)%N.
+Proof.
+  revert large v. induction small as [|small IH]; intros [|large] v Hwidth;
+    destruct v; time_unfold @T_wto_key_fits; time_cbn; try lia;
+    specialize (IH large v ltac:(lia)); lia.
+Qed.
+
+(** Any key rejected only by the smaller guard is absent from the listed table. *)
+Lemma wto_check_step_vertices g st :
+  wto_check_step (vertex_width (nodes g)) (listed_of g) st =
+    wto_check_step (graph_width (base g)) (listed_of g) st.
+Proof.
+  assert (Hfits : forall v b, trie_get v (listed_of g) = Some b ->
+      wto_key_fits (vertex_width (nodes g)) v = true /\
+      wto_key_fits (graph_width (base g)) v = true).
+  { intros v b Hget.
+    assert (Hin : In v (nodes g)).
+    { apply (proj1 (scc_listed_lookup (nodes g) v)). now exists b. }
+    split; apply wto_key_fits_complete.
+    - now apply search_vertex_width_member.
+    - now apply scc_node_width. }
+  destruct st as [tasks next ranks intervals vs].
+  destruct tasks as [|task rest]; [reflexivity|].
+  destruct task as [w|h]; [destruct w as [|v tail|h body tail]|];
+    cbn [wto_check_step]; try reflexivity.
+  - destruct (trie_get v (listed_of g)) as [b|] eqn:Hget.
+    + destruct (Hfits v b Hget) as [Hsmall Hlarge]. now rewrite Hsmall, Hlarge.
+    + destruct (wto_key_fits (vertex_width (nodes g)) v),
+        (wto_key_fits (graph_width (base g)) v); now rewrite ?Hget.
+  - destruct (trie_get h (listed_of g)) as [b|] eqn:Hget.
+    + destruct (Hfits h b Hget) as [Hsmall Hlarge]. now rewrite Hsmall, Hlarge.
+    + destruct (wto_key_fits (vertex_width (nodes g)) h),
+        (wto_key_fits (graph_width (base g)) h); now rewrite ?Hget.
+Qed.
+
+(** Pointwise equal transitions produce equal binary-fuel loop results. *)
+Lemma wto_loopN_agrees {St Out} (first second : St -> St + Out) :
+  (forall st, first st = second st) -> forall fuel st,
+  loopN first fuel st = loopN second fuel st.
+Proof.
+  intros Hagrees fuel st. rewrite !search_loopN_fuel.
+  generalize (N.to_nat fuel) as count. intro count. revert st.
+  induction count as [|count IH]; intro st; [reflexivity|].
+  cbn [loop_fuel]. rewrite Hagrees. destruct (second st); [apply IH|reflexivity].
+Qed.
+
+(** The complete index result is independent of edge-occurrence widths. *)
+Lemma wto_check_index_vertices g fuel tasks next ranks intervals vs :
+  wto_check_index fuel (vertex_width (nodes g)) (listed_of g)
+    tasks next ranks intervals vs =
+  wto_check_index fuel (graph_width (base g)) (listed_of g)
+    tasks next ranks intervals vs.
+Proof.
+  unfold wto_check_index.
+  rewrite (wto_loopN_agrees _ _ (wto_check_step_vertices g)). reflexivity.
+Qed.
+
+(** Early width rejection can only shorten an index transition. *)
+Lemma wto_check_step_clock_mono small large listed st :
+  small <= large ->
+  (T_wto_check_step small listed st <= T_wto_check_step large listed st)%N.
+Proof.
+  intro Hwidth. destruct st as [tasks next ranks intervals vs].
+  destruct tasks as [|task rest]; [apply N.le_refl|].
+  destruct task as [w|h]; [destruct w as [|v tail|h body tail]|];
+    try apply N.le_refl.
+  - pose proof (wto_key_fits_clock_mono small large v Hwidth) as Hfits.
+    time_unfold @T_wto_check_step. time_cbn.
+    destruct (wto_key_fits small v) eqn:Hsmall.
+    + rewrite (wto_key_fits_mono small large v Hwidth Hsmall). lia.
+    + destruct (wto_key_fits large v); lia.
+  - pose proof (wto_key_fits_clock_mono small large h Hwidth) as Hfits.
+    time_unfold @T_wto_check_step. time_cbn.
+    destruct (wto_key_fits small h) eqn:Hsmall.
+    + rewrite (wto_key_fits_mono small large h Hwidth Hsmall). lia.
+    + destruct (wto_key_fits large h); lia.
+Qed.
+
+
+(** The smaller key-width guard preserves acceptance on every candidate. *)
+Lemma wto_check_linear_agrees g roots w :
+  wto_check_linear g roots w = wto_check_linear_spec g roots w.
+Proof.
+  unfold wto_check_linear, wto_check_linear_spec.
+  rewrite wto_check_index_vertices. reflexivity.
+Qed.
+
 (** Distinct concatenated lists have no shared element. *)
 Lemma wto_index_disjoint (first last : list positive) v :
   NoDup (first ++ last) -> In v first -> In v last -> False.
@@ -2133,7 +2264,8 @@ Proof.
     - symmetry. now apply wto_filter_coverage.
     - intros u z Hu Hedge. rewrite scc_graph_nodes. now apply (scc_graph_closed g u).
     - intros r Hin. rewrite scc_graph_nodes. now apply Hroots. }
-  unfold wto_check_linear. rewrite Hroot_test, Hindex.
+  rewrite wto_check_linear_agrees. unfold wto_check_linear_spec.
+  rewrite Hroot_test, Hindex.
   apply andb_true_iff. split.
   - apply andb_true_iff. split; apply forallb_forall; intros v Hin.
     + apply wto_present_test. apply (proj2 (scc_listed_lookup _ v)).
@@ -2177,7 +2309,8 @@ Lemma wto_check_sound_from_reach : forall g roots w,
     reach (base (scc_graph g)) roots v) ->
   wto_check_linear g roots w = true -> is_wto g roots w.
 Proof.
-  intros g roots w Htrace Hcheck. unfold wto_check_linear in Hcheck.
+  intros g roots w Htrace Hcheck. rewrite wto_check_linear_agrees in Hcheck.
+  unfold wto_check_linear_spec in Hcheck.
   destruct (forallb (fun v =>
     match trie_get v (listed_of g) with Some _ => true | None => false end) roots);
     [|discriminate].
@@ -2225,13 +2358,6 @@ Lemma wto_key_fits_clock width v :
 Proof.
   revert v. induction width as [|width IH]; intro v; destruct v;
     time_step; specialize (IH v); lia.
-Qed.
-
-Lemma wto_key_fits_width width v : wto_key_fits width v = true -> Pos.size_nat v <= width.
-Proof.
-  revert v. induction width as [|width IH]; intro v; destruct v;
-    cbn [wto_key_fits Pos.size_nat]; try discriminate; intros Hfit; try lia;
-    specialize (IH _ Hfit); lia.
 Qed.
 
 (** Every processed index vertex is listed, even for a rejected or truncated candidate. *)
@@ -2392,33 +2518,48 @@ Qed.
 Local Opaque loopN.
 
 (** The fuel-bounded index pays for at most four transitions per listed occurrence. *)
-Lemma wto_check_index_clock g whole :
-  (1 + T_wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+Lemma wto_check_index_clock_from_steps g whole width :
+  (forall st, wto_check_step width (listed_of g) st =
+    wto_check_step (graph_width (base g)) (listed_of g) st) ->
+  (forall st, (T_wto_check_step width (listed_of g) st <=
+    T_wto_check_step (graph_width (base g)) (listed_of g) st)%N) ->
+  (1 + T_wto_check_index (check_fuel g) width (listed_of g)
       [WtoCheckVisit whole] 0 Empty Empty [] <=
     4096 * (PTrieT.c_trie + 1) * N.of_nat (graph_n (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
 Proof.
-  destruct (search_loop_trace_clock
-    (wto_check_step (graph_width (base g)) (listed_of g))
-    (fun st => T_wto_check_step (graph_width (base g)) (listed_of g) st)
+  intros Hagrees Hsmaller.
+  destruct (search_loop_trace_clock (wto_check_step width (listed_of g))
+    (fun st => T_wto_check_step width (listed_of g) st)
     (check_fuel g) (WtoCheckState [WtoCheckVisit whole] 0 Empty Empty []))
     as [states [last [Hpath [Hlength Hclock]]]].
-  destruct (wto_index_path g whole _ _ _ Hpath (wto_index_initial whole (listed_of g)))
+  assert (Hpath_old : search_machine_path
+      (wto_check_step (graph_width (base g)) (listed_of g))
+      (WtoCheckState [WtoCheckVisit whole] 0 Empty Empty []) states last).
+  { clear -Hagrees Hpath. induction Hpath as [st|st next states last Hstep Hpath IH].
+    - constructor.
+    - econstructor; [rewrite <- Hagrees; exact Hstep|exact IH]. }
+  destruct (wto_index_path g whole _ _ _ Hpath_old (wto_index_initial whole (listed_of g)))
     as [Hstates Hlast].
   assert (Hcost : forall st, In st states ->
-      (T_wto_check_step (graph_width (base g)) (listed_of g) st <=
+      (T_wto_check_step width (listed_of g) st <=
         128 * (PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1))%N).
   { intros st Hin. rewrite Forall_forall in Hstates.
     destruct (Hstates st Hin) as [Hinv [next Hstep]].
+    eapply N.le_trans; [apply Hsmaller|].
     now apply (wto_check_continuing_clock g whole st next). }
   assert (Hcostall : Forall (fun st =>
-    (T_wto_check_step (graph_width (base g)) (listed_of g) st <=
+    (T_wto_check_step width (listed_of g) st <=
       128 * (PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1))%N) states).
   { apply Forall_forall. exact Hcost. }
   pose proof (search_sum_clock_bound
-    (fun st => T_wto_check_step (graph_width (base g)) (listed_of g) st) states
+    (fun st => T_wto_check_step width (listed_of g) st) states
     (128 * (PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1))%N Hcostall) as Hsum.
-  pose proof (wto_check_terminal_clock g whole last Hlast) as Hterminal.
+  pose proof (wto_check_terminal_clock g whole last Hlast) as Hterminal_old.
+  assert (Hterminal : (T_wto_check_step width (listed_of g) last <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1) +
+    4 * N.of_nat (graph_n (base g) + 1))%N).
+  { eapply N.le_trans; [apply Hsmaller|exact Hterminal_old]. }
   pose proof (search_N_size_value (check_fuel g)) as Hbits.
   assert (Hfuel : N.to_nat (check_fuel g) = 4 * graph_n (base g) + 2).
   { unfold check_fuel. rewrite !N.double_spec. lia. }
@@ -2427,14 +2568,37 @@ Proof.
     by lia.
   assert (Hsum_scaled :
     (fold_right N.add 0%N (map
-      (fun st => T_wto_check_step (graph_width (base g)) (listed_of g) st) states) <=
+      (fun st => T_wto_check_step width (listed_of g) st) states) <=
       512 * (PTrieT.c_trie + 1) * N.of_nat (graph_n (base g) + 1) *
         N.of_nat (graph_width (base g) + 1))%N).
   { eapply N.le_trans; [exact Hsum|]. clear - HlengthN. nia. }
-  clear Hpath Hstates Hlast Hcost Hcostall Hsum Hfuel.
+  clear Hpath Hpath_old Hstates Hlast Hcost Hcostall Hsum Hfuel Hterminal_old.
   time_unfold @T_wto_check_index. time_cbn.
-  destruct (wto_check_step (graph_width (base g)) (listed_of g) last);
+  destruct (wto_check_step width (listed_of g) last);
     rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** The original index call retains its public time envelope. *)
+Lemma wto_check_index_clock g whole :
+  (1 + T_wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+      [WtoCheckVisit whole] 0 Empty Empty [] <=
+    4096 * (PTrieT.c_trie + 1) * N.of_nat (graph_n (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  apply wto_check_index_clock_from_steps; [reflexivity|].
+  intro st. apply N.le_refl.
+Qed.
+
+(** Equal transitions with smaller clocks retain the frozen index allowance. *)
+Lemma wto_check_index_vertices_clock g whole :
+  (1 + T_wto_check_index (check_fuel g) (vertex_width (nodes g)) (listed_of g)
+      [WtoCheckVisit whole] 0 Empty Empty [] <=
+    4096 * (PTrieT.c_trie + 1) * N.of_nat (graph_n (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  apply wto_check_index_clock_from_steps.
+  - apply wto_check_step_vertices.
+  - intro st. apply wto_check_step_clock_mono, vertex_width_le_graph_width.
 Qed.
 
 Local Transparent loopN.
@@ -2856,7 +3020,8 @@ Proof.
       (fun v => match trie_get v (listed_of g) with Some _ => true | None => false end)
       (fun v => 1 + T_trie_get v (listed_of g))%N roots <= 8 * wto_check_work g roots)%N).
   { eapply N.le_trans; [exact Hroots0|]. clear - Hrootwork. nia. }
-  time_unfold @T_wto_check_linear. unfold T_base.
+  time_unfold @T_wto_check_linear. unfold T_nodes, T_base, T_verts.
+  rewrite wto_check_index_vertices.
   destruct (forallb
     (fun v => match trie_get v (listed_of g) with Some _ => true | None => false end) roots)
     eqn:Hroot_test.
@@ -2865,14 +3030,20 @@ Proof.
       specialize (Hroot_test r Hr). apply (proj1 (scc_listed_lookup (nodes g) r)).
       destruct (trie_get r (listed_of g)) as [b|] eqn:Hget; [now exists b|discriminate]. }
     pose proof (wto_check_fuel_time g) as Hfuel0.
-    pose proof (wto_graph_width_time (base g)) as Hwidth0.
-    pose proof (wto_check_index_clock g w) as Hindex0.
+    assert (Hnodewidth : Forall (fun v => Pos.size_nat v <= graph_width (base g)) (nodes g)).
+    { apply Forall_forall. intros v Hv. now apply scc_node_width. }
+    pose proof (wto_vertex_width_time (nodes g) (graph_width (base g)) Hnodewidth) as Hwidth0.
+    assert (Hnodesize : length (nodes g) = graph_n (base g)).
+    { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+    rewrite Hnodesize in Hwidth0.
+    pose proof (wto_check_index_vertices_clock g w) as Hindex0.
     assert (Hfuel : (T_check_fuel g <= 64 * wto_check_work g roots)%N).
     { eapply N.le_trans; [exact Hfuel0|]. clear - Hbase.
       rewrite !Nat2N.inj_add in *. nia. }
-    assert (Hwidth : (T_graph_width (base g) <= 128 * wto_check_work g roots)%N).
-    { eapply N.le_trans; [exact Hwidth0|]. clear - Hbase. nia. }
-    assert (Hindex_time : (T_wto_check_index (check_fuel g) (graph_width (base g))
+    assert (Hwidth : (T_vertex_width (nodes g) <= 128 * wto_check_work g roots)%N).
+    { eapply N.le_trans; [exact Hwidth0|]. clear - Hbase.
+      rewrite !Nat2N.inj_add in *. nia. }
+    assert (Hindex_time : (T_wto_check_index (check_fuel g) (vertex_width (nodes g))
         (listed_of g) [WtoCheckVisit w] 0 Empty Empty [] <=
         4096 * (PTrieT.c_trie + 1) * wto_check_work g roots)%N).
     { eapply N.le_trans; [apply N.le_add_l|]. eapply N.le_trans; [exact Hindex0|].
@@ -3700,7 +3871,7 @@ Module WtoT <: WTO_ALL.
     intro Hcheck. pose proof (Wto.check_sound g roots w Hcheck) as Hsound.
     destruct Hsound as [Hunique [Hcover Hedges]].
     pose proof Hcheck as Hindex. change (wto_check_linear g roots w = true) in Hindex.
-    unfold wto_check_linear in Hindex.
+    rewrite wto_check_linear_agrees in Hindex. unfold wto_check_linear_spec in Hindex.
     destruct (forallb (fun v => match trie_get v (listed_of g) with
       Some _ => true | None => false end) roots); [|discriminate].
     destruct (Galois.Graph.Wto.wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
