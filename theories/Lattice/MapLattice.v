@@ -5,7 +5,7 @@
     Builds on: LatticeSig and MapSig. *)
 
 From Stdlib Require Import Bool List Arith NArith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Lattice Require Import LatticeSig.
 
@@ -323,5 +323,36 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
     pose proof L.c_lat_pos.
     assert (Hbot : (1 <= N.of_nat (L.size L.bot + 1))%N) by lia.
     rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Inclusion is linear in both map sizes. *)
+  Theorem leb_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_leb (fst ab) (snd ab)).
+  Proof.
+    apply bigO_intro with (c := c_lat).
+    intros [a b] _; cbn [fst snd].
+    pose proof (T_leb_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
+
+  (** Joining is linear in both map sizes. *)
+  Theorem join_bigO : bigO (X := t * t) (fun _ => True)
+    (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
+    (fun ab => T_join (fst ab) (snd ab)).
+  Proof.
+    apply bigO_intro with (c := c_lat).
+    intros [a b] _; cbn [fst snd].
+    pose proof (T_join_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
+
+  (** Bottom testing is linear in the map size. *)
+  Theorem is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
+  Proof.
+    apply bigO_intro with (c := c_lat).
+    intros a _.
+    pose proof (T_is_bot_le a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. nia.
   Qed.
 End MapLatticeT.
