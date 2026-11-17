@@ -1766,6 +1766,12 @@ Module SaturateCode (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I)
       let '(st, db) := E.run p cp lim initial in
       inr (st, db, cs)
     end.
+
+  (* STUB-CODE *)
+  Definition saturate_with (ds : list decl) (rws : list (rewrite V.t)) (ans : list (rule V.t))
+      (lim : limits) (_ : sched) (es : list (fexpr V.t))
+      : reject + (stop * D.t * list positive) :=
+    saturate ds rws ans lim es.
 End SaturateCode.
 
 Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
@@ -3096,6 +3102,11 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
       lim initial) as Hlimit.
     rewrite Hrun in Hlimit. cbn in Hlimit. now apply Hlimit.
   Qed.
+
+  (** Without a limit the call is [saturate]. *)
+  Lemma saturate_with_off : forall ds rws ans lim sc es, match_limit sc = None ->
+    saturate_with ds rws ans lim sc es = saturate ds rws ans lim es.
+  Proof. Admitted. (* STUB *)
 End Saturate.
 
 Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
@@ -3432,6 +3443,16 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     intros ds rws ans lim es [[st db] cs] Hresult.
     exact (saturate_execution ds rws ans lim es st db cs Hresult).
   Qed.
+
+  (** An accepted call runs the backoff engine with the planned program on the loaded inputs. *)
+  Lemma saturate_with_run : forall ds rws ans lim sc es out,
+    saturate_with ds rws ans lim sc es = inr out ->
+    let p := C.compile ds rws ans in
+    let cp := E.plan p in
+    exists initial, front_ok ds rws ans es /\ E.plans_ok p cp /\ D.wf initial /\
+      E.loaded p cp initial /\ add_inputs es (E.load p cp) = (snd out, initial) /\
+      E.run_with p cp lim sc initial = fst out.
+  Proof. Admitted. (* STUB *)
 
   Lemma closed_represents : forall ds rws ans db rw g tau c l r,
     D.wf db -> D.canonical db -> (forall f, kind (D.view db) f = lookup_kind ds f) ->

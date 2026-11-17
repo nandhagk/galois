@@ -18,6 +18,8 @@
       identifier width.
     - [run_complexity] A run costs its trace work at the identifier width, its fuel counter and
       its scaled initial credit.
+    - [run_with_complexity] A run with per-rule backoff costs its trace work with the backoff
+      bookkeeping at the identifier width, its fuel counter and its scaled initial credit.
     - [round_complexity] A round costs its round work at the identifier width and its scaled
       initial credit.
 
@@ -192,6 +194,32 @@ Fixpoint driver_trace {S R} (step : S -> S + R) (fuel : nat) (state : S) : list 
     end.
 TimeFun driver_trace.
 
+(** A backoff scheduler bans a rule whose matches in one round exceed its limit, as egg does. A
+    rule with [strikes] earlier bans may match [match_limit * 2^strikes] times in a round, and its
+    next ban lasts [ban_length * 2^strikes] rounds. [None] never bans. *)
+Record sched : Type := Sched { match_limit : option N; ban_length : N }.
+
+Definition no_backoff : sched := Sched None 0%N.
+
+(** egg's scheduler. A rule may match 1000 times in a round before its first ban, and that ban
+    lasts 5 rounds. *)
+Definition default_sched : sched := Sched (Some 1000%N) 5%N.
+
+(** What the scheduler remembers of one rule. A stale rule lost matches to a ban and runs its
+    naive plan before it returns to semi-naive rounds. *)
+Record rstat : Type := RStat { strikes : N; until : N; stale : bool }.
+
+(** The state of a driver call. The table is indexed by rule number. The flag [clean] says that
+    the round that produced the state found no rule banned and banned none. *)
+Record mode : Type := Mode { naive_next : bool; now : N; stats : list rstat; clean : bool }.
+
+Definition fresh_mode {V} (p : program V) : mode :=
+  Mode false 0%N (repeat (RStat 0%N 0%N false) (length (rules V p))) true.
+
+(** The rounds of a trace that met a ban. *)
+Definition unclean_rounds {T : Type} (tr : list (mode * T)) : nat :=
+  length (filter (fun st => negb (clean (fst st))) tr).
+
 Module Type RUN_OPS (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I)
     (D : DATABASE_OPS V I).
   Parameter plan : program V.t -> compiled V.t.
@@ -199,6 +227,7 @@ Module Type RUN_OPS (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I)
   Parameter load : program V.t -> compiled V.t -> D.t.
   Parameter round : program V.t -> compiled V.t -> bool -> D.t -> D.t.
   Parameter run : program V.t -> compiled V.t -> limits -> D.t -> stop * D.t.
+  Parameter run_with : program V.t -> compiled V.t -> limits -> sched -> D.t -> stop * D.t.
 End RUN_OPS.
 
 Module Type RUN_SPEC (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
@@ -324,6 +353,35 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
       limit. The final rebuild keeps the counter only on a well-formed database. *)
   Parameter run_limits : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     fst (run p cp lim db) = IdLimit -> (D.ids (snd (run p cp lim db)) > max_ids lim)%N.
+  (** A scheduler without a limit changes nothing. *)
+  Parameter run_with_off : forall p cp lim sc db, match_limit sc = None ->
+    run_with p cp lim sc db = run p cp lim db.
+  Parameter run_with_wf : forall p cp lim sc db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    D.wf (snd (run_with p cp lim sc db)) /\ D.canonical (snd (run_with p cp lim sc db)) /\
+    loaded p cp (snd (run_with p cp lim sc db)).
+  Parameter run_with_grows : forall p cp lim sc db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    grows db (snd (run_with p cp lim sc db)).
+  Parameter run_with_sat : forall p cp lim sc db (M : model (V := V.t)) nu,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> valid_sorted V.prim V.merge M p ->
+    sat V.merge M nu (D.view db) -> exists nu',
+      (forall i, D.allocated db i -> nu' i = nu i) /\
+      sat V.merge M nu' (D.view (snd (run_with p cp lim sc db))).
+  (** Saturation under backoff still establishes every rule's closure obligation. *)
+  Parameter run_with_closed : forall p cp lim sc db db', plans_ok p cp -> D.wf db ->
+    loaded p cp db -> run_with p cp lim sc db = (Saturated, db') ->
+    closed V.prim V.merge p (D.view db').
+  Parameter run_with_derives : forall p cp lim sc db f k o, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> relational_fragment p = true -> no_ids db ->
+    row (D.view (snd (run_with p cp lim sc db))) f k o -> derives V.prim p (D.view db) f k.
+  Parameter run_with_least : forall p cp lim sc db db', plans_ok p cp -> D.wf db ->
+    loaded p cp db -> relational_fragment p = true -> no_ids db ->
+    run_with p cp lim sc db = (Saturated, db') ->
+    forall w, closed V.prim V.merge p w -> includes (D.view db) w ->
+      (forall f, kind w f = program_kind p f) -> view_sorted (program_sorts p) w ->
+      includes (D.view db') w.
+  Parameter run_with_limits : forall p cp lim sc db, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> fst (run_with p cp lim sc db) = IdLimit ->
+    (D.ids (snd (run_with p cp lim sc db)) > max_ids lim)%N.
 End RUN_LAWS.
 
 Module Type RUN (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) :=
@@ -427,6 +485,51 @@ Module Type RUN_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
       for (B, U, p, cp, lim, db) |
         plans_ok p cp /\ D.wf db /\ loaded p cp db /\
         (D.ids (snd (run p cp lim db)) <= B)%N /\ D.unit (snd (run p cp lim db)) <= U.
+  Parameter trace_with : program V.t -> compiled V.t -> limits -> sched -> D.t ->
+    list (mode * D.t).
+  (** The bookkeeping of one round. Each plan reads its rule's table entry, and each entry is
+      read and written with binary counters. *)
+  Definition sched_work (p : program V.t) (cp : compiled V.t) (sc : sched) (md : mode) : nat :=
+    (length (naive V.t cp) + length (seminaive V.t cp) + 1) *
+    (fold_right (fun s n => N.size_nat (now md) + N.size_nat (ban_length sc) +
+        N.to_nat (strikes s) + N.size_nat (strikes s) + N.size_nat (until s) + 1 + n) 0
+      (stats md) +
+     match match_limit sc with Some l => N.size_nat l | None => 0 end + 1).
+  (** The round work of a backoff round is the work of its mode, plus the naive plans of the
+      stale rules when the mode is semi-naive, plus the bookkeeping. *)
+  Definition round_work_with (p : program V.t) (cp : compiled V.t) (sc : sched) (md : mode)
+      (db : D.t) : nat :=
+    round_work p cp (naive_next md) db +
+    (if naive_next md || negb (existsb stale (stats md)) then 0 else round_work p cp true db) +
+    sched_work p cp sc md.
+  Definition run_work_with (p : program V.t) (cp : compiled V.t) (lim : limits) (sc : sched)
+      (db : D.t) : nat :=
+    fold_right Nat.add 0 (map (fun st => round_work_with p cp sc (fst st) (snd st) + 1)
+      (trace_with p cp lim sc db)) + D.pending db + 1.
+  Definition run_cost_with (B : N) (U : nat) (p : program V.t) (cp : compiled V.t)
+      (lim : limits) (sc : sched) (db : D.t) : N :=
+    (N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        N.of_nat (run_work_with p cp lim sc db) +
+      N.of_nat (N.size_nat (max_iter lim) + 1) + N.of_nat U * D.potential B db)%N.
+  Parameter T_run_with : program V.t -> compiled V.t -> limits -> sched -> D.t -> N.
+  (** A backoff run pays its trace work at the identifier width, its fuel counter and its
+      scaled initial credit. *)
+  Parameter T_run_with_le : forall B U p cp lim sc db, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> (D.ids (snd (run_with p cp lim sc db)) <= B)%N ->
+    D.unit (snd (run_with p cp lim sc db)) <= U ->
+    (T_run_with p cp lim sc db <=
+      c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        (fold_right N.add 0 (map (fun st =>
+          N.of_nat (round_work_with p cp sc (fst st) (snd st) + 1))
+          (trace_with p cp lim sc db)) + N.of_nat (D.pending db + 1)) +
+      c_run * N.of_nat (N.size_nat (max_iter lim) + 1) +
+      N.of_nat U * D.potential B db)%N.
+  Parameter run_with_complexity :
+    T_run_with p cp lim sc db ∈ 𝑂(run_cost_with B U p cp lim sc db)
+      for (B, U, p, cp, lim, sc, db) |
+        plans_ok p cp /\ D.wf db /\ loaded p cp db /\
+        (D.ids (snd (run_with p cp lim sc db)) <= B)%N /\
+        D.unit (snd (run_with p cp lim sc db)) <= U.
 End RUN_TIME.
 
 Module Type RUN_T (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
@@ -587,6 +690,26 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     | inl (_, db') => run p cp lim db = (IterLimit, D.rebuild db')
     | inr (st, db') => run p cp lim db = (st, D.rebuild db')
     end.
+  Parameter driver_with : program V.t -> compiled V.t -> limits -> sched ->
+    (mode * D.t) -> (mode * D.t) + (stop * D.t).
+  (** The binary loop of the backoff driver, and the final rebuild. *)
+  Parameter run_with_unfolds_loop : forall p cp lim sc db, plans_ok p cp -> D.wf db ->
+    loaded p cp db ->
+    match loopN (driver_with p cp lim sc) (max_iter lim) (fresh_mode p, db) with
+    | inl (_, db') => run_with p cp lim sc db = (IterLimit, D.rebuild db')
+    | inr (st, db') => run_with p cp lim sc db = (st, D.rebuild db')
+    end.
+  Parameter trace_with_spec : forall p cp lim sc db,
+    trace_with p cp lim sc db =
+      driver_trace (driver_with p cp lim sc) (N.to_nat (max_iter lim)) (fresh_mode p, db).
+  (** A relational run that ends on its fuel had fuel for at most the Herbrand budget and the
+      rounds that met a ban. Without a ban the bound is [2 * herbrand + 2], so the budget
+      [2 * herbrand + 3] of [run_terminates] suffices. *)
+  Parameter run_with_iterlimit_bound : forall p cp lim sc db, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
+    fst (run_with p cp lim sc db) = IterLimit ->
+    N.to_nat (max_iter lim) <=
+      2 * herbrand p db + 2 * unclean_rounds (trace_with p cp lim sc db) + 2.
   (** Derivations are contained in every relational closed extension of their seed that keeps
       the program's kinds and sorts. *)
   Parameter derives_least : forall p db w f k, relational_fragment p = true ->

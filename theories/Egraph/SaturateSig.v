@@ -33,6 +33,8 @@ Module Type SATURATE_OPS (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I)
   Parameter add_expr : fexpr V.t -> D.t -> positive * D.t.
   Parameter saturate : list decl -> list (rewrite V.t) -> list (rule V.t) -> limits ->
     list (fexpr V.t) -> reject + (stop * D.t * list positive).
+  Parameter saturate_with : list decl -> list (rewrite V.t) -> list (rule V.t) -> limits ->
+    sched -> list (fexpr V.t) -> reject + (stop * D.t * list positive).
 End SATURATE_OPS.
 
 Module Type SATURATE_SPEC (V : VALUE) (I : INDEX V) (J : JOIN V I)
@@ -143,6 +145,9 @@ Module Type SATURATE_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I)
   (** An identifier stop reports allocation above the caller's limit. *)
   Parameter saturate_limits : forall ds rws ans lim es db cs,
     saturate ds rws ans lim es = inr (IdLimit, db, cs) -> (D.ids db > max_ids lim)%N.
+  (** Without a limit the call is [saturate]. *)
+  Parameter saturate_with_off : forall ds rws ans lim sc es, match_limit sc = None ->
+    saturate_with ds rws ans lim sc es = saturate ds rws ans lim es.
 End SATURATE_LAWS.
 
 Module Type SATURATE (V : VALUE) (I : INDEX V) (J : JOIN V I)
@@ -343,6 +348,14 @@ Module Type SATURATE_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     exists initial, front_ok ds rws ans es /\ E.plans_ok p cp /\ D.wf initial /\
       E.loaded p cp initial /\ add_inputs es (E.load p cp) = (snd out, initial) /\
       E.run p cp lim initial = fst out.
+  (** An accepted call runs the backoff engine with the planned program on the loaded inputs. *)
+  Parameter saturate_with_run : forall ds rws ans lim sc es out,
+    saturate_with ds rws ans lim sc es = inr out ->
+    let p := C.compile ds rws ans in
+    let cp := E.plan p in
+    exists initial, front_ok ds rws ans es /\ E.plans_ok p cp /\ D.wf initial /\
+      E.loaded p cp initial /\ add_inputs es (E.load p cp) = (snd out, initial) /\
+      E.run_with p cp lim sc initial = fst out.
   (** Closure under the compiled rules transports a represented left side to the right
       side in the same class. *)
   Parameter closed_represents : forall ds rws ans db rw g tau c l r,
