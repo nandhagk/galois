@@ -511,10 +511,23 @@ Definition first_table {A B} (key : A -> positive) (rows : list (A * B)) : ptrie
   fold_right (fun r m => PTrieCode.set (key (fst r)) (snd r) m) Empty rows.
 TimeFun first_table.
 
-(** A multi-table lists every row of a key in row order. *)
-Definition multi_table {A} (key : A -> positive) (rows : list A) : ptrie (list A) :=
+(** The unshared specification lists every row of a key in row order. *)
+Definition multi_table_specification {A} (key : A -> positive) (rows : list A)
+    : ptrie (list A) :=
   fold_right (fun r m => PTrieCode.set (key r) (r :: index_row m (key r)) m) Empty rows.
+
+(** A multi-table computes each row key once and retains row order. *)
+Definition multi_table {A} (key : A -> positive) (rows : list A) : ptrie (list A) :=
+  fold_right (fun r m =>
+    let k := key r in PTrieCode.set k (r :: index_row m k) m) Empty rows.
 TimeFun multi_table.
+
+(** Sharing the row key leaves the table unchanged. *)
+Lemma multi_table_agrees {A} (key : A -> positive) rows :
+  multi_table key rows = multi_table_specification key rows.
+Proof.
+  reflexivity.
+Qed.
 
 (** A multi-table contains precisely the rows whose key matches its lookup key. *)
 Lemma multi_table_spec {A} (key : A -> positive) (rows : list A) x y :
