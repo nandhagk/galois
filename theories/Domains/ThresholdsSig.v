@@ -2,10 +2,21 @@
 
     Balanced threshold trees support widening to the nearest supplied bound.
     For example, searching above 4 in thresholds 0 and 8 returns 8.
-    Builds on: Stdlib List and ZArith, Argent BigO. *)
+
+    Main results
+    - [above_spec] Upper search returns the least eligible threshold or proves none exists.
+    - [below_spec] Lower search returns the greatest eligible threshold or proves none exists.
+    - [above_sound] Upper search is sound even when the tree is unordered.
+    - [below_sound] Lower search is sound even when the tree is unordered.
+    - [make_complexity] Construction has the published comparison-sort bound.
+    - [above_complexity] Upper search has the published path-times-bits class.
+    - [below_complexity] Lower search has the published path-times-bits class.
+
+    Builds on: Stdlib List and ZArith, Argent Complexity. *)
 
 From Stdlib Require Import List ZArith Arith Sorting.Sorted Sorting.Permutation.
-From Argent Require Import Std BigO.
+From Argent Require Import Std Complexity.
+Import ComplexityNotations.
 
 Inductive ttree : Type :=
   | TLeaf
@@ -79,17 +90,17 @@ Module Type THRESHOLDS_TIME (Import T : THRESHOLDS).
   Parameter T_below_le : forall t z, (T_below t z <=
     c_thresholds * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + 1)%nat))%N.
   (** Construction has the published comparison-sort bound. *)
-  Parameter make_complexity : (bigO (fun _ => True)
-    (fun zs => N.of_nat
-      (((length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1))%nat)) T_make)%N.
+  Parameter make_complexity :
+    T_make zs ∈ 𝑂(N.of_nat (((length zs * (Nat.log2 (length zs) + 1) + 1) *
+      (zb zs + 1))%nat)) for zs.
   (** Upper search has the published path-times-bits class. *)
-  Parameter above_complexity : bigO (X := ttree * Z) (fun _ => True)
-    (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
-    (fun x => T_above (fst x) (snd x)).
+  Parameter above_complexity :
+    T_above tree z ∈ 𝑂(N.of_nat (((depth tree + 1) * (tree_bits tree + 1))%nat))
+      for (tree, z).
   (** Lower search has the published path-times-bits class. *)
-  Parameter below_complexity : bigO (X := ttree * Z) (fun _ => True)
-    (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
-    (fun x => T_below (fst x) (snd x)).
+  Parameter below_complexity :
+    T_below tree z ∈ 𝑂(N.of_nat (((depth tree + 1) * (tree_bits tree + 1))%nat))
+      for (tree, z).
 End THRESHOLDS_TIME.
 
 Module Type THRESHOLDS_T := THRESHOLDS <+ THRESHOLDS_TIME.

@@ -2,10 +2,21 @@
 
     Threshold trees store sorted distinct integers and search for nearby bounds.
     For example, the least threshold above four in [0; 8] is eight.
+
+    Main results
+    - [above_spec] Upper search returns the least eligible threshold or proves none exists.
+    - [below_spec] Lower search returns the greatest eligible threshold or proves none exists.
+    - [above_sound] Upper search is sound even when the tree is unordered.
+    - [below_sound] Lower search is sound even when the tree is unordered.
+    - [make_complexity] Construction has the published comparison-sort bound.
+    - [above_complexity] Upper search has the published path-times-bits class.
+    - [below_complexity] Lower search has the published path-times-bits class.
+
     Builds on: ThresholdsSig. *)
 
 From Stdlib Require Import List ZArith NArith Arith Lia Sorting.Sorted Sorting.Permutation.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Domains Require Import ThresholdsSig.
 Import List.ListNotations.
 
@@ -882,27 +893,27 @@ Module ThresholdsT <: THRESHOLDS_ALL.
   Qed.
 
   (** Threshold preparation has the published comparison-sort complexity. *)
-  Lemma make_complexity : (bigO (fun _ => True)
-    (fun zs => N.of_nat
-      (((length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1))%nat)) T_make)%N.
+  Lemma make_complexity :
+    T_make zs ∈ 𝑂(N.of_nat (((length zs * (Nat.log2 (length zs) + 1) + 1) *
+      (zb zs + 1))%nat)) for zs.
   Proof.
     unfold bigO. exists c_thresholds. intros zs _. rewrite Nat2N.inj_mul.
     pose proof (T_make_le zs). nia.
   Qed.
 
   (** Upper search has the published path-times-bits class. *)
-  Lemma above_complexity : bigO (X := ttree * Z) (fun _ => True)
-    (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
-    (fun x => T_above (fst x) (snd x)).
+  Lemma above_complexity :
+    T_above tree z ∈ 𝑂(N.of_nat (((depth tree + 1) * (tree_bits tree + 1))%nat))
+      for (tree, z).
   Proof.
     exists c_thresholds. intros [tree z] _. cbn [fst snd].
     rewrite Nat2N.inj_mul. pose proof (T_above_le tree z) as Htime. nia.
   Qed.
 
   (** Lower search has the published path-times-bits class. *)
-  Lemma below_complexity : bigO (X := ttree * Z) (fun _ => True)
-    (fun x => N.of_nat (((depth (fst x) + 1) * (tree_bits (fst x) + 1))%nat))
-    (fun x => T_below (fst x) (snd x)).
+  Lemma below_complexity :
+    T_below tree z ∈ 𝑂(N.of_nat (((depth tree + 1) * (tree_bits tree + 1))%nat))
+      for (tree, z).
   Proof.
     exists c_thresholds. intros [tree z] _. cbn [fst snd].
     rewrite Nat2N.inj_mul. pose proof (T_below_le tree z) as Htime. nia.

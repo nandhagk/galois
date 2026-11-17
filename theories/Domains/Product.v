@@ -2,10 +2,17 @@
 
     Products apply value transfers to each component independently.
     For example, a forward transfer pairs the two component results.
+
+    Main results
+    - [forward_complexity] Product forward transfer has the published work bound.
+    - [backward_complexity] Backward transfer has the published work-plus-request class.
+    - [guard_complexity] Guard transfer has the published guard-work class.
+
     Builds on: ProductSig and lattice products. *)
 
 From Stdlib Require Import List NArith Bool Lia PeanoNat.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
+Import ComplexityNotations.
 From Galois.Lattice Require Import Product.
 From Galois.Domains Require Import LangSig ValueSig ProductSig.
 
@@ -1101,27 +1108,24 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
     - lia.
     - apply N.mul_le_mono_r. unfold c_product. pose proof (proj1 core_bounds). lia.
   Qed.
-  Lemma forward_complexity : (bigO (fun _ => True)
-    (fun ox => N.of_nat (work (fst ox) (snd ox)))
-    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Lemma forward_complexity :
+    T_forward o xs ∈ 𝑂(N.of_nat (work o xs)) for (o, xs).
   Proof.
     exists c_val. intros [o xs] _. cbn [fst snd].
     pose proof (T_forward_le o xs) as Htime.
     rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
   Qed.
   (** Backward transfer has the published work-plus-request class. *)
-  Lemma backward_complexity : (bigO (fun _ => True)
-    (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
-    (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
+  Lemma backward_complexity :
+    T_backward o r xs ∈ 𝑂(N.of_nat ((work o xs + size r)%nat)) for (o, (r, xs)).
   Proof.
     exists c_val. intros [o [r xs]] _. cbn [fst snd].
     pose proof (T_backward_le o r xs) as Htime.
     rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
   Qed.
   (** Guard transfer has the published guard-work class. *)
-  Lemma guard_complexity : (bigO (fun _ => True)
-    (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
-    (fun gx => T_guard (fst gx) (snd gx)))%N.
+  Lemma guard_complexity :
+    T_guard g xs ∈ 𝑂(N.of_nat ((gwork g xs)%nat)) for (g, xs).
   Proof.
     exists c_val. intros [g xs] _. cbn [fst snd].
     pose proof (T_guard_le g xs) as Htime.

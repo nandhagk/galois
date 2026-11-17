@@ -2,10 +2,17 @@
 
     Products combine two abstractions of the same concrete value.
     For example, a value belongs to a product when both components describe it.
+
+    Main results
+    - [forward_complexity] Product forward transfer has the published work bound.
+    - [backward_complexity] Backward transfer has the published work-plus-request class.
+    - [guard_complexity] Guard transfer has the published guard-work class.
+
     Builds on: ValueSig and LatticeSig. *)
 
 From Stdlib Require Import List NArith.
-From Argent Require Import BigO.
+From Argent Require Import Complexity.
+Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 
@@ -73,16 +80,14 @@ Module Type PRODUCT_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
       fold_right N.add 0%N (map T_normalize
         (combine (A.guard g (map fst xs)) (B.guard g (map snd xs)))) + 1))%N.
   (** Product forward transfer has the published work bound. *)
-  Parameter forward_complexity : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat)) (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Parameter forward_complexity :
+    T_forward o xs ∈ 𝑂(N.of_nat ((work o xs)%nat)) for (o, xs).
   (** Backward transfer has the published work-plus-request class. *)
-  Parameter backward_complexity : (bigO (fun _ => True)
-    (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
-    (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
+  Parameter backward_complexity :
+    T_backward o r xs ∈ 𝑂(N.of_nat ((work o xs + size r)%nat)) for (o, (r, xs)).
   (** Guard transfer has the published guard-work class. *)
-  Parameter guard_complexity : (bigO (fun _ => True)
-    (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
-    (fun gx => T_guard (fst gx) (snd gx)))%N.
+  Parameter guard_complexity :
+    T_guard g xs ∈ 𝑂(N.of_nat ((gwork g xs)%nat)) for (g, xs).
 End PRODUCT_TIME.
 
 Module Type PRODUCT_T (L : LANG_T) (A B : VALUE_DOMAIN_T L) :=
@@ -141,16 +146,14 @@ Module Type REDUCED_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (T_red (a, b) <= c_red * N.of_nat (K.rounds + 1) *
       N.of_nat ((A.size a + B.size b + 1)%nat))%N.
   (** Reduced transfer has the published work bound. *)
-  Parameter forward_complexity : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat)) (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Parameter forward_complexity :
+    T_forward o xs ∈ 𝑂(N.of_nat ((work o xs)%nat)) for (o, xs).
   (** Backward transfer has the published work-plus-request class. *)
-  Parameter backward_complexity : (bigO (fun _ => True)
-    (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
-    (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
+  Parameter backward_complexity :
+    T_backward o r xs ∈ 𝑂(N.of_nat ((work o xs + size r)%nat)) for (o, (r, xs)).
   (** Guard transfer has the published guard-work class. *)
-  Parameter guard_complexity : (bigO (fun _ => True)
-    (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
-    (fun gx => T_guard (fst gx) (snd gx)))%N.
+  Parameter guard_complexity :
+    T_guard g xs ∈ 𝑂(N.of_nat ((gwork g xs)%nat)) for (g, xs).
 End REDUCED_TIME.
 
 Module Type REDUCED_T (L : LANG_T) (A B : VALUE_DOMAIN_T L)

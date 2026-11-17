@@ -2,10 +2,26 @@
 
     The harness combines singleton evaluation with optional abstract transfer entries.
     For example, a missing forward entry falls back to top.
+
+    Main results
+    - [is_bot_sound] Recognized bottoms represent no value.
+    - [point_sound] A recognized singleton identifies every represented value.
+    - [abst_sound] Abstraction retains its concrete argument.
+    - [fwd_sound] A modeled forward entry retains concrete results.
+    - [bwd_sound] A modeled backward entry retains consistent operands.
+    - [grd_sound] A modeled guard entry retains satisfying operands.
+    - [forward_complexity] Forward transfer has the published operator-work class.
+    - [backward_complexity] Backward transfer has the published work-plus-request class.
+    - [guard_complexity] Guard transfer has the published guard-work class.
+
+    Glossary
+    - [wsize] The size of a widening parameter, such as a threshold set.
+
     Builds on: LangSig, ValueSig and LatticeSig. *)
 
 From Stdlib Require Import List NArith.
-From Argent Require Import BigO.
+From Argent Require Import Complexity.
+Import ComplexityNotations.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 
@@ -168,17 +184,14 @@ Module Type HARNESS_TIME (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
       N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) +
         fold_right Nat.add 0%nat (map B.bsize ys) + length xs + length ys + 1)%nat))%N.
   (** Forward transfer has the published operator-work class. *)
-  Parameter forward_complexity : (bigO (fun _ => True)
-    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
-    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Parameter forward_complexity :
+    T_forward o xs ∈ 𝑂(N.of_nat ((work o xs)%nat)) for (o, xs).
   (** Backward transfer has the published work-plus-request class. *)
-  Parameter backward_complexity : (bigO (fun _ => True)
-    (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
-    (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
+  Parameter backward_complexity :
+    T_backward o r xs ∈ 𝑂(N.of_nat ((work o xs + size r)%nat)) for (o, (r, xs)).
   (** Guard transfer has the published guard-work class. *)
-  Parameter guard_complexity : (bigO (fun _ => True)
-    (fun gx => N.of_nat ((gwork (fst gx) (snd gx))%nat))
-    (fun gx => T_guard (fst gx) (snd gx)))%N.
+  Parameter guard_complexity :
+    T_guard g xs ∈ 𝑂(N.of_nat ((gwork g xs)%nat)) for (g, xs).
 End HARNESS_TIME.
 
 Module Type HARNESS_T (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B) :=

@@ -2,10 +2,35 @@
 
     Two masks record known zero and one bits, including contradictory bottom facts.
     For example, Tnum 1 0 requires a clear low bit.
+
+    Main results
+    - [tnum_not_sound] Bitwise negation retains each concrete result.
+    - [tnum_neg_sound] Arithmetic negation retains each concrete result.
+    - [tnum_add_sound] Addition retains each concrete result.
+    - [tnum_sub_sound] Subtraction retains each concrete result.
+    - [tnum_and_sound] Conjunction retains each concrete result.
+    - [tnum_or_sound] Disjunction retains each concrete result.
+    - [tnum_xor_sound] Exclusive disjunction retains each concrete result.
+    - [tnum_mul_with_sound] Every multiplier choice retains each concrete product.
+    - [tnum_variable_sound] An unknown shift or rotation retains each concrete result.
+    - [mul_complexity] Configured multiplication has quadratic asymptotic width work.
+    - [normalise_complexity] Normalization is linear in the width and the raw masks.
+    - [not_complexity] Bitwise negation is linear.
+    - [neg_complexity] Arithmetic negation is linear.
+    - [add_complexity] Addition is linear.
+    - [sub_complexity] Subtraction is linear.
+    - [and_complexity] Conjunction is linear.
+    - [or_complexity] Disjunction is linear.
+    - [xor_complexity] Exclusive disjunction is linear.
+    - [variable_complexity] Unknown shifts and rotations have the published quadratic class.
+    - [variable_shift_complexity] Unknown shifts take logarithmically many expansion steps of
+      linear cost.
+
     Builds on: WordSig and the bit-vector word operations. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
+Import ComplexityNotations.
 From Galois.Bits Require Import Word Op Fun.
 From Galois.Domains Require Import WordSig.
 Local Open Scope nat_scope.
@@ -159,58 +184,49 @@ Module Type KNOWN_BITS_TIME (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   Parameter T_tnum_variable_le : forall o w a b, (T_tnum_variable o w a b <=
     c_tnum * N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
   (** Configured multiplication has quadratic asymptotic width work. *)
-  Parameter mul_complexity : bigO (fun _ => True)
-    (fun x : positive * (tnum * tnum) => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
-      tnum_bits (fst (snd x)) + tnum_bits (snd (snd x))))
-    (fun x => T_tnum_mul (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter mul_complexity :
+    T_tnum_mul w a b ∈ 𝑂(N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))
+      for (w, (a, b)).
   (** Normalization is linear in the width and the raw masks. *)
-  Parameter normalise_complexity : bigO (X := positive * tnum) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
-    (fun x => T_tnum_normalise (fst x) (snd x)).
+  Parameter normalise_complexity :
+    T_tnum_normalise w a ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + 1)) for (w, a).
   (** Bitwise negation is linear. *)
-  Parameter not_complexity : bigO (X := positive * tnum) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
-    (fun x => T_tnum_not (fst x) (snd x)).
+  Parameter not_complexity :
+    T_tnum_not w a ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + 1)) for (w, a).
   (** Arithmetic negation is linear. *)
-  Parameter neg_complexity : bigO (X := positive * tnum) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (snd x) + 1))
-    (fun x => T_tnum_neg (fst x) (snd x)).
+  Parameter neg_complexity :
+    T_tnum_neg w a ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + 1)) for (w, a).
   (** Addition is linear. *)
-  Parameter add_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
-      tnum_bits (snd (snd x)) + 1))
-    (fun x => T_tnum_add (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter add_complexity :
+    T_tnum_add w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))
+      for (w, (a, b)).
   (** Subtraction is linear. *)
-  Parameter sub_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
-      tnum_bits (snd (snd x)) + 1))
-    (fun x => T_tnum_sub (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter sub_complexity :
+    T_tnum_sub w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))
+      for (w, (a, b)).
   (** Conjunction is linear. *)
-  Parameter and_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
-      tnum_bits (snd (snd x)) + 1))
-    (fun x => T_tnum_and (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter and_complexity :
+    T_tnum_and w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))
+      for (w, (a, b)).
   (** Disjunction is linear. *)
-  Parameter or_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
-      tnum_bits (snd (snd x)) + 1))
-    (fun x => T_tnum_or (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter or_complexity :
+    T_tnum_or w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))
+      for (w, (a, b)).
   (** Exclusive disjunction is linear. *)
-  Parameter xor_complexity : bigO (X := positive * (tnum * tnum)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) +
-      tnum_bits (snd (snd x)) + 1))
-    (fun x => T_tnum_xor (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter xor_complexity :
+    T_tnum_xor w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))
+      for (w, (a, b)).
   (** Unknown shifts and rotations have the published quadratic class. *)
-  Parameter variable_complexity : bigO (X := Op.op * (positive * (tnum * tnum))) (fun _ => True)
-    (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + 1) ^ 2 +
-      tnum_bits (fst (snd (snd x))) + tnum_bits (snd (snd (snd x)))))
-    (fun x => T_tnum_variable (fst x) (fst (snd x)) (fst (snd (snd x))) (snd (snd (snd x)))).
+  Parameter variable_complexity :
+    T_tnum_variable o w a b ∈ 𝑂(N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))
+      for (o, (w, (a, b))).
   (** Unknown shifts take logarithmically many expansion steps of linear cost. *)
-  Parameter variable_shift_complexity : bigO (X := Op.op * (positive * (tnum * tnum)))
-    (fun x => fst x = Op.bvshl \/ fst x = Op.bvlshr \/ fst x = Op.bvashr)
-    (fun x => N.of_nat ((Pos.to_nat (fst (snd x)) + tnum_bits (fst (snd (snd x))) +
-      tnum_bits (snd (snd (snd x))) + 1) * (Nat.log2 (Pos.to_nat (fst (snd x))) + 2)))
-    (fun x => T_tnum_variable (fst x) (fst (snd x)) (fst (snd (snd x))) (snd (snd (snd x)))).
+  Parameter variable_shift_complexity :
+    T_tnum_variable o w a b
+      ∈ 𝑂(N.of_nat ((Pos.to_nat w + tnum_bits a + tnum_bits b + 1) *
+        (Nat.log2 (Pos.to_nat w) + 2)))
+      for (o, (w, (a, b))) |
+      o = Op.bvshl \/ o = Op.bvlshr \/ o = Op.bvashr.
   (** Payload size includes the width and the stored mask bits. *)
   Parameter psize_bits : forall w a, psize w a = Pos.to_nat w + tnum_bits a + 1.
   (** Every unary operation returns masks within the width. *)

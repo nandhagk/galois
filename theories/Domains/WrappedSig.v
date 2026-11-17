@@ -2,10 +2,28 @@
 
     Circular intervals describe inclusive arcs across the unsigned and signed poles.
     For example, the eight-bit arc from 250 to 3 contains zero.
+
+    Main results
+    - [wrapped_neg_sound] Arithmetic negation retains each concrete result.
+    - [wrapped_add_sound] Addition retains each concrete result.
+    - [wrapped_sub_sound] Subtraction retains each concrete result.
+    - [wrapped_mul_sound] Multiplication retains each concrete result.
+    - [mul_complexity] Circular multiplication has the published quadratic asymptotic work.
+    - [norm_complexity] Normalization is linear in the width and the raw endpoints.
+    - [neg_complexity] Arithmetic negation is linear.
+    - [double_complexity] Circular expansion is linear.
+    - [not_complexity] Bitwise negation is linear.
+    - [split_complexity] Pole splitting is linear.
+    - [add_complexity] Addition is linear.
+    - [sub_complexity] Subtraction is linear.
+    - [udiv_complexity] Unsigned division has the published quadratic class.
+    - [urem_complexity] Unsigned remainder has the published quadratic class.
+
     Builds on: WordSig and the bit-vector word operations. *)
 
 From Stdlib Require Import ZArith List.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
+Import ComplexityNotations.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import WordSig.
 
@@ -118,51 +136,45 @@ Module Type WRAPPED_TIME (L : WORD_LANGUAGE_T) (Import W : WRAPPED L).
   Parameter T_wrapped_urem_le : forall w a b, (T_wrapped_urem w a b <=
     c_wrapped * N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   (** Circular multiplication has the published quadratic asymptotic work. *)
-  Parameter mul_complexity : bigO (fun _ => True)
-    (fun x : positive * (wrapped * wrapped) => N.of_nat
-      ((Pos.to_nat (fst x) + 1) ^ 2 +
-       wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
-    (fun x => T_wrapped_mul (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter mul_complexity :
+    T_wrapped_mul w a b ∈ 𝑂(N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a +
+      wrapped_bits b))
+      for (w, (a, b)).
   (** Normalization is linear in the width and the raw endpoints. *)
-  Parameter norm_complexity : bigO (X := positive * wrapped) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
-    (fun x => T_wrapped_norm (fst x) (snd x)).
+  Parameter norm_complexity :
+    T_wrapped_norm w a ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + 1)) for (w, a).
   (** Arithmetic negation is linear. *)
-  Parameter neg_complexity : bigO (X := positive * wrapped) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
-    (fun x => T_wrapped_neg (fst x) (snd x)).
+  Parameter neg_complexity :
+    T_wrapped_neg w a ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + 1)) for (w, a).
   (** Circular expansion is linear. *)
-  Parameter double_complexity : bigO (X := positive * wrapped) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
-    (fun x => T_wrapped_double (fst x) (snd x)).
+  Parameter double_complexity :
+    T_wrapped_double w a ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + 1)) for (w, a).
   (** Bitwise negation is linear. *)
-  Parameter not_complexity : bigO (X := positive * wrapped) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
-    (fun x => T_wrapped_not (fst x) (snd x)).
+  Parameter not_complexity :
+    T_wrapped_not w a ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + 1)) for (w, a).
   (** Pole splitting is linear. *)
-  Parameter split_complexity : bigO (X := positive * wrapped) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (snd x) + 1))
-    (fun x => T_wrapped_split (fst x) (snd x)).
+  Parameter split_complexity :
+    T_wrapped_split w a ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a + 1)) for (w, a).
   (** Addition is linear. *)
-  Parameter add_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
-      wrapped_bits (snd (snd x)) + 1))
-    (fun x => T_wrapped_add (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter add_complexity :
+    T_wrapped_add w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a +
+      wrapped_bits b + 1))
+      for (w, (a, b)).
   (** Subtraction is linear. *)
-  Parameter sub_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
-    (fun x => N.of_nat (Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) +
-      wrapped_bits (snd (snd x)) + 1))
-    (fun x => T_wrapped_sub (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter sub_complexity :
+    T_wrapped_sub w a b ∈ 𝑂(N.of_nat (Pos.to_nat w + wrapped_bits a +
+      wrapped_bits b + 1))
+      for (w, (a, b)).
   (** Unsigned division has the published quadratic class. *)
-  Parameter udiv_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
-    (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
-      wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
-    (fun x => T_wrapped_udiv (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter udiv_complexity :
+    T_wrapped_udiv w a b ∈ 𝑂(N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a +
+      wrapped_bits b))
+      for (w, (a, b)).
   (** Unsigned remainder has the published quadratic class. *)
-  Parameter urem_complexity : bigO (X := positive * (wrapped * wrapped)) (fun _ => True)
-    (fun x => N.of_nat ((Pos.to_nat (fst x) + 1) ^ 2 +
-      wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x))))
-    (fun x => T_wrapped_urem (fst x) (fst (snd x)) (snd (snd x))).
+  Parameter urem_complexity :
+    T_wrapped_urem w a b ∈ 𝑂(N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a +
+      wrapped_bits b))
+      for (w, (a, b)).
   (** Arc payload size charges width and raw endpoint storage. *)
   Parameter psize_bits : forall w a, psize w a = Pos.to_nat w + wrapped_bits a + 1.
   (** Every arithmetic result the table reads has endpoints within the width. *)
