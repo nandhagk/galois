@@ -61,10 +61,14 @@ Module MayTests.
 
   (** The hand candidate passes every row of the liveness system. *)
   Example hand_candidate_accepted : check candidate = true.
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
   (** A candidate with no facts at all fails some row. *)
   Example missing_uses_rejected : check (fun _ => Sets.empty) = false.
-  Proof. vm_compute; reflexivity. Qed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
 
 End MayTests.
