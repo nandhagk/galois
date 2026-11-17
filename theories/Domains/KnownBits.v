@@ -18,6 +18,7 @@ Local Open Scope Z_scope.
 Module Z.
   TimeFun Z.b2z.
   TimeFun Z.lnot.
+  TimeFun Z.to_N.
 End Z.
 
 Definition tnum_wand (w : width) (x y : Z) : Z := tnum_wrap w (Z.land x y).
@@ -782,6 +783,11 @@ Definition tnum_mul_stage_step (w : width) (a b : tnum) (s : Z * tnum)
       if Z.testbit (ones b) i then sum else tnum_join w r sum).
 TimeFun tnum_mul_stage_step.
 
+(** The highest multiplier bit that can be set bounds the useful staged work. *)
+Definition tnum_mul_fuel (w : width) (b : tnum) : N :=
+  Z.to_N (Z.min (Zpos w) (tnum_bitlen (tnum_max w b))).
+TimeFun tnum_mul_fuel.
+
 Definition tnum_mul_stages (w : width) (a b : tnum) : tnum :=
   let a := tnum_normalise w a in
   let b := tnum_normalise w b in
@@ -791,6 +797,17 @@ Definition tnum_mul_stages (w : width) (a b : tnum) : tnum :=
   | inr r => r
   end.
 TimeFun tnum_mul_stages.
+
+(** Stages above every possible multiplier bit leave the accumulator unchanged. *)
+Definition tnum_mul_stages_fast (w : width) (a b : tnum) : tnum :=
+  let a := tnum_normalise w a in
+  let b := tnum_normalise w b in
+  if tnum_empty w a || tnum_empty w b then tnum_bot w else
+  match loopN (tnum_mul_stage_step w a b) (tnum_mul_fuel w b) (0, tnum_const w 0) with
+  | inl s => snd s
+  | inr r => r
+  end.
+TimeFun tnum_mul_stages_fast.
 
 Definition tnum_mul_acc_step (w : width) (a b : tnum) (s : Z * tnum)
     : (Z * tnum) + tnum :=
@@ -824,6 +841,15 @@ Definition tnum_mul_with (choice : mulchoice) (w : width) (a b : tnum) : tnum :=
   | MulBoth => tnum_meet w (tnum_mul_stages w a b) (tnum_mul_acc w a b)
   end.
 TimeFun tnum_mul_with.
+
+Definition tnum_mul_with_fast (choice : mulchoice) (w : width) (a b : tnum) : tnum :=
+  match choice with
+  | MulLow => tnum_mul w a b
+  | MulStages => tnum_mul_stages_fast w a b
+  | MulAcc => tnum_mul_acc w a b
+  | MulBoth => tnum_meet w (tnum_mul_stages_fast w a b) (tnum_mul_acc w a b)
+  end.
+TimeFun tnum_mul_with_fast.
 
 Fixpoint tnum_expand (o : op) (w : width) (p : positive) (d : Z) (r : tnum) : tnum :=
   match p with
@@ -937,7 +963,7 @@ Module KnownBitsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG) <: KNOWN_BITS_OPS
   Definition tnum_and := tnum_and.
   Definition tnum_or := tnum_or.
   Definition tnum_xor := tnum_xor.
-  Definition tnum_mul_with := tnum_mul_with.
+  Definition tnum_mul_with := tnum_mul_with_fast.
   Definition tnum_mul := tnum_mul_with C.multiplier.
   Definition tnum_variable := tnum_variable_fast.
 End KnownBitsCode.
@@ -1711,6 +1737,47 @@ Proof.
     pose proof (Z.log2_spec h ltac:(lia)). lia.
 Qed.
 
+(** Converting the useful stage count to binary fuel preserves its nonnegative value. *)
+Lemma tnum_mul_fuel_value : forall w b,
+  Z.of_N (tnum_mul_fuel w b) = Z.min (Zpos w) (tnum_bitlen (tnum_max w b)).
+Proof.
+  intros w b. unfold tnum_mul_fuel. apply Z2N.id.
+  pose proof (tnum_max_word w b) as Hword.
+  pose proof (tnum_bitlen_bound (tnum_max w b) (proj1 Hword)) as [Hbits _].
+  apply Z.min_glb; lia.
+Qed.
+
+(** Useful staged multiplication never requests more than the word width. *)
+Lemma tnum_mul_fuel_le : forall w b, (tnum_mul_fuel w b <= N.pos w)%N.
+Proof.
+  intros w b. unfold tnum_mul_fuel. rewrite Z2N.inj_min. apply N.le_min_l.
+Qed.
+
+(** Every in-range stage above the useful fuel merely advances the index. *)
+Lemma tnum_mul_stage_noop : forall w a b i r,
+  Z.of_N (tnum_mul_fuel w b) <= i -> i < Zpos w ->
+  tnum_mul_stage_step w a b (i, r) = inl (Z.succ i, r).
+Proof.
+  intros w a b i r Hfuel Hwidth.
+  pose proof (N2Z.is_nonneg (tnum_mul_fuel w b)) as Hnonneg.
+  assert (Hi : 0 <= i < Zpos w) by lia.
+  rewrite tnum_mul_fuel_value in Hfuel.
+  assert (Hlength : tnum_bitlen (tnum_max w b) <= i).
+  { destruct (Z_le_dec (Zpos w) (tnum_bitlen (tnum_max w b))) as [Hle|Hle].
+    - rewrite Z.min_l in Hfuel by exact Hle. lia.
+    - rewrite Z.min_r in Hfuel by lia. exact Hfuel. }
+  pose proof (tnum_max_word w b) as Hword.
+  pose proof (tnum_bitlen_bound (tnum_max w b) (proj1 Hword)) as [Hbits Hbound].
+  pose proof (proj1 Hword) as Hmax.
+  assert (Hclear : Z.testbit (tnum_max w b) i = false).
+  { rewrite <- (Z.mod_small (tnum_max w b) (2 ^ tnum_bitlen (tnum_max w b))) by lia.
+    apply Z.mod_pow2_bits_high. lia. }
+  unfold tnum_max in Hclear.
+  rewrite tnum_wnot_agrees, tnum_not_bit in Hclear by exact Hi.
+  apply negb_false_iff in Hclear.
+  unfold tnum_mul_stage_step. now rewrite Hclear.
+Qed.
+
 Theorem tnum_upper_sound : forall w h x,
   0 <= x <= h -> tnum_gamma w (tnum_upper w h) x.
 Proof.
@@ -2342,6 +2409,80 @@ Proof.
   - destruct s as [i q], next as [j q']. injection Hnext as Hj Hq.
     cbn [fst] in Hj. destruct result as [[k q'']|r]; [|exact IH].
     cbn [fst] in *. rewrite Nat2Z.inj_succ. lia.
+Qed.
+
+(** A suffix of stages above the useful fuel preserves the accumulator. *)
+Lemma tnum_mul_runs_skip : forall w a b n s result,
+  tnum_runs (tnum_mul_stage_step w a b) n s result ->
+  Z.of_N (tnum_mul_fuel w b) <= fst s -> fst s + Z.of_nat n <= Zpos w ->
+  match result with
+  | inl next => snd next = snd s
+  | inr _ => False
+  end.
+Proof.
+  intros w a b n s result Hrun.
+  induction Hrun as [s|n s r Hstop|n s next result Hnext Hrun IH];
+    intros Hfuel Hwidth.
+  - reflexivity.
+  - destruct s as [i q]. discriminate Hstop.
+  - destruct s as [i q]. cbn [fst snd] in Hfuel, Hwidth |- *.
+    rewrite Nat2Z.inj_succ in Hwidth.
+    rewrite (tnum_mul_stage_noop w a b i q Hfuel ltac:(lia)) in Hnext.
+    injection Hnext as Hnext. subst next.
+    apply IH; cbn [fst]; lia.
+Qed.
+
+(** A staged trace may stop once it has reached every possible multiplier bit. *)
+Lemma tnum_mul_runs_prefix : forall w a b n s first,
+  tnum_runs (tnum_mul_stage_step w a b) n s first ->
+  forall m last, tnum_runs (tnum_mul_stage_step w a b) m s last ->
+  (n <= m)%nat -> Z.of_N (tnum_mul_fuel w b) <= fst s + Z.of_nat n ->
+  fst s + Z.of_nat m <= Zpos w ->
+  (match first with inl next => snd next | inr r => r end) =
+  (match last with inl next => snd next | inr r => r end).
+Proof.
+  intros w a b n s first Hrun.
+  induction Hrun as [s|n s r Hstop|n s next result Hnext Hrun IH];
+    intros m last Hlast Hle Hfuel Hwidth.
+  - pose proof (tnum_mul_runs_skip w a b m s last Hlast ltac:(cbn in Hfuel; lia)
+      Hwidth) as Hsame.
+    destruct last as [next|r]; [symmetry; exact Hsame|contradiction].
+  - destruct s as [i q]. discriminate Hstop.
+  - destruct m as [|m]; [lia|].
+    assert (Hindex : fst next = fst s + 1).
+    { destruct s as [i q], next as [j r].
+      unfold tnum_mul_stage_step in Hnext. injection Hnext as Hj Hr. cbn [fst]. lia. }
+    inversion Hlast as [|m' s' q Hstop'|m' s' next' result' Hnext' Htail]; subst.
+    + rewrite Hnext in Hstop'. discriminate.
+    + rewrite Hnext in Hnext'. injection Hnext' as Hsame. subst next'.
+      rewrite Nat2Z.inj_succ in Hfuel, Hwidth.
+      apply (IH m last Htail); lia.
+Qed.
+
+(** Truncating the staged loop preserves its complete abstract result. *)
+Lemma tnum_mul_stages_fast_agrees : forall w a b,
+  tnum_mul_stages_fast w a b = tnum_mul_stages w a b.
+Proof.
+  intros w a b. unfold tnum_mul_stages_fast, tnum_mul_stages.
+  set (a' := tnum_normalise w a). set (b' := tnum_normalise w b).
+  destruct (tnum_empty w a' || tnum_empty w b'); [reflexivity|].
+  pose proof (tnum_mul_fuel_le w b') as Hfuel.
+  apply (tnum_mul_runs_prefix w a' b' _ _ _
+    (tnum_loop_runs _ _ (tnum_mul_stage_step w a' b')
+      (tnum_mul_fuel w b') (0, tnum_const w 0))
+    _ _ (tnum_loop_runs _ _ (tnum_mul_stage_step w a' b')
+      (N.pos w) (0, tnum_const w 0))).
+  - apply Nat2Z.inj_le. rewrite !N_nat_Z. now apply N2Z.inj_le.
+  - cbn [fst]. rewrite N_nat_Z. lia.
+  - cbn [fst N.to_nat]. rewrite positive_nat_Z. lia.
+Qed.
+
+(** Selecting the shortened staged multiplier preserves every multiplier choice. *)
+Lemma tnum_mul_with_fast_agrees : forall choice w a b,
+  tnum_mul_with_fast choice w a b = tnum_mul_with choice w a b.
+Proof.
+  intros choice w a b. destruct choice; cbn [tnum_mul_with_fast tnum_mul_with];
+    now rewrite ?tnum_mul_stages_fast_agrees.
 Qed.
 
 Lemma tnum_mul_runs_sound : forall w a b x y,
@@ -5264,6 +5405,116 @@ Proof.
 Qed.
 TimeBound tnum_bitlen_time.
 
+(** Computing the useful stage fuel scans at most the width and the raw zero mask. *)
+Lemma tnum_mul_fuel_time : forall w b,
+  (T_tnum_mul_fuel w b <= 256 * N.of_nat (Pos.to_nat w + tnum_bits b + 1))%N.
+Proof.
+  intros w b. pose proof (tnum_positive_bits w) as Hwidth.
+  pose proof (tnum_max_bits w b) as Hmax.
+  time_unfold T_tnum_mul_fuel. cbn beta iota zeta.
+  time_unfold Z.T_to_N. time_pose.
+  unfold tnum_bits in *. change (Z.size_nat (Zpos w)) with (Pos.size_nat w) in *.
+  rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_mul_fuel_time.
+
+(** Any staged-loop fuel bounded by the width fits the original quadratic budget. *)
+Lemma tnum_mul_stage_loop_fuel_time : forall w a b fuel,
+  (fuel <= N.pos w)%N ->
+  (tnum_bits a <= 2 * Pos.to_nat w)%nat ->
+  (tnum_bits b <= 2 * Pos.to_nat w)%nat ->
+  (T_loopN (tnum_mul_stage_step w a b)
+    (fun s => T_tnum_mul_stage_step w a b s) fuel (0%Z, tnum_const w 0) <=
+    2097152 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros w a b fuel Hfuel_le Ha Hb.
+  pose proof Hfuel_le as HfuelZ. apply N2Z.inj_le in HfuelZ.
+  set (Inv := fun n (s : Z * tnum) =>
+    (0 <= fst s /\ fst s + Z.of_N n <= Zpos w) /\
+    (tnum_bits (snd s) <= 2 * Pos.to_nat w)%nat).
+  assert (Hcost : forall n s, Inv n s -> n <> 0%N ->
+    (T_tnum_mul_stage_step w a b s <=
+      131072 * N.of_nat (8 * Pos.to_nat w + 1))%N).
+  { intros n [i r] [[Hi Hfuel] Hr] Hn.
+    cbn [fst snd] in Hi, Hfuel, Hr.
+    pose proof (tnum_mul_stage_step_time w a b i r ltac:(lia)) as Htime.
+    destruct (tnum_count_bits_width w i ltac:(lia)) as [Hibits _].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add in *. lia. }
+  assert (Hpreserve : forall n s next, Inv n s -> n <> 0%N ->
+    tnum_mul_stage_step w a b s = inl next -> Inv (N.pred n) next).
+  { intros n [i r] [j q] [[Hi Hfuel] Hr] Hn Hstep.
+    pose proof (tnum_mul_step_bits w a b (i, r) Hr) as Hbits.
+    rewrite Hstep in Hbits. cbn [snd] in Hbits.
+    assert (Hindex : j = i + 1).
+    { unfold tnum_mul_stage_step in Hstep. injection Hstep as Hindex Hvalue. lia. }
+    assert (Hpred : (N.pred n + 1 = n)%N) by lia.
+    apply (f_equal Z.of_N) in Hpred. rewrite N2Z.inj_add in Hpred.
+    unfold Inv. cbn [fst snd] in *. repeat split; lia. }
+  assert (Hinitial : Inv fuel (0%Z, tnum_const w 0)).
+  { unfold Inv. cbn [fst snd]. repeat split; try lia. apply tnum_const_bits. }
+  pose proof (tnum_loopN_indexed_time (Z * tnum)%type tnum
+    (tnum_mul_stage_step w a b) (fun s => T_tnum_mul_stage_step w a b s)
+    Inv (131072 * N.of_nat (8 * Pos.to_nat w + 1))%N
+    fuel (0%Z, tnum_const w 0) Hcost Hpreserve Hinitial) as Hloop.
+  assert (Hsize : (N.of_nat (N.size_nat fuel) <= N.pos w)%N).
+  { destruct fuel as [|p]; [cbn [N.size_nat]; lia|].
+    cbn [N.size_nat].
+    eapply N.le_trans with (m := N.of_nat (Pos.to_nat p)).
+    - apply time_of_nat_le, tnum_positive_bits.
+    - change (N.of_nat (N.to_nat (N.pos p)) <= N.pos w)%N.
+      now rewrite N2Nat.id. }
+  assert (Hconvert : N.of_nat (Pos.to_nat w) = N.pos w).
+  { change (N.of_nat (N.to_nat (N.pos w)) = N.pos w). apply N2Nat.id. }
+  cbn [Nat.pow] in *. rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add in *. nia.
+Qed.
+
+(** Fuel calculation and the shortened loop retain the staged multiplier's time contract. *)
+Lemma tnum_mul_stages_fast_time : forall w a b,
+  (T_tnum_mul_stages_fast w a b <= 4194304 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros w a b.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  pose proof (tnum_normalise_bits w a) as Ha.
+  pose proof (tnum_normalise_bits w b) as Hb.
+  pose proof (tnum_mul_stage_loop_fuel_time w (tnum_normalise w a)
+    (tnum_normalise w b) (tnum_mul_fuel w (tnum_normalise w b))
+    (tnum_mul_fuel_le w (tnum_normalise w b)) Ha Hb) as Hloop.
+  time_unfold T_tnum_mul_stages_fast. cbn beta iota zeta.
+  destruct (tnum_empty w (tnum_normalise w a) || tnum_empty w (tnum_normalise w b)).
+  - time_pose. rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  - destruct (loopN (tnum_mul_stage_step w (tnum_normalise w a)
+      (tnum_normalise w b)) (tnum_mul_fuel w (tnum_normalise w b))
+      (0%Z, tnum_const w 0)) as [state|result];
+      cbn beta iota zeta; time_pose;
+      change (Z.size_nat 0) with 0%nat in *;
+      rewrite ?Nat2N.inj_add in *;
+      set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *;
+      clearbody budget; lia.
+Qed.
+TimeBound tnum_mul_stages_fast_time.
+
+(** The optimized selector keeps the existing multiplier budget for every choice. *)
+Lemma tnum_mul_with_fast_time : forall choice w a b,
+  (T_tnum_mul_with_fast choice w a b <= 16777216 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros choice w a b.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  pose proof (tnum_mul_stages_bits w a b) as Hstages.
+  rewrite <- tnum_mul_stages_fast_agrees in Hstages.
+  pose proof (tnum_mul_acc_bits w a b) as Hacc.
+  destruct choice; time_unfold T_tnum_mul_with_fast; cbn beta iota zeta; time_pose;
+    rewrite ?Nat2N.inj_add in *;
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *;
+    clearbody budget; lia.
+Qed.
+TimeBound tnum_mul_with_fast_time.
+
 (** Computing the shift cutoff is linear in the width. *)
 Lemma tnum_shift_cutoff_time : forall w,
   (T_tnum_shift_cutoff w <= 128 * N.of_nat (Pos.to_nat w + 1))%N.
@@ -6149,7 +6400,8 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
     intros choice w a b x y z Hx Hy Ha Hb Heval.
     change (eval_op bvmul [(w, x); (w, y)] = Some (w, z)) in Heval.
     rewrite (eval_op_fun2 bvmul w x y BMul eq_refl) in Heval.
-    injection Heval as <-. now apply tnum_mul_with_sound.
+    injection Heval as <-. unfold tnum_mul_with.
+    rewrite tnum_mul_with_fast_agrees. now apply tnum_mul_with_sound.
   Qed.
   (** An unknown shift or rotation retains each concrete result. *)
   Lemma tnum_variable_sound : forall o w a b x y z,
@@ -6396,7 +6648,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_tnum_mul_with choice w a b <= c_tnum *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
   Proof.
-    intros choice w a b. pose proof (tnum_mul_with_time choice w a b) as Htime.
+    intros choice w a b. pose proof (tnum_mul_with_fast_time choice w a b) as Htime.
     time_unfold T_tnum_mul_with. cbn beta iota zeta.
     pose proof (WordTime.time_square_floor 1
       (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
@@ -6408,7 +6660,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_tnum_mul w a b <= c_tnum *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
   Proof.
-    intros w a b. pose proof (tnum_mul_with_time C.multiplier w a b) as Htime.
+    intros w a b. pose proof (tnum_mul_with_fast_time C.multiplier w a b) as Htime.
     time_unfold T_tnum_mul. try time_unfold T_tnum_mul_with. cbn beta iota zeta.
     pose proof (WordTime.time_square_floor 1
       (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
@@ -6562,15 +6814,18 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (tnum_bits (tnum_mul w a b) <= 2 * Pos.to_nat w)%nat.
   Proof.
     intros w a b. repeat split; first [apply tnum_add_bits|apply tnum_sub_bits|
-      apply tnum_and_bits|apply tnum_or_bits|apply tnum_xor_bits|apply tnum_mul_with_bits].
+      apply tnum_and_bits|apply tnum_or_bits|apply tnum_xor_bits|
+      unfold tnum_mul, tnum_mul_with; rewrite tnum_mul_with_fast_agrees;
+        apply tnum_mul_with_bits].
   Qed.
   (** Configured stages and variable shifts keep masks within the width. *)
   Lemma tnum_stage_bits : forall choice o w a b,
     (tnum_bits (tnum_mul_with choice w a b) <= 2 * Pos.to_nat w)%nat /\
     (tnum_bits (tnum_variable o w a b) <= 2 * Pos.to_nat w)%nat.
   Proof.
-    intros choice o w a b. split; [apply tnum_mul_with_bits|].
-    unfold tnum_variable. rewrite tnum_variable_fast_agrees. apply tnum_variable_bits.
+    intros choice o w a b. split.
+    - unfold tnum_mul_with. rewrite tnum_mul_with_fast_agrees. apply tnum_mul_with_bits.
+    - unfold tnum_variable. rewrite tnum_variable_fast_agrees. apply tnum_variable_bits.
   Qed.
   (** The bit mask agrees with modular word reduction. *)
   Lemma F0_tnum_wrap : forall w z, tnum_wrap w z = L.wrap w z.

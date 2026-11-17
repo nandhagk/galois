@@ -6,10 +6,38 @@
 
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Word Fun.
-From Galois.Domains Require Import KnownBitsSig KnownBits.
+From Galois.Domains Require Import KnownBitsSig KnownBits BitsLang.
 Import List.ListNotations.
 
 Local Open Scope Z_scope.
+
+Module ShortStages <: TNUM_CONFIG.
+  Definition multiplier := MulStages.
+End ShortStages.
+Module ShortMasks := KnownBitsCode WordLanguageCode ShortStages.
+
+(** The staged instance preserves sparse, unknown, zero and contradictory products. *)
+Example multiplier_short_fuel_results :
+  ShortMasks.tnum_mul 16%positive (Tnum 0 1) (Tnum 65527 8) = Tnum 7 8 /\
+  ShortMasks.tnum_mul_with MulBoth 16%positive (Tnum 0 1) (Tnum 65527 8) = Tnum 7 8 /\
+  ShortMasks.tnum_mul 16%positive (Tnum 0 1) (Tnum 0 0) = Tnum 0 0 /\
+  ShortMasks.tnum_mul_with MulBoth 16%positive (Tnum 0 1) (Tnum 0 0) = Tnum 0 0 /\
+  ShortMasks.tnum_mul 16%positive (Tnum 0 1) (Tnum 65535 0) = Tnum 65535 0 /\
+  ShortMasks.tnum_mul_with MulBoth 16%positive (Tnum 7 7) (Tnum 65527 8) =
+    Tnum 65535 65535.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** A known value of one and a raw equivalent multiplier keep the exact constant product. *)
+Example multiplier_short_fuel_constants :
+  ShortMasks.tnum_mul 16%positive (tnum_const 16%positive 1) (Tnum 65527 8) =
+    Tnum 65527 8 /\
+  ShortMasks.tnum_mul 16%positive (tnum_const 16%positive 1) (Tnum (-9) 8) =
+    Tnum 65527 8.
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
 
 Definition mul_test_contains (w : width) (a : tnum) (x : Z) : bool :=
   (Z.land x (wrap w (zeros a)) =? 0) &&
