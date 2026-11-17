@@ -2,6 +2,7 @@
 
     These examples exercise clipping, arithmetic and comparisons.
     For example, clipping at width one retains the interval from zero to one.
+    Builds on: IntervalOps IntervalBack BitsLang Tagged Harness WordSig ZLang.
 
     Groups:
     - [ClipTests] Clipping an interval to a word.
@@ -16,8 +17,7 @@
     - [SignedConstantTests] Signs and signed views of constant ranges.
     - [JoinMeetTests] Join and meet of scalar intervals.
     - [WideningTests] Widening and narrowing with thresholds.
-    - [ThresholdTreeTests] Threshold trees and their ranks.
-    Builds on: IntervalOps IntervalBack BitsLang Tagged Harness WordSig ZLang. *)
+    - [ThresholdTreeTests] Threshold trees and their ranks. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op.
@@ -213,15 +213,6 @@ Module ArithmeticTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** An arithmetic shift of negative values keeps them negative. *)
-  Example arithmetic_shift_of_negatives_stays_negative :
-    interval_fwd bvashr [(8%positive, I (Fin 248) (Fin 252));
-                         (8%positive, I (Fin 1) (Fin 2))] 8%positive =
-      I (Fin 252) (Fin 255).
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
   (** Signed division by a range containing zero gives the range from 1 to 129. *)
   Example signed_division_by_range_containing_zero :
     interval_fwd bvsdiv [(8%positive, I (Fin 128) (Fin 129));
@@ -236,24 +227,6 @@ Module ArithmeticTests.
     interval_fwd bvsdiv [(8%positive, I (Fin 128) (Fin 129));
                          (8%positive, I (Fin 255) (Fin 255))] 8%positive =
       I (Fin 127) (Fin 128).
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A large arithmetic shift of negative values saturates at minus one. *)
-  Example arithmetic_shift_saturates_negatives_at_minus_one :
-    interval_fwd bvashr [(8%positive, I (Fin 248) (Fin 252));
-                         (8%positive, I (Fin 7) (Fin 8))] 8%positive =
-      I (Fin 255) (Fin 255).
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A large arithmetic shift of nonnegative values gives zero. *)
-  Example arithmetic_shift_saturates_nonnegatives_at_zero :
-    interval_fwd bvashr [(8%positive, I (Fin 2) (Fin 4));
-                         (8%positive, I (Fin 8) (Fin 9))] 8%positive =
-      I (Fin 0) (Fin 0).
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -276,6 +249,21 @@ Module ArithmeticTests.
   (** The exact signed remainder of five by three is two. *)
   Example signed_remainder_of_five_by_three_is_two :
     eval_op bvsrem [(8%positive, 5); (8%positive, 3)] = Some (8%positive, 2).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Eight-bit arithmetic shifts as ((value range, count range), result). A negative range
+      stays negative and saturates at minus one, and a nonnegative range saturates at zero. *)
+  Definition arithmetic_shift_cases : list ((itv * itv) * itv) :=
+    [((I (Fin 248) (Fin 252), I (Fin 1) (Fin 2)), I (Fin 252) (Fin 255));
+     ((I (Fin 248) (Fin 252), I (Fin 7) (Fin 8)), I (Fin 255) (Fin 255));
+     ((I (Fin 2) (Fin 4), I (Fin 8) (Fin 9)), I (Fin 0) (Fin 0))].
+
+  (** The forward arithmetic shift gives the result of every case of its table. *)
+  Example arithmetic_shift_boundaries :
+    map (fun c => interval_fwd bvashr [(8%positive, fst (fst c)); (8%positive, snd (fst c))]
+      8%positive) arithmetic_shift_cases = map snd arithmetic_shift_cases.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -406,21 +394,6 @@ Module BackwardTests.
     vm_compute. reflexivity.
   Qed.
 
-(* Old results clip each input as shown below. Current results are
-   [([], true, true); ([I NegInf PosInf], true, true);
-    ([I NegInf PosInf; I (Fin (-3)) (Fin 20); I PosInf PosInf], true, true)].
-Example interval_backward_malformed_fallback_count_and_refinement :
-  map (fun xs =>
-    let ys := interval_back bvadd xs 1%positive (I (Fin 1) (Fin 1)) in
-    (ys, Nat.eqb (length ys) (length xs),
-     forallb (fun p => Payload.pleb (fst (fst p)) (snd p) (snd (fst p))) (combine xs ys)))
-    malformed_backward_inputs =
-  [([], true, true); ([I (Fin 0) (Fin 255)], true, true);
-   ([I (Fin 0) (Fin 1); I (Fin 0) (Fin 15); IBot], true, true)].
-Proof. vm_compute. reflexivity. Qed.
-
-*)
-
 End BackwardTests.
 
 (** * Bitwise operations *)
@@ -470,58 +443,51 @@ End BitwiseTests.
 
 Module WordShiftTests.
 
+  (** The two word widths at which the shifts of small ranges agree. *)
+  Definition shift_widths : list positive := [8%positive; 64%positive].
+
+  (** Eight-bit left shifts as ((value range, count range), result). A full range stays full,
+      and a count range with a negative high end gives reversed bounds. *)
+  Definition shl_cases : list ((itv * itv) * itv) :=
+    [((I (Fin 0) (Fin 255), I (Fin 0) (Fin 7)), I (Fin 0) (Fin 255));
+     ((I (Fin 1) (Fin 4), I (Fin 0) (Fin (-1))), I (Fin 1) (Fin 0))].
+
+  (** Eight-bit logical right shifts as ((value range, count range), result). A full range stays
+      full, a count range with a negative high end gives zero to four, and a value range with a
+      negative high end gives a negative upper bound. *)
+  Definition lshr_cases : list ((itv * itv) * itv) :=
+    [((I (Fin 0) (Fin 255), I (Fin 0) (Fin 7)), I (Fin 0) (Fin 255));
+     ((I (Fin 1) (Fin 4), I (Fin 0) (Fin (-1))), I (Fin 0) (Fin 4));
+     ((I (Fin 1) (Fin (-4)), I (Fin 2) (Fin 3)), I (Fin 0) (Fin (-1)))].
+
   (** A left shift by two or three gives the same result at widths eight and sixty-four. *)
   Example shl_at_widths_eight_and_sixty_four :
-    map (fun w => Ops.interval_shl w (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 3)))
-      [8%positive; 64%positive] = [I (Fin 4) (Fin 32); I (Fin 4) (Fin 32)].
+    Forall (fun w => Ops.interval_shl w (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 3)) =
+      I (Fin 4) (Fin 32)) shift_widths.
   Proof.
-    vm_compute. reflexivity.
+    repeat constructor; vm_compute; reflexivity.
   Qed.
 
   (** A logical right shift by two or three gives the same result at widths eight and sixty-four. *)
   Example lshr_at_widths_eight_and_sixty_four :
-    map (fun w => Ops.interval_lshr w (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 3)))
-      [8%positive; 64%positive] = [I (Fin 0) (Fin 1); I (Fin 0) (Fin 1)].
+    Forall (fun w => Ops.interval_lshr w (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 3)) =
+      I (Fin 0) (Fin 1)) shift_widths.
+  Proof.
+    repeat constructor; vm_compute; reflexivity.
+  Qed.
+
+  (** The left shift gives the result of every case of its table. *)
+  Example left_shift_boundaries :
+    map (fun c => Ops.interval_shl 8%positive (fst (fst c)) (snd (fst c))) shl_cases =
+      map snd shl_cases.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** A left shift of the full eight-bit range falls back to the full range. *)
-  Example shl_of_full_range_is_full_range :
-    Ops.interval_shl 8%positive (I (Fin 0) (Fin 255)) (I (Fin 0) (Fin 7)) =
-      I (Fin 0) (Fin 255).
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A logical right shift of the full eight-bit range falls back to the full range. *)
-  Example lshr_of_full_range_is_full_range :
-    Ops.interval_lshr 8%positive (I (Fin 0) (Fin 255)) (I (Fin 0) (Fin 7)) =
-      I (Fin 0) (Fin 255).
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A left shift whose count range has a negative high end gives reversed bounds. *)
-  Example shl_with_negative_high_count_gives_reversed_bounds :
-    Ops.interval_shl 8%positive (I (Fin 1) (Fin 4)) (I (Fin 0) (Fin (-1))) =
-      I (Fin 1) (Fin 0).
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A logical right shift whose count range has a negative high end gives zero to four. *)
-  Example lshr_with_negative_high_count_gives_zero_to_four :
-    Ops.interval_lshr 8%positive (I (Fin 1) (Fin 4)) (I (Fin 0) (Fin (-1))) =
-      I (Fin 0) (Fin 4).
-  Proof.
-    vm_compute. reflexivity.
-  Qed.
-
-  (** A logical right shift whose value range has a negative high end gives a negative bound. *)
-  Example lshr_with_negative_high_endpoint_gives_negative_bound :
-    Ops.interval_lshr 8%positive (I (Fin 1) (Fin (-4))) (I (Fin 2) (Fin 3)) =
-      I (Fin 0) (Fin (-1)).
+  (** The logical right shift gives the result of every case of its table. *)
+  Example logical_right_shift_boundaries :
+    map (fun c => Ops.interval_lshr 8%positive (fst (fst c)) (snd (fst c))) lshr_cases =
+      map snd lshr_cases.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -669,16 +635,5 @@ Module ThresholdTreeTests.
   Proof.
     vm_compute. reflexivity.
   Qed.
-
-(* The former interval_word_domain accepted a prepared tree at construction. The
-   current IntervalWordTableCode has no threshold argument, so the same construction
-   dependency cannot be observed through its forward interface. Its result is retained
-   as forward_ite_joins_branch_ranges above.
-
-Example interval_ite_uses_prepared_tree :
-  pforward (interval_word_domain (threshold_of_list [0; 10; 20])) bvite
-    [(1%positive, Itv (Fin 0) (Fin 1)); (8%positive, Itv (Fin 2) (Fin 4));
-     (8%positive, Itv (Fin 11) (Fin 12))] 8%positive = Itv (Fin 2) (Fin 12).
-*)
 
 End ThresholdTreeTests.
