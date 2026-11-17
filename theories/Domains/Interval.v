@@ -49,6 +49,14 @@ Proof.
   all: rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ; lia.
 Qed.
 
+(** A positive-width modulus is twice the highest-bit value. *)
+Lemma interval_modulus_half : forall w : positive,
+  (2 ^ Z.pos w = 2 * 2 ^ (Z.pos w - 1))%Z.
+Proof.
+  intro w. replace (Z.pos w) with (Z.succ (Z.pos w - 1)) at 1 by lia.
+  rewrite Z.pow_succ_r by lia. reflexivity.
+Qed.
+
 Module IntervalBaseCode (T : THRESHOLDS_OPS) <: INTERVAL_SCALAR_OPS T.
   Include INTERVAL_SCALAR_SPEC T.
 End IntervalBaseCode.
@@ -471,7 +479,7 @@ Module IntervalCode (L : Z_LANGUAGE_OPS) (T : THRESHOLDS_OPS) <: INTERVAL_OPS L 
   Definition code_bnd_bits b := match b with Fin z => Z.size_nat z | _ => 0%nat end.
   Definition code_itv_bits a :=
     match a with IBot => 0%nat | I lo hi => Nat.max (code_bnd_bits lo) (code_bnd_bits hi) end.
-  Definition shl a b :=
+  Definition shl_ref a b :=
     let k := Z.of_nat (code_itv_bits a + code_itv_bits b + 1) in
     match a, b with
     | IBot, _ | _, IBot => IBot
@@ -479,6 +487,23 @@ Module IntervalCode (L : Z_LANGUAGE_OPS) (T : THRESHOLDS_OPS) <: INTERVAL_OPS L 
       if (Z.leb 0 la && Z.leb 0 lb)%bool then
         match ha, hb with
         | Fin ha, Fin hb =>
+          if andb (Z.leb lb hb) (Z.leb hb k) then
+            I (Fin (Z.shiftl la lb)) (Fin (Z.shiftl ha hb))
+          else I (Fin la) PosInf
+        | _, _ => I (Fin la) PosInf
+        end
+      else top
+    | _, _ => top
+    end.
+
+  Definition shl a b :=
+    match a, b with
+    | IBot, _ | _, IBot => IBot
+    | I (Fin la) ha, I (Fin lb) hb =>
+      if (Z.leb 0 la && Z.leb 0 lb)%bool then
+        match ha, hb with
+        | Fin ha, Fin hb =>
+          let k := Z.of_nat (code_itv_bits a + code_itv_bits b + 1) in
           if andb (Z.leb lb hb) (Z.leb hb k) then
             I (Fin (Z.shiftl la lb)) (Fin (Z.shiftl ha hb))
           else I (Fin la) PosInf
@@ -520,9 +545,16 @@ Module IntervalCode (L : Z_LANGUAGE_OPS) (T : THRESHOLDS_OPS) <: INTERVAL_OPS L 
       else (a, b)
     | _, _, _ => (a, b)
     end.
-  Definition signed_split w a :=
+  Definition signed_split_ref w a :=
     let modulus := Z.pow 2 (Zpos w) in
     let half := Z.pow 2 (Zpos w - 1) in
+    let low := meet a (I (Fin 0) (Fin (half - 1))) in
+    let high := meet a (I (Fin half) (Fin (modulus - 1))) in
+    low :: sub high (abst modulus) :: nil.
+
+  Definition signed_split w a :=
+    let half := Z.pow 2 (Zpos w - 1) in
+    let modulus := 2 * half in
     let low := meet a (I (Fin 0) (Fin (half - 1))) in
     let high := meet a (I (Fin half) (Fin (modulus - 1))) in
     low :: sub high (abst modulus) :: nil.
@@ -575,6 +607,19 @@ Local Close Scope Z_scope.
 Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Include IntervalCode L T.
   Include INTERVAL_SPEC L T.
+
+  (** Deferring cutoff computation preserves every scalar shift result. *)
+  Lemma shl_eq : forall a b, shl a b = shl_ref a b.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Sharing the half-width power preserves both signed split ranges. *)
+  Lemma signed_split_eq : forall w a, signed_split w a = signed_split_ref w a.
+  Proof.
+    intros w a. unfold signed_split, signed_split_ref.
+    rewrite <- interval_modulus_half. reflexivity.
+  Qed.
   (** Every bound is below itself. *)
   Theorem bound_leb_refl : forall a, bound_leb a a = true.
   Proof.
@@ -1232,7 +1277,7 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Proof.
     intros [|la ha] [|lb hb] x y Ha Hb Hy;
       cbn [gamma in_itv] in Ha, Hb; try contradiction.
-    destruct la as [|la|], lb as [|lb|]; cbn [shl]; try apply gamma_top.
+    destruct la as [|la|], lb as [|lb|]; rewrite shl_eq; cbn [shl_ref]; try apply gamma_top.
     destruct ((0 <=? la) && (0 <=? lb))%bool eqn:Hnonneg;
       [|apply gamma_top].
     apply andb_true_iff in Hnonneg as [Hla Hlb].
@@ -2569,7 +2614,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Lemma shl_result_bits : forall a b, size (shl a b) <= 2 * (size a + size b + 1).
   Proof.
     intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
-      unfold shl; cbn beta iota zeta; cbn [size itv_bits bnd_bits top]; try lia.
+      rewrite shl_eq; unfold shl_ref; cbn beta iota zeta; cbn [size itv_bits bnd_bits top]; try lia.
     all: destruct ((0 <=? la)%Z && (0 <=? lb)%Z) eqn:Hnonnegative;
       cbn [size itv_bits bnd_bits top]; try lia.
     apply andb_true_iff in Hnonnegative as [Hla Hlb].
@@ -2690,6 +2735,18 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     rewrite !Nat2N.inj_add in *. lia.
   Qed.
 
+  (** Sharing the half power replaces the other power with one constant-cost doubling. *)
+  Lemma split_shared_power_time : forall w,
+    (Std.Z.T_sub (Z.pos w) 1 + Word.Z.T_pow 2 (Z.pos w - 1) +
+      Std.Z.T_mul 2 (2 ^ (Z.pos w - 1)) + Std.Z.T_sub (2 ^ (Z.pos w - 1)) 1 +
+      Std.Z.T_sub (2 * 2 ^ (Z.pos w - 1)) 1 <=
+      68 * N.of_nat (Pos.to_nat w + 1))%N.
+  Proof.
+    intro w. pose proof (split_power_time w) as Hpower.
+    pose proof (Std.Z.T_mul_two_le (2 ^ (Z.pos w - 1))) as Hdouble.
+    rewrite <- interval_modulus_half. rewrite Nat2N.inj_add in *. nia.
+  Qed.
+
   (** A scalar meet wrapper retains the tight threshold-independent endpoint bound. *)
   Lemma split_meet_time : forall a b,
     (T_meet a b <= 33 * (T.c_thresholds + 1) * N.of_nat (size a + size b + 1))%N.
@@ -2740,7 +2797,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     set (budget := ((T.c_thresholds + 1) * N.of_nat s)%N).
     assert (Hs : 1 <= s) by (unfold s; lia).
     assert (Hbudget : (1 <= budget /\ N.of_nat s <= budget)%N) by (unfold budget; nia).
-    pose proof (split_power_time w) as Hpower.
+    pose proof (split_shared_power_time w) as Hpower.
     pose proof (split_range_bits w) as [Hlowrange Hhighrange].
     pose proof (split_meet_width_time w a
       (I (Fin 0) (Fin (2 ^ (Z.pos w - 1) - 1))) Hlowrange) as Hlow.
@@ -2754,7 +2811,8 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
       lia. }
     replace (512 * (T.c_thresholds + 1) * N.of_nat s)%N
       with (512 * budget)%N by (unfold budget; ring).
-    unfold T_signed_split, T_abst. cbn beta iota zeta. lia.
+    unfold T_signed_split, T_abst. cbn beta iota zeta.
+    rewrite <- interval_modulus_half in Hpower |- *. lia.
   Qed.
 
   (** Signed splitting pays for two ranges and their finite translation. *)
@@ -3347,7 +3405,7 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     exists b, In b (signed_split w a) /\
       in_itv b (if (x <? 2 ^ (Zpos w - 1))%Z then x else x - 2 ^ Zpos w).
   Proof.
-    intros w a x Ha Hword. unfold signed_split.
+    intros w a x Ha Hword. rewrite signed_split_eq; unfold signed_split_ref.
     set (m := (2 ^ Zpos w)%Z) in *.
     set (h := (2 ^ (Zpos w - 1))%Z).
     destruct (Z.ltb x h) eqn:Hhalf.
