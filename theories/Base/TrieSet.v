@@ -29,7 +29,12 @@ Module TrieSetCode (K : KEY_OPS) <: SET_OPS K.
       (fun tr => tr) (fun _ => PTrieCode.empty) s u.
   Definition subset (s u : t) :=
     PTrieCode.forall2 (fun _ b => match b with Some _ => true | None => false end) s u.
-  Definition equal (s u : t) := andb (subset s u) (subset u s).
+  Definition equal (s u : t) :=
+    PTrieCode.forall2b
+      (fun a b => match a, b with
+       | Some _, Some _ | None, None => true
+       | _, _ => false
+       end) s u.
   Definition fold {A} (f : A -> K.t -> A) (s : t) (a : A) :=
     PTrieCode.fold_values f s a.
   Definition elements (s : t) := List.rev_append (fold (fun acc k => k :: acc) s nil) nil.
@@ -247,10 +252,9 @@ Module TrieSet (K : KEY) <: SET K.
   Qed.
   Lemma equal_spec : forall s u, equal s u = true <-> forall p, has p s = has p u.
   Proof.
-    intros s u. unfold equal. rewrite andb_true_iff, !subset_spec. split.
-    - intros [Hsu Hus] p. specialize (Hsu p). specialize (Hus p).
-      destruct (has p s), (has p u); intuition discriminate.
-    - intro Heq. split; intros p Hp; [rewrite <- Heq|rewrite Heq]; exact Hp.
+    intros s u. unfold equal. rewrite PTrie.forall2b_spec by reflexivity.
+    split; intros Heq p; specialize (Heq p); unfold has in *;
+      destruct (PTrieCode.get p s), (PTrieCode.get p u); congruence.
   Qed.
   Lemma wf_has : forall s p, wf s -> has p s = true -> exists k, K.encode k = p.
   Proof.
@@ -408,10 +412,10 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Qed.
   Lemma T_equal_le : forall s u, (T_equal s u <= c_set * N.of_nat (nodes s + nodes u + 1))%N.
   Proof.
-    intros s u.
-    pose proof (T_subset_nodes s u) as Hleft.
-    pose proof (T_subset_nodes u s) as Hright.
-    unfold c_set. time_step.
+    intros s u. unfold T_equal. eapply N.le_trans.
+    - apply N.add_le_mono_l. apply PTrieT.T_forall2b_le with (k := 2%N).
+      intros a b. destruct a, b; time_cbn; nia.
+    - unfold c_set, nodes. nia.
   Qed.
   Lemma T_elements_le : forall s, (wf s -> T_elements s <= c_set * N.of_nat (weight s + 1))%N.
   Proof.

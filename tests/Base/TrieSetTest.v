@@ -105,3 +105,13 @@ Example set_difference_empty :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Equality checks shared members and rejects a member on either side only. *)
+Example set_equality_shared_and_one_sided :
+  (PosSet.equal left_set (fold_right PosSet.add PosSet.empty [1; 2]%positive),
+   PosSet.equal left_set right_set, PosSet.equal right_set left_set,
+   PosSet.equal left_set PosSet.empty, PosSet.equal PosSet.empty left_set) =
+    (true, false, false, false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
