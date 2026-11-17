@@ -5536,7 +5536,8 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** Scoped components and entries read the materialized rows once. *)
-  Lemma T_wto_components_scoped_amort : forall g vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
+  Lemma T_wto_components_scoped_amort : forall g vs, NoDup vs ->
+      (forall v, In v vs -> In v (nodes g)) ->
       (T_wto_components (wto_scoped g (Some vs)) (rev vs) +
         T_wto_entries (wto_scoped g (Some vs)) (rev vs)
           (wto_components (wto_scoped g (Some vs)) (rev vs)) <=
@@ -6595,8 +6596,8 @@ Module WtoT <: WTO_ALL.
                (WtoState (WtoExpand within entries owners c :: tasks) partial parents)
                within entries owners c tasks Hin eq_refl) as Hselect_clock.
              pose proof (Hscope_bound (v :: body) Hbody_unique Hbody_listed) as Hscope_clock.
-             pose proof (T_wto_step_expand_split g within entries owners c tasks partial parents h (v :: body)
-               Hselect ltac:(discriminate)) as Hstep.
+             pose proof (T_wto_step_expand_split g within entries owners c tasks partial
+               parents h (v :: body) Hselect ltac:(discriminate)) as Hstep.
              pose proof (source_mass_permutation g _ _ (wto_select_spec _ _ _ _ Hselect))
                as Hmass.
              change (source_mass g c =

@@ -7,7 +7,8 @@
     - [check_sound] Acceptance establishes exact rooted coverage and the nesting edge condition.
     - [heads_spec] Heads are the structural loop heads in traversal order.
     - [ranks_spec] Ranks number the unique linear order starting at one.
-    - [heads_complexity] Head projection is linear in the order length.
+    - [heads_complexity] Head projection is linear in the order length, O(n) for an order of length
+      n.
     - [ranks_complexity] Ranking is linear in the order length and the key and counter widths.
     - [check_complexity] Checking is linear in graph size and identifier width.
     - [build_complexity] Building has the published nesting-sensitive bound.
@@ -502,7 +503,8 @@ Module Type WTO_PLAN (Import W : WTO_T).
       N.of_nat (vertex_width vs + Nat.log2 (length vs) + 1))%N.
 
   (** Scoped components and entries read the materialized rows once. *)
-  Parameter T_wto_components_scoped_amort : forall g vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
+  Parameter T_wto_components_scoped_amort : forall g vs, NoDup vs ->
+    (forall v, In v vs -> In v (nodes g)) ->
     (T_wto_components (wto_scoped g (Some vs)) (rev vs) +
       T_wto_entries (wto_scoped g (Some vs)) (rev vs)
         (wto_components (wto_scoped g (Some vs)) (rev vs)) <=
