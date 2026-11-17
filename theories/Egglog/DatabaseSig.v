@@ -2,14 +2,42 @@
 
     Databases store rows, identifier equalities and indexes of canonical tuples.
     For example, rebuilding merges two constructor outputs whose keys become equal.
+
+    Main results
+    - [find_spec] Find returns the representative without changing the view.
+    - [make_spec] Make reuses a canonical constructor output or allocates a fresh identifier.
+    - [index_all_complete] The full index contains every row in its slot.
+    - [lookup_spec] Lookup canonicalizes its query and keeps the view and invariant.
+    - [find_complexity] Find is linear in the bit steps of one identifier operation.
+    - [lookup_complexity] Lookup is linear in the key length and the key's encoded cells.
+    - [init_complexity] Initialization is linear in the declarations and the permutation sizes,
+      with the layout work of insertion sorting.
+    - [put_complexity] Insertion, without its share of the deferred rebuild, is linear in the
+      arity and the number of slots of its function.
+    - [make_complexity] Constructor allocation, without its share of the deferred rebuild, has the
+      same class.
+    - [union_complexity] Union, without queued work, is linear in the bit steps of one identifier
+      operation.
+    - [put_amort_complexity] Insertion pays its own clock and the rebuild credit of its new use
+      entries.
+    - [make_amort_complexity] Constructor allocation has the same amortized class as insertion.
+    - [union_amort_complexity] Union is constant at the spending unit, because it only queues
+      rebuild work.
+    - [rebuild_amort_complexity] Rebuilding is linear in the pending equalities at the spending
+      unit.
+    - [index_complexity] Slot lookup is logarithmic in the slot number.
+    - [advance_complexity] Advancing is constant, because it empties the new-row indexes with one
+      store.
+
     Builds on: ValueSig, IndexSig, Syntax and Model. *)
 
 From Stdlib Require Import List PArith NArith Relations.Relation_Operators.
-From Argent Require Import Time Std Loop BigO.
+From Argent Require Import Time Std Loop Complexity.
 From Galois.Base Require Import Loop UnionFind.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax Model.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** Layout preparation charges every unary position read by insertion sorting. *)
 Definition layout_work (sl : list (positive * list nat)) : nat :=
@@ -420,91 +448,68 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
   (** The allocation counter is stored. *)
   Parameter T_ids_le : forall db, (T_ids db <= c_db)%N.
   (** Find is linear in the bit steps of one identifier operation. *)
-  Parameter find_complexity : bigO
-    (fun x : positive * t => wf (snd x) /\ allocated (snd x) (fst x))
-    (fun x => N.of_nat (unit (snd x)))
-    (fun x => T_find (fst x) (snd x)).
+  Parameter find_complexity :
+    T_find i db ∈ 𝑂(N.of_nat (unit db)) for (i, db) | wf db /\ allocated db i.
   (** Lookup is linear in the key length and the key's encoded cells. *)
-  Parameter lookup_complexity : bigO
-    (fun x : positive * list (cell V.t) * t => wf (snd x))
-    (fun x => N.of_nat ((length (snd (fst x)) + 1) * unit (snd x) +
-      fold_right (fun c n => cell_bits V.encode c + n) 0 (snd (fst x))))
-    (fun x => T_lookup (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter lookup_complexity :
+    T_lookup f k db ∈ 𝑂(N.of_nat (((length k + 1) * unit db +
+      fold_right (fun c n => cell_bits V.encode c + n) 0 k)%nat))
+      for (f, k, db) | wf db.
   (** Initialization is linear in the declarations and the permutation sizes, with the
       layout work of insertion sorting. *)
-  Parameter init_complexity : bigO (fun _ => True)
-    (fun x : list decl * list (positive * list nat) =>
-      N.of_nat ((length (fst x) + length (snd x) + layout_work (snd x) + 1) *
-        (fold_right (fun s n => length (snd s) + n) 0 (snd x) + 1) +
-        (fold_right (fun d n => Pos.size_nat (name d) + n) 0 (fst x) +
-         fold_right (fun s n => Pos.size_nat (fst s) + n) 0 (snd x))))
-    (fun x => T_init (fst x) (snd x)).
+  Parameter init_complexity :
+    T_init ds sl ∈ 𝑂(N.of_nat (((length ds + length sl + layout_work sl + 1) *
+      (fold_right (fun s n => length (snd s) + n) 0 sl + 1) +
+      (fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
+       fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl))%nat))
+      for (ds, sl).
   (** Insertion, without its share of the deferred rebuild, is linear in the arity and the
       number of slots of its function. *)
-  Parameter put_complexity : bigO
-    (fun x : positive * list (cell V.t) * option (cell V.t) * t =>
-      let '(f, k, o, db) := x in wf db /\ slots_fit db f (length (k ++ option_list o)))
-    (fun x => let '(f, k, o, db) := x in
-      N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (put f k o db)))
-    (fun x => let '(f, k, o, db) := x in T_put f k o db).
+  Parameter put_complexity :
+    T_put f k o db ∈ 𝑂(N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (put f k o db)))
+      for (f, k, o, db) | wf db /\ slots_fit db f (length (k ++ option_list o)).
   (** Constructor allocation, without its share of the deferred rebuild, has the same class. *)
-  Parameter make_complexity : bigO
-    (fun x : positive * list (cell V.t) * t =>
-      let '(f, k, db) := x in wf db /\ slots_fit db f (S (length k)))
-    (fun x => let '(f, k, db) := x in
-      N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (snd (make f k db))))
-    (fun x => let '(f, k, db) := x in T_make f k db).
+  Parameter make_complexity :
+    T_make f k db ∈ 𝑂(N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (snd (make f k db))))
+      for (f, k, db) | wf db /\ slots_fit db f (S (length k)).
   (** Union, without queued work, is linear in the bit steps of one identifier operation. *)
-  Parameter union_complexity : bigO
-    (fun x : positive * positive * t =>
-      let '(i, j, db) := x in wf db /\ allocated db i /\ allocated db j)
-    (fun x => let '(i, j, db) := x in N.of_nat (unit db))
-    (fun x => let '(i, j, db) := x in T_union i j db).
+  Parameter union_complexity :
+    T_union i j db ∈ 𝑂(N.of_nat (unit db))
+      for (i, j, db) | wf db /\ allocated db i /\ allocated db j.
   (** Insertion pays its own clock and the rebuild credit of its new use entries. *)
-  Parameter put_amort_complexity : bigO
-    (fun x : N * positive * list (cell V.t) * option (cell V.t) * t =>
-      let '(B, f, k, o, db) := x in
-      wf db /\ slots_fit db f (length (k ++ option_list o)) /\ (ids (put f k o db) <= B)%N)
-    (fun x => let '(B, f, k, o, db) := x in
-      N.of_nat (unit (put f k o db) * ((length k + 1) * (length k + 1)) *
+  Parameter put_amort_complexity :
+    amortized (T_put f k o db) (unit (put f k o db)) (potential B (put f k o db))
+        (potential B db) ∈
+      𝑂(N.of_nat (unit (put f k o db) * ((length k + 1) * (length k + 1)) *
         (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1)))
-    (fun x => let '(B, f, k, o, db) := x in
-      amortized (T_put f k o db) (unit (put f k o db))
-        (potential B (put f k o db)) (potential B db)).
+      for (B, f, k, o, db) |
+        wf db /\ slots_fit db f (length (k ++ option_list o)) /\ (ids (put f k o db) <= B)%N.
   (** Constructor allocation has the same amortized class as insertion. *)
-  Parameter make_amort_complexity : bigO
-    (fun x : N * positive * list (cell V.t) * t =>
-      let '(B, f, k, db) := x in
-      wf db /\ slots_fit db f (S (length k)) /\ (ids (snd (make f k db)) <= B)%N)
-    (fun x => let '(B, f, k, db) := x in
-      N.of_nat (unit (snd (make f k db)) * ((length k + 1) * (length k + 1)) *
+  Parameter make_amort_complexity :
+    amortized (T_make f k db) (unit (snd (make f k db)))
+        (potential B (snd (make f k db))) (potential B db) ∈
+      𝑂(N.of_nat (unit (snd (make f k db)) * ((length k + 1) * (length k + 1)) *
         (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1)))
-    (fun x => let '(B, f, k, db) := x in
-      amortized (T_make f k db) (unit (snd (make f k db)))
-        (potential B (snd (make f k db))) (potential B db)).
+      for (B, f, k, db) |
+        wf db /\ slots_fit db f (S (length k)) /\ (ids (snd (make f k db)) <= B)%N.
   (** Union is constant at the spending unit, because it only queues rebuild work. *)
-  Parameter union_amort_complexity : bigO
-    (fun x : N * positive * positive * t =>
-      let '(B, i, j, db) := x in
-      wf db /\ allocated db i /\ allocated db j /\ (ids db <= B)%N)
-    (fun x => let '(B, i, j, db) := x in N.of_nat (unit (union i j db)))
-    (fun x => let '(B, i, j, db) := x in
-      amortized (T_union i j db) (unit (union i j db))
-        (potential B (union i j db)) (potential B db)).
+  Parameter union_amort_complexity :
+    amortized (T_union i j db) (unit (union i j db)) (potential B (union i j db))
+        (potential B db) ∈
+      𝑂(N.of_nat (unit (union i j db)))
+      for (B, i, j, db) |
+        wf db /\ allocated db i /\ allocated db j /\ (ids db <= B)%N.
   (** Rebuilding is linear in the pending equalities at the spending unit. *)
-  Parameter rebuild_amort_complexity : bigO
-    (fun x : N * t => let '(B, db) := x in wf db /\ (ids (rebuild db) <= B)%N)
-    (fun x => let '(B, db) := x in
-      N.of_nat (unit (rebuild db) * (pending db + 1)))
-    (fun x => let '(B, db) := x in
-      amortized (T_rebuild db) (unit (rebuild db))
-        (potential B (rebuild db)) (potential B db)).
+  Parameter rebuild_amort_complexity :
+    amortized (T_rebuild db) (unit (rebuild db)) (potential B (rebuild db))
+        (potential B db) ∈
+      𝑂(N.of_nat (unit (rebuild db) * (pending db + 1)))
+      for (B, db) | wf db /\ (ids (rebuild db) <= B)%N.
   (** Slot lookup is logarithmic in the slot number. *)
-  Parameter index_complexity : bigO (fun _ => True)
-    (fun x : N * bool * t => N.of_nat (N.to_nat (N.log2 (fst (fst x))) + 1))
-    (fun x => T_index (fst (fst x)) (snd (fst x)) (snd x)).
+  Parameter index_complexity :
+    T_index s new db ∈ 𝑂(N.of_nat (N.to_nat (N.log2 s) + 1)) for (s, new, db).
   (** Advancing is constant, because it empties the new-row indexes with one store. *)
-  Parameter advance_complexity : bigO (fun _ => True) (fun _ : t => 0%N) T_advance.
+  Parameter advance_complexity : T_advance db ∈ 𝑂(0) for db.
 
 End DATABASE_TIME.
 

@@ -2,15 +2,43 @@
 
     Databases store rows and identifier equalities.
     For example, an initialized database supplies indexes on request.
+
+    Main results
+    - [find_spec] Find returns the representative without changing the view.
+    - [make_spec] Make reuses a canonical constructor output or allocates a fresh identifier.
+    - [index_all_complete] The full index contains every row in its slot.
+    - [lookup_spec] Lookup canonicalizes its query and keeps the view and invariant.
+    - [find_complexity] Find is linear in the bit steps of one identifier operation.
+    - [lookup_complexity] Lookup is linear in the key length and the key's encoded cells.
+    - [init_complexity] Initialization is linear in the declarations and the permutation sizes,
+      with the layout work of insertion sorting.
+    - [put_complexity] Insertion, without its share of the deferred rebuild, is linear in the
+      arity and the number of slots of its function.
+    - [make_complexity] Constructor allocation, without its share of the deferred rebuild, has the
+      same class.
+    - [union_complexity] Union, without queued work, is linear in the bit steps of one identifier
+      operation.
+    - [put_amort_complexity] Insertion pays its own clock and the rebuild credit of its new use
+      entries.
+    - [make_amort_complexity] Constructor allocation has the same amortized class as insertion.
+    - [union_amort_complexity] Union is constant at the spending unit, because it only queues
+      rebuild work.
+    - [rebuild_amort_complexity] Rebuilding is linear in the pending equalities at the spending
+      unit.
+    - [index_complexity] Slot lookup is logarithmic in the slot number.
+    - [advance_complexity] Advancing is constant, because it empties the new-row indexes with one
+      store.
+
     Builds on: DatabaseSig. *)
 
 From Stdlib Require Import List PArith NArith PeanoNat Bool Lia Relations.Relation_Operators
   Sorting.Permutation Sorting.Sorted.
-From Argent Require Import Time Tactics Std Loop BigO.
+From Argent Require Import Time Tactics Std Loop Complexity.
 From Galois.Base Require Import Code Loop UnionFind Trie Key Map.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig ModelFacts.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 Module Pos.
   TimeFun Pos.iter_op Pos.max Pos.to_nat.
@@ -33362,10 +33390,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Published big-O classes, raw and amortized. *)
 
   (** Find is linear in the bit steps of one identifier operation. *)
-  Lemma find_complexity : bigO
-    (fun x : positive * t => wf (snd x) /\ allocated (snd x) (fst x))
-    (fun x => N.of_nat (unit (snd x)))
-    (fun x => T_find (fst x) (snd x)).
+  Lemma find_complexity :
+    T_find i db ∈ 𝑂(N.of_nat (unit db)) for (i, db) | wf db /\ allocated db i.
   Proof.
     eapply bigO_intro with (c := c_db).
     intros [i db] [Hwf Hallocated]. cbn [fst snd] in *.
@@ -33373,11 +33399,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Lookup is linear in the key length and the key's encoded cells. *)
-  Lemma lookup_complexity : bigO
-    (fun x : positive * list (cell V.t) * t => wf (snd x))
-    (fun x => N.of_nat ((length (snd (fst x)) + 1) * unit (snd x) +
-      fold_right (fun c n => cell_bits V.encode c + n) 0 (snd (fst x))))
-    (fun x => T_lookup (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma lookup_complexity :
+    T_lookup f k db ∈ 𝑂(N.of_nat (((length k + 1) * unit db +
+      fold_right (fun c n => cell_bits V.encode c + n) 0 k)%nat))
+      for (f, k, db) | wf db.
   Proof.
     eapply bigO_intro with (c := c_db).
     intros [[f k] db] Hwf. cbn [fst snd] in *.
@@ -33387,13 +33412,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Initialization is linear in the declarations and the permutation sizes, with the
       layout work of insertion sorting. *)
-  Lemma init_complexity : bigO (fun _ => True)
-    (fun x : list decl * list (positive * list nat) =>
-      N.of_nat ((length (fst x) + length (snd x) + layout_work (snd x) + 1) *
-        (fold_right (fun s n => length (snd s) + n) 0 (snd x) + 1) +
-        (fold_right (fun d n => Pos.size_nat (name d) + n) 0 (fst x) +
-         fold_right (fun s n => Pos.size_nat (fst s) + n) 0 (snd x))))
-    (fun x => T_init (fst x) (snd x)).
+  Lemma init_complexity :
+    T_init ds sl ∈ 𝑂(N.of_nat (((length ds + length sl + layout_work sl + 1) *
+      (fold_right (fun s n => length (snd s) + n) 0 sl + 1) +
+      (fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
+       fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl))%nat))
+      for (ds, sl).
   Proof.
     eapply bigO_intro with (c := c_db).
     intros [ds sl] _. cbn [fst snd].
@@ -33414,12 +33438,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Insertion, without its share of the deferred rebuild, is linear in the arity and the
       number of slots of its function. *)
-  Lemma put_complexity : bigO
-    (fun x : positive * list (cell V.t) * option (cell V.t) * t =>
-      let '(f, k, o, db) := x in wf db /\ slots_fit db f (length (k ++ option_list o)))
-    (fun x => let '(f, k, o, db) := x in
-      N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (put f k o db)))
-    (fun x => let '(f, k, o, db) := x in T_put f k o db).
+  Lemma put_complexity :
+    T_put f k o db ∈ 𝑂(N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (put f k o db)))
+      for (f, k, o, db) | wf db /\ slots_fit db f (length (k ++ option_list o)).
   Proof.
     eapply bigO_intro with (c := ((32 * 4096) *
       (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf + V.c_key + V.c_val +
@@ -33434,12 +33455,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Constructor allocation, without its share of the deferred rebuild, has the same class. *)
-  Lemma make_complexity : bigO
-    (fun x : positive * list (cell V.t) * t =>
-      let '(f, k, db) := x in wf db /\ slots_fit db f (S (length k)))
-    (fun x => let '(f, k, db) := x in
-      N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (snd (make f k db))))
-    (fun x => let '(f, k, db) := x in T_make f k db).
+  Lemma make_complexity :
+    T_make f k db ∈ 𝑂(N.of_nat ((length k + 1) * (slots_of db f + 1) * unit (snd (make f k db))))
+      for (f, k, db) | wf db /\ slots_fit db f (S (length k)).
   Proof.
     eapply bigO_intro with (c := ((32 * 4096) *
       (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf + V.c_key + V.c_val +
@@ -33453,11 +33471,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Union, without queued work, is linear in the bit steps of one identifier operation. *)
-  Lemma union_complexity : bigO
-    (fun x : positive * positive * t =>
-      let '(i, j, db) := x in wf db /\ allocated db i /\ allocated db j)
-    (fun x => let '(i, j, db) := x in N.of_nat (unit db))
-    (fun x => let '(i, j, db) := x in T_union i j db).
+  Lemma union_complexity :
+    T_union i j db ∈ 𝑂(N.of_nat (unit db))
+      for (i, j, db) | wf db /\ allocated db i /\ allocated db j.
   Proof.
     eapply bigO_intro with (c := c_db).
     intros [[i j] db] [Hwf [Hi Hj]]. cbn beta iota zeta.
@@ -33499,16 +33515,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Insertion pays its own clock and the rebuild credit of its new use entries. *)
-  Lemma put_amort_complexity : bigO
-    (fun x : N * positive * list (cell V.t) * option (cell V.t) * t =>
-      let '(B, f, k, o, db) := x in
-      wf db /\ slots_fit db f (length (k ++ option_list o)) /\ (ids (put f k o db) <= B)%N)
-    (fun x => let '(B, f, k, o, db) := x in
-      N.of_nat (unit (put f k o db) * ((length k + 1) * (length k + 1)) *
+  Lemma put_amort_complexity :
+    amortized (T_put f k o db) (unit (put f k o db)) (potential B (put f k o db))
+        (potential B db) ∈
+      𝑂(N.of_nat (unit (put f k o db) * ((length k + 1) * (length k + 1)) *
         (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1)))
-    (fun x => let '(B, f, k, o, db) := x in
-      amortized (T_put f k o db) (unit (put f k o db))
-        (potential B (put f k o db)) (potential B db)).
+      for (B, f, k, o, db) |
+        wf db /\ slots_fit db f (length (k ++ option_list o)) /\ (ids (put f k o db) <= B)%N.
   Proof.
     eapply bigO_intro with (c := (4 * c_db)%N).
     intros [[[[B f] k] o] db] [Hwf [Hfit Hids]]. cbn beta iota zeta.
@@ -33523,16 +33536,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Constructor allocation has the same amortized class as insertion. *)
-  Lemma make_amort_complexity : bigO
-    (fun x : N * positive * list (cell V.t) * t =>
-      let '(B, f, k, db) := x in
-      wf db /\ slots_fit db f (S (length k)) /\ (ids (snd (make f k db)) <= B)%N)
-    (fun x => let '(B, f, k, db) := x in
-      N.of_nat (unit (snd (make f k db)) * ((length k + 1) * (length k + 1)) *
+  Lemma make_amort_complexity :
+    amortized (T_make f k db) (unit (snd (make f k db)))
+        (potential B (snd (make f k db))) (potential B db) ∈
+      𝑂(N.of_nat (unit (snd (make f k db)) * ((length k + 1) * (length k + 1)) *
         (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1)))
-    (fun x => let '(B, f, k, db) := x in
-      amortized (T_make f k db) (unit (snd (make f k db)))
-        (potential B (snd (make f k db))) (potential B db)).
+      for (B, f, k, db) |
+        wf db /\ slots_fit db f (S (length k)) /\ (ids (snd (make f k db)) <= B)%N.
   Proof.
     eapply bigO_intro with (c := (4 * c_db)%N).
     intros [[[B f] k] db] [Hwf [Hfit Hids]]. cbn beta iota zeta.
@@ -33547,14 +33557,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Union is constant at the spending unit, because it only queues rebuild work. *)
-  Lemma union_amort_complexity : bigO
-    (fun x : N * positive * positive * t =>
-      let '(B, i, j, db) := x in
-      wf db /\ allocated db i /\ allocated db j /\ (ids db <= B)%N)
-    (fun x => let '(B, i, j, db) := x in N.of_nat (unit (union i j db)))
-    (fun x => let '(B, i, j, db) := x in
-      amortized (T_union i j db) (unit (union i j db))
-        (potential B (union i j db)) (potential B db)).
+  Lemma union_amort_complexity :
+    amortized (T_union i j db) (unit (union i j db)) (potential B (union i j db))
+        (potential B db) ∈
+      𝑂(N.of_nat (unit (union i j db)))
+      for (B, i, j, db) |
+        wf db /\ allocated db i /\ allocated db j /\ (ids db <= B)%N.
   Proof.
     eapply bigO_intro with (c := c_db).
     intros [[[B i] j] db] [Hwf [Hi [Hj Hids]]]. cbn beta iota zeta.
@@ -33564,13 +33572,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Rebuilding is linear in the pending equalities at the spending unit. *)
-  Lemma rebuild_amort_complexity : bigO
-    (fun x : N * t => let '(B, db) := x in wf db /\ (ids (rebuild db) <= B)%N)
-    (fun x => let '(B, db) := x in
-      N.of_nat (unit (rebuild db) * (pending db + 1)))
-    (fun x => let '(B, db) := x in
-      amortized (T_rebuild db) (unit (rebuild db))
-        (potential B (rebuild db)) (potential B db)).
+  Lemma rebuild_amort_complexity :
+    amortized (T_rebuild db) (unit (rebuild db)) (potential B (rebuild db))
+        (potential B db) ∈
+      𝑂(N.of_nat (unit (rebuild db) * (pending db + 1)))
+      for (B, db) | wf db /\ (ids (rebuild db) <= B)%N.
   Proof.
     eapply bigO_intro with (c := c_db).
     intros [B db] [Hwf Hids]. cbn beta iota zeta.
@@ -33580,9 +33586,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Slot lookup is logarithmic in the slot number. *)
-  Lemma index_complexity : bigO (fun _ => True)
-    (fun x : N * bool * t => N.of_nat (N.to_nat (N.log2 (fst (fst x))) + 1))
-    (fun x => T_index (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma index_complexity :
+    T_index s new db ∈ 𝑂(N.of_nat (N.to_nat (N.log2 s) + 1)) for (s, new, db).
   Proof.
     eapply bigO_intro with (c := c_db).
     intros [[s new] db] _. cbn [fst snd].
@@ -33599,7 +33604,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Advancing is constant, because it empties the new-row indexes with one store. *)
-  Lemma advance_complexity : bigO (fun _ => True) (fun _ : t => 0%N) T_advance.
+  Lemma advance_complexity : T_advance db ∈ 𝑂(0) for db.
   Proof.
     eapply bigO_intro with (c := c_db). intros db _.
     rewrite N.mul_0_r, N.add_0_l. apply T_advance_const.
