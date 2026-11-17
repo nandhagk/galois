@@ -158,6 +158,254 @@ TimeFun tnum_sub.
 Definition tnum_neg (w : width) (a : tnum) : tnum := tnum_sub w (tnum_const w 0) a.
 TimeFun tnum_neg.
 
+(** Shared masks preserve the specification while avoiding repeated mask construction. *)
+Definition tnum_wrap_m (m z : Z) : Z := Z.land z m.
+TimeFun tnum_wrap_m.
+
+(** Supplying the width mask preserves word wrapping exactly. *)
+Lemma tnum_wrap_m_eq : forall w z,
+  tnum_wrap_m (Z.ones (Zpos w)) z = tnum_wrap w z.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_wand_m (mask : Z) (x y : Z) : Z := tnum_wrap_m mask (Z.land x y).
+TimeFun tnum_wand_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_wand_m_eq : forall w x y,
+  tnum_wand_m (Z.ones (Zpos w)) x y = tnum_wand w x y.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_wor_m (mask : Z) (x y : Z) : Z := tnum_wrap_m mask (Z.lor x y).
+TimeFun tnum_wor_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_wor_m_eq : forall w x y,
+  tnum_wor_m (Z.ones (Zpos w)) x y = tnum_wor w x y.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_wnot_m (mask : Z) (x : Z) : Z := tnum_wrap_m mask (Z.lnot x).
+TimeFun tnum_wnot_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_wnot_m_eq : forall w x,
+  tnum_wnot_m (Z.ones (Zpos w)) x = tnum_wnot w x.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_normalise_m (mask : Z) (t : tnum) : tnum :=
+  Tnum (tnum_wrap_m mask (zeros t)) (tnum_wrap_m mask (ones t)).
+TimeFun tnum_normalise_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_normalise_m_eq : forall w t,
+  tnum_normalise_m (Z.ones (Zpos w)) t = tnum_normalise w t.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_join_m (mask : Z) (a b : tnum) : tnum :=
+  Tnum (tnum_wand_m mask (zeros a) (zeros b)) (tnum_wand_m mask (ones a) (ones b)).
+TimeFun tnum_join_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_join_m_eq : forall w a b,
+  tnum_join_m (Z.ones (Zpos w)) a b = tnum_join w a b.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_meet_m (mask : Z) (a b : tnum) : tnum :=
+  Tnum (tnum_wor_m mask (zeros a) (zeros b)) (tnum_wor_m mask (ones a) (ones b)).
+TimeFun tnum_meet_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_meet_m_eq : forall w a b,
+  tnum_meet_m (Z.ones (Zpos w)) a b = tnum_meet w a b.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_subset_m (mask : Z) (a b : Z) : bool :=
+  Z.eqb (tnum_wand_m mask a b) (tnum_wrap_m mask a).
+TimeFun tnum_subset_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_subset_m_eq : forall w a b,
+  tnum_subset_m (Z.ones (Zpos w)) a b = tnum_subset w a b.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_const_m (mask : Z) (z : Z) : tnum := Tnum (tnum_wnot_m mask z) (tnum_wrap_m mask z).
+TimeFun tnum_const_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_const_m_eq : forall w z,
+  tnum_const_m (Z.ones (Zpos w)) z = tnum_const w z.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_min_m (mask : Z) (a : tnum) : Z := tnum_wrap_m mask (ones a).
+TimeFun tnum_min_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_min_m_eq : forall w a,
+  tnum_min_m (Z.ones (Zpos w)) a = tnum_min w a.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_max_m (mask : Z) (a : tnum) : Z := tnum_wnot_m mask (zeros a).
+TimeFun tnum_max_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_max_m_eq : forall w a,
+  tnum_max_m (Z.ones (Zpos w)) a = tnum_max w a.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_mask_m (mask : Z) (a : tnum) : Z := tnum_wnot_m mask (tnum_wor_m mask (zeros a) (ones a)).
+TimeFun tnum_mask_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_mask_m_eq : forall w a,
+  tnum_mask_m (Z.ones (Zpos w)) a = tnum_mask w a.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_constant_m (mask : Z) (a : tnum) : option Z :=
+  if tnum_wrap_m mask (zeros a) =? tnum_wnot_m mask (ones a) then Some (tnum_min_m mask a) else None.
+TimeFun tnum_constant_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_constant_m_eq : forall w a,
+  tnum_constant_m (Z.ones (Zpos w)) a = tnum_constant w a.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_empty_m (mask : Z) (a : tnum) : bool :=
+  negb (Z.eqb (tnum_wand_m mask (zeros a) (ones a)) 0).
+TimeFun tnum_empty_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_empty_m_eq : forall w a,
+  tnum_empty_m (Z.ones (Zpos w)) a = tnum_empty w a.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_not_m (mask : Z) (a : tnum) : tnum :=
+  Tnum (tnum_wrap_m mask (ones a)) (tnum_wrap_m mask (zeros a)).
+TimeFun tnum_not_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_not_m_eq : forall w a,
+  tnum_not_m (Z.ones (Zpos w)) a = tnum_not w a.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_and_m (mask : Z) (a b : tnum) : tnum :=
+  Tnum (tnum_wor_m mask (zeros a) (zeros b)) (tnum_wand_m mask (ones a) (ones b)).
+TimeFun tnum_and_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_and_m_eq : forall w a b,
+  tnum_and_m (Z.ones (Zpos w)) a b = tnum_and w a b.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_or_m (mask : Z) (a b : tnum) : tnum :=
+  Tnum (tnum_wand_m mask (zeros a) (zeros b)) (tnum_wor_m mask (ones a) (ones b)).
+TimeFun tnum_or_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_or_m_eq : forall w a b,
+  tnum_or_m (Z.ones (Zpos w)) a b = tnum_or w a b.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_xor_m (mask : Z) (a b : tnum) : tnum :=
+  Tnum (tnum_wor_m mask (tnum_wand_m mask (zeros a) (zeros b)) (tnum_wand_m mask (ones a) (ones b)))
+    (tnum_wor_m mask (tnum_wand_m mask (zeros a) (ones b)) (tnum_wand_m mask (ones a) (zeros b))).
+TimeFun tnum_xor_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_xor_m_eq : forall w a b,
+  tnum_xor_m (Z.ones (Zpos w)) a b = tnum_xor w a b.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_adc_uncertain_m (mask : Z) (a b : tnum) (initial : bool) : Z :=
+  Z.lor (Z.lxor (tnum_min_m mask a + tnum_min_m mask b + Z.b2z initial)
+      (tnum_max_m mask a + tnum_max_m mask b + Z.b2z initial))
+    (Z.lor (tnum_mask_m mask a) (tnum_mask_m mask b)).
+TimeFun tnum_adc_uncertain_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_adc_uncertain_m_eq : forall w a b initial,
+  tnum_adc_uncertain_m (Z.ones (Zpos w)) a b initial = tnum_adc_uncertain w a b initial.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_adc_m (mask : Z) (a b : tnum) (initial : bool) : tnum :=
+  let v := tnum_min_m mask a + tnum_min_m mask b + Z.b2z initial in
+  let m := tnum_adc_uncertain_m mask a b initial in
+  Tnum (tnum_wrap_m mask (Z.lnot (Z.lor v m))) (tnum_wrap_m mask (Z.land v (Z.lnot m))).
+TimeFun tnum_adc_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_adc_m_eq : forall w a b initial,
+  tnum_adc_m (Z.ones (Zpos w)) a b initial = tnum_adc w a b initial.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_add_m (mask : Z) (a b : tnum) : tnum := tnum_adc_m mask a b false.
+TimeFun tnum_add_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_add_m_eq : forall w a b,
+  tnum_add_m (Z.ones (Zpos w)) a b = tnum_add w a b.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_sub_m (mask : Z) (a b : tnum) : tnum := tnum_adc_m mask a (tnum_not_m mask b) true.
+TimeFun tnum_sub_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_sub_m_eq : forall w a b,
+  tnum_sub_m (Z.ones (Zpos w)) a b = tnum_sub w a b.
+Proof.
+  reflexivity.
+Qed.
+
+Definition tnum_neg_m (mask : Z) (a : tnum) : tnum := tnum_sub_m mask (tnum_const_m mask 0) a.
+TimeFun tnum_neg_m.
+
+(** The shared-mask form agrees with the width-indexed specification. *)
+Lemma tnum_neg_m_eq : forall w a,
+  tnum_neg_m (Z.ones (Zpos w)) a = tnum_neg w a.
+Proof.
+  reflexivity.
+Qed.
+
 Definition tnum_bitlen (h : Z) : Z := if h =? 0 then 0 else Z.succ (Z.log2 h).
 TimeFun tnum_bitlen.
 
