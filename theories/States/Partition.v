@@ -2613,37 +2613,77 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     rewrite Nat2N.inj_add in Hbound; exact Hbound.
   Qed.
 
+  (** The bottom test is linear in the partition size for the fixed cap. *)
   Lemma is_bot_bigO : bigO (fun _ : t => True) (fun a => N.of_nat (size a)) T_is_bot.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_lat; intros a _.
+    pose proof (T_is_bot_le a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 
+  (** Narrowing is linear in both partition sizes for the fixed cap. *)
   Lemma narrow_bigO : bigO (X := t * t) (fun _ => True)
     (fun ab => N.of_nat (size (fst ab) + size (snd ab)))
     (fun ab => T_narrow (fst ab) (snd ab)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_lat; intros [a b] _.
+    pose proof (T_narrow_le a b) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 
+  (** Assignment is linear in its component work measure. *)
   Lemma assign_bigO : bigO (X := X.t * term L.op X.t * t) (fun _ => True)
     (fun '(x, e, a) => N.of_nat (assign_work x e a)) (fun '(x, e, a) => T_assign x e a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_state; intros [[x e] a] _.
+    pose proof (T_assign_le x e a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 
+  (** Havoc is linear in its component work measure. *)
   Lemma havoc_bigO : bigO (X := X.t * t) (fun _ => True)
     (fun '(x, a) => N.of_nat (havoc_work x a)) (fun '(x, a) => T_havoc x a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_state; intros [x a] _.
+    pose proof (T_havoc_le x a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 
+  (** Assumption is linear in its component work measure. *)
   Lemma assume_bigO : bigO (X := L.guard * list (term L.op X.t) * t) (fun _ => True)
     (fun '(gd, es, a) => N.of_nat (assume_work gd es a)) (fun '(gd, es, a) => T_assume gd es a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_state; intros [[g es] a] _.
+    pose proof (T_assume_le g es a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 
+  (** Evaluation is linear in its component work measure. *)
   Lemma eval_bigO : bigO (X := term L.op X.t * t) (fun _ => True)
     (fun '(e, a) => N.of_nat (eval_work e a)) (fun '(e, a) => T_eval e a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_state; intros [e a] _.
+    pose proof (T_eval_le e a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 
+  (** Injection is linear in the token width and the component state size. *)
   Lemma inject_bigO : bigO (X := Tk.t * S.t) (fun _ => True)
     (fun ks => N.of_nat (Tk.bits (fst ks) + S.size (snd ks)))
     (fun ks => T_inject (fst ks) (snd ks)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_partition; intros [k a] _.
+    pose proof (T_inject_le k a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 
+  (** Retagging is linear in the token width and the partition size. *)
   Lemma retag_bigO : bigO (X := Tk.t * t) (fun _ => True)
     (fun ka => N.of_nat (Tk.bits (fst ka) + size (snd ka)))
     (fun ka => T_retag (fst ka) (snd ka)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_partition; intros [k a] _.
+    pose proof (T_retag_le k a) as Hbound.
+    rewrite Nat2N.inj_add in Hbound; exact Hbound.
+  Qed.
 End PartitionT.
