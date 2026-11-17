@@ -2,14 +2,25 @@
 
     Integer elimination tracks the input multipliers used by every produced row.
     For example, eliminating x from x + y = 2 and x = 1 gives y = 1.
+
+    Main results
+    - [leb_complexity] Inclusion of normal states costs one elimination of both and one cheap
+      check per row.
+    - [join_complexity] Join of normal states is one elimination.
+    - [widen_complexity] Widening is an inclusion test followed by at most one join.
+    - [affine_hull_complexity] The affine hull is one elimination of the stacked rows.
+    - [entail_cert_complexity] Certificate production is one elimination of the premises and
+      the conclusion.
+
     Builds on: KarrSig and the binary trie code. *)
 From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring ArithRing Lqa Permutation.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig LinCertSig KarrSig.
+Import ComplexityNotations.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 
@@ -26525,9 +26536,8 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   (** Assignment is linear in its declared numeric work. *)
-  Lemma assign_complexity : bigO (fun _ : X.t * term L.op X.t * t => True)
-    (fun x => N.of_nat (assign_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assign (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assign_complexity :
+    T_assign x e s ∈ 𝑂(N.of_nat (assign_work x e s)) for (x, e, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [[x e] s] _.
     pose proof (T_assign_le x e s) as Hclock.
@@ -26536,9 +26546,8 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   (** Havoc is linear in its declared numeric work. *)
-  Lemma havoc_complexity : bigO (fun _ : X.t * t => True)
-    (fun x => N.of_nat (havoc_work (fst x) (snd x)))
-    (fun x => T_havoc (fst x) (snd x)).
+  Lemma havoc_complexity :
+    T_havoc x s ∈ 𝑂(N.of_nat (havoc_work x s)) for (x, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [x s] _.
     pose proof (T_havoc_le x s) as Hclock.
@@ -26547,9 +26556,8 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   (** Assumption is linear in its declared numeric work. *)
-  Lemma assume_complexity : bigO (fun _ : L.guard * list (term L.op X.t) * t => True)
-    (fun x => N.of_nat (assume_work (fst (fst x)) (snd (fst x)) (snd x)))
-    (fun x => T_assume (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma assume_complexity :
+    T_assume g es s ∈ 𝑂(N.of_nat (assume_work g es s)) for (g, es, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [[g es] s] _.
     pose proof (T_assume_le g es s) as Hclock.
@@ -26558,9 +26566,8 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   (** A range query is linear in its declared numeric work. *)
-  Lemma range_complexity : bigO (fun _ : term L.op X.t * t => True)
-    (fun x => N.of_nat (range_work (fst x) (snd x)))
-    (fun x => T_range (fst x) (snd x)).
+  Lemma range_complexity :
+    T_range e s ∈ 𝑂(N.of_nat (range_work e s)) for (e, s).
   Proof.
     apply bigO_intro with (c := c_num). intros [e s] _.
     pose proof (T_range_le e s) as Hclock.
@@ -27505,9 +27512,8 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
   (** Inclusion of normal states uses one shared elimination allowance. *)
   (** Inclusion of normal states fits one shared elimination allowance. *)
-  Lemma leb_complexity : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
-    (fun x => N.of_nat (elimination_work (fst x) (snd x)))
-    (fun x => T_leb (fst x) (snd x)).
+  Lemma leb_complexity :
+    T_leb s1 s2 ∈ 𝑂(N.of_nat (elimination_work s1 s2)) for (s1, s2) | normal_s s1 /\ normal_s s2.
   Proof.
     apply bigO_intro with (c := karr_shared_leb_factor).
     intros [a b] [Ha Hb]. cbn [fst snd] in *.
@@ -27516,9 +27522,8 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
 
   (** Join of normal states fits one public elimination allowance. *)
-  Lemma join_complexity : bigO (fun x : t * t => normal_s (fst x) /\ normal_s (snd x))
-    (fun x => N.of_nat (elimination_work (fst x) (snd x)))
-    (fun x => T_join (fst x) (snd x)).
+  Lemma join_complexity :
+    T_join s1 s2 ∈ 𝑂(N.of_nat (elimination_work s1 s2)) for (s1, s2) | normal_s s1 /\ normal_s s2.
   Proof.
     apply bigO_intro with (c := c_karr). intros [a b] [Ha Hb].
     pose proof (T_join_karr_le a b Ha Hb) as Hclock.
@@ -27527,10 +27532,9 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
   (** Widening combines the inclusion and join elimination allowances. *)
   (** Widening pays one inclusion check and at most one join. *)
-  Lemma widen_complexity : bigO (fun x : wparam * t * t =>
-      normal_s (snd (fst x)) /\ normal_s (snd x))
-    (fun x => N.of_nat (elimination_work (snd (fst x)) (snd x)))
-    (fun x => T_widen (fst (fst x)) (snd (fst x)) (snd x)).
+  Lemma widen_complexity :
+    T_widen w s1 s2 ∈ 𝑂(N.of_nat (elimination_work s1 s2))
+      for (w, s1, s2) | normal_s s1 /\ normal_s s2.
   Proof.
     apply bigO_intro with (c := (karr_shared_leb_factor + c_karr + 1)%N).
     intros [[p a] b] [Ha Hb]. cbn [fst snd] in *.
@@ -27544,10 +27548,9 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
 
   (** The affine hull of normal sources fits one public elimination allowance. *)
-  Lemma affine_hull_complexity : bigO
-    (fun x : list (lcons X.t) * list (lcons X.t) => normal (fst x) /\ normal (snd x))
-    (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x))))
-    (fun x => T_affine_hull (fst x) (snd x)).
+  Lemma affine_hull_complexity :
+    T_affine_hull P Q ∈ 𝑂(N.of_nat (elimination_work (Reached P) (Reached Q)))
+      for (P, Q) | normal P /\ normal Q.
   Proof.
     apply bigO_intro with (c := c_karr). intros [a b] [Ha Hb].
     pose proof (T_affine_hull_le a b Ha Hb) as Hclock.
@@ -27555,10 +27558,9 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   (** Certificate production for normal inputs fits one public elimination allowance. *)
-  Lemma entail_cert_complexity : bigO
-    (fun x : list (lcons X.t) * lcons X.t => normal (fst x) /\ normal (snd x :: nil))
-    (fun x => N.of_nat (elimination_work (Reached (fst x)) (Reached (snd x :: nil))))
-    (fun x => T_entail_cert (fst x) (snd x)).
+  Lemma entail_cert_complexity :
+    T_entail_cert P c ∈ 𝑂(N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))
+      for (P, c) | normal P /\ normal (c :: nil).
   Proof.
     apply bigO_intro with (c := c_karr). intros [P c] [HP Hc].
     pose proof (T_entail_cert_le P c HP Hc) as Hclock.
