@@ -110,6 +110,32 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example rejects_missing_edge_target_in_unreachable_graph :
+  WtoCode.check (DigraphCode.prepare Unreachable.graph) [1]
+    (WVertex 1 (WVertex 2 (WVertex 4 WNil))) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_ranked_source_without_its_successor :
+  WtoCode.check (DigraphCode.prepare Unreachable.graph) [2]
+    (WVertex 2 (WVertex 3 WNil)) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example edge_scan_accepts_an_unranked_sink :
+  wto_edges_ok Unreachable.graph Empty Empty [5] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example edge_scan_rejects_an_unranked_source :
+  wto_edges_ok Unreachable.graph Empty Empty [1] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example rejects_duplicate :
   WtoCode.check (DigraphCode.prepare Singleton.graph) [1]
     (WVertex 1 (WVertex 1 WNil)) = false.

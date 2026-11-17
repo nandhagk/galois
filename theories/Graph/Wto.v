@@ -820,11 +820,62 @@ Definition wto_interval_edge (ranks : ptrie N) (intervals : ptrie (N * N))
   end.
 TimeFun wto_interval_edge.
 
-(** The edge scan is the final conjunct of the checker. *)
-Definition wto_edges_ok (b : digraph) (ranks : ptrie N) (intervals : ptrie (N * N))
+(** A row shares its source rank and reads an interval only for a non-forward edge. *)
+Definition wto_interval_edge_from (ranks : ptrie N) (intervals : ptrie (N * N))
+    (ru : N) (v : positive) : bool :=
+  match trie_get v ranks with
+  | Some rv =>
+    if N.ltb ru rv then true else
+      match trie_get v intervals with
+      | Some (lo, hi) => N.leb lo ru && N.ltb ru hi
+      | None => false
+      end
+  | None => false
+  end.
+TimeFun wto_interval_edge_from.
+
+(** An unranked sink has no edge to reject; a nonempty unranked row does. *)
+Definition wto_edges_row (ranks : ptrie N) (intervals : ptrie (N * N))
+    (b : digraph) (u : positive) : bool :=
+  match trie_get u ranks with
+  | Some ru => forallb (wto_interval_edge_from ranks intervals ru) (succs b u)
+  | None => match succs b u with [] => true | _ => false end
+  end.
+TimeFun wto_edges_row.
+
+(** Reading the source rank once preserves every row's old Boolean result. *)
+Lemma wto_edges_row_agrees ranks intervals b u :
+  wto_edges_row ranks intervals b u =
+    forallb (wto_interval_edge ranks intervals u) (succs b u).
+Proof.
+  unfold wto_edges_row.
+  destruct (trie_get u ranks) as [ru|] eqn:Hrank.
+  - induction (succs b u) as [|v rest IH]; [reflexivity|].
+    cbn [forallb]. rewrite IH. unfold wto_interval_edge_from, wto_interval_edge.
+    rewrite Hrank. destruct (trie_get v ranks); reflexivity.
+  - destruct (succs b u) as [|v rest]; [reflexivity|].
+    cbn [forallb]. unfold wto_interval_edge. now rewrite Hrank.
+Qed.
+
+(** The original edge scan remains the functional specification. *)
+Definition wto_edges_ok_spec (b : digraph) (ranks : ptrie N) (intervals : ptrie (N * N))
     (vs : list positive) : bool :=
   forallb (fun u => forallb (wto_interval_edge ranks intervals u) (succs b u)) vs.
+
+(** The checker's final scan shares a source-rank lookup across each row. *)
+Definition wto_edges_ok (b : digraph) (ranks : ptrie N) (intervals : ptrie (N * N))
+    (vs : list positive) : bool :=
+  forallb (wto_edges_row ranks intervals b) vs.
 TimeFun wto_edges_ok.
+
+(** Hoisting a source rank preserves the original edge predicate on every row. *)
+Lemma wto_edges_ok_agrees b ranks intervals vs :
+  wto_edges_ok b ranks intervals vs = wto_edges_ok_spec b ranks intervals vs.
+Proof.
+  unfold wto_edges_ok, wto_edges_ok_spec.
+  induction vs as [|u vs IH]; [reflexivity|].
+  cbn [forallb]. now rewrite wto_edges_row_agrees, IH.
+Qed.
 
 (** The checker builds its own listed-row graph and never reads prepared caches. *)
 Definition wto_check_linear (g : prepared) (roots : list positive) (w : wto) : bool :=
@@ -1989,7 +2040,8 @@ Proof.
     + apply wto_present_test. apply (proj2 (scc_listed_lookup _ v)).
       apply Hlive. now rewrite <- Hvs.
     + apply wto_present_test, (proj2 (Hranks v)). now apply Hlive.
-  - unfold wto_edges_ok. apply forallb_forall. intros u Hu.
+  - rewrite wto_edges_ok_agrees. unfold wto_edges_ok_spec.
+    apply forallb_forall. intros u Hu.
     apply forallb_forall. intros v Hedge. apply Hedges; [now rewrite <- Hvs|exact Hedge].
 Qed.
 
@@ -2039,7 +2091,8 @@ Proof.
   destruct (wto_check_index_spec (check_fuel g) (graph_width (base g)) (listed_of g)
     w ranks intervals vs Hindex) as [Hunique [Hvs [Hdomain Hlegal]]].
   rewrite forallb_forall in Hinside. rewrite forallb_forall in Houtside.
-  unfold wto_edges_ok in Hedges. rewrite forallb_forall in Hedges.
+  rewrite wto_edges_ok_agrees in Hedges. unfold wto_edges_ok_spec in Hedges.
+  rewrite forallb_forall in Hedges.
   assert (Hedge_order : forall u v, In u (wto_order w) -> edge (base g) u v ->
     graph_before (wto_order w) u v \/ wto_encloses v u w).
   { intros u v Hu Hedge. apply Hlegal.
@@ -2393,6 +2446,78 @@ Proof.
       rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *; nia.
 Qed.
 
+(** A shared-rank edge pays only target lookups and source-width comparisons. *)
+Lemma wto_interval_edge_from_clock width ranks intervals ru v :
+  Pos.size_nat v <= width -> N.size_nat ru <= width + 1 ->
+  (T_wto_interval_edge_from ranks intervals ru v <= 64 * N.of_nat (width + 1))%N.
+Proof.
+  intros Hv Hrank.
+  pose proof (PTrieT.T_trie_get_le N v ranks) as Hgetv.
+  pose proof (PTrieT.T_trie_get_le (N * N) v intervals) as Hgetinterval.
+  destruct (trie_get v ranks) as [rv|] eqn:Hrv.
+  - pose proof (wto_N_ltb_clock ru rv) as Hforward.
+    destruct (N.ltb ru rv) eqn:Hforward_value.
+    + time_unfold @T_wto_interval_edge_from. rewrite Hrv, Hforward_value.
+      time_cbn. rewrite !Nat2N.inj_add in *. lia.
+    + destruct (trie_get v intervals) as [[lo hi]|] eqn:Hinterval.
+      * pose proof (wto_N_leb_right lo ru) as Hlower.
+        pose proof (wto_N_ltb_clock ru hi) as Hupper.
+        time_unfold @T_wto_interval_edge_from. rewrite Hrv, Hforward_value, Hinterval.
+        time_cbn. rewrite !Nat2N.inj_add in *.
+        destruct (N.leb lo ru); unfold Datatypes.T_andb; time_cbn; lia.
+      * time_unfold @T_wto_interval_edge_from. rewrite Hrv, Hforward_value, Hinterval.
+        time_cbn. rewrite !Nat2N.inj_add in *. lia.
+  - time_unfold @T_wto_interval_edge_from. rewrite Hrv.
+    time_cbn. rewrite !Nat2N.inj_add in *. lia.
+Qed.
+
+(** One source lookup and a successor scan fit the existing per-row allowance. *)
+Lemma wto_edges_row_clock g ranks intervals u :
+  In u (nodes g) ->
+  (forall r, trie_get u ranks = Some r -> N.size_nat r <= graph_width (base g) + 1) ->
+  (T_wto_edges_row ranks intervals (base g) u <=
+    128 * N.of_nat (length (succs (base g) u) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros Hu Hrank.
+  pose proof (PTrieT.T_trie_get_le N u ranks) as Hget.
+  pose proof (search_succs_clock (base g) u) as Hread.
+  pose proof (scc_node_width g u Hu) as Hwidth.
+  destruct (trie_get u ranks) as [ru|] eqn:Hru.
+  - assert (Hrow : Forall (fun v =>
+        (T_wto_interval_edge_from ranks intervals ru v <=
+          64 * N.of_nat (graph_width (base g) + 1))%N) (succs (base g) u)).
+    { apply Forall_forall. intros v Hv. apply wto_interval_edge_from_clock.
+      - now apply (wto_listed_target_width g u v).
+      - now apply Hrank. }
+    pose proof (wto_forallb_clock (wto_interval_edge_from ranks intervals ru)
+      (fun v => T_wto_interval_edge_from ranks intervals ru v) (succs (base g) u)
+      (64 * N.of_nat (graph_width (base g) + 1))%N Hrow) as Hinner.
+    time_unfold @T_wto_edges_row. rewrite Hru. time_cbn.
+    rewrite !Nat2N.inj_add in *. nia.
+  - time_unfold @T_wto_edges_row. rewrite Hru. time_cbn.
+    destruct (succs (base g) u); cbn [length]; rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** Hoisted row scans retain the old source-and-edge time envelope. *)
+Lemma wto_edge_rows_from_clock g ranks intervals vs :
+  Forall (fun u => In u (nodes g)) vs ->
+  (forall u r, trie_get u ranks = Some r -> N.size_nat r <= graph_width (base g) + 1) ->
+  (List.T_forallb (wto_edges_row ranks intervals (base g))
+    (fun u => T_wto_edges_row ranks intervals (base g) u) vs <=
+    256 * N.of_nat (length vs +
+      fold_right (fun u n => (length (succs (base g) u) + n)%nat) 0%nat vs + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros Hlisted Hrank. induction Hlisted as [|u vs Hu Hlisted IH].
+  - time_unfold @List.T_forallb. cbn [length fold_right]. nia.
+  - pose proof (wto_edges_row_clock g ranks intervals u Hu (Hrank u)) as Hrow.
+    time_unfold @List.T_forallb. time_cbn.
+    destruct (wto_edges_row ranks intervals (base g) u);
+      unfold Datatypes.T_andb; time_cbn; cbn [length fold_right];
+      rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *; nia.
+Qed.
+
 (** Successful indexing limits the final scan to distinct listed rows and bounded source ranks. *)
 Lemma wto_checked_edges_clock g w ranks intervals vs :
   wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
@@ -2413,7 +2538,7 @@ Proof.
     now rewrite Hranks. }
   assert (Hlistedall : Forall (fun u => In u (nodes g)) vs).
   { apply Forall_forall. exact Hincl. }
-  pose proof (wto_edge_rows_clock g ranks intervals vs Hlistedall Hrank) as Hscan.
+  pose proof (wto_edge_rows_from_clock g ranks intervals vs Hlistedall Hrank) as Hscan.
   pose proof (NoDup_incl_length Hunique Hincl) as Hvertices.
   pose proof (scc_weight_incl (fun u => length (succs (base g) u))
     vs (nodes g) Hunique Hincl) as Hrows.
@@ -4542,7 +4667,7 @@ Module WtoT <: WTO_ALL.
     wto_edges_ok b ranks intervals vs =
       forallb (fun u => forallb (wto_interval_edge ranks intervals u) (succs b u)) vs.
   Proof.
-    reflexivity.
+    exact wto_edges_ok_agrees.
   Qed.
 
   (** The edge scan reads the rows of distinct listed vertices once each. *)
