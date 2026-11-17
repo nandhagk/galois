@@ -5,7 +5,7 @@
     Builds on: DestroyCode, ParMoveCode and the block interpreter. *)
 
 From Stdlib Require Import List PArith Arith.
-From Galois.Base Require Import KeySig Key.
+From Galois.Base Require Import KeySig Key Trie.
 From Galois.Ssa Require Import Lang ParMove Destroy.
 
 Import List.ListNotations.
@@ -122,6 +122,26 @@ Qed.
 
 Example temporary_move_preconditions_rejected :
   DS.moves_ok [(1%positive, 2%positive); (2%positive, 1%positive)] 2%positive = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example checked_copy_block :
+  DS.copy_block (PTrieCode.set 2%positive [3%positive; 4%positive] Empty) 5%positive
+    (Block _ _ _ [] [] (Jump 2%positive [4%positive; 3%positive])) =
+  Some (Block _ _ _ []
+    [(5%positive, tt, [4%positive]); (5%positive, tt, [3%positive]);
+     (5%positive, tt, [4%positive]); (4%positive, tt, [3%positive]);
+     (3%positive, tt, [5%positive])] (Jump 2%positive []),
+    Some ([(3%positive, 4%positive); (4%positive, 3%positive)], 5%positive,
+      [(5%positive, 4%positive); (4%positive, 3%positive); (3%positive, 5%positive)])).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example duplicate_copy_block_rejected :
+  DS.copy_block (PTrieCode.set 2%positive [3%positive; 3%positive] Empty) 5%positive
+    (Block _ _ _ [] [] (Jump 2%positive [1%positive; 2%positive])) = None.
 Proof.
   vm_compute. reflexivity.
 Qed.
