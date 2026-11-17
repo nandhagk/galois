@@ -658,7 +658,7 @@ Lemma tnum_forward_mul_same : forall w a b,
     tnum_mul_with (C.multiplier) w a b.
 Proof.
   intros w a b. unfold F.tnum_forward_raw. rewrite !Pos.eqb_refl.
-  apply tnum_mul_with_fast_agrees.
+  rewrite tnum_mul_with_ctx_agrees. apply tnum_mul_with_fast_agrees.
 Qed.
 Lemma tnum_forward_one_sound : forall o w a x rw z,
   is_word w x -> tnum_gamma w a x -> eval_op o [(w, x)] = Some (rw, z) ->

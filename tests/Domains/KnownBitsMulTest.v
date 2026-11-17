@@ -39,6 +39,27 @@ Proof.
   vm_compute. split; reflexivity.
 Qed.
 
+(** Cached staged, accumulating and combined loops retain both width observations. *)
+Example multiplier_context_results :
+  ShortMasks.tnum_mul_with MulStages 8%positive (Tnum 240 15) (Tnum 252 1) = Tnum 208 13 /\
+  ShortMasks.tnum_mul_with MulAcc 8%positive (Tnum 240 15) (Tnum 252 1) = Tnum 192 1 /\
+  ShortMasks.tnum_mul_with MulBoth 8%positive (Tnum 240 15) (Tnum 252 1) = Tnum 208 13 /\
+  ShortMasks.tnum_mul_with MulStages 64%positive (Tnum 240 15) (Tnum 252 1) = Tnum 208 13 /\
+  ShortMasks.tnum_mul_with MulAcc 64%positive (Tnum 240 15) (Tnum 252 1) = Tnum 192 1 /\
+  ShortMasks.tnum_mul_with MulBoth 64%positive (Tnum 240 15) (Tnum 252 1) = Tnum 208 13.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Each cached loop retains bottom without constructing its context. *)
+Example multiplier_context_bottom :
+  ShortMasks.tnum_mul_with MulStages 8%positive (Tnum 128 128) (Tnum 252 1) = Tnum 255 255 /\
+  ShortMasks.tnum_mul_with MulAcc 8%positive (Tnum 240 15) (Tnum 1 1) = Tnum 255 255 /\
+  ShortMasks.tnum_mul_with MulBoth 8%positive (Tnum 128 128) (Tnum 252 1) = Tnum 255 255.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
 Definition mul_test_contains (w : width) (a : tnum) (x : Z) : bool :=
   (Z.land x (wrap w (zeros a)) =? 0) &&
     (Z.land (wrap w (ones a)) (Z.lnot x) =? 0).
