@@ -19,11 +19,14 @@ Module TrieSetCode (K : KEY_OPS) <: SET_OPS K.
   Definition add (k : K.t) (s : t) := PTrieCode.set (K.encode k) k s.
   Definition remove (k : K.t) (s : t) := PTrieCode.remove (K.encode k) s.
   Definition union (s u : t) :=
-    PTrieCode.merge (fun a b => match a with Some _ => a | None => b end) s u.
+    PTrieCode.merge_with (fun a b => match a with Some _ => a | None => b end)
+      (fun tr => tr) (fun tr => tr) s u.
   Definition inter (s u : t) :=
-    PTrieCode.merge (fun a b => match b with Some _ => a | None => None end) s u.
+    PTrieCode.merge_with (fun a b => match b with Some _ => a | None => None end)
+      (fun _ => PTrieCode.empty) (fun _ => PTrieCode.empty) s u.
   Definition diff (s u : t) :=
-    PTrieCode.merge (fun a b => match b with Some _ => None | None => a end) s u.
+    PTrieCode.merge_with (fun a b => match b with Some _ => None | None => a end)
+      (fun tr => tr) (fun _ => PTrieCode.empty) s u.
   Definition subset (s u : t) :=
     PTrieCode.forall2 (fun _ b => match b with Some _ => true | None => false end) s u.
   Definition equal (s u : t) := andb (subset s u) (subset u s).
@@ -86,7 +89,8 @@ Module TrieSet (K : KEY) <: SET K.
   Lemma wf_union : forall s u, wf s -> wf u -> wf (union s u).
   Proof.
     intros s u Hleft Hright p k Hget. unfold union in Hget.
-    rewrite PTrie.get_merge in Hget by reflexivity.
+    rewrite PTrie.get_merge_with in Hget by
+      (intros q tr; rewrite ?PTrie.get_empty; destruct (PTrieCode.get q tr); reflexivity).
     destruct (PTrieCode.get p s) as [a|] eqn:Hfirst.
     - inversion Hget; subst. eapply Hleft. exact Hfirst.
     - exact (Hright p k Hget).
@@ -94,13 +98,15 @@ Module TrieSet (K : KEY) <: SET K.
   Lemma wf_inter : forall s u, wf s -> wf u -> wf (inter s u).
   Proof.
     intros s u Hleft Hright p k Hget. unfold inter in Hget.
-    rewrite PTrie.get_merge in Hget by reflexivity.
+    rewrite PTrie.get_merge_with in Hget by
+      (intros q tr; rewrite ?PTrie.get_empty; destruct (PTrieCode.get q tr); reflexivity).
     destruct (PTrieCode.get p u); [exact (Hleft p k Hget)|discriminate].
   Qed.
   Lemma wf_diff : forall s u, wf s -> wf u -> wf (diff s u).
   Proof.
     intros s u Hleft Hright p k Hget. unfold diff in Hget.
-    rewrite PTrie.get_merge in Hget by reflexivity.
+    rewrite PTrie.get_merge_with in Hget by
+      (intros q tr; rewrite ?PTrie.get_empty; destruct (PTrieCode.get q tr); reflexivity).
     destruct (PTrieCode.get p u); [discriminate|exact (Hleft p k Hget)].
   Qed.
   Lemma mem_empty : forall k, mem k empty = false.
@@ -129,17 +135,20 @@ Module TrieSet (K : KEY) <: SET K.
   Qed.
   Lemma mem_union : forall k s u, mem k (union s u) = (mem k s || mem k u).
   Proof.
-    intros k s u. unfold mem, union. rewrite PTrie.get_merge by reflexivity.
+    intros k s u. unfold mem, union. rewrite PTrie.get_merge_with by
+      (intros q tr; rewrite ?PTrie.get_empty; destruct (PTrieCode.get q tr); reflexivity).
     destruct (PTrieCode.get (K.encode k) s), (PTrieCode.get (K.encode k) u); reflexivity.
   Qed.
   Lemma mem_inter : forall k s u, mem k (inter s u) = (mem k s && mem k u).
   Proof.
-    intros k s u. unfold mem, inter. rewrite PTrie.get_merge by reflexivity.
+    intros k s u. unfold mem, inter. rewrite PTrie.get_merge_with by
+      (intros q tr; rewrite ?PTrie.get_empty; destruct (PTrieCode.get q tr); reflexivity).
     destruct (PTrieCode.get (K.encode k) s), (PTrieCode.get (K.encode k) u); reflexivity.
   Qed.
   Lemma mem_diff : forall k s u, mem k (diff s u) = (mem k s && negb (mem k u)).
   Proof.
-    intros k s u. unfold mem, diff. rewrite PTrie.get_merge by reflexivity.
+    intros k s u. unfold mem, diff. rewrite PTrie.get_merge_with by
+      (intros q tr; rewrite ?PTrie.get_empty; destruct (PTrieCode.get q tr); reflexivity).
     destruct (PTrieCode.get (K.encode k) s), (PTrieCode.get (K.encode k) u); reflexivity.
   Qed.
   Lemma elements_spec : forall s k, wf s -> (In k (elements s) <-> mem k s = true).
@@ -211,17 +220,20 @@ Module TrieSet (K : KEY) <: SET K.
   Qed.
   Lemma has_union : forall p s u, has p (union s u) = has p s || has p u.
   Proof.
-    intros p s u. unfold has, union. rewrite PTrie.get_merge by reflexivity.
+    intros p s u. unfold has, union. rewrite PTrie.get_merge_with by
+      (intros q tr; rewrite ?PTrie.get_empty; destruct (PTrieCode.get q tr); reflexivity).
     destruct (PTrieCode.get p s), (PTrieCode.get p u); reflexivity.
   Qed.
   Lemma has_inter : forall p s u, has p (inter s u) = has p s && has p u.
   Proof.
-    intros p s u. unfold has, inter. rewrite PTrie.get_merge by reflexivity.
+    intros p s u. unfold has, inter. rewrite PTrie.get_merge_with by
+      (intros q tr; rewrite ?PTrie.get_empty; destruct (PTrieCode.get q tr); reflexivity).
     destruct (PTrieCode.get p s), (PTrieCode.get p u); reflexivity.
   Qed.
   Lemma has_diff : forall p s u, has p (diff s u) = has p s && negb (has p u).
   Proof.
-    intros p s u. unfold has, diff. rewrite PTrie.get_merge by reflexivity.
+    intros p s u. unfold has, diff. rewrite PTrie.get_merge_with by
+      (intros q tr; rewrite ?PTrie.get_empty; destruct (PTrieCode.get q tr); reflexivity).
     destruct (PTrieCode.get p s), (PTrieCode.get p u); reflexivity.
   Qed.
   Lemma subset_spec : forall s u,
@@ -260,25 +272,19 @@ Module TrieSet (K : KEY) <: SET K.
   Qed.
   Lemma nodes_union : forall s u, nodes (union s u) <= nodes s + nodes u.
   Proof.
-    intros s u. apply PTrie.nodes_merge.
+    intros s u. apply PTrie.nodes_merge_with; intro tr; apply Nat.le_refl.
   Qed.
 
   (** Dropping every right-only binding keeps the result inside the left skeleton. *)
-  Lemma nodes_merge_left {A B C} (f : option A -> option B -> option C) m u :
-    (forall b, f None b = None) ->
-    PTrie.nodes (PTrieCode.merge f m u) <= PTrie.nodes m.
+  Lemma nodes_merge_left {A B C} (f : option A -> option B -> option C) fl m u :
+    (forall tr, PTrie.nodes (fl tr) <= PTrie.nodes tr) ->
+    PTrie.nodes (PTrieCode.merge_with f fl (fun _ => PTrieCode.empty) m u) <= PTrie.nodes m.
   Proof.
-    intro Hnone.
-    assert (Hright : forall tr,
-      PTrieCode.filter_map (fun b => f None (Some b)) tr = PTrieCode.empty).
-    { intro tr. apply PTrie.ext. intro p.
-      rewrite PTrie.get_filter, PTrie.get_empty.
-      destruct (PTrieCode.get p tr); [apply Hnone|reflexivity]. }
-    unfold PTrieCode.merge. destruct m as [|n].
-    - cbn [PTrieCode.merge_with]. rewrite Hright. reflexivity.
+    intro Hleft_only. destruct m as [|n].
+    - cbn [PTrieCode.merge_with]. reflexivity.
     - revert u. induction n; intros [|other].
-      all: try (cbn [PTrieCode.merge_with PTrieCode.merge_ne]; apply PTrie.nodes_filter).
-      all: cbn [PTrieCode.merge_with PTrieCode.merge_ne]; rewrite ?Hright.
+      all: try (cbn [PTrieCode.merge_with PTrieCode.merge_ne]; apply Hleft_only).
+      all: cbn [PTrieCode.merge_with PTrieCode.merge_ne].
       all: eapply Nat.le_trans; [apply PTrie.nodes_node_le|].
       all: cbn [PTrieCode.merge_with] in *.
       all: try pose proof (IHn (PTrieCode.left (Nodes other))) as Hleft.
@@ -290,11 +296,11 @@ Module TrieSet (K : KEY) <: SET K.
 
   Lemma nodes_inter : forall s u, nodes (inter s u) <= nodes s.
   Proof.
-    intros s u. apply nodes_merge_left. intro b. destruct b; reflexivity.
+    intros s u. apply nodes_merge_left. intro tr. apply Nat.le_0_l.
   Qed.
   Lemma nodes_diff : forall s u, nodes (diff s u) <= nodes s.
   Proof.
-    intros s u. apply nodes_merge_left. intro b. destruct b; reflexivity.
+    intros s u. apply nodes_merge_left. intro tr. apply Nat.le_refl.
   Qed.
 
   (** Consistent labels give the same binding weight as the stored trie codes. *)
@@ -354,25 +360,34 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   Proof.
     intros s u. unfold T_union.
     eapply N.le_trans.
-    - apply N.add_le_mono_l. apply PTrieT.T_merge_le with (k := 1%N).
-      intros a b. destruct a; time_cbn; nia.
-    - unfold c_set, nodes. nia.
+    - apply N.add_le_mono_l. apply PTrieT.T4_merge_with with (c := 1%N)
+        (cl := 1%N) (cr := 1%N).
+      + intros a b. destruct a; time_cbn; nia.
+      + intro tr. time_cbn. nia.
+      + intro tr. time_cbn. nia.
+    - unfold c_set, nodes, PTrieT.k_merge, PTrieT.c_trie. nia.
   Qed.
   Lemma T_inter_le : forall s u, (T_inter s u <= c_set * N.of_nat (nodes s + nodes u + 1))%N.
   Proof.
     intros s u. unfold T_inter.
     eapply N.le_trans.
-    - apply N.add_le_mono_l. apply PTrieT.T_merge_le with (k := 1%N).
-      intros a b. destruct b; time_cbn; nia.
-    - unfold c_set, nodes. nia.
+    - apply N.add_le_mono_l. apply PTrieT.T4_merge_with with (c := 1%N)
+        (cl := 1%N) (cr := 1%N).
+      + intros a b. destruct b; time_cbn; nia.
+      + intro tr. time_cbn. nia.
+      + intro tr. time_cbn. nia.
+    - unfold c_set, nodes, PTrieT.k_merge, PTrieT.c_trie. nia.
   Qed.
   Lemma T_diff_le : forall s u, (T_diff s u <= c_set * N.of_nat (nodes s + nodes u + 1))%N.
   Proof.
     intros s u. unfold T_diff.
     eapply N.le_trans.
-    - apply N.add_le_mono_l. apply PTrieT.T_merge_le with (k := 1%N).
-      intros a b. destruct b; time_cbn; nia.
-    - unfold c_set, nodes. nia.
+    - apply N.add_le_mono_l. apply PTrieT.T4_merge_with with (c := 1%N)
+        (cl := 1%N) (cr := 1%N).
+      + intros a b. destruct b; time_cbn; nia.
+      + intro tr. time_cbn. nia.
+      + intro tr. time_cbn. nia.
+    - unfold c_set, nodes, PTrieT.k_merge, PTrieT.c_trie. nia.
   Qed.
 
   (** Inclusion needs only the left skeleton and a constant presence callback. *)
@@ -422,30 +437,72 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
     - unfold c_set, nodes. nia.
   Qed.
 
+  (** Membership costs at most a constant per encoded key bit. *)
   Lemma mem_bigO : bigO (X := K.t * t) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_mem (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_set. intros [k s] _. cbn [fst snd].
+    pose proof (T_mem_le k s) as Hmem.
+    rewrite Nat2N.inj_add in Hmem. exact Hmem.
+  Qed.
 
+  (** Adding a member costs at most a constant per encoded key bit. *)
   Lemma add_bigO : bigO (X := K.t * t) (fun _ => True)
     (fun x => N.of_nat (K.bits (fst x))) (fun x => T_add (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_set. intros [k s] _. cbn [fst snd].
+    pose proof (T_add_le k s) as Hadd.
+    rewrite Nat2N.inj_add in Hadd. exact Hadd.
+  Qed.
 
+  (** Union shares one-sided subtrees and visits at most the smaller skeleton. *)
   Lemma union_bigO : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
     (fun x => T_union (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (4 * PTrieT.k_merge + 1)%N. intros [s u] _. cbn [fst snd].
+    unfold T_union. eapply N.le_trans.
+    - apply N.add_le_mono_l. apply PTrieT.T_merge_with_min with (c := 1%N).
+      + intros a b. destruct a; time_cbn; nia.
+      + intro tr. time_cbn. nia.
+      + intro tr. time_cbn. nia.
+    - unfold nodes. rewrite Nat2N.inj_add. time_cbn. nia.
+  Qed.
 
+  (** Intersection drops one-sided subtrees and visits at most the smaller skeleton. *)
   Lemma inter_bigO : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
     (fun x => T_inter (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (4 * PTrieT.k_merge + 1)%N. intros [s u] _. cbn [fst snd].
+    unfold T_inter. eapply N.le_trans.
+    - apply N.add_le_mono_l. apply PTrieT.T_merge_with_min with (c := 1%N).
+      + intros a b. destruct b; time_cbn; nia.
+      + intro tr. time_cbn. nia.
+      + intro tr. time_cbn. nia.
+    - unfold nodes. rewrite Nat2N.inj_add. time_cbn. nia.
+  Qed.
 
+  (** Difference shares left-only subtrees and visits at most the smaller skeleton. *)
   Lemma diff_bigO : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (Nat.min (nodes (fst x)) (nodes (snd x))))
     (fun x => T_diff (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (4 * PTrieT.k_merge + 1)%N. intros [s u] _. cbn [fst snd].
+    unfold T_diff. eapply N.le_trans.
+    - apply N.add_le_mono_l. apply PTrieT.T_merge_with_min with (c := 1%N).
+      + intros a b. destruct b; time_cbn; nia.
+      + intro tr. time_cbn. nia.
+      + intro tr. time_cbn. nia.
+    - unfold nodes. rewrite Nat2N.inj_add. time_cbn. nia.
+  Qed.
 
+  (** Inclusion visits the left skeleton only. *)
   Lemma subset_bigO : bigO (X := t * t) (fun _ => True)
     (fun x => N.of_nat (nodes (fst x))) (fun x => T_subset (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (2 * PTrieT.k_check + 1)%N. intros [s u] _. cbn [fst snd].
+    pose proof (T_subset_nodes s u) as Hsubset.
+    rewrite Nat2N.inj_add in Hsubset. exact Hsubset.
+  Qed.
 End TrieSetT.
