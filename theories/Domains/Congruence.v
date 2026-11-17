@@ -1622,6 +1622,12 @@ Module CongruenceCode (L : WORD_LANGUAGE_OPS) <: CONGRUENCE_OPS L.
     | c, CBot => c
     | C m r, C n s => congr_norm w (C (Z.gcd (Z.gcd m n) (r - s)) r)
     end.
+  Definition join_norm w na nb :=
+    match na, nb with
+    | CBot, c => c
+    | c, CBot => c
+    | C m r, C n s => congr_norm w (C (Z.gcd (Z.gcd m n) (r - s)) r)
+    end.
   Definition pmeet w a b :=
     match congr_norm w a, congr_norm w b with
     | CBot, _ | _, CBot => CBot
@@ -1637,8 +1643,12 @@ Module CongruenceCode (L : WORD_LANGUAGE_OPS) <: CONGRUENCE_OPS L.
   Definition ppoint w a :=
     match congr_norm w a with C 0 r => Some r | _ => None end.
   Definition pwparam := unit.
-  Definition pwiden (_ : pwparam) w a b :=
+  Definition pwiden_ref (_ : pwparam) w a b :=
     if pleb w b a then a else pjoin w a b.
+  Definition pwiden (_ : pwparam) w a b :=
+    let na := congr_norm w a in
+    let nb := congr_norm w b in
+    if raw_leb nb na then a else join_norm w na nb.
   Definition pnarrow w a b := pmeet w a b.
   Definition wrap_class_ref w m r := congr_norm w (C (Z.gcd m (modulus w)) r).
   Definition wrap_class_g w g r := wrap_class_at (modulus w) g r.
@@ -1813,6 +1823,13 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     change (wrap_class_g w (Z.min (pow2_gcd w m) (pow2_gcd w n)) (r - s) =
       wrap_class_ref w (Z.gcd m n) (r - s)).
     rewrite <- pow2_gcd_gcd. apply wrap_class_eq.
+  Qed.
+
+  (** Widening reuses the normalized operands without changing the result. *)
+  Lemma pwiden_eq : forall q w a b, pwiden q w a b = pwiden_ref q w a b.
+  Proof.
+    intros q w a b. unfold pwiden, pwiden_ref, pleb, pjoin, join_norm.
+    destruct (congr_norm w a), (congr_norm w b); reflexivity.
   Qed.
 
   Local Lemma cong_wordb_spec w z : wordb w z = true <-> is_word w z.
@@ -2263,27 +2280,27 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
   Proof.
-    intros q w a b. unfold pwiden. destruct (pleb w b a).
+    intros q w a b. rewrite pwiden_eq. unfold pwiden_ref. destruct (pleb w b a).
     - apply cong_raw_leb_refl.
     - exact (proj1 (cong_join_upper w a b)).
   Qed.
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
   Proof.
-    intros q w a b. unfold pwiden. destruct (pleb w b a) eqn:Horder.
+    intros q w a b. rewrite pwiden_eq. unfold pwiden_ref. destruct (pleb w b a) eqn:Horder.
     - exact Horder.
     - exact (proj2 (cong_join_upper w a b)).
   Qed.
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
   Proof.
-    intros q w a b Hstable. unfold pwiden. now rewrite Hstable.
+    intros q w a b Hstable. rewrite pwiden_eq. unfold pwiden_ref. now rewrite Hstable.
   Qed.
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
   Proof.
     intros q w a b Hnonbottom Hunstable.
-    unfold pwiden. rewrite Hunstable.
+    rewrite pwiden_eq. unfold pwiden_ref. rewrite Hunstable.
     assert (Hreverse : pleb w (pjoin w a b) a = false).
     { destruct (pleb w (pjoin w a b) a) eqn:Hreverse; [| reflexivity].
       assert (Horder : pleb w b a = true).
@@ -2302,7 +2319,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Proof.
     intros q w a b Hnonbottom.
     destruct (pleb w b a) eqn:Hstable.
-    - unfold pwiden. rewrite Hstable. reflexivity.
+    - rewrite pwiden_eq. unfold pwiden_ref. rewrite Hstable. reflexivity.
     - pose proof (pwrank_widen q w a b Hnonbottom Hstable). lia.
   Qed.
   (** Narrowing lies between ordered inputs. *)
@@ -2723,6 +2740,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   TimeFun raw_leb.
   TimeFun pleb.
   TimeFun pjoin.
+  TimeFun join_norm.
   TimeFun pmeet.
   TimeFun pbot.
   TimeFun ptop.
@@ -3103,7 +3121,7 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     (N.of_nat (psize w (pwiden q w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
   Proof.
-    intros q w a b. unfold pwiden, pwsize.
+    intros q w a b. rewrite pwiden_eq. unfold pwiden_ref, pwsize.
     destruct (pleb w b a).
     - unfold c_payload. rewrite !Nat2N.inj_add. nia.
     - pose proof (pjoin_size w a b). rewrite Nat.add_0_r. exact H.
@@ -3128,8 +3146,11 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     assert (Hpositive : (1 <= N.of_nat (psize w a + psize w b + 1))%N).
     { change (N.of_nat 1 <= N.of_nat (psize w a + psize w b + 1))%N.
       apply time_of_nat_le. lia. }
-    time_unfold T_pwiden. unfold pwsize, c_payload. rewrite Nat.add_0_r.
-    destruct (pleb w b a); lia.
+    unfold pwsize, c_payload. rewrite Nat.add_0_r.
+    unfold T_pleb in Hinclusion. unfold T_pjoin in Hjoin.
+    time_unfold T_pwiden. unfold T_join_norm. cbn beta iota zeta in *.
+    destruct (raw_leb (congr_norm w b) (congr_norm w a));
+      destruct (congr_norm w a), (congr_norm w b); cbn beta iota zeta in *; lia.
   Qed.
   (** Payload narrowing charges both payload sizes. *)
   Lemma T_pnarrow_le : forall w a b,
