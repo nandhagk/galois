@@ -4,9 +4,9 @@
     For example, the diamond places its join between its two incoming branches.
     Builds on: graph fixtures, preparation and the dominator code tower. *)
 
-From Stdlib Require Import List PArith.
+From Stdlib Require Import List PArith NArith.
 From Galois.Base Require Import Trie.
-From Galois.Graph Require Import Data Digraph DomProducer Dom.
+From Galois.Graph Require Import Data Digraph DomSig DomProducer Dom.
 From Galois.Tests.Graph Require Import Fixtures.
 Import List.ListNotations.
 Open Scope positive_scope.
@@ -164,6 +164,43 @@ Definition derived_sources_graph := fixture_graph [1; 2; 3; 4; 5; 6; 7]
 Example producer_derives_sources_from_sibling_subtrees :
   let p := DigraphCode.prepare derived_sources_graph in
   let '(m, o) := DomCode.build p 1 in DomCode.check p 1 m o = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The backedge evaluates a linked chain during reverse semidominator settlement. *)
+Definition compression_loop_graph := fixture_graph [1; 2; 3; 4; 5; 6; 7; 8]
+  [(1, 2); (2, 3); (3, 4); (4, 5); (5, 6); (6, 7); (7, 8); (8, 2)].
+
+Example producer_compresses_long_backedge_path :
+  DomCode.build (DigraphCode.prepare compression_loop_graph) 1 =
+    (parent_map [(2, 1); (3, 2); (4, 3); (5, 4); (6, 5); (7, 6); (8, 7)],
+      [1; 2; 3; 4; 5; 6; 7; 8]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition compression_chain :=
+  dom_lt_link (dom_lt_link (dom_lt_link (DomLtLinks Empty Empty []) 2%N 1%N)
+    3%N 2%N) 4%N 3%N.
+
+Definition compression_tied_semis :=
+  PTrieCode.set (dom_lt_key 4%N) 1%N
+    (PTrieCode.set (dom_lt_key 3%N) 1%N
+      (PTrieCode.set (dom_lt_key 2%N) 1%N Empty)).
+
+(** Equal stored semidominators still select the fresh label at every unwind frame. *)
+Example compression_prefers_fresh_label_on_ties :
+  snd (dom_lt_eval 4%N compression_tied_semis compression_chain 4%N) = 4%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Exhaustion just after the first score prefetch preserves the exact partial links. *)
+Example compression_preserves_exhausted_prefix :
+  dom_lt_eval 1%N compression_tied_semis compression_chain 4%N =
+    (DomLtLinks (lt_shortcut compression_chain) (lt_label compression_chain)
+      (LtEval 4%N :: lt_operations compression_chain), 4%N).
 Proof.
   vm_compute. reflexivity.
 Qed.
