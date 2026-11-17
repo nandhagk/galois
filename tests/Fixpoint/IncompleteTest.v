@@ -2,6 +2,11 @@
 
     The evaluator rejects a row when its declared dependencies do not supply enough fuel.
     For example, a declared empty list cannot evaluate a query that reads one key.
+
+    Groups:
+    - Fixtures: a system whose row reads a key that it does not declare.
+    - Summary: the solver and the certified analysis both reject the incomplete summary.
+
     Builds on: Fixpoint.Worklist and Fixpoint.Certified. *)
 
 From Stdlib Require Import List PArith NArith.
@@ -10,6 +15,9 @@ From Galois.Fixpoint Require Import Query SystemSig SolverSig Check Narrow Workl
 From Galois.Tests.Fixpoint Require Import WorklistTest.
 Import List.ListNotations.
 
+(** * Fixtures *)
+
+(** A system whose row 1 asks for key 2, but declares no dependencies. *)
 Module Incomplete <: SYSTEM_OPS BoolOps.
   Definition prog := unit.
   Definition key := positive.
@@ -30,17 +38,22 @@ Module R := NarrowCode BoolOps Incomplete C.
 Module W := WorklistCode BoolOps Incomplete P HeapCode.
 Module A := CertifiedCode BoolOps Incomplete W C R.
 
-(* The old solver returned Solved [false; true] and certification returned
-   Rejected Check_failed. The new query fuel comes from dependencies, so both
-   the solver and certification return Rejected Check_failed. *)
-Example incomplete_summary_rejected :
-  (W.run tt flat 3%N, A.analyze tt flat 3%N) =
-    (Rejected Check_failed, Rejected Check_failed).
-Proof.
-  vm_compute; reflexivity.
-Qed.
+(** * Summary *)
 
-(* incomplete_summary_leaves_reader_stale is the old solver observation [false;
-   true]. worklist_certification_rejects_incomplete_summary is the old rejection.
-   incomplete_summary_rejected records the new early evaluator rejection and
-   the unchanged certified rejection. *)
+Module SummaryTests.
+
+  (** The solver rejects the incomplete summary with Check_failed. *)
+  Example solver_rejects_incomplete_summary :
+    W.run tt flat 3%N = Rejected Check_failed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+  (** The certified analysis rejects the incomplete summary with Check_failed. *)
+  Example certified_rejects_incomplete_summary :
+    A.analyze tt flat 3%N = Rejected Check_failed.
+  Proof.
+    vm_compute; reflexivity.
+  Qed.
+
+End SummaryTests.
