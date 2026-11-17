@@ -2,15 +2,16 @@
 
     These examples exercise code on finite difference constraints and malformed stored labels.
     For example, closure composes bounds three and four into an upper bound seven.
-    The groups are:
-    - Constraints, which insert bounds into a zone and read empty rows.
-    - Join, which keeps the larger of two upper bounds.
-    - Closure, which composes bounds along paths and detects negative cycles.
-    - Range, which reads the interval of an affine form.
-    - Assume, which adds the constraints of a guard.
-    - Assign, which assigns affine forms and word forms.
-    - AssignClosed, which checks assignments on closed and widened fixtures.
-    Builds on: Zone, trie maps and the integer language. *)
+    Builds on: Zone, trie maps and the integer language.
+
+    Groups:
+    - [ConstraintTests] Inserting bounds into a zone and reading empty rows.
+    - [JoinTests] Keeping the larger of two upper bounds.
+    - [ClosureTests] Composing bounds along paths and detecting negative cycles.
+    - [RangeTests] Reading the interval of an affine form.
+    - [AssumeTests] Adding the constraints of a guard.
+    - [AssignTests] Assigning affine forms and word forms.
+    - [AssignClosedTests] Assignments on closed and widened fixtures. *)
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map Trie.
@@ -167,8 +168,7 @@ Module ClosureTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** A round follows the encoded lookup, so stored labels that differ from their codes
-      do not redirect it. *)
+  (** A round follows the encoded lookup, so labels that differ from their codes do not matter. *)
   Example round_follows_encoded_lookup :
     let row := PTrieCode.set 4%positive (None, 7%Z) PTrieCode.empty in
     let m := PTrieCode.set 2%positive (None, row) PTrieCode.empty in
