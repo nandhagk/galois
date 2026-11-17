@@ -329,26 +329,38 @@ Module IntervalBaseT (T : THRESHOLDS_T) <: INTERVAL_SCALAR_T T.
   Lemma interval_leb_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
     (fun x => T_interval_leb (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_scalar. intros [a b] _. cbn [fst snd].
+    pose proof (T_interval_leb_le a b). nia.
+  Qed.
 
   (** Scalar join has the published endpoint-bit class. *)
   Lemma interval_join_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
     (fun x => T_interval_join (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_scalar. intros [a b] _. cbn [fst snd].
+    pose proof (T_interval_join_le a b). nia.
+  Qed.
 
   (** Scalar meet has the published endpoint-bit class. *)
   Lemma interval_meet_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst x) + interval_bits (snd x) + 1))
     (fun x => T_interval_meet (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_scalar. intros [a b] _. cbn [fst snd].
+    pose proof (T_interval_meet_le a b). nia.
+  Qed.
 
   (** Scalar widening has the published bits-plus-search-path class. *)
   Lemma interval_stable_widen_bigO : bigO (X := ttree * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (interval_bits (fst (snd x)) + interval_bits (snd (snd x)) +
       (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
     (fun x => T_interval_stable_widen (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_scalar. intros [ts [a b]] _. cbn [fst snd].
+    pose proof (T_interval_stable_widen_le ts a b). nia.
+  Qed.
 
   Local Close Scope nat_scope.
 End IntervalBaseT.
@@ -3334,40 +3346,64 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Lemma add_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
     (fun x => T_add (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_interval. intros [a b] _. cbn [fst snd].
+    pose proof (T_add_le a b). nia.
+  Qed.
   (** Subtraction has the published linear class. *)
   Lemma sub_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1))
     (fun x => T_sub (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_interval. intros [a b] _. cbn [fst snd].
+    pose proof (T_sub_le a b). nia.
+  Qed.
   (** Unsigned division has the published quadratic endpoint class. *)
   Lemma udiv_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_udiv (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_interval. intros [a b] _. cbn [fst snd].
+    pose proof (T_udiv_le a b). nia.
+  Qed.
   (** Unsigned remainder has the published quadratic endpoint class. *)
   Lemma urem_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_urem (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_interval. intros [a b] _. cbn [fst snd].
+    pose proof (T_urem_le a b). nia.
+  Qed.
   (** Shift has the published quadratic endpoint class. *)
   Lemma shl_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (binary_work (fst x) (snd x))) (fun x => T_shl (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_interval. intros [a b] _. cbn [fst snd].
+    pose proof (T_shl_le a b). nia.
+  Qed.
   (** Threshold widening has the published bits-plus-search-path class. *)
   Lemma widen_bigO : bigO (X := ttree * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst (snd x)) + size (snd (snd x)) +
       (T.depth (fst x) + 1) * (T.tree_bits (fst x) + 1) + 1))
     (fun x => T_widen (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_interval. intros [ts [a b]] _. cbn [fst snd].
+    pose proof (T_widen_thresholds_le ts a b). nia.
+  Qed.
   (** Backward addition is linear in the result and operand sizes. *)
   Lemma add_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_add_back (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (512 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
+    pose proof (add_back_time_linear r a b). nia.
+  Qed.
   (** Backward subtraction is linear in the result and operand sizes. *)
   Lemma sub_back_bigO : bigO (X := itv * (itv * itv)) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (fst (snd x)) + size (snd (snd x)) + 1))
     (fun x => T_sub_back (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (512 * (T.c_thresholds + 1))%N. intros [r [a b]] _. cbn [fst snd].
+    pose proof (sub_back_time_linear r a b). nia.
+  Qed.
   (** Bitwise conjunction is linear, because the result is a minimum of upper endpoints. *)
   Lemma bitand_bigO : bigO (X := itv * itv) (fun _ => True)
     (fun x => N.of_nat (size (fst x) + size (snd x) + 1)) (fun x => T_bitand (fst x) (snd x)).
