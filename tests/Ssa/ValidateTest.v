@@ -129,6 +129,65 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+(** Repeated and shadowed input bindings retain their first-binding behavior. *)
+Example cached_scan_keeps_shadowed_history :
+  let rho := [(1, 10); (1, 9); (1, 10)] in
+  let result := [(1, 12); (1, 11); (1, 10); (1, 9); (1, 10)] in
+  (V.check_code [(1, 1, [1]); (1, 1, [1])]
+     [(11, 1, [10]); (12, 1, [11])] rho [1; 1],
+   V.check_code_tables [(1, 1, [1]); (1, 1, [1])]
+     [(11, 1, [10]); (12, 1, [11])] rho [1; 1]) =
+  (Some result, Some (result,
+    ExitTables (val_index result) (val_inverse result) (val_set [1]))).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition cache_source_code : list (positive * positive * list positive) :=
+  [(2, 1, [1]); (3, 1, [2]); (2, 1, [3])].
+
+Definition cache_target_code : list (positive * positive * list positive) :=
+  [(20, 1, [10]); (30, 1, [20]); (21, 1, [30])].
+
+(** Local overwrites update the forward table while preserving inverse history and membership. *)
+Example cached_scan_keeps_overwrite_tables :
+  let result := [(2, 21); (3, 30); (2, 20); (1, 10)] in
+  V.check_code_tables cache_source_code cache_target_code [(1, 10)] [1; 1] =
+  Some (result, ExitTables (val_index result) (val_inverse result)
+    (val_set [2; 3; 2; 1; 1])).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Different owners of one target remain rejected before scanning. *)
+Example cached_scan_rejects_conflicting_owners :
+  (V.check_code_tables [] [] [(1, 10); (2, 10)] [1; 2],
+   V.check_code [] [] [(1, 10); (2, 10)] [1; 2],
+   V.check_code_ref [] [] [(1, 10); (2, 10)] [1; 2]) = (None, None, None).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition cache_source : Source.t :=
+  Func positive positive positive 1 [1]
+    [(1, Block positive positive positive [] cache_source_code (Return [2; 3]))].
+
+Definition cache_target : Source.t :=
+  Func positive positive positive 1 [10]
+    [(1, Block positive positive positive [] cache_target_code (Return [21; 30]))].
+
+Definition cache_certificate : cert := ([(1, [(1, 10)])], [(1, [1])]).
+
+(** The exit consumes the final scan tables after an imperative local is overwritten. *)
+Example cached_exit_accepts_local_overwrite :
+  let t := V.tables cache_source cache_target cache_certificate in
+  (V.check cache_source cache_target cache_certificate,
+   V.check_block t 1, V.check_block_ref t 1, V.check_ssa cache_target) =
+  (true, true, true, true).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Example rejects_clobbered_live_renaming :
   V.check_code [(1, 1, [1])] [(20, 1, [10])] [(1, 10); (2, 20)] [1; 2] = None.
 Proof.

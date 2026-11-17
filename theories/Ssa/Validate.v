@@ -12,6 +12,10 @@ From Galois.Program Require Import CfgSig SsaSig.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig.
 Import List.ListNotations.
 
+Module Datatypes.
+  TimeFun option_map.
+End Datatypes.
+
 Module ValidateSig.
   TimeFun source_bodies.
   TimeFun target_bodies.
@@ -191,6 +195,32 @@ Proof.
     + unfold val_mem at 1; rewrite PTrie.get_set_other by exact Hneq.
       change (val_mem (val_set rest) x = true <-> y = x \/ In x rest).
       rewrite IH; split; intro Hin; [right; exact Hin|destruct Hin; congruence || assumption].
+Qed.
+
+(** Unit tries are equal when every membership query agrees. *)
+Lemma val_mem_ext (left right : ptrie unit) :
+  (forall x, val_mem left x = val_mem right x) -> left = right.
+Proof.
+  intro Hagree. apply PTrie.ext. intro x.
+  change (trie_get x left = trie_get x right).
+  specialize (Hagree x). unfold val_mem in Hagree.
+  destruct (trie_get x left) as [[]|];
+    destruct (trie_get x right) as [[]|]; congruence.
+Qed.
+
+(** Lists with the same members build the same canonical unit trie. *)
+Lemma val_set_ext xs ys :
+  (forall x, In x xs <-> In x ys) -> val_set xs = val_set ys.
+Proof.
+  intro Hagree. apply val_mem_ext. intro x.
+  apply Bool.eq_true_iff_eq. rewrite !val_set_member. apply Hagree.
+Qed.
+
+(** Moving one insertion past a prefix preserves the availability set. *)
+Lemma val_set_move_to_front x xs ys :
+  val_set (xs ++ x :: ys) = val_set (x :: xs ++ ys).
+Proof.
+  apply val_set_ext. intro z. rewrite !in_app_iff. cbn. rewrite in_app_iff. tauto.
 Qed.
 
 Lemma val_maps_spec : forall rho x y,
@@ -1096,6 +1126,30 @@ Lemma val_code_charge : forall r l s c rho live code ops width total,
     c * total * width + c * (ops + 1))%N.
 Proof.
   intros r l s c rho live code ops width total Hr Hl Hs Hc Hcount.
+  assert (Hrho : (r * rho * width <= c * rho * width)%N)
+    by (apply N.mul_le_mono_r; apply N.mul_le_mono_r; exact Hr).
+  assert (Hlive : (l * live * width <= c * live * width)%N)
+    by (apply N.mul_le_mono_r; apply N.mul_le_mono_r; exact Hl).
+  assert (Hcode : (s * code * width <= c * code * width)%N)
+    by (apply N.mul_le_mono_r; apply N.mul_le_mono_r; exact Hs).
+  assert (Hops : (s * ops <= c * ops)%N) by (apply N.mul_le_mono_r; exact Hs).
+  eapply N.le_trans with (m :=
+    (c * rho * width + c * live * width + c * code * width + c * ops + c)%N).
+  - repeat apply N.add_le_mono; assumption.
+  - replace (c * rho * width + c * live * width + c * code * width + c * ops + c)%N
+      with (c * (rho + live + code) * width + c * (ops + 1))%N by ring.
+    apply N.add_le_mono; [|apply N.le_refl].
+    apply N.mul_le_mono_r; apply N.mul_le_mono_l; exact Hcount.
+Qed.
+
+(** The code budget absorbs any fixed projection overhead below its coefficient. *)
+Lemma val_code_charge_extra : forall r l s c rho live code ops width total extra,
+  (r <= c)%N -> (l <= c)%N -> (s <= c)%N -> (extra <= c)%N ->
+  (rho + live + code <= total)%N ->
+  (r * rho * width + l * live * width + s * code * width + s * ops + extra <=
+    c * total * width + c * (ops + 1))%N.
+Proof.
+  intros r l s c rho live code ops width total extra Hr Hl Hs Hc Hcount.
   assert (Hrho : (r * rho * width <= c * rho * width)%N)
     by (apply N.mul_le_mono_r; apply N.mul_le_mono_r; exact Hr).
   assert (Hlive : (l * live * width <= c * live * width)%N)
@@ -2146,11 +2200,37 @@ Module ValidateCode (O : OPS)
     | _, _ => None
     end.
 
-  Definition check_code (ic sc : list (positive * O.K * list positive))
+  (** A successful scan returns the indexes it maintained while checking instructions. *)
+  Fixpoint code_scan_tables (ic sc : list (positive * O.K * list positive))
+      (rho : renaming) (forward inverse : ptrie positive) (known : ptrie unit)
+      : option (renaming * exit_tables) :=
+    match ic, sc with
+    | [], [] => Some (rho, ExitTables forward inverse known)
+    | (x, op, args) :: ir, (y, sop, sargs) :: sr =>
+      if K.eqb op sop && val_args forward known args sargs &&
+        match trie_get y inverse with Some owner => Pos.eqb x owner | None => true end
+      then code_scan_tables ir sr ((x, y) :: rho) (PTrieCode.set x y forward)
+        (PTrieCode.set y x inverse) (PTrieCode.set x tt known)
+      else None
+    | _, _ => None
+    end.
+
+  Definition check_code_ref (ic sc : list (positive * O.K * list positive))
       (rho : renaming) (live : list positive) : option renaming :=
     if val_injective rho then
       code_scan ic sc rho (val_index rho) (val_inverse rho) (val_set live)
     else None.
+
+  Definition check_code_tables (ic sc : list (positive * O.K * list positive))
+      (rho : renaming) (live : list positive) : option (renaming * exit_tables) :=
+    if val_injective rho then
+      code_scan_tables ic sc rho (val_index rho) (val_inverse rho) (val_set live)
+    else None.
+
+  (** The public code checker projects the renaming from the cached scan. *)
+  Definition check_code (ic sc : list (positive * O.K * list positive))
+      (rho : renaming) (live : list positive) : option renaming :=
+    option_map fst (check_code_tables ic sc rho live).
 
   Definition available_target (rho : ptrie positive) (inverse : ptrie positive)
       (known : ptrie unit) (y : positive) : bool :=
@@ -2321,9 +2401,9 @@ Module ValidateCode (O : OPS)
     | Some ib, Some sb =>
       match params _ _ _ ib with
       | [] =>
-        match check_code (code _ _ _ ib) (code _ _ _ sb)
+        match check_code_tables (code _ _ _ ib) (code _ _ _ sb)
           (index_row (cert_envs t) b) (index_row (cert_rows t) b) with
-        | Some rho => check_exit_with t ib sb (prepare_exit_tables t b ib rho)
+        | Some (_, cached) => check_exit_with t ib sb cached
         | None => false
         end
       | _ => false
@@ -2429,6 +2509,70 @@ Module Validate (O : OPS)
   Include ValidateCode O K G P Q R E C S DG D.
   Include VALIDATE_SPEC O K G P Q R E C S DG D.
 
+  (** Returning indexes preserves the original scan result on every input. *)
+  Lemma code_scan_tables_project : forall ic sc rho forward inverse known,
+    option_map fst (code_scan_tables ic sc rho forward inverse known) =
+      code_scan ic sc rho forward inverse known.
+  Proof.
+    induction ic as [|[[x op] args] ir IH];
+      intros sc rho forward inverse known;
+      destruct sc as [|[[y sop] sargs] sr];
+      cbn [code_scan_tables code_scan option_map]; try reflexivity.
+    destruct (K.eqb op sop && val_args forward known args sargs &&
+      match trie_get y inverse with Some owner => Pos.eqb x owner | None => true end);
+      [apply IH|reflexivity].
+  Qed.
+
+  (** Every returned index equals the corresponding rebuilt index. *)
+  Lemma code_scan_tables_agree : forall ic sc rho live rho' tables,
+    code_scan_tables ic sc rho (val_index rho) (val_inverse rho) (val_set live) =
+      Some (rho', tables) ->
+    tables = ExitTables (val_index rho') (val_inverse rho')
+      (val_set (map (fun i => fst (fst i)) ic ++ live)).
+  Proof.
+    induction ic as [|[[x op] args] ir IH];
+      intros sc rho live rho' tables Hscan;
+      destruct sc as [|[[y sop] sargs] sr];
+      cbn [code_scan_tables] in Hscan; try discriminate.
+    - injection Hscan as Heq Htables. subst rho' tables. reflexivity.
+    - destruct (K.eqb op sop && val_args (val_index rho) (val_set live) args sargs &&
+        match trie_get y (val_inverse rho) with
+        | Some owner => Pos.eqb x owner
+        | None => true
+        end); [|discriminate].
+      pose proof (IH sr ((x, y) :: rho) (x :: live) rho' tables Hscan) as Htables.
+      rewrite Htables. cbn [map fst]. rewrite val_set_move_to_front. reflexivity.
+  Qed.
+
+  (** The cached code checker projects to the original specification. *)
+  Lemma check_code_tables_project : forall ic sc rho live,
+    option_map fst (check_code_tables ic sc rho live) = check_code_ref ic sc rho live.
+  Proof.
+    intros ic sc rho live. unfold check_code_tables, check_code_ref.
+    destruct (val_injective rho); [apply code_scan_tables_project|reflexivity].
+  Qed.
+
+  (** Accepted cached checks expose the checked renaming and its exact exit tables. *)
+  Lemma check_code_tables_agree : forall ic sc rho live rho' tables,
+    check_code_tables ic sc rho live = Some (rho', tables) ->
+    check_code ic sc rho live = Some rho' /\
+    tables = ExitTables (val_index rho') (val_inverse rho')
+      (val_set (map (fun i => fst (fst i)) ic ++ live)).
+  Proof.
+    intros ic sc rho live rho' tables Hscan. split.
+    - unfold check_code. rewrite Hscan. reflexivity.
+    - unfold check_code_tables in Hscan.
+      destruct (val_injective rho); [|discriminate].
+      exact (code_scan_tables_agree ic sc rho live rho' tables Hscan).
+  Qed.
+
+  (** Projection preserves the original public code-checking result. *)
+  Lemma check_code_agrees ic sc rho live :
+    check_code ic sc rho live = check_code_ref ic sc rho live.
+  Proof.
+    apply check_code_tables_project.
+  Qed.
+
   (** Passing the prepared renaming indexes preserves every target check. *)
   Lemma check_target_with_agrees t target rho known args :
     check_target_with t target (ExitTables (val_index rho) (val_inverse rho) known) args =
@@ -2464,15 +2608,20 @@ Module Validate (O : OPS)
     rewrite Hib, Hsb; reflexivity.
   Qed.
 
-  (** A block builds its exit tables once and returns the original checker result. *)
+  (** Reusing the scan indexes preserves the original block-checking result. *)
   Lemma check_block_agrees t b : check_block t b = check_block_ref t b.
   Proof.
-    unfold check_block, check_block_ref.
+    unfold check_block, check_block_ref, check_code.
     destruct (trie_get b (source_bodies t)) as [ib|] eqn:Hib; [|reflexivity].
     destruct (trie_get b (target_bodies t)) as [sb|] eqn:Hsb; [|reflexivity].
     destruct (params _ _ _ ib); [|reflexivity].
-    destruct (check_code (code _ _ _ ib) (code _ _ _ sb)
-      (index_row (cert_envs t) b) (index_row (cert_rows t) b)); [|reflexivity].
+    destruct (check_code_tables (code _ _ _ ib) (code _ _ _ sb)
+      (index_row (cert_envs t) b) (index_row (cert_rows t) b))
+      as [[rho cached]|] eqn:Hscan; [|reflexivity].
+    destruct (check_code_tables_agree _ _ _ _ _ _ Hscan) as [_ Hcached].
+    rewrite Hcached. cbn [option_map fst].
+    change (check_exit_with t ib sb (prepare_exit_tables t b ib rho) =
+      check_exit t b ib sb rho).
     apply check_exit_with_agrees; assumption.
   Qed.
 
@@ -2677,7 +2826,8 @@ Module Validate (O : OPS)
     | _, _ => False
     end.
   Proof.
-    intros ic sc rho live rho' ss si Hcheck Hagree; unfold check_code in Hcheck.
+    intros ic sc rho live rho' ss si Hcheck Hagree.
+    rewrite check_code_agrees in Hcheck; unfold check_code_ref in Hcheck.
     destruct (val_injective rho) eqn:Hinj; [|discriminate].
     eapply code_scan_sim; [apply val_injective_sound; exact Hinj|exact Hcheck|exact Hagree].
   Qed.
@@ -3071,6 +3221,9 @@ Module ValidateT (O : OPS)
   TimeFun row_budget.
   TimeFun check_entry.
   TimeFun code_scan.
+  TimeFun code_scan_tables.
+  TimeFun check_code_ref.
+  TimeFun check_code_tables.
   TimeFun check_code.
   TimeFun available_target.
   TimeFun check_target.
@@ -3082,6 +3235,7 @@ Module ValidateT (O : OPS)
   TimeFun check_edge_with.
   TimeFun check_exit_with.
   TimeFun prepare_exit_tables.
+  TimeFun check_block_ref.
   TimeFun check_block.
   TimeFun check.
   TimeFun dom_cert.
@@ -3384,6 +3538,38 @@ Module ValidateT (O : OPS)
 
 
 
+  (** Returning maintained indexes adds no work to the instruction scan. *)
+  Lemma code_scan_tables_clock : forall ic sc rho forward inverse known,
+    T_code_scan_tables ic sc rho forward inverse known =
+      T_code_scan ic sc rho forward inverse known.
+  Proof.
+    intros. reflexivity.
+  Qed.
+
+  (** The cached wrapper has the same clock as the original code checker. *)
+  Lemma check_code_tables_clock : forall ic sc rho live,
+    T_check_code_tables ic sc rho live = T_check_code_ref ic sc rho live.
+  Proof.
+    intros. reflexivity.
+  Qed.
+
+  (** Projecting the public result adds only a fixed amount of work. *)
+  Lemma check_code_projection_clock : forall ic sc rho live,
+    (T_check_code ic sc rho live <= T_check_code_ref ic sc rho live + 4)%N.
+  Proof.
+    intros ic sc rho live.
+    time_unfold T_check_code; unfold Datatypes.T_option_map; time_simpl.
+    rewrite check_code_tables_clock.
+    destruct (check_code_tables ic sc rho live) as [[rho' cached]|]; time_simpl; lia.
+  Qed.
+
+  (** Keeping the complete result costs no more than projecting its renaming. *)
+  Lemma check_code_tables_clock_le ic sc rho live :
+    (T_check_code_tables ic sc rho live <= T_check_code ic sc rho live)%N.
+  Proof.
+    time_unfold T_check_code. lia.
+  Qed.
+
   Definition val_scan_cost : N := (4 * PTrieT.c_trie + K.c_key + 64)%N.
 
   Lemma code_scan_time : forall ic sc rho forward inverse known w,
@@ -3431,12 +3617,24 @@ Module ValidateT (O : OPS)
   Qed.
 
   (** The optional scan is bounded by paying for every code-checking phase. *)
-  Lemma code_clock : forall ic sc rho live,
-    (T_check_code ic sc rho live <=
+  Lemma code_clock_ref : forall ic sc rho live,
+    (T_check_code_ref ic sc rho live <=
       1 + T_val_injective rho + T_val_index rho + T_val_inverse rho + T_val_set live +
         T_code_scan ic sc rho (val_index rho) (val_inverse rho) (val_set live))%N.
   Proof.
-    intros ic sc rho live; time_unfold T_check_code; destruct (val_injective rho); lia.
+    intros ic sc rho live; time_unfold T_check_code_ref; destruct (val_injective rho); lia.
+  Qed.
+
+  (** The public projection adds a constant to the original phase decomposition. *)
+  Lemma code_clock : forall ic sc rho live,
+    (T_check_code ic sc rho live <=
+      5 + T_val_injective rho + T_val_index rho + T_val_inverse rho + T_val_set live +
+        T_code_scan ic sc rho (val_index rho) (val_inverse rho) (val_set live))%N.
+  Proof.
+    intros ic sc rho live.
+    pose proof (code_clock_ref ic sc rho live) as Hreference.
+    pose proof (check_code_projection_clock ic sc rho live) as Hproject.
+    lia.
   Qed.
 
   (** Code checking is linear in its lists at any width bounding their identifiers. *)
@@ -3465,7 +3663,7 @@ Module ValidateT (O : OPS)
     { clear - ic sc; induction ic as [|i rest IH]; cbn; lia. }
     set (cost := (8 * PTrieT.c_trie + 4 * K.c_key + 256)%N).
     pose proof (code_clock ic sc rho live) as Hclock.
-    pose proof (proj1 (N.add_le_mono_l _ _ 1%N) Hinjective) as Hstart.
+    pose proof (proj1 (N.add_le_mono_l _ _ 5%N) Hinjective) as Hstart.
     pose proof (N.add_le_mono _ _ _ _ Hstart Hindex) as Hindexed.
     pose proof (N.add_le_mono _ _ _ _ Hindexed Hinverse) as Hinverted.
     pose proof (N.add_le_mono _ _ _ _ Hinverted Hset) as Hknown.
@@ -3477,7 +3675,7 @@ Module ValidateT (O : OPS)
           val_scan_cost * N.of_nat (length ic +
             fold_right (fun i n => (length (snd i) + n)%nat) 0%nat ic) * N.of_nat (w + 1) +
           val_scan_cost * N.of_nat
-            (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat ic) + 12)%N
+            (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat ic) + 16)%N
         in Hsum by ring
     end.
     eapply N.le_trans; [exact Hclock|]; eapply N.le_trans; [exact Hsum|].
@@ -3486,7 +3684,7 @@ Module ValidateT (O : OPS)
       (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat ic + 1))
       with (N.of_nat
         (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat ic) + 1)%N by lia.
-    apply val_code_charge.
+    apply val_code_charge_extra.
     - unfold cost; lia.
     - unfold cost; lia.
     - unfold cost, val_scan_cost; lia.
@@ -3597,7 +3795,7 @@ Module ValidateT (O : OPS)
     length rho' <= length rho + length ic /\
       forall x y, In (x, y) rho' -> Pos.size_nat x <= w /\ Pos.size_nat y <= w.
   Proof.
-    intros Hrho Hcode Hcheck; unfold check_code in Hcheck.
+    intros Hrho Hcode Hcheck; rewrite check_code_agrees in Hcheck; unfold check_code_ref in Hcheck.
     destruct (val_injective rho); [|discriminate].
     eapply code_scan_bounded; eassumption.
   Qed.
@@ -4152,6 +4350,41 @@ Module ValidateT (O : OPS)
         (Pos.eqb u su), (Pos.eqb v sv), (check_edge t b u rho); time_simpl; lia.
   Qed.
 
+  (** Reusing an existing cache only removes work from the exit check. *)
+  Lemma check_exit_cached_clock t b ib sb rho :
+    trie_get b (source_bodies t) = Some ib -> trie_get b (target_bodies t) = Some sb ->
+    (T_check_exit_with t ib sb (prepare_exit_tables t b ib rho) <=
+      T_check_exit t b ib sb rho)%N.
+  Proof.
+    intros Hib Hsb.
+    pose proof (check_exit_prepared_clock t b ib sb rho Hib Hsb) as Hexit.
+    assert (Hinverse : (T_val_inverse rho + 1 <= T_prepare_exit_tables t b ib rho)%N).
+    { time_unfold T_prepare_exit_tables. lia. }
+    lia.
+  Qed.
+
+  (** A block reuses exactly the indexes that its scan would otherwise rebuild. *)
+  Lemma check_block_cached_clock t b : (T_check_block t b <= T_check_block_ref t b)%N.
+  Proof.
+    time_unfold T_check_block; time_unfold T_check_block_ref; time_simpl.
+    destruct (trie_get b (source_bodies t)) as [ib|] eqn:Hib; [|lia].
+    destruct (trie_get b (target_bodies t)) as [sb|] eqn:Hsb; [|lia].
+    destruct (params _ _ _ ib); [|lia].
+    pose proof (check_code_tables_clock_le (code _ _ _ ib) (code _ _ _ sb)
+      (index_row (cert_envs t) b) (index_row (cert_rows t) b)) as Hscan_time.
+    unfold check_code.
+    destruct (check_code_tables (code _ _ _ ib) (code _ _ _ sb)
+      (index_row (cert_envs t) b) (index_row (cert_rows t) b))
+      as [[rho cached]|] eqn:Hscan; time_simpl; [|lia].
+    destruct (check_code_tables_agree _ _ _ _ _ _ Hscan) as [_ Hcached].
+    rewrite Hcached; cbn [option_map fst].
+    change (ExitTables (val_index rho) (val_inverse rho)
+      (val_set (map (fun i => fst (fst i)) (code _ _ _ ib) ++ index_row (cert_rows t) b)))
+      with (prepare_exit_tables t b ib rho).
+    pose proof (check_exit_cached_clock t b ib sb rho Hib Hsb) as Hexit.
+    lia.
+  Qed.
+
   Definition val_body_bits (body : block positive O.K O.G) : nat :=
     fold_right (fun i n => K.bits (snd (fst i)) + n) 0 (code _ _ _ body) +
       val_exit_bits (term _ _ _ body).
@@ -4167,6 +4400,7 @@ Module ValidateT (O : OPS)
       N.of_nat (w + 1) + val_block_cost * N.of_nat (val_checked_bits t b))%N.
   Proof.
     intros t b w Htable Hb Hfit.
+    eapply N.le_trans; [apply check_block_cached_clock|].
     set (charge := val_block_charge t b).
     set (width := N.of_nat (w + 1)).
     set (budget := (N.of_nat charge * width)%N).
@@ -4178,7 +4412,7 @@ Module ValidateT (O : OPS)
     pose proof (val_row_time (cert_rows t) b w Hb) as Hliverow; fold width in Hliverow.
     replace (val_block_cost * N.of_nat charge * width)%N with
       (val_block_cost * budget)%N by (unfold budget; ring).
-    time_unfold T_check_block; time_simpl; PTrieT.trie_get_le.
+    time_unfold T_check_block_ref; time_simpl; PTrieT.trie_get_le.
     unfold val_checked_bits; destruct (trie_get b (source_bodies t)) as [ib|] eqn:Hib;
       [|unfold val_block_cost; nia].
     destruct (trie_get b (target_bodies t)) as [sb|] eqn:Hsb;
@@ -4221,29 +4455,17 @@ Module ValidateT (O : OPS)
       replace ((512 * PTrieT.c_trie + 8 * G.c_key + 32768) * N.of_nat charge * width)%N
         with ((512 * PTrieT.c_trie + 8 * G.c_key + 32768) * budget)%N in Hexit
         by (unfold budget; ring).
-      assert (Hrhosize : length rho <= charge).
-      { pose proof (val_body_counts ib) as Hbody.
-        unfold charge, val_block_charge; rewrite Hib, Hsb; lia. }
-      pose proof (val_inverse_time rho w Hrhowidth) as Hinverse.
-      pose proof (val_exact_cost _ _ charge _ _ width Hinverse Hrhosize Hcharge Hwidth)
-        as Hinverse'; fold budget in Hinverse'.
-      pose proof (check_exit_prepared_clock t b ib sb rho Hib Hsb) as Hprepared.
-      assert (Hexit' : (T_prepare_exit_tables t b ib rho +
-        T_check_exit_with t ib sb (prepare_exit_tables t b ib rho) <=
-        (520 * PTrieT.c_trie + 8 * G.c_key + 33024) * budget +
-          G.c_key * N.of_nat (val_exit_bits (term _ _ _ ib)))%N) by nia.
       clearbody budget width charge.
-      clear - Hwidth Hbudget Hbits Henvrow Hliverow Hscan' Hexit'.
+      clear - Hwidth Hbudget Hbits Henvrow Hliverow Hscan' Hexit.
       PTrieT.trie_get_le.
       unfold val_body_bits; rewrite Nat2N.inj_add in Hscan' |- *.
       change (N.of_nat 1) with 1%N in Hscan'.
       eapply N.le_trans with (m :=
         (T_check_code (code _ _ _ ib) (code _ _ _ sb)
           (index_row (cert_envs t) b) (index_row (cert_rows t) b) +
-          (T_prepare_exit_tables t b ib rho +
-            T_check_exit_with t ib sb (prepare_exit_tables t b ib rho)) + 32 * budget)%N).
+          T_check_exit t b ib sb rho + 32 * budget)%N).
       { lia. }
-      eapply val_pair_clock_charge; [lia|exact Hscan'|exact Hexit'| | |];
+      eapply val_pair_clock_charge; [lia|exact Hscan'|exact Hexit| | |];
         unfold val_block_cost; lia.
     - clearbody budget width charge.
       clear - Hwidth Hbudget Hbits Henvrow Hliverow Hscan'.
