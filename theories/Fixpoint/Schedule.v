@@ -1826,7 +1826,12 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
     (fun p => (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
         N.of_nat (S.kw p + 1) + N.of_nat (row_count p) * (S.row_work p 0 + 1))%N)
     (fun p => T_dep_graph p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_sched).
+    intros p Hwf; cbn [fst snd].
+    eapply N.le_trans; [apply T_dep_graph_le; exact Hwf|].
+    apply N.le_add_r.
+  Qed.
 
   (** Cut checking is linear in occurrences times the key and priority widths. *)
   Lemma cuts_bigO : bigO (X := S.prog * policy L.wparam) (fun x => S.wf (fst x))
@@ -1834,7 +1839,12 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
         N.of_nat (S.kw (fst x) + prio_width (fst x) (snd x) + 1) +
         N.of_nat (row_count (fst x)) * (S.row_work (fst x) 0 + 1))%N)
     (fun x => T_cuts (fst x) (snd x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_sched).
+    intros [p pol] Hwf; cbn [fst snd] in *.
+    eapply N.le_trans; [apply T_cuts_le; exact Hwf|].
+    apply N.le_add_r.
+  Qed.
 
   (** Planning is linear in occurrences and edges times the nesting depth. *)
   Lemma plan_bigO : bigO (X := S.prog * head_cfg * L.wparam * nat)
@@ -1843,12 +1853,23 @@ Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
         N.of_nat (wto_depth (W.build (G.prepare (dep_graph p)) (verts (dep_graph p))) + 1) *
         N.of_nat (S.kw p + 1) + N.of_nat (row_count p) * (S.row_work p 0 + 1))%N)
     (fun '(p, cfg, wp, n) => T_plan p cfg wp n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_sched).
+    intros [[[p cfg] wp] n] Hwf; cbn [fst snd] in *.
+    eapply N.le_trans; [apply T_plan_le; exact Hwf|].
+    apply N.le_add_r.
+  Qed.
 
   (** WTO conversion is linear in the order length times the key and rank widths. *)
   Lemma of_wto_bigO : bigO (X := wto * head_cfg * L.wparam * nat) (fun _ => True)
     (fun '(w, _, _, _) => N.of_nat ((length (wto_order w) + 1) *
       (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1)))
     (fun '(w, cfg, wp, n) => T_of_wto w cfg wp n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_sched).
+    intros [[[w cfg] wp] n] _; cbn [fst snd].
+    eapply N.le_trans; [apply T_of_wto_le|].
+    rewrite Nat2N.inj_mul, N.mul_assoc.
+    apply N.le_add_r.
+  Qed.
 End ScheduleT.

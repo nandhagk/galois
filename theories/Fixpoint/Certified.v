@@ -70,8 +70,15 @@ Module CertifiedT (L : WLATTICE_T) (S : SYSTEM_T L) (V : SOLVER_T L S)
     time_step.
   Qed.
 
+  (** Certification is linear in the solver clock and the work of a solved candidate. *)
   Lemma analyze_bigO : bigO (X := S.prog * policy L.wparam * N) (fun _ => True)
     (fun '(p, pol, fuel) => (V.T_run p pol fuel + candidate_work p pol fuel)%N)
     (fun '(p, pol, fuel) => T_analyze p pol fuel).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply bigO_intro with (c := c_cert).
+    intros [[p pol] fuel] _; cbn [fst snd].
+    pose proof (T_analyze_le p pol fuel) as Hbound.
+    rewrite N.mul_add_distr_l, N.mul_1_r in Hbound.
+    exact Hbound.
+  Qed.
 End CertifiedT.
