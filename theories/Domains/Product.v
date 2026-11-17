@@ -1116,9 +1116,8 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
     rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
   Qed.
   (** Backward transfer has the published work-plus-request class. *)
-  Lemma backward_complexity : (bigO (fun _ => True)
-    (fun x => N.of_nat ((work (fst x) (snd (snd x)) + size (fst (snd x)))%nat))
-    (fun x => T_backward (fst x) (fst (snd x)) (snd (snd x))))%N.
+  Lemma backward_complexity :
+    T_backward o r xs ∈ 𝑂(N.of_nat ((work o xs + size r)%nat)) for (o, (r, xs)).
   Proof.
     exists c_val. intros [o [r xs]] _. cbn [fst snd].
     pose proof (T_backward_le o r xs) as Htime.
