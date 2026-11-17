@@ -1106,6 +1106,50 @@ Proof.
   - apply Pos.eqb_refl.
 Qed.
 
+(** Building row tables preserves pointwise agreement at every listed key. *)
+Lemma scc_rows_agree {A} (first second : positive -> A) vs initial :
+  (forall v, In v vs -> first v = second v) ->
+  fold_left (fun acc v => PTrieCode.set v (first v) acc) vs initial =
+    fold_left (fun acc v => PTrieCode.set v (second v) acc) vs initial.
+Proof.
+  revert initial. induction vs as [|v vs IH]; intros initial Hrows; [reflexivity|].
+  cbn [fold_left]. rewrite (Hrows v (or_introl eq_refl)).
+  apply IH. intros u Hin. apply Hrows. now right.
+Qed.
+
+(** Repeating a membership filter retains exactly the already selected occurrences. *)
+Local Lemma scc_filter_twice {A} (test : A -> bool) vs :
+  filter test (filter test vs) = filter test vs.
+Proof.
+  induction vs as [|v vs IH]; cbn [filter]; [reflexivity|].
+  destruct (test v) eqn:Htest; cbn [filter]; rewrite ?Htest, ?IH; reflexivity.
+Qed.
+
+(** Rebuilding filtered listed rows changes only their untrusted count caches. *)
+Lemma scc_graph_filtered g vs n e :
+  let listed := fold_left (fun acc v => PTrieCode.set v true acc) vs Empty in
+  let rows := fold_left (fun acc v => PTrieCode.set v
+    (filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (succs g v)) acc) vs Empty in
+  let b := Digraph vs rows in
+  scc_graph (Prepared b Empty n e) =
+    Prepared b Empty (N.of_nat (graph_n b)) (N.of_nat (graph_e b)).
+Proof.
+  intros listed rows b.
+  assert (Hbase : base (scc_graph (Prepared b Empty n e)) = b).
+  { unfold b, rows, listed, scc_graph. cbn [base nodes]. f_equal.
+    apply scc_rows_agree. intros v Hin.
+    cbn [base succs]. rewrite scc_rows_lookup.
+    assert (Hmember : existsb (Pos.eqb v) vs = true).
+    { apply existsb_exists. exists v. split; [exact Hin|apply Pos.eqb_refl]. }
+    rewrite Hmember. apply scc_filter_twice. }
+  change (Prepared (base (scc_graph (Prepared b Empty n e))) Empty
+    (N.of_nat (graph_n (base (scc_graph (Prepared b Empty n e)))))
+    (N.of_nat (graph_e (base (scc_graph (Prepared b Empty n e))))) =
+    Prepared b Empty (N.of_nat (graph_n b)) (N.of_nat (graph_e b))).
+  now rewrite Hbase.
+Qed.
+
 (** The filtered traversal reads neither predecessor nor count caches of its input. *)
 Definition scc_trace (g : prepared) : list event :=
   let ready := scc_graph g in
