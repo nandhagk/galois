@@ -39,6 +39,54 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example interval_payload_constant_wraps_once :
+  Payload.pconst 64%positive (2 ^ 64 + 5) = I (Fin 5) (Fin 5).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_payload_constant_in_range :
+  Payload.pconst 64%positive 5 = I (Fin 5) (Fin 5).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_payload_shared_modulus_inclusion :
+  map (fun w => Payload.pleb w (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 9)))
+    [8%positive; 64%positive] = [false; false].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_payload_shared_modulus_join :
+  map (fun w => Payload.pjoin w (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 9)))
+    [8%positive; 64%positive] = [I (Fin 1) (Fin 9); I (Fin 1) (Fin 9)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_payload_shared_modulus_meet :
+  map (fun w => Payload.pmeet w (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 9)))
+    [8%positive; 64%positive] = [I (Fin 2) (Fin 4); I (Fin 2) (Fin 4)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_payload_shared_modulus_widen :
+  map (fun w => Payload.pwiden (ThresholdsCode.make [0; 8; 255]) w
+    (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 9))) [8%positive; 64%positive] =
+    [I (Fin 1) (Fin 255); I (Fin 1) (Fin 255)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_payload_shared_modulus_narrow :
+  map (fun w => Payload.pnarrow w (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 9)))
+    [8%positive; 64%positive] = [I (Fin 1) (Fin 4); I (Fin 1) (Fin 4)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example interval_add_in_range :
   interval_add 8%positive (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 5)) =
   I (Fin 3) (Fin 9).
@@ -342,3 +390,68 @@ Example interval_ite_uses_prepared_tree :
     [(1%positive, Itv (Fin 0) (Fin 1)); (8%positive, Itv (Fin 2) (Fin 4));
      (8%positive, Itv (Fin 11) (Fin 12))] 8%positive = Itv (Fin 2) (Fin 12).
 *)
+
+Example interval_word_shift_shl_widths : map (fun w => Ops.interval_shl w
+  (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 3))) [8%positive;64%positive] =
+  [I (Fin 4) (Fin 32); I (Fin 4) (Fin 32)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_lshr_widths : map (fun w => Ops.interval_lshr w
+  (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 3))) [8%positive;64%positive] =
+  [I (Fin 0) (Fin 1); I (Fin 0) (Fin 1)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_shl_fallback : Ops.interval_shl 8%positive
+  (I (Fin 0) (Fin 255)) (I (Fin 0) (Fin 7)) = I (Fin 0) (Fin 255).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_lshr_fallback : Ops.interval_lshr 8%positive
+  (I (Fin 0) (Fin 255)) (I (Fin 0) (Fin 7)) = I (Fin 0) (Fin 255).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_shl_negative_high_count : Ops.interval_shl 8%positive
+  (I (Fin 1) (Fin 4)) (I (Fin 0) (Fin (-1))) = I (Fin 1) (Fin 0).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_lshr_negative_high_count : Ops.interval_lshr 8%positive
+  (I (Fin 1) (Fin 4)) (I (Fin 0) (Fin (-1))) = I (Fin 0) (Fin 4).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+Example interval_word_shift_lshr_negative_high_endpoint : Ops.interval_lshr 8%positive
+  (I (Fin 1) (Fin (-4))) (I (Fin 2) (Fin 3)) = I (Fin 0) (Fin (-1)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_shared_sign_constants :
+  map (interval_sign 8%positive)
+    [I (Fin 1) (Fin 4); I (Fin 252) (Fin 255); I (Fin 127) (Fin 128)] =
+    [Some false; Some true; None].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_shared_signed_constants :
+  interval_signed 8%positive (I (Fin 252) (Fin 255)) = Some (-4, -1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_shared_negation_modulus :
+  interval_neg 8%positive (I (Fin 252) (Fin 255)) = I (Fin 1) (Fin 4).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_shared_signed_division_constants :
+  interval_sdiv 8%positive (I (Fin 252) (Fin 252)) (I (Fin 2) (Fin 2)) =
+    I (Fin 254) (Fin 254).
+Proof.
+  vm_compute. reflexivity.
+Qed.

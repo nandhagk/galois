@@ -30,6 +30,112 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** The normal-residue path agrees with reduction at the width boundary. *)
+Example p1_cong_norm_width_one :
+  map (Payload.congr_norm 1%positive) [C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot] =
+    [C 0 1; CBot; CBot; C 0 1; CBot; CBot].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Normal residues are unchanged at the two larger test widths. *)
+Example p1_cong_norm_normal :
+  map (fun w => map (Payload.congr_norm w)
+    [C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot]) [8%positive; 64%positive] =
+    [[C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot];
+     [C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot]].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition p1_cong_inputs := [C 4 1; C 8 3; C 0 5; C 3 1; C 6 2; CBot].
+
+(** At width one, out-of-range constants normalize to bottom before transfer. *)
+Example p1_cong_transfers_width_one :
+  map (Payload.congr_neg 1%positive) p1_cong_inputs =
+    [C 0 1; CBot; CBot; C 0 1; CBot; CBot] /\
+  map (fun a => Payload.congr_add 1%positive a (C 8 3)) p1_cong_inputs =
+    repeat CBot 6 /\
+  map (fun a => Payload.congr_sub 1%positive a (C 8 3)) p1_cong_inputs =
+    repeat CBot 6 /\
+  map (fun a => Payload.congr_mul 1%positive a (C 8 3)) p1_cong_inputs =
+    repeat CBot 6 /\
+  map (fun a => Payload.congr_shl 1%positive a (C 0 5)) p1_cong_inputs =
+    repeat CBot 6 /\
+  map (Payload.congr_project 1%positive 1%positive) p1_cong_inputs =
+    [C 0 1; CBot; CBot; C 0 1; CBot; CBot].
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** Eight-bit negation reduces residues modulo the gcd with 256. *)
+Example p1_cong_neg_width_eight :
+  map (Payload.congr_neg 8%positive) p1_cong_inputs =
+    [C 4 3; C 8 5; C 0 251; C 1 0; C 2 0; CBot].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Sixty-four-bit negation wraps the exact constant at its word modulus. *)
+Example p1_cong_neg_width_sixty_four :
+  map (Payload.congr_neg 64%positive) p1_cong_inputs =
+    [C 4 3; C 8 5; C 0 (2 ^ 64 - 5); C 1 0; C 2 0; CBot].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Addition and subtraction keep only common power-of-two factors of the moduli. *)
+Example p1_cong_add_sub_widths :
+  map (fun w => map (fun a => Payload.congr_add w a (C 8 3)) p1_cong_inputs)
+    [8%positive; 64%positive] =
+    repeat [C 4 0; C 8 6; C 8 0; C 1 0; C 2 1; CBot] 2 /\
+  map (fun w => map (fun a => Payload.congr_sub w a (C 8 3)) p1_cong_inputs)
+    [8%positive; 64%positive] =
+    repeat [C 4 2; C 8 0; C 8 2; C 1 0; C 2 1; CBot] 2.
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** The product class uses the gcd of all three coefficient products. *)
+Example p1_cong_mul_widths :
+  map (fun w => map (fun a => Payload.congr_mul w a (C 8 3)) p1_cong_inputs)
+    [8%positive; 64%positive] =
+    repeat [C 4 3; C 8 1; C 8 7; C 1 0; C 2 0; CBot] 2.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A shifted modulus can collapse to an exact value at the smaller width. *)
+Example p1_cong_shl_widths :
+  map (fun a => Payload.congr_shl 8%positive a (C 0 5)) p1_cong_inputs =
+    [C 128 32; C 0 96; C 0 160; C 32 0; C 64 0; CBot] /\
+  map (fun a => Payload.congr_shl 64%positive a (C 0 5)) p1_cong_inputs =
+    [C 128 32; C 256 96; C 0 160; C 32 0; C 64 0; CBot].
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** Projection folds arbitrary moduli into divisors of the target word modulus. *)
+Example p1_cong_project_widths :
+  map (Payload.congr_project 8%positive 8%positive) p1_cong_inputs =
+    [C 4 1; C 8 3; C 0 5; C 1 0; C 2 0; CBot] /\
+  map (Payload.congr_project 64%positive 32%positive) p1_cong_inputs =
+    [C 4 1; C 8 3; C 0 5; C 1 0; C 2 0; CBot].
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** Stable widening returns its original operand, including raw payloads. *)
+Example p1_cong_widen_widths :
+  map (fun a => Payload.pwiden tt 1%positive a (C 8 5)) p1_cong_inputs =
+    p1_cong_inputs /\
+  map (fun w => map (fun a => Payload.pwiden tt w a (C 8 5)) p1_cong_inputs)
+    [8%positive; 64%positive] =
+    repeat [C 4 1; C 2 1; C 8 5; C 1 0; C 1 0; C 8 5] 2.
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
 Example dom4_cong_negative_modulus : Payload.congr_norm 8%positive (C (-4) 6) = C 4 2.
 Proof.
   vm_compute. reflexivity.
@@ -192,6 +298,34 @@ Qed.
 (** A zero divisor retains the dividend in the unsigned remainder table. *)
 Example congruence_remainder_zero :
   forward_payload bvurem [(8%positive, C 0 5); (8%positive, C 0 0)] 8%positive = C 0 5.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Negative residues take the original Euclidean remainder branch. *)
+Example congruence_negative_residue_normalization :
+  Payload.congr_norm 8%positive (C (-6) (-1)) = C 6 5.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Shifting a normalized negative raw residue agrees with gcd and remainder. *)
+Example congruence_negative_residue_shift :
+  Payload.congr_shl 8%positive (C (-6) (-1)) (C 0 1) = C 4 2.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A zero shift preserves this already word-folded class. *)
+Example congruence_zero_shift :
+  Payload.congr_shl 8%positive (C 4 1) (C 0 0) = C 4 1.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A shift equal to the word width yields the exact zero class. *)
+Example congruence_width_shift :
+  Payload.congr_shl 8%positive (C 4 1) (C 0 8) = C 0 0.
 Proof.
   vm_compute. reflexivity.
 Qed.

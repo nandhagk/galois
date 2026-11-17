@@ -4,8 +4,8 @@
     For example, adding [1, 4] to [2, 5] yields [3, 9] at width eight.
     Builds on: Interval and the fixed-width word operations. *)
 
-From Stdlib Require Import ZArith List Bool Lia.
-From Argent Require Import Time Std.
+From Stdlib Require Import ZArith NArith List Bool Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Fun Testbit Arith Op.
 From Galois.Domains Require Import Interval IntervalSig ThresholdsSig ValueSig.
 Import List.ListNotations.
@@ -17,6 +17,46 @@ End Datatypes.
 Module Bool.
   TimeFun Bool.eqb.
 End Bool.
+
+(** Left shifts use constant-cost doubling at each nonnegative shift step. *)
+Lemma interval_shiftl_time : forall z k, 0 <= k ->
+  (Std.Z.T_shiftl z k <= 8 * N.of_nat (Z.to_nat k + 1))%N.
+Proof.
+  intros z [|p|p] Hk; [| |lia].
+  - time_unfold Std.Z.T_shiftl. time_cbn. nia.
+  - pose proof (Std.Pos.T_iter_le (Z.mul 2) (fun x => Std.Z.T_mul 2 x) (fun _ => True)
+      3 z p (fun _ _ => Logic.I) (fun x _ => Std.Z.T_mul_two_le x) Logic.I) as Hiter.
+    time_unfold Std.Z.T_shiftl. time_cbn. cbn [Z.to_nat].
+    rewrite Nat2N.inj_add.
+    change (N.of_nat (Pos.to_nat p)) with (N.of_nat (N.to_nat (N.pos p))).
+    rewrite N2Nat.id. nia.
+Qed.
+
+(** Halving preserves a nonnegative endpoint. *)
+Lemma interval_div2_nonnegative : forall z, 0 <= z -> 0 <= Z.div2 z.
+Proof.
+  intros [|[p|p|]|p] Hz; cbn [Z.div2]; lia.
+Qed.
+
+(** Halving a nonnegative endpoint reads only the outer constructor. *)
+Lemma interval_div2_time : forall z, 0 <= z -> (Std.Z.T_div2 z <= 4)%N.
+Proof.
+  intros [|[p|p|]|p] Hz; try lia; time_unfold Std.Z.T_div2; time_cbn; time_pose; nia.
+Qed.
+
+(** Logical right shifts use constant-cost halving at each nonnegative shift step. *)
+Lemma interval_shiftr_time : forall z k, 0 <= z -> 0 <= k ->
+  (Std.Z.T_shiftr z k <= 8 * N.of_nat (Z.to_nat k + 1))%N.
+Proof.
+  intros z [|p|p] Hz Hk; [| |lia].
+  - time_unfold Std.Z.T_shiftr. time_unfold Std.Z.T_shiftl. time_cbn. time_pose. nia.
+  - pose proof (Std.Pos.T_iter_le Z.div2 (fun x => Std.Z.T_div2 x) (fun x => 0 <= x)
+      4 z p interval_div2_nonnegative interval_div2_time Hz) as Hiter.
+    time_unfold Std.Z.T_shiftr. time_unfold Std.Z.T_shiftl. time_cbn. time_pose.
+    cbn [Z.to_nat]. rewrite Nat2N.inj_add.
+    change (N.of_nat (Pos.to_nat p)) with (N.of_nat (N.to_nat (N.pos p))).
+    rewrite N2Nat.id. nia.
+Qed.
 
 Module IntervalOpsCode (T : THRESHOLDS_OPS) (Scalar : INTERVAL_SCALAR_OPS T).
 
@@ -57,11 +97,21 @@ Definition interval_mul (w : width) (a b : itv) : itv :=
   | _, _ => interval_top w
   end.
 
-Definition interval_neg (w : width) (a : itv) : itv :=
+Definition interval_neg_ref (w : width) (a : itv) : itv :=
   match interval_finite_helper a with
   | Some (lo, hi) =>
     if Z.eqb hi 0 then I (Fin 0) (Fin 0)
     else if Z.ltb 0 lo then interval_checked w (modulus w - hi) (modulus w - lo)
+    else interval_top w
+  | None => interval_top w
+  end.
+
+Definition interval_neg (w : width) (a : itv) : itv :=
+  match interval_finite_helper a with
+  | Some (lo, hi) =>
+    if Z.eqb hi 0 then I (Fin 0) (Fin 0)
+    else if Z.ltb 0 lo then
+      let M := modulus w in interval_checked w (M - hi) (M - lo)
     else interval_top w
   | None => interval_top w
   end.
@@ -165,7 +215,7 @@ Definition interval_eq (a b : itv) : itv :=
   | _, _ => interval_truth None
   end.
 
-Definition interval_shl (w : width) (a b : itv) : itv :=
+Definition interval_shl_ref (w : width) (a b : itv) : itv :=
   match interval_finite_helper a, interval_finite_helper b with
   | Some (la, ha), Some (lb, hb) =>
     if (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Zpos w))%bool
@@ -173,7 +223,17 @@ Definition interval_shl (w : width) (a b : itv) : itv :=
   | _, _ => interval_top w
   end.
 
-Definition interval_lshr (w : width) (a b : itv) : itv :=
+(** Negative upper counts keep the original zero-power endpoint on raw intervals. *)
+Definition interval_shl (w : width) (a b : itv) : itv :=
+  match interval_finite_helper a, interval_finite_helper b with
+  | Some (la, ha), Some (lb, hb) =>
+    if (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Zpos w))%bool
+    then interval_checked w (Z.shiftl la lb) (if Z.leb 0 hb then Z.shiftl ha hb else 0)
+    else interval_top w
+  | _, _ => interval_top w
+  end.
+
+Definition interval_lshr_ref (w : width) (a b : itv) : itv :=
   match interval_finite_helper a, interval_finite_helper b with
   | Some (la, ha), Some (lb, hb) =>
     if (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Zpos w))%bool
@@ -181,7 +241,17 @@ Definition interval_lshr (w : width) (a b : itv) : itv :=
   | _, _ => interval_top w
   end.
 
-Definition interval_sign (w : width) (a : itv) : option bool :=
+(** Negative upper counts keep the original division-by-zero endpoint on raw intervals. *)
+Definition interval_lshr (w : width) (a b : itv) : itv :=
+  match interval_finite_helper a, interval_finite_helper b with
+  | Some (la, ha), Some (lb, hb) =>
+    if (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Zpos w))%bool
+    then interval_checked w (if Z.leb 0 hb then Z.shiftr la hb else 0) (Z.shiftr ha lb)
+    else interval_top w
+  | _, _ => interval_top w
+  end.
+
+Definition interval_sign_ref (w : width) (a : itv) : option bool :=
   match interval_finite_helper a with
   | Some (lo, hi) =>
     if Z.ltb hi (half w) then Some false
@@ -189,11 +259,31 @@ Definition interval_sign (w : width) (a : itv) : option bool :=
   | None => None
   end.
 
-Definition interval_signed (w : width) (a : itv) : option (Z * Z) :=
+Definition interval_sign (w : width) (a : itv) : option bool :=
+  match interval_finite_helper a with
+  | Some (lo, hi) =>
+    let h := half w in
+    if Z.ltb hi h then Some false
+    else if Z.leb h lo then Some true else None
+  | None => None
+  end.
+
+Definition interval_signed_ref (w : width) (a : itv) : option (Z * Z) :=
   match interval_finite_helper a with
   | Some (lo, hi) =>
     if Z.ltb hi (half w) then Some (lo, hi)
     else if Z.leb (half w) lo then Some (lo - modulus w, hi - modulus w)
+    else None
+  | None => None
+  end.
+
+Definition interval_signed (w : width) (a : itv) : option (Z * Z) :=
+  match interval_finite_helper a with
+  | Some (lo, hi) =>
+    let h := half w in
+    if Z.ltb hi h then Some (lo, hi)
+    else if Z.leb h lo then
+      let M := modulus w in Some (lo - M, hi - M)
     else None
   | None => None
   end.
@@ -392,6 +482,56 @@ End IntervalOpsCode.
 Module IntervalOpsSound (T : THRESHOLDS) (Scalar : INTERVAL_SCALAR_OPS T).
   Include IntervalOpsCode T Scalar.
   Include Scalar.
+
+  (** Sharing width-dependent constants preserves the original endpoint formulas. *)
+  Lemma interval_neg_agrees : forall w a, interval_neg w a = interval_neg_ref w a.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Sharing the signed midpoint preserves the sign test. *)
+  Lemma interval_sign_agrees : forall w a, interval_sign w a = interval_sign_ref w a.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Sharing width constants preserves conversion to signed endpoints. *)
+  Lemma interval_signed_agrees : forall w a, interval_signed w a = interval_signed_ref w a.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Bit shifts preserve the old product endpoints even for malformed raw intervals. *)
+  Lemma interval_shl_agrees : forall w a b, interval_shl w a b = interval_shl_ref w a b.
+  Proof.
+    intros w a b. unfold interval_shl, interval_shl_ref.
+    destruct (interval_finite_helper a) as [[la ha]|];
+      destruct (interval_finite_helper b) as [[lb hb]|]; try reflexivity.
+    destruct (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Zpos w)) eqn:Hguard;
+      [|reflexivity].
+    repeat rewrite andb_true_iff in Hguard. destruct Hguard as [[_ Hlb] _].
+    apply Z.leb_le in Hlb. rewrite (Z.shiftl_mul_pow2 la lb) by exact Hlb.
+    destruct (Z.leb 0 hb) eqn:Hhb.
+    - apply Z.leb_le in Hhb. now rewrite Z.shiftl_mul_pow2 by exact Hhb.
+    - apply Z.leb_gt in Hhb. rewrite (Z.pow_neg_r 2 hb) by exact Hhb.
+      now rewrite Z.mul_0_r.
+  Qed.
+
+  (** Bit shifts preserve the old quotient endpoints even for malformed raw intervals. *)
+  Lemma interval_lshr_agrees : forall w a b, interval_lshr w a b = interval_lshr_ref w a b.
+  Proof.
+    intros w a b. unfold interval_lshr, interval_lshr_ref.
+    destruct (interval_finite_helper a) as [[la ha]|];
+      destruct (interval_finite_helper b) as [[lb hb]|]; try reflexivity.
+    destruct (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Zpos w)) eqn:Hguard;
+      [|reflexivity].
+    repeat rewrite andb_true_iff in Hguard. destruct Hguard as [[_ Hlb] _].
+    apply Z.leb_le in Hlb. rewrite (Z.shiftr_div_pow2 ha lb) by exact Hlb.
+    destruct (Z.leb 0 hb) eqn:Hhb.
+    - apply Z.leb_le in Hhb. now rewrite Z.shiftr_div_pow2 by exact Hhb.
+    - apply Z.leb_gt in Hhb. rewrite (Z.pow_neg_r 2 hb) by exact Hhb.
+      now rewrite Z.div_0_r.
+  Qed.
 
   (** * Word interval membership *)
 
@@ -1044,7 +1184,7 @@ Module IntervalOpsSound (T : THRESHOLDS) (Scalar : INTERVAL_SCALAR_OPS T).
     interval_pgamma w a x -> interval_pgamma w b y ->
     interval_pgamma w (interval_shl w a b) (wshl w x y).
   Proof.
-    intros Ha Hb. unfold interval_shl.
+    intros Ha Hb. rewrite interval_shl_agrees. unfold interval_shl_ref.
     destruct (interval_finite_helper a) as [[la ha]|] eqn:Hfa;
       destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hfb;
       try (apply interval_top_sound, wshl_is_word).
@@ -1067,7 +1207,7 @@ Module IntervalOpsSound (T : THRESHOLDS) (Scalar : INTERVAL_SCALAR_OPS T).
     interval_pgamma w a x -> interval_pgamma w b y ->
     interval_pgamma w (interval_lshr w a b) (wlshr w x y).
   Proof.
-    intros Ha Hb. unfold interval_lshr.
+    intros Ha Hb. rewrite interval_lshr_agrees. unfold interval_lshr_ref.
     destruct (interval_finite_helper a) as [[la ha]|] eqn:Hfa;
       destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hfb;
       try (apply interval_top_sound, wlshr_is_word).
