@@ -2,6 +2,11 @@
 
     Effects retain the snapshot at each read and the historical address of existing bytes.
     For example, a barrier reads and writes the oracle's all-memory region.
+
+    Main results
+    - [disjoint_sound] A successful disjointness answer excludes every shared location.
+    - [covers_sound] A successful coverage answer includes the second region in the first.
+
     Builds on: Program.CfgSig and Program.SemanticsSig. *)
 
 From Stdlib Require Import List NArith.
