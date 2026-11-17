@@ -4,8 +4,9 @@
     For example, wrapping 260 at width eight gives 4.
 
     Main results
-    - [modulus_complexity] Modulus construction is linear in the width.
-    - [wrap_complexity] Wrapping has the linear class in the width and the raw integer size.
+    - [modulus_complexity] Modulus construction is linear in the width, O(w).
+    - [wrap_complexity] Wrapping has the linear class in the width and the raw integer size,
+      O(w + |z|).
 
     Builds on: Stdlib integer arithmetic and Argent time derivation. *)
 
