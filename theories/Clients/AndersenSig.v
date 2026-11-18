@@ -20,6 +20,7 @@ From Stdlib Require Import List PArith NArith Bool.
 From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
+From Galois.Front Require Import Spec Derive.
 Import List.ListNotations.
 Import ComplexityNotations.
 
@@ -105,39 +106,10 @@ Module Type POINTER_LINK.
       pointer_exec instruction (memory s) = Some (memory t).
 End POINTER_LINK.
 
-Definition pointer_relation (q : pointer_input) (f x y : positive) : Prop :=
-  (f = 1%positive /\ In (Addr x y) (constraints q)) \/
-  (f = 2%positive /\ In (Copy x y) (constraints q)) \/
-  (f = 3%positive /\ In (Load x y) (constraints q)) \/
-  (f = 4%positive /\ In (Store x y) (constraints q)) \/
-  (f = 5%positive /\ may_points q x y).
+(** The engine program is derived from [may_points], and every table code is generated. *)
+Egglog Andersen from may_points.
 
-Definition andersen_model (q : pointer_input) : model (V := positive) :=
-  Model unit (fun f args => exists x y, args = [inr x; inr y] /\ pointer_relation q f x y)
-    (fun _ _ => tt) (fun _ _ _ => False).
-
-Definition andersen_program : program positive := Program positive
-  [Decl 1 [SVal; SVal] ORel; Decl 2 [SVal; SVal] ORel; Decl 3 [SVal; SVal] ORel;
-   Decl 4 [SVal; SVal] ORel; Decl 5 [SVal; SVal] ORel]
-  [Rule positive [Fun positive 1 [Var 1; Var 2] None]
-      [Put 5 [Var 1; Var 2] None];
-   Rule positive [Fun positive 2 [Var 1; Var 2] None;
-      Fun positive 5 [Var 2; Var 3] None] [Put 5 [Var 1; Var 3] None];
-   Rule positive [Fun positive 3 [Var 1; Var 2] None;
-      Fun positive 5 [Var 2; Var 3] None; Fun positive 5 [Var 3; Var 4] None]
-      [Put 5 [Var 1; Var 4] None];
-   Rule positive [Fun positive 4 [Var 1; Var 2] None;
-      Fun positive 5 [Var 1; Var 3] None; Fun positive 5 [Var 2; Var 4] None]
-      [Put 5 [Var 3; Var 4] None]].
-
-Definition pointer_seed_row (q : pointer_input) f (k : list (cell positive))
-    (o : option (cell positive)) :=
-  o = None /\ exists x y, k = [Val x; Val y] /\
-    ((f = 1%positive /\ In (Addr x y) (constraints q)) \/
-     (f = 2%positive /\ In (Copy x y) (constraints q)) \/
-     (f = 3%positive /\ In (Load x y) (constraints q)) \/
-     (f = 4%positive /\ In (Store x y) (constraints q)) \/
-     (f = 5%positive /\ In (x, y) (initial_pointers q))).
+Definition andersen_program : program positive := Andersen.program.
 
 Module Type ANDERSEN_OPS (V : VALUE_OPS with Definition t := positive)
     (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE_OPS V I)
@@ -154,10 +126,9 @@ Module Type ANDERSEN_LAWS (V : VALUE with Definition t := positive)
     (Import A : ANDERSEN_OPS V I J D R).
   (** Compilation emits exactly the four inclusion rules. *)
   Parameter compile_rules : forall q, compile q = andersen_program.
-  (** The generated rules are valid in the independent least inclusion model. *)
-  Parameter rules_valid : forall q, valid V.prim V.merge (andersen_model q) (compile q).
-  (** Seeds contain exactly the source constraints and initial pointer facts. *)
-  Parameter seed_rows : forall q f k o, row (D.view (seed q)) f k o <-> pointer_seed_row q f k o.
+  (** Seeds contain exactly the input rows of the source constraints and initial pointers. *)
+  Parameter seed_rows : forall q f k o, row (D.view (seed q)) f k o <->
+    o = None /\ exists vs, k = map Val vs /\ In (f, vs) (Andersen.facts q).
   (** Seeds carry the compiled declarations, the layout of the compiled plan and
       well-sorted rows. *)
   Parameter seed_loaded : forall q, R.loaded (compile q) (R.plan (compile q)) (seed q).
@@ -168,7 +139,7 @@ Module Type ANDERSEN_LAWS (V : VALUE with Definition t := positive)
     solve q lim = R.run (compile q) (R.plan (compile q)) lim (seed q).
   (** Points-to queries reflect canonical relation membership. *)
   Parameter points_spec : forall db x a, D.wf db -> D.canonical db ->
-    reflect (row (D.view db) 5 [Val x; Val a] None) (points db x a).
+    reflect (row (D.view db) Andersen.may_points_code [Val x; Val a] None) (points db x a).
   (** Every returned database is well formed and canonical. *)
   Parameter solve_wf : forall q lim, D.wf (snd (solve q lim)) /\ D.canonical (snd (solve q lim)).
 
@@ -248,24 +219,6 @@ Module Type ANDERSEN_PLAN (V : VALUE_T with Definition t := positive)
   (** Every relation closed under the four source rules contains the least source relation. *)
   Parameter source_least : forall q r, pointer_closed q r ->
     forall x a, may_points q x a -> r x a.
-  (** Each generated rule is valid by its matching source closure rule. *)
-  Parameter rule_valid : forall q r rho, In r (rules V.t (compile q)) ->
-    Forall (model_atom V.prim (andersen_model q) (program_kind (compile q)) rho)
-      (query V.t r) ->
-    model_actions V.prim (andersen_model q) (program_kind (compile q)) rho (actions V.t r).
-  (** Initial database rows satisfy the least inclusion model. *)
-  Parameter seed_sat_spec : forall q,
-    sat V.merge (andersen_model q) (fun _ => tt) (D.view (seed q)).
-  (** Engine derivations of points-to rows yield source inclusion derivations. *)
-  Parameter derives_source : forall q x a,
-    derives V.prim (compile q) (D.view (seed q)) 5 [Val x; Val a] -> may_points q x a.
-  (** Source inclusion derivations occur in every closed extension of the seed view that keeps
-      the program's kinds and sorts. *)
-  Parameter closed_source : forall q w, closed V.prim V.merge (compile q) w ->
-    (forall f k o, row (D.view (seed q)) f k o -> row w f k o) ->
-    (forall f, kind w f = program_kind (compile q) f) ->
-    view_sorted (program_sorts (compile q)) w ->
-    forall x a, may_points q x a -> row w 5 [Val x; Val a] None.
   (** Concrete updates preserve coverage by every source-closed relation. *)
   Parameter step_covered : forall q r instruction before after,
     pointer_closed q r -> In instruction (constraints q) -> memory_covered r before ->
