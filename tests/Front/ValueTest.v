@@ -389,14 +389,26 @@ Module GlueTests.
     exact (proj2 (Reach.reach_spec one_step 1 3) Hrow).
   Qed.
 
-  (** Two integers whose encodings are different are not related, so the glue does not confuse
-      a row of one integer with another. *)
-  Example derived_row_of_other_integer_is_not_reach :
-    derived IntOps.prim Reach.spec (Reach.inputs one_step) Reach.reach_code
-      [ZEncode.encode 1; ZEncode.encode 4] -> reach one_step 1 4.
+  (** The one step reaches only 3, so the row of 1 and 4 is not derived, through the glue. *)
+  Example unreached_row_is_not_derived :
+    ~ derived IntOps.prim Reach.spec (Reach.inputs one_step) Reach.reach_code
+      [ZEncode.encode 1; ZEncode.encode 4].
   Proof.
     intros Hrow.
-    exact (proj2 (Reach.reach_spec one_step 1 4) Hrow).
+    apply (proj2 (Reach.reach_spec one_step 1 4)) in Hrow.
+    assert (Hthree : forall x y, reach one_step x y -> y = 3).
+    { intros x y Hreach.
+      induction Hreach as [x k y Hin Hadd | x y k z Hreach IH Hin Hadd].
+      - destruct Hin as [Hstep | []].
+        injection Hstep as Hx Hk.
+        subst x k.
+        rewrite <- Hadd.
+        reflexivity.
+      - destruct Hin as [Hstep | []].
+        injection Hstep as Hy Hk.
+        rewrite <- Hy in IH.
+        discriminate IH. }
+    discriminate (Hthree 1 4 Hrow).
   Qed.
 
   (** Names give derived rows too, through [linked_spec]. *)
