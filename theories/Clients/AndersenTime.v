@@ -21,7 +21,7 @@ From Stdlib Require Import List PArith NArith Bool.
 From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
-From Galois.Front Require Import Lower RunnerSig Runner RunnerFacts Relational.
+From Galois.Front Require Import Lower RunnerSig Runner RunnerFacts RunnerTime Relational.
 From Galois.Clients Require Import AndersenSig Andersen.
 Import List.ListNotations.
 Import ComplexityNotations.
@@ -56,6 +56,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Lemma T_compile_le : forall q, (T_compile q <= c_andersen)%N.
   Proof. Admitted. (* STUB *)
 
+  (* STUB: [XT.T_holds_le] at [MayPoints.may_points_code] and the two values [x] and [a]. *)
   Lemma T_points_le : forall db x a, D.wf db ->
     (T_points db x a <= c_andersen * (N.of_nat (3 * D.unit db) +
       N.of_nat (cell_bits V.encode (Val x) + cell_bits V.encode (Val a)) + 1))%N.

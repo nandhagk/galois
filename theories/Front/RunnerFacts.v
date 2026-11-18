@@ -1,20 +1,18 @@
 (** * Facts of the runner
 
-    The facts that every theorem about a run needs, and the timed runner. The seed of a
-    specification that passes its checks holds exactly its input rows, as rows of values
-    without output, and the run contracts of the engine apply to it. A model of the input rows
-    satisfies the seed, every outcome keeps the input rows, and a lookup says whether a
-    database has a row. The timed runner derives the time function of each operation, and
-    seeding and solving pay for their parts.
+    The facts that every theorem about a run needs. The seed of a specification that passes its
+    checks holds exactly its input rows, as rows of values without output, and the run
+    contracts of the engine apply to it. A model of the input rows satisfies the seed, every
+    outcome keeps the input rows, and a lookup says whether a database has a row. The timed
+    runner is in [RunnerTime.v].
     For example, [seed_rows] says that the seed of [Path.program] on the edges 1 to 2 and 2 to 3
     holds exactly the two edge rows.
 
-    Builds on: the runner signature, the runner and the engine contracts. *)
+    Builds on: the runner signature and the engine contracts. *)
 
 From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time Tactics Std.
 From Galois.Egglog Require Import ValueSig Syntax Model Sorts IndexSig JoinSig DatabaseSig RunSig.
-From Galois.Front Require Import Spec LowerSig RunnerSig Runner.
+From Galois.Front Require Import Spec LowerSig RunnerSig.
 
 Import List.ListNotations.
 
@@ -58,37 +56,3 @@ Module RunnerFacts (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   Proof.
   Admitted. (* STUB *)
 End RunnerFacts.
-
-Module RunnerT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
-    (R : RUN_T V I J D) <: RUNNER_T V I J D R.
-  Include Runner V I J D R.
-  TimeFun put_row.
-  TimeFun seed.
-  TimeFun solve.
-  TimeFun holds.
-  TimeFun add_term.
-  TimeFun add_terms.
-  TimeFun saturate.
-  TimeFun same_cell.
-  TimeFun equal.
-  Definition c_runner : N := 1. (* STUB *)
-
-  Lemma T_seed_le : forall B U (s : spec V.t) rows,
-    spec_ok s = true -> rows_ok s rows = true ->
-    (D.ids (seed (spec_program s) rows) <= B)%N -> D.unit (seed (spec_program s) rows) <= U ->
-    (T_seed (spec_program s) rows <=
-      R.T_plan (spec_program s) + R.T_load (spec_program s) (R.plan (spec_program s)) +
-      c_runner * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
-        N.of_nat (length (Syntax.slots V.t (R.plan (spec_program s))) + 1) *
-        N.of_nat (fold_right
-          (fun row n => ((length (snd row) + 2) * (length (snd row) + 2) + n)%nat) 0%nat rows +
-          1))%N.
-  Proof.
-  Admitted. (* STUB *)
-
-  Lemma T_solve_split : forall p rows lim,
-    (T_solve p rows lim <=
-      T_seed p rows + R.T_plan p + R.T_run p (R.plan p) lim (seed p rows) + c_runner)%N.
-  Proof.
-  Admitted. (* STUB *)
-End RunnerT.

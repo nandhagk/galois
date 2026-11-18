@@ -21,7 +21,8 @@ From Stdlib Require Import List PArith NArith Bool Lia.
 From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
-From Galois.Front Require Import Spec Lower RunnerSig Runner RunnerFacts CongruenceRef Ground.
+From Galois.Front Require Import Spec Lower RunnerSig Runner RunnerFacts RunnerTime CongruenceRef
+  Ground.
 From Galois.Clients Require Import AndersenSig Andersen SteensgaardSig Steensgaard
   SteensgaardExact.
 Import List.ListNotations.

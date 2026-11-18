@@ -3,8 +3,8 @@
     [seed] loads a program with its planned slots and puts each input row, [solve] runs the
     program on the seed, and [holds] says whether a lookup finds a row without output.
     [saturate] also adds terms before the run, and [equal] says whether the run puts two terms
-    in one class. The timed runner [RunnerT] is in [RunnerFacts.v], with the facts that the
-    theorems use.
+    in one class. The timed runner [RunnerT] is in [RunnerTime.v], and the facts that the
+    theorems use are in [RunnerFacts.v].
     For example, [holds MayPoints.may_points_code [x; a] db] says whether [x] may point to [a]
     in the result [db] of [solve MayPoints.program (MayPoints.facts q) lim].
 

@@ -4,25 +4,33 @@
     constructor inventory from the declarations of a program and its planned slots, asks the
     engine to extract a checked DAG for the class, and [decode] reads the DAG back as an
     expression. The engine keeps one best entry for each class ([best_nodup]), so the extracted
-    DAG has the least cost of the class. A returned term is represented by the class ([cheapest_represents]), and no term that the class represents costs less
+    DAG has the least cost of the class. A returned term is represented by the class
+    ([cheapest_represents]), and no term that the class represents costs less
     ([cheapest_optimal]). The conditions [inventory_fits] say that the database matches the
-    declarations and the slots of the program.
+    declarations and the slots of the program. Decoding unfolds the DAG into a tree, which can
+    be exponentially larger than the DAG, so the time bounds count the nodes of the returned
+    term ([expr_size]).
     For example, after saturating [Add (Num 1) (Num 2)] with the folding rules, [cheapest] of
     its class is the encoding of [Num 3], which costs less than the sum.
 
     Main results
     - [cheapest_represents] A returned term is represented by the class.
     - [cheapest_optimal] No term that the class represents costs less than the returned term.
+    - [decode_complexity] Decoding reverses the DAG and scans it once for each node of the
+      returned term.
+    - [cheapest_complexity] The cheapest term costs planning, the inventory, the extraction of
+      the engine and the decoding of a DAG with at most one entry for each constructor row.
 
     Builds on: the program syntax, the exact model, the run contracts and the extraction
     contracts of the engine. *)
 
 From Stdlib Require Import List PArith NArith Bool.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Egglog Require Import ValueSig Syntax Model Sorts IndexSig JoinSig DatabaseSig RunSig
   ExtractSig.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** * Decoding *)
 
@@ -66,6 +74,28 @@ Definition planned_slots {V} (cp : compiled V) : list (positive * list nat) :=
   end.
 TimeFun planned_slots.
 
+(** * Measures *)
+
+(** The number of nodes of an expression. *)
+Fixpoint expr_size {V} (e : @expr V) : nat :=
+  match e with
+  | ELit _ => 1
+  | EApp _ args => S (fold_right (fun a n => expr_size a + n) 0 args)
+  end.
+
+(** The number of nodes of a returned expression, or zero when there is none. *)
+Definition result_size {V} (o : option (@expr V)) : nat :=
+  match o with
+  | Some e => expr_size e
+  | None => 0
+  end.
+
+(** The widest cell of the rows of a DAG. A scan for a child of a row compares the child with
+    the identifiers of the entries, so it pays for the bits of the child. *)
+Definition dag_width {V} (encode : V -> positive) (g : extraction_dag V) : nat :=
+  fold_right (fun entry n =>
+    fold_right (fun c m => Nat.max (cell_bits encode c) m) n (snd (snd entry))) 0 g.
+
 (** * Operations *)
 
 Module Type EXTRACTION_OPS (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I)
@@ -95,6 +125,59 @@ End EXTRACTION_LAWS.
 Module Type EXTRACTION_BASE (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I)
     (D : DATABASE_OPS V I) (R : RUN_OPS V I J D) (C : COST_OPS V) (X : EXTRACT_OPS V I D C) :=
   EXTRACTION_OPS V I J D R C X <+ EXTRACTION_LAWS V I J D R C X.
+
+(** * Time *)
+
+Module Type EXTRACTION_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
+    (D : DATABASE_T V I) (R : RUN_T V I J D) (C : COST_T V) (X : EXTRACT_T V I D C)
+    (Import K : EXTRACTION_BASE V I J D R C X).
+  Parameter T_decode : extraction_dag V.t -> positive -> N.
+  Parameter T_cheapest : program V.t -> D.t -> positive -> N.
+  Parameter c_extraction : N.
+  (** The constructor inventory of a program, from its declarations and its planned slots. *)
+  Definition inventory_of (p : program V.t) : list (positive * (N * nat)) :=
+    X.inventory (decls V.t p) (planned_slots (R.plan p)).
+  (** Decoding reverses the DAG and then scans it once for each node of the returned term. Each
+      step of a scan compares an entry with the class or with a cell of the DAG. *)
+  Parameter T_decode_le : forall g c e, decode g c = Some e ->
+    (T_decode g c <= c_extraction * N.of_nat ((length g + 1) * (length g + 1) +
+      (expr_size e + 1) * (length g + 1) * (Pos.size_nat c + dag_width V.encode g + 1)))%N.
+  (** Decoding is quadratic in the length of the DAG, and linear in the returned term, in the
+      length of the DAG and in the width of the compared identifiers. *)
+  Parameter decode_complexity :
+    T_decode g c ∈
+      𝑂(N.of_nat ((length g + 1) * (length g + 1) +
+        (expr_size e + 1) * (length g + 1) * (Pos.size_nat c + dag_width V.encode g + 1)))
+      for (g, c, e) | decode g c = Some e.
+  (** The cheapest term pays for planning, for the inventory, for the extraction and for
+      decoding the extracted DAG. *)
+  Parameter T_cheapest_split : forall p db c,
+    (T_cheapest p db c <=
+      R.T_plan p + X.T_inventory (decls V.t p) (planned_slots (R.plan p)) +
+      X.T_extract (inventory_of p) db c +
+      match X.extract (inventory_of p) db c with
+      | Some g => T_decode g c
+      | None => 0
+      end + c_extraction)%N.
+  (** The cheapest term costs the cube of the program for planning, the layout for the
+      inventory, and the best rows and their traversal at the unit for the extraction. The
+      extracted DAG has at most one entry for each constructor row, and its identifiers fit in
+      the unit, so decoding costs the returned term times the constructor rows at the unit. *)
+  Parameter cheapest_complexity :
+    T_cheapest p db c ∈
+      𝑂(N.of_nat ((R.size_program p + 1) * (R.size_program p + 1) * (R.size_program p + 1) +
+        (layout_bits (decls V.t p) (planned_slots (R.plan p)) + 1) *
+          (Nat.log2 (length (planned_slots (R.plan p))) + 1) +
+        (inventory_bits (inventory_of p) + 2 * ((X.R db + 1) * (X.a db + 1)) +
+          (X.R db + 1) * (Nat.log2 (X.R db) + 1)) * (D.unit db + 1) * (X.cost_width db + 1) +
+        (X.R db + 1) * (X.R db + 1) +
+        (result_size (cheapest p db c) + 1) * (X.R db + 1) * (D.unit db + 1)))
+      for (p, db, c) | D.wf db /\ D.canonical db /\ X.ctor_inventory (inventory_of p) db.
+End EXTRACTION_TIME.
+
+Module Type EXTRACTION_T (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
+    (R : RUN_T V I J D) (C : COST_T V) (X : EXTRACT_T V I D C) :=
+  EXTRACTION_BASE V I J D R C X <+ EXTRACTION_TIME V I J D R C X.
 
 (** * Specification *)
 

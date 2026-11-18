@@ -7,7 +7,9 @@
     The specification conditions say which programs and rows the theorems cover. [spec_ok]
     checks the sorts of the lowered program and the kinds of the patterns, and [rows_ok]
     checks that each input row belongs to an input relation and has the arity of its first
-    declaration, with values at every argument.
+    declaration, with values at every argument. The measures [rows_work] and [term_work] count
+    the arity factors that the database charges for putting the input rows and for allocating
+    the constructors of a term.
     For example, [solve MayPoints.program (MayPoints.facts q) lim] is Andersen's analysis of
     [q].
 
@@ -19,15 +21,24 @@
       outcome keeps the input rows.
     - [T_seed_le], [T_solve_split] Seeding pays for planning, loading and each put, and a
       solve pays for its seed, planning and the run.
+    - [seed_complexity], [solve_complexity], [saturate_complexity] Seeding, solving and
+      saturating cost the planning, the loading, the put work of the rows, the work of the terms
+      and the rounds of the run, at the unit and the identifier width of the databases.
+    - [T_add_terms_amort] Adding terms gives each constructor the amortized budget of one
+      allocation.
+    - [holds_complexity], [same_cell_complexity], [equal_complexity] A lookup is linear in its
+      key at the unit of the database, and comparing two cells pays for two finds and the bits
+      of a representative.
 
     Builds on: the specifications, their lowering, and the run contracts. *)
 
 From Stdlib Require Import List PArith NArith Bool.
-From Argent Require Import Time.
+From Argent Require Import Time Complexity.
 From Galois.Egglog Require Import ValueSig Syntax Model Sorts IndexSig JoinSig DatabaseSig RunSig.
 From Galois.Front Require Import Spec LowerSig.
 
 Import List.ListNotations.
+Import ComplexityNotations.
 
 (** * Conditions *)
 
@@ -74,6 +85,27 @@ Definition rows_ok {V} (s : spec V) (rows : list (positive * list V)) : bool :=
         forallb (fun so => match so with SVal => true | SId => false end) ss
     | _, _ => false
     end) rows.
+
+(** * Measures *)
+
+(** The put work of input rows. A row of [n] values pays [(n + 2) * (n + 2)], the arity factor of
+    one insertion in the amortized budget of the database. *)
+Definition rows_work {V} (rows : list (positive * list V)) : nat :=
+  fold_right (fun row n => (length (snd row) + 2) * (length (snd row) + 2) + n) 0 rows.
+
+(** The work of adding a term. An application of [n] arguments pays [(n + 2) * (n + 2)], the
+    arity factor of one constructor in the amortized budget of the database, and a literal
+    pays one. *)
+Fixpoint term_work {V} (e : @expr V) : nat :=
+  match e with
+  | ELit _ => 1
+  | EApp _ args =>
+    (length args + 2) * (length args + 2) + fold_right (fun a n => term_work a + n) 0 args
+  end.
+
+(** The work of adding terms in order. *)
+Definition terms_work {V} (es : list (@expr V)) : nat :=
+  fold_right (fun e n => term_work e + n) 0 es.
 
 (** * Operations *)
 
@@ -166,7 +198,37 @@ Module Type RUNNER_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATA
     (R : RUN_T V I J D) (Import X : RUNNER V I J D R).
   Parameter T_seed : program V.t -> list (positive * list V.t) -> N.
   Parameter T_solve : program V.t -> list (positive * list V.t) -> limits -> N.
+  Parameter T_holds : positive -> list V.t -> D.t -> N.
+  Parameter T_add_term : @expr V.t -> D.t -> N.
+  Parameter T_add_terms : list (@expr V.t) -> D.t -> N.
+  Parameter T_saturate : program V.t -> list (positive * list V.t) -> list (@expr V.t) ->
+    limits -> N.
+  Parameter T_same_cell : cell V.t -> cell V.t -> D.t -> N.
+  Parameter T_equal : program V.t -> list (positive * list V.t) -> limits -> @expr V.t ->
+    @expr V.t -> N.
   Parameter c_runner : N.
+  Parameter c_terms : N.
+  Parameter c_saturate : N.
+  (** The cost of a seed at identifier bound [B] and unit bound [U]. Planning is cubic in the
+      program and loading is linear in its layout. Each put pays for its arity and the slots of
+      the plan, at the unit and the identifier width. *)
+  Definition seed_cost (B : N) (U : nat) (p : program V.t) (rows : list (positive * list V.t))
+      : N :=
+    (N.of_nat ((R.size_program p + 1) * (R.size_program p + 1) * (R.size_program p + 1)) +
+     R.load_cost p (R.plan p) +
+     N.of_nat (U * (N.to_nat (N.log2 B) + 1) * (length (Syntax.slots V.t (R.plan p)) + 1) *
+       (rows_work rows + 1)))%N.
+  (** The cost of a saturation at identifier bound [B] and unit bound [U]. It adds to the cost
+      of the seed each constructor of the terms and each round of the run, at the unit and the
+      identifier width, and the fuel counter. With no terms it is the cost of a solve. *)
+  Definition saturate_cost (B : N) (U : nat) (p : program V.t)
+      (rows : list (positive * list V.t)) (es : list (@expr V.t)) (lim : limits) : N :=
+    (seed_cost B U p rows +
+     N.of_nat (U * (N.to_nat (N.log2 B) + 1) *
+       ((length (Syntax.slots V.t (R.plan p)) + 1) * (terms_work es + 1) +
+        (R.wbits p + 1) * R.run_work p (R.plan p) lim (snd (add_terms es (seed p rows))))) +
+     N.of_nat (N.size_nat (max_iter lim) + 1))%N.
+
   (** Seeding pays for planning, for loading and for each put at the unit and the identifier
       width of the seed, with the slots of the plan. *)
   Parameter T_seed_le : forall B U (s : spec V.t) rows,
@@ -176,13 +238,149 @@ Module Type RUNNER_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATA
       R.T_plan (spec_program s) + R.T_load (spec_program s) (R.plan (spec_program s)) +
       c_runner * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
         N.of_nat (length (Syntax.slots V.t (R.plan (spec_program s))) + 1) *
-        N.of_nat (fold_right
-          (fun row n => ((length (snd row) + 2) * (length (snd row) + 2) + n)%nat) 0%nat rows +
-          1))%N.
+        N.of_nat (rows_work rows + 1))%N.
+  (** Seeding, with the potential that it leaves priced at the unit bound, has the budget of
+      [T_seed_le]. Loading starts without potential, and each put pays for its share of the
+      deferred rebuild. *)
+  Parameter T_seed_amort : forall B U (s : spec V.t) rows,
+    spec_ok s = true -> rows_ok s rows = true ->
+    (D.ids (seed (spec_program s) rows) <= B)%N -> D.unit (seed (spec_program s) rows) <= U ->
+    (T_seed (spec_program s) rows + N.of_nat U * D.potential B (seed (spec_program s) rows) <=
+      R.T_plan (spec_program s) + R.T_load (spec_program s) (R.plan (spec_program s)) +
+      c_runner * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (length (Syntax.slots V.t (R.plan (spec_program s))) + 1) *
+        N.of_nat (rows_work rows + 1))%N.
+  (** Seeding costs planning, loading and the put work of the rows, at the unit and the
+      identifier width of the seed. *)
+  Parameter seed_complexity :
+    T_seed (spec_program s) rows ∈
+      𝑂(seed_cost (D.ids (seed (spec_program s) rows)) (D.unit (seed (spec_program s) rows))
+        (spec_program s) rows)
+      for (s, rows) | spec_ok s = true /\ rows_ok s rows = true.
+
   (** A solve pays for its seed, for planning and for the run. *)
   Parameter T_solve_split : forall p rows lim,
     (T_solve p rows lim <=
       T_seed p rows + R.T_plan p + R.T_run p (R.plan p) lim (seed p rows) + c_runner)%N.
+  (** A solve costs its seed and the rounds of its run. The puts and the rounds are paid at an
+      identifier bound [B] of the outcome and at a unit bound [U] of the seed and the outcome,
+      so the credit that the puts leave pays for the deferred rebuilds of the run. *)
+  Parameter solve_complexity :
+    T_solve (spec_program s) rows lim ∈ 𝑂(saturate_cost B U (spec_program s) rows [] lim)
+      for (B, U, s, rows, lim) |
+        spec_ok s = true /\ rows_ok s rows = true /\ D.unit (seed (spec_program s) rows) <= U /\
+        (D.ids (snd (solve (spec_program s) rows lim)) <= B)%N /\
+        D.unit (snd (solve (spec_program s) rows lim)) <= U.
+
+  (** A lookup of a row of values pays for its key at the unit of the database and for the bits
+      of its values. *)
+  Parameter T_holds_le : forall r vs db, D.wf db ->
+    (T_holds r vs db <= c_runner * N.of_nat ((length vs + 1) * D.unit db +
+      fold_right (fun v n => (cell_bits V.encode (Val v) + n)%nat) 0%nat vs + 1))%N.
+  (** A lookup of a row of values is linear in its key at the unit of the database and in the
+      bits of its values. *)
+  Parameter holds_complexity :
+    T_holds r vs db ∈
+      𝑂(N.of_nat ((length vs + 1) * D.unit db +
+        fold_right (fun v n => (cell_bits V.encode (Val v) + n)%nat) 0%nat vs))
+      for (r, vs, db) | D.wf db.
+
+  (** Adding well-sorted terms to a database that is loaded with the planned program never
+      lowers its unit. *)
+  Parameter add_terms_unit : forall (s : spec V.t) es db,
+    spec_ok s = true -> D.wf db -> R.loaded (spec_program s) (R.plan (spec_program s)) db ->
+    forallb (term_ok s) es = true -> D.unit db <= D.unit (snd (add_terms es db)).
+  (** Adding a well-sorted term to a database that is loaded with the planned program gives
+      each constructor the budget of one allocation in [D.T_make_amort], at the unit bound [U]
+      and the identifier bound [B] of the result. The time and the potential that it leaves,
+      priced at [U], stay within these budgets and the potential that it found. *)
+  Parameter T_add_term_amort : forall B U (s : spec V.t) e db,
+    spec_ok s = true -> D.wf db -> R.loaded (spec_program s) (R.plan (spec_program s)) db ->
+    term_ok s e = true ->
+    (D.ids (snd (add_term e db)) <= B)%N -> D.unit (snd (add_term e db)) <= U ->
+    (T_add_term e db + N.of_nat U * D.potential B (snd (add_term e db)) <=
+      N.of_nat U * (c_terms * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (length (Syntax.slots V.t (R.plan (spec_program s))) + 1) *
+        N.of_nat (term_work e) + D.potential B db))%N.
+  (** Adding well-sorted terms in order has the budget of [T_add_term_amort] for each term. *)
+  Parameter T_add_terms_amort : forall B U (s : spec V.t) es db,
+    spec_ok s = true -> D.wf db -> R.loaded (spec_program s) (R.plan (spec_program s)) db ->
+    forallb (term_ok s) es = true ->
+    (D.ids (snd (add_terms es db)) <= B)%N -> D.unit (snd (add_terms es db)) <= U ->
+    (T_add_terms es db + N.of_nat U * D.potential B (snd (add_terms es db)) <=
+      N.of_nat U * (c_terms * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (length (Syntax.slots V.t (R.plan (spec_program s))) + 1) *
+        N.of_nat (terms_work es + 1) + D.potential B db))%N.
+  (** Adding a well-sorted term is linear in its work at the unit bound and the identifier
+      width, with the slots of the plan, once the potential that it leaves is counted. *)
+  Parameter add_term_complexity :
+    T_add_term e db ∈
+      𝑂(N.of_nat (U * (N.to_nat (N.log2 B) + 1) *
+        (length (Syntax.slots V.t (R.plan (spec_program s))) + 1) * term_work e))
+      amortised N.of_nat U * D.potential B db ↦ N.of_nat U * D.potential B (snd (add_term e db))
+      for (B, U, s, e, db) |
+        spec_ok s = true /\ D.wf db /\ R.loaded (spec_program s) (R.plan (spec_program s)) db /\
+        term_ok s e = true /\ (D.ids (snd (add_term e db)) <= B)%N /\
+        D.unit (snd (add_term e db)) <= U.
+  (** Adding well-sorted terms is linear in their work in the same way. *)
+  Parameter add_terms_complexity :
+    T_add_terms es db ∈
+      𝑂(N.of_nat (U * (N.to_nat (N.log2 B) + 1) *
+        (length (Syntax.slots V.t (R.plan (spec_program s))) + 1) * terms_work es))
+      amortised N.of_nat U * D.potential B db ↦
+        N.of_nat U * D.potential B (snd (add_terms es db))
+      for (B, U, s, es, db) |
+        spec_ok s = true /\ D.wf db /\ R.loaded (spec_program s) (R.plan (spec_program s)) db /\
+        forallb (term_ok s) es = true /\ (D.ids (snd (add_terms es db)) <= B)%N /\
+        D.unit (snd (add_terms es db)) <= U.
+
+  (** A saturation pays for its seed, for adding the terms, for planning and for the run. *)
+  Parameter T_saturate_split : forall p rows es lim,
+    (T_saturate p rows es lim <=
+      T_seed p rows + T_add_terms es (seed p rows) + R.T_plan p +
+      R.T_run p (R.plan p) lim (snd (add_terms es (seed p rows))) + c_saturate)%N.
+  (** A saturation costs its seed, the constructors of its terms and the rounds of its run, at
+      bounds [B] and [U] of the database before the run and of the outcome. *)
+  Parameter saturate_complexity :
+    T_saturate (spec_program s) rows es lim ∈ 𝑂(saturate_cost B U (spec_program s) rows es lim)
+      for (B, U, s, rows, es, lim) |
+        spec_ok s = true /\ rows_ok s rows = true /\ forallb (term_ok s) es = true /\
+        (D.ids (snd (add_terms es (seed (spec_program s) rows))) <= B)%N /\
+        D.unit (snd (add_terms es (seed (spec_program s) rows))) <= U /\
+        (D.ids (snd (fst (saturate (spec_program s) rows es lim))) <= B)%N /\
+        D.unit (snd (fst (saturate (spec_program s) rows es lim))) <= U.
+
+  (** Comparing two classes pays for two finds at the unit of the database and for the bits of
+      the representative of the first class. Comparing two values pays for the bits of the first
+      value. *)
+  Parameter T_same_cell_le : forall a b db, D.wf db ->
+    (forall i, In (Id i) [a; b] -> D.allocated db i) ->
+    (T_same_cell a b db <=
+      c_runner * N.of_nat (2 * D.unit db + cell_bits V.encode (D.canon db a) + 1))%N.
+  (** Comparing two cells is linear in the unit of the database and in the bits of the first
+      cell after canonicalization. *)
+  Parameter same_cell_complexity :
+    T_same_cell a b db ∈ 𝑂(N.of_nat (D.unit db + cell_bits V.encode (D.canon db a)))
+      for (a, b, db) | D.wf db /\ (forall i, In (Id i) [a; b] -> D.allocated db i).
+
+  (** Deciding equality pays for the saturation with the two terms and for comparing their
+      cells. *)
+  Parameter T_equal_split : forall p rows lim t u st db c d,
+    saturate p rows [t; u] lim = (st, db, [c; d]) ->
+    (T_equal p rows lim t u <= T_saturate p rows [t; u] lim + T_same_cell c d db + c_saturate)%N.
+  (** Deciding equality costs the saturation with the two terms and the comparison of their
+      cells. The run contracts do not say that a run keeps identifiers allocated, so the bound
+      assumes that both cells are allocated in the outcome. *)
+  Parameter equal_complexity :
+    T_equal (spec_program s) rows lim t u ∈
+      𝑂(saturate_cost B U (spec_program s) rows [t; u] lim +
+        N.of_nat (cell_bits V.encode (D.canon db c)))
+      for (B, U, s, rows, lim, t, u, st, db, c, d) |
+        spec_ok s = true /\ rows_ok s rows = true /\ term_ok s t = true /\ term_ok s u = true /\
+        saturate (spec_program s) rows [t; u] lim = (st, db, [c; d]) /\
+        (D.ids (snd (add_terms [t; u] (seed (spec_program s) rows))) <= B)%N /\
+        D.unit (snd (add_terms [t; u] (seed (spec_program s) rows))) <= U /\
+        (D.ids db <= B)%N /\ D.unit db <= U /\ (forall i, In (Id i) [c; d] -> D.allocated db i).
 End RUNNER_TIME.
 
 Module Type RUNNER_T (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)

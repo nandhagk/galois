@@ -11,6 +11,8 @@
     - [PlainTests] A class without folding returns an equal term that is no bigger.
     - [MissingTests] A class that does not exist has no term.
     - [BestTests] The best table of the engine has one entry for each class.
+    - [MeasureTests] Decoding unfolds a shared entry, and the measures of the time bounds count
+      the nodes of a term and the widest cell of a DAG.
 
     Builds on: the extraction functor, the derive command, the runner and the engine. *)
 
@@ -295,3 +297,52 @@ Module BestTests.
   Qed.
 
 End BestTests.
+
+(** * Measures *)
+
+Module MeasureTests.
+
+  Local Open Scope positive_scope.
+
+  (** A DAG whose sum reads the entry of [Num 1] for both of its arguments. *)
+  Definition shared_dag : extraction_dag positive :=
+    [(9, (Math.Num_code, [Val 1])); (10, (Math.Add_code, [Id 9; Id 9]))].
+
+  (** Decoding the sum unfolds the shared entry once for each argument. *)
+  Example shared_entry_unfolds_twice :
+    ArithExtraction.decode shared_dag 10 = Some (Math.encode_term (Add (Num 1) (Num 1))).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The decoded sum has five nodes, more than the two entries of its DAG. *)
+  Example decoded_sum_has_five_nodes :
+    result_size (ArithExtraction.decode shared_dag 10) = 5%nat.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A class without an entry decodes to nothing, whose size is zero. *)
+  Example missing_class_has_size_zero :
+    result_size (ArithExtraction.decode shared_dag 11) = 0%nat.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The node count of a term is the size that the cost module charges. *)
+  Example node_count_is_the_charged_size :
+    N.of_nat (expr_size (Math.encode_term (Add (Num 1) (Num 2)))) =
+      size (Math.encode_term (Add (Num 1) (Num 2))).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The widest cell of the DAG is the child [Id 9], whose encoding [xO 9] has five bits. The
+      literal [Val 1] is encoded as [xI 1], of two bits. *)
+  Example shared_dag_width_is_the_child :
+    dag_width ArithValue.encode shared_dag = 5%nat.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End MeasureTests.

@@ -475,7 +475,13 @@ input rows and that the run contracts of the engine apply to it. A model of the 
 satisfies the seed, every outcome keeps the input rows, and the lemma `holds_spec` says that
 `holds` finds a row exactly when the database has it without output. The timed runner states
 that seeding pays for planning, loading and each put (`T_seed_le`), and that a solve pays for
-its seed, planning and the run (`T_solve_split`).
+its seed, planning and the run (`T_solve_split`). Its big-O bounds count the planning, the
+loading, the work of the input rows and of the added terms, and the rounds of the run, at the
+unit and the identifier width of the databases (`seed_complexity`, `solve_complexity` and
+`saturate_complexity`). Each put and each constructor pays its share of the deferred rebuild
+at the unit bound, and the run spends that credit. A lookup is linear in its key at the unit
+of the database (`holds_complexity`), and comparing two classes pays for two finds
+(`same_cell_complexity`).
 
 **Relational exactness** (`RelationalSig.v`). For a relational specification, `solve_sound`
 says that every row of every outcome is derived from the input rows, and `solve_complete`
@@ -517,7 +523,10 @@ comes from the reference closure of `ClosureSig.v`, whose normal forms the tests
 decodes it when the cost that the engine's checker reports for the DAG is at most the cost of
 every best entry of the class, and returns nothing otherwise. The lemma `cheapest_represents`
 says that a returned term is represented by the class, and `cheapest_optimal` says that no
-term that the class represents costs less.
+term that the class represents costs less. Decoding unfolds the DAG into a tree, which can be
+exponentially larger than the DAG, so `decode_complexity` and `cheapest_complexity` count the
+nodes of the returned term, together with the length of the DAG and the costs of the
+extraction of the engine.
 
 The clients state their own results in terms of these. For example, Andersen's `solve_exact`
 says that a saturated solve answers `may_points q x a` exactly (`AndersenSig.v`), and

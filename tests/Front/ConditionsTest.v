@@ -4,7 +4,8 @@
     derived programs and on small changes of them. [kinds_ok] checks the kinds of the tables
     that patterns name, [rule_scoped] checks the variables of the actions of a rule, [ground]
     and [lattice_spec] pick the specifications of two theorems, [rows_ok] reads the first
-    declaration of a table, and [holds] finds only rows without output.
+    declaration of a table, and [holds] finds only rows without output. The work measures of
+    the time bounds count the arity factors of the rows and the terms.
     For example, the atoms of a union clause declared as a lattice table fail the kind check.
 
     Groups:
@@ -17,6 +18,7 @@
     - [RowTests] Rows are checked against the first declaration of a relation.
     - [LookupTests] A lookup finds a relation row and ignores a constructor row.
     - [PatternTests] The helpers of the pattern laws read constructors, terms and values.
+    - [WorkTests] Rows and terms cost the squares of their arities plus two, and literals one.
 
     Builds on: the derive command, the lowering checks, the runner conditions, the conditions of
     the theorems and the runner. *)
@@ -349,3 +351,50 @@ Module PatternTests.
   Qed.
 
 End PatternTests.
+
+(** * Work measures *)
+
+Module WorkTests.
+
+  Local Open Scope positive_scope.
+
+  (** The edges 1 to 2 and 2 to 3. *)
+  Definition two_edges : list (positive * positive) := [(1, 2); (2, 3)].
+
+  (** Each edge row has two values and costs [(2 + 2) * (2 + 2)], so the two rows cost 32. *)
+  Example edge_rows_cost_thirty_two :
+    rows_work (Path.facts two_edges) = 32%nat.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** No rows cost nothing. *)
+  Example no_rows_cost_nothing :
+    rows_work (Path.facts []) = 0%nat.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** An atom is a constructor of one argument over a literal, so it costs [(1 + 2) * (1 + 2)]
+      for the constructor and one for the literal. *)
+  Example atom_costs_ten :
+    term_work (Terms.encode_term (Atom 1)) = 10%nat.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Wrapping the atom adds a second constructor of one argument. *)
+  Example wrapped_atom_costs_nineteen :
+    term_work (Terms.encode_term (Wrap (Atom 1))) = 19%nat.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The work of two terms is the sum of their works. *)
+  Example two_terms_cost_their_sum :
+    terms_work [Terms.encode_term (Atom 1); Terms.encode_term (Wrap (Atom 1))] = 29%nat.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End WorkTests.

@@ -1,14 +1,14 @@
 (** * Cheapest terms of classes
 
     [cheapest] builds the constructor inventory of a program, extracts a checked DAG for a class
-    and decodes it. [decode] finds the entry of the class in the reversed DAG and rebuilds its term from the entries before it.
+    and decodes it. [decode] finds the entry of the class in the reversed DAG and rebuilds its
+    term from the entries before it. The timed module [ExtractionT] is in [ExtractionTime.v].
     For example, [cheapest Math.program db i] is the encoding of [Num 3] when the class [i] of
     [db] holds [Add (Num 1) (Num 2)] and its folding.
 
     Builds on: the extraction signature, and the run and extraction operations of the engine. *)
 
 From Stdlib Require Import List PArith NArith Bool.
-From Argent Require Import Time Tactics Std.
 From Galois.Egglog Require Import ValueSig Syntax Model Sorts IndexSig JoinSig DatabaseSig RunSig
   ExtractSig.
 From Galois.Front Require Import ExtractionSig.
@@ -45,13 +45,6 @@ Module Extraction (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I)
     reflexivity.
   Qed.
 End Extraction.
-
-Module ExtractionT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
-    (R : RUN_T V I J D) (C : COST_T V) (X : EXTRACT_T V I D C).
-  Include Extraction V I J D R C X.
-  TimeFun decode.
-  TimeFun cheapest.
-End ExtractionT.
 
 Module ExtractionPlan (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     (R : RUN V I J D) (C : COST V) (X : EXTRACT V I D C)
