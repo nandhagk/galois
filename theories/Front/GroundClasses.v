@@ -32,8 +32,9 @@ Module GroundClasses (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   Proof.
   Admitted. (* STUB *)
 
-  (* STUB: [R.run_sat] with the model of the classes, which [LW.lower_valid] makes valid, read
-     through [outcome_rows]. *)
+  (* STUB: directly. The outcome is well formed and canonical by [R.run_wf], so a relation row
+     holds by its own key and a constructor row by [D.old_row]. [outcome_rows] leaves no lattice
+     row, and [D.same_repr] gives the equalities. *)
   Lemma class_sat : forall (s : spec V.t) rows lim st db,
     spec_ok s = true -> ground s = true -> rows_ok s rows = true ->
     X.solve (spec_program s) rows lim = (st, db) ->

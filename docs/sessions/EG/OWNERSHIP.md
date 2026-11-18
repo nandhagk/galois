@@ -37,7 +37,7 @@ hours are estimates, and every card is at most ~6 hours.
 | RW-2 | `theories/Front/RewriteSound.v` | `saturate_sound`, `saturate_represents`, `equal_sound` | ~5 |
 | RW-3 | `theories/Front/RewriteMatch.v` | `query_pat_complete` | ~4 |
 | RW-4 | `theories/Front/RewriteClosed.v` | `saturate_closed` | ~5 |
-| RW-5 | `theories/Front/RewriteSorts.v` | `rewrite_right_app` | ~3 |
+| RW-5 | `theories/Front/RewriteSorts.v` | `rewrite_right_app` | ~5.5 |
 | LT-1 | `theories/Front/LatticeSound.v` | `lattice_model`, `solve_sound` | ~5 |
 | LT-2 | `theories/Front/LatticeComplete.v` | `lower_assigned`, `solve_complete` | ~4.5 |
 | EX | `theories/Front/Extraction.v` | `fits_inventory`, `decode_agrees_unfold`, `cheapest_represents`, `cheapest_optimal` | ~4 |
