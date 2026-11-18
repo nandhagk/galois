@@ -7,9 +7,18 @@
     therefore preserved by every equality that saturation finds. The cell of each added term
     represents it ([saturate_represents]), so [equal] is sound ([equal_sound]). At saturation,
     a rewrite step from a represented term reaches a term of the same class
-    ([saturate_closed]).
+    ([saturate_closed]). A rewrite step reads its premises in the input rows, so the last
+    theorem says nothing about a rewrite whose premises read derived rows.
     For example, a model that evaluates arithmetic satisfies the commutativity of addition, so
     [Add a b] and [Add b a] share a class only when their values are equal.
+
+    Main results
+    - [saturate_sound] Two represented terms in one class of any outcome have equal meanings
+      in every model of the specification.
+    - [saturate_represents] The cell of each added term represents it in every outcome.
+    - [equal_sound] [equal] answers [true] only for terms with equal meanings in every model.
+    - [saturate_closed] At saturation, a rewrite step from a represented term stays in its
+      class.
 
     Builds on: the specifications, their lowering, the runner and the run contracts. *)
 
@@ -19,7 +28,10 @@ From Galois.Front Require Import Spec LowerSig RunnerSig.
 
 Import List.ListNotations.
 
-Module Type REWRITE (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
+(** * Theorems *)
+
+(** Soundness of equality saturation. *)
+Module Type REWRITE_SOUND (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     (R : RUN V I J D) (X : RUNNER V I J D R).
   (** Two represented terms in one class of any outcome have equal meanings in every model of
       the specification and its input rows. *)
@@ -35,42 +47,65 @@ Module Type REWRITE (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->
     X.saturate (spec_program s) rows es lim = (st, db, cs) ->
     nth_error es n = Some e -> nth_error cs n = Some c -> represents (D.view db) c e.
-  (** At saturation, a rewrite step from a represented term reaches a term of its class. *)
-  Parameter saturate_closed : forall (s : spec V.t) rows es lim db cs i t u,
-    spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->
-    X.saturate (spec_program s) rows es lim = (Saturated, db, cs) ->
-    represents (D.view db) (Id i) t -> rewrite_step V.prim s (rows_in rows) t u ->
-    represents (D.view db) (Id i) u.
   (** Saturation says that two terms are equal only when they have equal meanings in every
       model of the specification and its input rows. *)
   Parameter equal_sound : forall (s : spec V.t) rows lim t u (M : @model V.t),
     spec_ok s = true -> rows_ok s rows = true -> term_ok s t = true -> term_ok s u = true ->
     satisfies V.prim V.merge M s (rows_in rows) ->
     X.equal (spec_program s) rows lim t u = true -> denote M t = denote M u.
-End REWRITE.
+End REWRITE_SOUND.
+
+(** Closure of a saturated outcome under rewrite steps. *)
+Module Type REWRITE_CLOSED (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
+    (R : RUN V I J D) (X : RUNNER V I J D R).
+  (** At saturation, a rewrite step from a represented term reaches a term of its class. *)
+  Parameter saturate_closed : forall (s : spec V.t) rows es lim db cs i t u,
+    spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->
+    X.saturate (spec_program s) rows es lim = (Saturated, db, cs) ->
+    represents (D.view db) (Id i) t -> rewrite_step V.prim s (rows_in rows) t u ->
+    represents (D.view db) (Id i) u.
+End REWRITE_CLOSED.
+
+Module Type REWRITE (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
+    (R : RUN V I J D) (X : RUNNER V I J D R) :=
+  REWRITE_SOUND V I J D R X <+ REWRITE_CLOSED V I J D R X.
 
 (** * Proof plan *)
 
-Module Type REWRITE_PLAN (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
+(** Adding terms to a loaded database. *)
+Module Type REWRITE_TERMS_PLAN (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     (R : RUN V I J D) (X : RUNNER V I J D R).
-  (** A model of a specification validates the rules of its lowered program. *)
-  Parameter model_valid : forall (s : spec V.t) I (M : @model V.t),
-    satisfies V.prim V.merge M s I -> valid_sorted V.prim V.merge M (spec_program s).
-  (** Adding well-sorted terms to a satisfied database keeps it satisfied under a valuation
-      that agrees on the old identifiers and gives each added cell the meaning of its term. *)
+  (** Adding well-sorted terms to a satisfied database loaded with the planned program keeps
+      it satisfied under a valuation that agrees on the old identifiers and gives each added
+      cell the meaning of its term. *)
   Parameter add_terms_sat : forall (s : spec V.t) es db cs db' (M : @model V.t) nu,
-    D.wf db -> forallb (term_ok s) es = true -> X.add_terms es db = (cs, db') ->
+    spec_ok s = true -> D.wf db -> R.loaded (spec_program s) (R.plan (spec_program s)) db ->
+    forallb (term_ok s) es = true -> X.add_terms es db = (cs, db') ->
     sat V.merge M nu (D.view db) ->
     exists nu', (forall i, D.allocated db i -> nu' i = nu i) /\
       sat V.merge M nu' (D.view db') /\ Forall2 (fun c e => den nu' c = denote M e) cs es.
-  (** A represented instance of a pattern matches the query atoms of the pattern under an
-      environment that binds each variable at a table position to a cell that represents its
-      value, and the term of the pattern to the class of the instance. *)
+  (** Adding well-sorted terms to a database loaded with the planned program keeps it well
+      formed and loaded, keeps its rows, and gives cells that represent the terms. *)
+  Parameter add_terms_ready : forall (s : spec V.t) es db cs db',
+    spec_ok s = true -> D.wf db -> R.loaded (spec_program s) (R.plan (spec_program s)) db ->
+    forallb (term_ok s) es = true -> X.add_terms es db = (cs, db') ->
+    D.wf db' /\ R.loaded (spec_program s) (R.plan (spec_program s)) db' /\
+    (forall f k o, row (D.view db) f k o -> row (D.view db') f k o) /\
+    Forall2 (represents (D.view db')) cs es.
+End REWRITE_TERMS_PLAN.
+
+(** Matching the left side of a rewrite. *)
+Module Type REWRITE_MATCH_PLAN (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
+    (R : RUN V I J D) (X : RUNNER V I J D R).
+  (** A represented instance of a pattern matches the query atoms of the pattern, with fresh
+      variables above its own, under an environment that binds each variable of the pattern to
+      a cell that represents its value, and the term of the pattern to the class of the
+      instance. *)
   Parameter query_pat_complete : forall db next (p : pat V.t) e t i,
-    D.wf db -> D.canonical db -> pat_term V.prim e p = Some t ->
-    represents (D.view db) (Id i) t ->
+    (pat_top p < next)%positive -> D.wf db -> D.canonical db ->
+    pat_term V.prim e p = Some t -> represents (D.view db) (Id i) t ->
     exists env, matches V.prim (D.view db) (fst (fst (query_pat next p))) env /\
       term_value env (snd (fst (query_pat next p))) (Id (D.repr db i)) /\
-      (forall x u, In x (pat_bound p) -> e x = Some u ->
+      (forall x u, In x (pat_vars p) -> e x = Some u ->
         exists c, env x = Some c /\ represents (D.view db) c u).
-End REWRITE_PLAN.
+End REWRITE_MATCH_PLAN.
