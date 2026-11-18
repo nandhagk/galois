@@ -107,9 +107,9 @@ Module Type POINTER_LINK.
 End POINTER_LINK.
 
 (** The engine program is derived from [may_points], and every table code is generated. *)
-Egglog Andersen from may_points.
+Egglog MayPoints from may_points.
 
-Definition andersen_program : program positive := Andersen.program.
+Definition andersen_program : program positive := MayPoints.program.
 
 Module Type ANDERSEN_OPS (V : VALUE_OPS with Definition t := positive)
     (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE_OPS V I)
@@ -128,7 +128,7 @@ Module Type ANDERSEN_LAWS (V : VALUE with Definition t := positive)
   Parameter compile_rules : forall q, compile q = andersen_program.
   (** Seeds contain exactly the input rows of the source constraints and initial pointers. *)
   Parameter seed_rows : forall q f k o, row (D.view (seed q)) f k o <->
-    o = None /\ exists vs, k = map Val vs /\ In (f, vs) (Andersen.facts q).
+    o = None /\ exists vs, k = map Val vs /\ In (f, vs) (MayPoints.facts q).
   (** Seeds carry the compiled declarations, the layout of the compiled plan and
       well-sorted rows. *)
   Parameter seed_loaded : forall q, R.loaded (compile q) (R.plan (compile q)) (seed q).
@@ -139,7 +139,7 @@ Module Type ANDERSEN_LAWS (V : VALUE with Definition t := positive)
     solve q lim = R.run (compile q) (R.plan (compile q)) lim (seed q).
   (** Points-to queries reflect canonical relation membership. *)
   Parameter points_spec : forall db x a, D.wf db -> D.canonical db ->
-    reflect (row (D.view db) Andersen.may_points_code [Val x; Val a] None) (points db x a).
+    reflect (row (D.view db) MayPoints.may_points_code [Val x; Val a] None) (points db x a).
   (** Every returned database is well formed and canonical. *)
   Parameter solve_wf : forall q lim, D.wf (snd (solve q lim)) /\ D.canonical (snd (solve q lim)).
 

@@ -8,6 +8,7 @@
     Builds on: the runner signature and the database and run operations. *)
 
 From Stdlib Require Import List PArith.
+From Argent Require Import Time Tactics Std.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig JoinSig DatabaseSig RunSig.
 From Galois.Front Require Import RunnerSig.
 
@@ -53,3 +54,12 @@ Module Runner (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE
     reflexivity.
   Qed.
 End Runner.
+
+Module RunnerT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
+    (R : RUN_T V I J D).
+  Include Runner V I J D R.
+  TimeFun put_row.
+  TimeFun seed.
+  TimeFun solve.
+  TimeFun holds.
+End RunnerT.

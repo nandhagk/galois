@@ -53,10 +53,10 @@ Module SeedTests.
 
   (** The same queries with the table codes that the derived Andersen program generates. *)
   Definition andersen_seed_queries : list (positive * list (cell positive)) :=
-    [(AndersenSig.Andersen.Addr_code, [Val 1; Val 10]);
-     (AndersenSig.Andersen.Addr_code, [Val 2; Val 20]);
-     (AndersenSig.Andersen.Copy_code, [Val 3; Val 1]);
-     (AndersenSig.Andersen.Addr_code, [Val 3; Val 10])].
+    [(MayPoints.Addr_code, [Val 1; Val 10]);
+     (MayPoints.Addr_code, [Val 2; Val 20]);
+     (MayPoints.Copy_code, [Val 3; Val 1]);
+     (MayPoints.Addr_code, [Val 3; Val 10])].
 
   (** Andersen stores the three input constraints without adding a derived address constraint. *)
   Example andersen_seed_keeps_input_rows :

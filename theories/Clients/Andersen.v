@@ -634,11 +634,11 @@ Module AndersenCode (V : VALUE_OPS with Definition t := positive)
   Module X := RunnerCode V I J D R.
   Definition compile (_ : pointer_input) : program V.t := andersen_program.
   Definition seed (q : pointer_input) : D.t :=
-    X.seed (compile q) (AndersenSig.Andersen.facts q).
+    X.seed (compile q) (MayPoints.facts q).
   Definition solve (q : pointer_input) (lim : limits) : stop * D.t :=
-    X.solve (compile q) (AndersenSig.Andersen.facts q) lim.
+    X.solve (compile q) (MayPoints.facts q) lim.
   Definition points (db : D.t) (x a : positive) : bool :=
-    X.holds AndersenSig.Andersen.may_points_code [x; a] db.
+    X.holds MayPoints.may_points_code [x; a] db.
 End AndersenCode.
 
 (** * Laws *)
@@ -658,16 +658,16 @@ Module Andersen (V : VALUE with Definition t := positive)
     reflexivity.
   Qed.
 
-  (* STUB: RELATIONAL_PLAN.seed_rows for [Andersen.spec], with [rows_ok] by vm_compute. *)
+  (* STUB: RELATIONAL_PLAN.seed_rows for [MayPoints.spec], with [rows_ok] by vm_compute. *)
   Lemma seed_rows : forall q f k o, row (D.view (seed q)) f k o <->
-    o = None /\ exists vs, k = map Val vs /\ In (f, vs) (AndersenSig.Andersen.facts q).
+    o = None /\ exists vs, k = map Val vs /\ In (f, vs) (MayPoints.facts q).
   Proof. Admitted. (* STUB *)
 
-  (* STUB: RELATIONAL_PLAN.seed_ready for [Andersen.spec], with [spec_ok] by vm_compute. *)
+  (* STUB: RELATIONAL_PLAN.seed_ready for [MayPoints.spec], with [spec_ok] by vm_compute. *)
   Lemma seed_loaded : forall q, R.loaded (compile q) (R.plan (compile q)) (seed q).
   Proof. Admitted. (* STUB *)
 
-  (* STUB: RELATIONAL_PLAN.seed_ready for [Andersen.spec], with [spec_ok] by vm_compute. *)
+  (* STUB: RELATIONAL_PLAN.seed_ready for [MayPoints.spec], with [spec_ok] by vm_compute. *)
   Lemma seed_wf : forall q, D.wf (seed q) /\ D.canonical (seed q) /\ R.no_ids (seed q).
   Proof. Admitted. (* STUB *)
 
@@ -677,10 +677,10 @@ Module Andersen (V : VALUE with Definition t := positive)
     reflexivity.
   Qed.
 
-  (* STUB: RELATIONAL.holds_spec at [Andersen.may_points_code], and the sorts of the program
+  (* STUB: RELATIONAL.holds_spec at [MayPoints.may_points_code], and the sorts of the program
      give an output-free row. *)
   Lemma points_spec : forall db x a, D.wf db -> D.canonical db ->
-    reflect (row (D.view db) AndersenSig.Andersen.may_points_code [Val x; Val a] None)
+    reflect (row (D.view db) MayPoints.may_points_code [Val x; Val a] None)
       (points db x a).
   Proof. Admitted. (* STUB *)
 
@@ -706,7 +706,7 @@ Module Andersen (V : VALUE with Definition t := positive)
     - exact Hfuel.
   Qed.
 
-  (* STUB: RELATIONAL.solve_sound and solve_complete with [Andersen.may_points_spec], and
+  (* STUB: RELATIONAL.solve_sound and solve_complete with [MayPoints.may_points_spec], and
      [points_spec]. *)
   Lemma solve_exact : forall q lim db, solve q lim = (Saturated, db) ->
     forall x a, points db x a = true <-> may_points q x a.
