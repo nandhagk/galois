@@ -88,7 +88,8 @@ Proof. vm_compute. reflexivity. Qed.
 
 A lookup reads the database that the run produced. It answers `true` for a derived row. For
 a run that saturated, a `false` answer says that the row is not derived. For a run that
-stopped at a limit, a `false` answer says that the run has not derived the row yet, and a later iteration may derive it.
+stopped at a limit, a `false` answer says that the run has not derived the row yet, and a later
+iteration may derive it.
 
 The generated lemma `Path.path_spec` connects the rows to the inductive. It says that
 `path edges x y` holds exactly when the row `[x; y]` of the table `Path.path_code` is derived
@@ -114,8 +115,9 @@ without primitives takes any function, and the lemma holds for all of them.
 
 A client that wants to know whether the program is inside the range of a theorem checks three
 conditions by computation. `spec_ok` checks the sorts of the lowered program, `relational`
-checks that the program has no rewrites, and `rows_ok` checks that each input row belongs to an
-input table and has its arity.
+checks that every table is a relation and every rule only computes values and puts rows, and
+`rows_ok` checks that each input row belongs to an input table and has its arity. The command
+already stops when `spec_ok` fails, so a derived program always passes it.
 
 ```coq
 Example path_is_covered :
@@ -139,23 +141,34 @@ type is an error.
 of the relation, `field` is a record projection of `q`, and `e` is a pair or a constructor of a
 datatype. A list of pairs is one input table with one row for each pair. A list of constructors
 gets one input table for each constructor that a premise names, and each element is a row of
-the table of its constructor. Rows from the client go into these input tables, and the engine derives the rows of all the others.
+the table of its constructor. Rows from the client go into these input tables, and the engine
+derives the rows of all the others.
 
 **Clauses.** Each constructor of a relation is a clause. Its premises are the clause body and
 its conclusion is the head. A premise `Ri ..` of a relation over values reads that relation's
 table. Binders of data are numbered as variables in binder order, and binders of propositions
-are premises.
+are premises. A premise `f x1 .. xn = y`, where `f` is a primitive (see Primitives), computes a
+value.
 
 **Equations.** A relation `R t u` whose two indices have the same datatype is an equation. It
 gets no table of its own, because the constructors of the datatype are its tables. The
 constructors of the relation that state reflexivity, symmetry, transitivity or congruence of a
 datatype constructor are the e-graph's own laws, so they give no clause. Every other
-constructor is a clause. It is a union when the premises bind every variable that its two
-sides use, and a rewrite otherwise.
+constructor is a clause. It is a union when its premises bind every variable that its two sides
+use, and a rewrite otherwise. A relation premise or an input premise binds the variables of its
+arguments outside primitive calls, and an equation premise binds its result when its arguments
+are bound.
 
-**Generated names and numbers.** Every table code and every variable number is generated. A
-reader of the generated module finds the codes as constants named after the table. A client
-never writes a code or a variable number (see the rule in `docs/design/rules.md`).
+**Rules.** Each clause becomes one engine rule. The premises become the query, and the head
+becomes actions that build its terms, then put its row or join its two sides. A rewrite also
+matches its left side in the query, and its last action joins the matched class with the built
+right side. An equation premise whose result no other premise binds becomes an action that
+computes the result. Every other primitive call in a premise becomes a check that follows the
+relation and input atoms of the query.
+
+**Generated names and numbers.** Every table code and every variable number is generated. The
+codes are constants named after their tables, and the generated lemmas refer to these constants.
+A client never writes a code or a variable number (see the rule in `docs/design/rules.md`).
 
 ## Equations
 
@@ -181,12 +194,15 @@ Inductive equiv (merges : list (positive * positive)) : term -> term -> Prop :=
 
 Egglog Terms from equiv.
 
+Definition is_union (c : clause positive) : bool :=
+  match head c with Unify _ _ => true | _ => false end.
+
 Example one_union_and_one_rewrite :
-  length (clauses Terms.spec) = 2%nat /\ length Terms.rewrites = 1%nat.
-Proof. vm_compute. auto. Qed.
+  map is_union (clauses Terms.spec) = [true; false].
+Proof. vm_compute. reflexivity. Qed.
 ```
 
-The module `Terms` has the tables `Terms.input1_code` for the input list `merges` (parameter 1),
+The module `Terms` has the tables `Terms.merges_code` for the input list `merges`,
 `Terms.Num_code` and `Terms.Add_code`. It also has the encoder
 `Terms.encode_term`, which maps a term to the engine's expression for it, and the lemma
 `Terms.equiv_congruent`. The lemma says that `equiv merges t u` gives
@@ -218,10 +234,20 @@ Inductive pointer_congruence (q : pointer_input) : pointer_term -> pointer_term 
 Egglog Unification from pointer_congruence.
 ```
 
-Two terms are equal in a run when the e-graph puts them in one class. The runner's `holds`
-reads relations over values, so a client reads the classes of an equation through the
-predicates `represents` and `same` of the engine's model (`theories/Egglog/Model.v`). The
-Steensgaard client does this in `points_spec`.
+Two terms are equal in a run when the e-graph puts them in one class. The runner's
+`equal program rows limits t u` adds the encodings `t` and `u` to the seed, runs the program
+and says whether their classes are one. Inside proofs, a client reads the classes through the
+predicates `represents` and `same` of the engine's model (`theories/Egglog/Model.v`), as the
+Steensgaard client does in `points_spec`.
+
+```coq
+Example merged_numbers_are_equal :
+  ExampleRunner.equal Terms.program (Terms.facts [(1, 2)]) example_limits
+    (Terms.encode_term (Add (Num 1) (Num 3))) (Terms.encode_term (Add (Num 3) (Num 2))) = true.
+Proof. vm_compute. reflexivity. Qed.
+```
+
+The input merges 1 with 2, and commutativity swaps the sum, so the two sums share a class.
 
 Andersen's inclusion-based analysis is the relational counterpart. `Egglog MayPoints from
 may_points.` in `theories/Clients/AndersenSig.v` reads the inductive with five constructors
@@ -282,10 +308,27 @@ Example shifts_apply_the_primitives :
 Proof. vm_compute. auto. Qed.
 ```
 
-A premise written as an equation, such as `add_pos x y = z`, is read as a primitive premise.
-The command cannot yet prove the fire lemma of such a clause, and it stops with the message
-that the Elpi command `Egglog` failed without a specific error. The example above puts the
-call in the conclusion. This is a defect of the front end, and the limits below list it.
+A premise written as an equation, such as `add_pos x k = y`, computes `y` when no relation or
+input premise binds `y`. Otherwise it checks that the call gives `y`. A call inside a premise
+argument, such as `fib (Pos.succ n) b`, is a check as well, so its arguments must be variables
+that a relation or input premise binds. The command stops when a clause breaks these rules.
+
+```coq
+(** [moved offsets x y] says that [y] is [x] plus an offset. *)
+Inductive moved (offsets : list (positive * positive)) : positive -> positive -> Prop :=
+  | move x k y : In (x, k) offsets -> add_pos x k = y -> moved offsets x y.
+
+Egglog Moves from moved with Ops.
+
+Example moves_compute_their_targets :
+  OpsRunner.holds Moves.moved_code [1; 3]
+    (snd (OpsRunner.solve Moves.program (Moves.facts offsets) example_limits)) = true.
+Proof. vm_compute. reflexivity. Qed.
+```
+
+A call in the right side of a rewrite computes its value when the rule fires, so a rewrite can
+fold constants. The tests `TermTests` in `tests/Front/PrimitiveTest.v` fold `2 * 3` into `6`
+and join `2 * (x + 3)` with `6 + 2 * x`, as in the egglog tutorial.
 
 ## The generated module
 
@@ -295,11 +338,10 @@ For a command `Egglog P from R1 .. Rn` the module `P` has the following members.
 | --- | --- |
 | `spec` | The specification of the constructors. It lists the tables, the input tables and one clause for each constructor (`theories/Front/Spec.v`). |
 | `program` | The engine program that `spec` lowers to. |
-| `rewrites` | The rewrites among the clauses. It is empty for a relational program. |
 | `facts` | A function from the parameters of the first relation to the list of input rows. |
 | `inputs` | The input rows as a relation `positive -> list positive -> Prop`, for the lemmas. |
 | `relation` | The meaning of each table, as a relation on rows. |
-| `<Table>_code` | One constant for each table. A relation has `<R>_code`, a constructor table has `<Constructor>_code`, and an input list that is a parameter has `input<i>_code`. |
+| `<Table>_code` | One constant for each table. A relation has `<R>_code`, a constructor table has `<Constructor>_code`, and an input list that is a parameter has `<parameter>_code`. |
 | `encode_<T>` | One encoder for each datatype `T`, which maps a value of `T` to the engine's expression. |
 | `<Constructor>_fires` | One lemma for each constructor, which says that the clause derives the conclusion from the premises. The command adds each to the hint database `egglog_fire`. |
 | `closed` | The derived rows are closed under the clauses of `relation`. It is the converse half of the glue. |
@@ -311,9 +353,10 @@ Every lemma is checked, so a wrong reading stops the command. The proofs use the
 
 ## The theorems
 
-Five signatures state what a run guarantees. Each theorem takes the conditions of its kind as hypotheses. These are `spec_ok` and
-`rows_ok`, together with `relational`, `ground` or `lattice_spec`, and each is stated over any value module that satisfies the
-engine's laws. The proofs are stubs, so none of these theorems is proved yet.
+Five signatures state what a run guarantees. Each theorem takes the conditions of its kind
+as hypotheses. These are `spec_ok` and `rows_ok`, together with `relational`, `ground` or
+`lattice_spec`, and each is stated over any value module that satisfies the engine's laws. The
+proofs are stubs, so none of these theorems is proved yet.
 
 **Relational exactness** (`RelationalSig.v`). For a relational specification, `solve_sound`
 says that every row of every outcome is derived from the input rows, and `solve_complete`
@@ -331,10 +374,13 @@ represents both sides of every instance, and `solve_saturates` says that enough 
 identifiers saturate the run. With `<R>_congruent`, these give the exactness of an equational
 inductive such as Steensgaard's.
 
-**Soundness of rewriting** (`RewriteSig.v`). For a specification with rewrites, the lemma
-`saturate_sound` says that two represented terms in one class have the same meaning in every
-model of the specification. The theorem states soundness. Saturation with rewrites need not
-terminate and need not find every congruence, so the theorem makes no completeness claim.
+**Equality saturation** (`RewriteSig.v`). For any specification, the lemma `saturate_sound`
+says that two represented terms in one class of any outcome have the same meaning in every
+model of the specification and its input rows. The lemma `saturate_represents` says that the
+cell of each added term represents it, so `equal_sound` says that `equal` answers `true` only
+for terms with the same meaning in every model. At saturation, `saturate_closed` says that a
+rewrite step from a represented term reaches a term of the same class. Saturation with
+rewrites need not terminate, so a run that stops at a limit has only the soundness claims.
 
 **Lattice tables** (`LatticeSig.v`). A lattice table keeps, for each key, the merge of the
 values that the clauses assign to it. The lemma `solve_sound` says that a stored value is a
@@ -352,9 +398,8 @@ says that a saturated solve answers `may_points q x a` exactly (`AndersenSig.v`)
 ## Limits
 
 - The engine has one value type, `positive`. An argument of any other type is an error.
-- A primitive has one to three arguments. A primitive appears in the conclusion of a clause.
-  An equation premise `f x = y` is read, but the command fails on the lemma that it must
-  generate (see Primitives).
+- A primitive has one to three arguments. A call inside a premise argument applies to
+  variables that a relation or input premise binds, so a nested call there is not supported.
 - The engine has no rulesets and no `run-schedule`. It has no `subsume` and no `delete`, and
   its containers cannot hold class identifiers. These features wait for engine support after
   stage 2, so the command cannot express them.
