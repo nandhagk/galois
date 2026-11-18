@@ -181,6 +181,8 @@ Module Type EXTRACT_LAWS (V : VALUE) (I : INDEX V) (D : DATABASE V I)
     ctor_inventory cs db ->
     In (c, (n, ch)) (best cs db) ->
     exists e, represents (D.view db) (Id c) e /\ tree_cost e = n.
+  (** The chosen table has at most one entry for each class. *)
+  Parameter best_nodup : forall cs db, NoDup (map fst (best cs db)).
   (** Accepted certificates unfold to represented trees and report their unfolded tree cost. *)
   Parameter check_dag_sound : forall db c g n, D.wf db -> check_dag db c g = Some n ->
     dag_valid (D.view db) c g /\
