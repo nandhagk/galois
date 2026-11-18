@@ -15,7 +15,7 @@
 
 From Stdlib Require Import List PArith.
 From elpi Require Import elpi.
-From Galois.Egglog Require Import Syntax.
+From Galois.Egglog Require Import Syntax Model.
 From Galois.Egraph Require Import Syntax.
 From Galois.Front Require Import Spec SpecFacts LowerSig.
 
@@ -153,6 +153,22 @@ Ltac egglog_clause Hc Hh Hb Hvals :=
              end
          end;
   red; right; egglog_pick.
+
+(** The arguments of a congruence: each is related by a hypothesis or equal. *)
+Ltac egglog_args :=
+  repeat (apply Forall2_cons; [first [assumption | apply congruent_refl] | ]);
+  apply Forall2_nil.
+
+(** Each instance of an equational relation is a congruence of the encodings: the fire
+    lemmas for its clauses and the congruence rules for its closure laws. *)
+Ltac egglog_congruent :=
+  intros; match goal with H : _ |- _ => induction H end;
+  first
+    [ solve [eauto with egglog_fire]
+    | apply congruent_refl
+    | apply congruent_sym; assumption
+    | eapply congruent_trans; eassumption
+    | simpl; apply congruent_cong; egglog_args ].
 
 (** Every derived row is in the relation of the program. *)
 Ltac egglog_closed :=
@@ -742,6 +758,126 @@ pred define-code i:table.
 define-code T :- T = table _ N _ _, code-name T Name, int->pos N P,
   coq.env.add-const Name P {{ positive }} @transparent! _.
 
+% ---------------------------------------------------------------------------------------------
+% Encoders of datatypes
+
+% The expression of a constructor argument: the encoder on the datatype, a literal on a value.
+pred encode-arg i:inductive, i:term, i:term, i:term, o:term.
+encode-arg D F Ty X {{ lp:F lp:X }} :- Ty = global (indt D), !.
+encode-arg _ _ Ty X {{ @Model.ELit positive lp:X }} :- value-type Ty, !.
+encode-arg _ _ Ty _ _ :- coq.error "Egglog: a datatype argument has type"
+  {coq.term->string Ty} "which is neither positive nor the datatype itself".
+
+pred encode-branch i:list table, i:inductive, i:term, i:constructor, i:term, o:term.
+encode-branch Ts D F K KTy B :- arg-types KTy Tys, code-of Ts (tk-con K) Code,
+  mk-lams Tys [] (xs\ body\ sigma Es L\ std.map2 Tys xs (encode-arg D F) Es,
+    list->term {{ @Model.expr positive }} Es L, body = {{ @Model.EApp positive lp:Code lp:L }}) B.
+
+pred encoder i:list table, i:inductive, o:term.
+encoder Ts D Fix :-
+  T = global (indt D), RetTy = {{ @Model.expr positive }},
+  coq.env.indt D _ _ _ _ Ks KTys,
+  (pi f\ std.map2 Ks KTys (encode-branch Ts D f) (Bs f)),
+  Fix = fix `encode` 0 {{ lp:T -> lp:RetTy }}
+          (f\ fun `t` T (t\ match t (fun `t` T _\ RetTy) (Bs f))).
+
+pred define-encoder i:list table, i:inductive, o:pair inductive term.
+define-encoder Ts D (pr D (global (const C))) :- encoder Ts D Fix,
+  std.assert-ok! (coq.elaborate-skeleton Fix Ty FixE) "Egglog: an ill-typed encoder",
+  Name is "encode_" ^ {coq.gref->id (indt D)},
+  coq.env.add-const Name FixE Ty @transparent! C.
+
+% ---------------------------------------------------------------------------------------------
+% Glue of an equational relation: each relation instance is a congruence of encodings
+
+pred enc-of i:list (pair inductive term), i:term, o:term.
+enc-of Encs (global (indt D)) E :- std.exists Encs (p\ p = pr D E), !.
+
+% The type of the fire lemma of an equational constructor.
+pred eq-fire-type i:inductive, i:int, i:list (pair inductive term), i:term, i:term, i:term,
+  i:term, o:term.
+eq-fire-type R NP Encs Prim Spec I (prod N Ty F) (prod N Ty F1) :- !,
+  pi x\ decl x N Ty => eq-fire-type R NP Encs Prim Spec I (F x) (F1 x).
+eq-fire-type R NP Encs Prim Spec I (app [global (indt R) | All])
+    {{ @congruent positive lp:Prim lp:Spec lp:I lp:TL lp:TR }} :-
+  drop NP All [L, Rt], coq.env.indt R _ _ _ Ar _ _, index-types NP Ar [T, _],
+  enc-of Encs T Enc, TL = app [Enc, L], TR = app [Enc, Rt].
+
+% The term of a binder in the environment of an equational clause.
+pred binder-expr i:list (pair inductive term), i:term, i:term, o:term.
+binder-expr _ Ty X {{ @Model.ELit positive lp:X }} :- value-type Ty, !.
+binder-expr Encs Ty X (app [Enc, X]) :- enc-of Encs Ty Enc.
+
+pred eq-fire-proof i:list table, i:inductive, i:int, i:list (pair inductive term), i:term,
+  i:term, i:term, i:term, i:term, i:list term, i:list term, i:list term, i:term, o:term.
+eq-fire-proof Ts R NP Encs Prim Spec I Ck Kn Ps Vals Hyps (prod N Ty F) (fun N Ty B) :- !,
+  pi x\ sigma Vals1 Hyps1 E\ decl x N Ty =>
+    if (is-prop Ty)
+       (std.append Hyps [x] Hyps1,
+        eq-fire-proof Ts R NP Encs Prim Spec I Ck Kn Ps Vals Hyps1 (F x) (B x))
+       (binder-expr Encs Ty x E, std.append Vals [E] Vals1,
+        eq-fire-proof Ts R NP Encs Prim Spec I Ck Kn Ps Vals1 Hyps (F x) (B x)).
+eq-fire-proof _ R NP Encs Prim Spec I Ck Kn _ Vals Hyps (app [global (indt R) | All]) P :-
+  drop NP All [L, Rt], coq.env.indt R _ _ _ Ar _ _, index-types NP Ar [T, _],
+  enc-of Encs T Enc, TL = app [Enc, L], TR = app [Enc, Rt],
+  list->term {{ @Model.expr positive }} Vals EnvL,
+  Env = {{ @env_of (@Model.expr positive) lp:EnvL }},
+  Ck = {{ @Clause positive lp:BodyT lp:Head }},
+  if (Head = {{ @Unify positive lp:PL lp:PR }})
+     (Which = {{ or_introl eq_refl }})
+     (Head = {{ @Rewrites positive lp:PL lp:PR }}, Which = {{ or_intror eq_refl }}),
+  eq-body-proof Prim I Env Hyps BodyT BodyP,
+  P = {{ @congruent_clause positive lp:Prim lp:Spec lp:I lp:Ck lp:Env lp:PL lp:PR lp:TL lp:TR
+          lp:Kn lp:Which lp:BodyP eq_refl eq_refl }}.
+
+% The premises of a ground clause hold in the input rows: one hole per input row.
+pred eq-body-proof i:term, i:term, i:term, i:list term, i:term, o:term.
+eq-body-proof Prim I Env [] _ {{ @Forall_nil _ (@input_premise positive lp:Prim lp:I lp:Env) }}.
+eq-body-proof Prim I Env [_ | Hs] {{ @cons _ lp:Prem lp:Rest }} P :-
+  eq-body-proof Prim I Env Hs Rest RestP,
+  P = {{ @Forall_cons _ (@input_premise positive lp:Prim lp:I lp:Env) lp:Prem lp:Rest
+          (ex_intro _ _ (conj eq_refl _)) lp:RestP }}.
+
+% forall prim params t u, R params t u -> congruent prim spec (inputs params) (enc t) (enc u)
+pred congruent-type i:list (pair inductive term), i:term, i:term, i:rel, o:term.
+congruent-type Encs Spec Inputs (rel R NP _ _) (prod `prim` PT TyF) :-
+  coq.env.indt R _ _ _ Arity _ _, prim-type PT, index-types NP Arity [T, _], enc-of Encs T Enc,
+  (pi prim\ decl prim `prim` PT =>
+    params-binders NP Arity tt [] (ps\ t\ sigma Inst\ coq.subst-prod ps Arity Inst,
+      idx-binders Inst tt [] (xs\ c\ sigma Args RApp I TL TR A B\ std.append ps xs Args,
+        RApp = app [global (indt R) | Args], I = app [Inputs | ps],
+        xs = [A, B], TL = app [Enc, A], TR = app [Enc, B],
+        c = prod `H` RApp (_\ {{ @congruent positive lp:prim lp:Spec lp:I lp:TL lp:TR }})) t)
+    (TyF prim)).
+
+pred define-eq-glue i:list table, i:list rel, i:list term, i:list (pair inductive term),
+  i:term, i:term, i:rel.
+define-eq-glue Ts Rels ClauseList Encs Spec Inputs (rel R NP tt Ss) :- !,
+  coq.env.indt R _ _ _ _ Ks KTys,
+  std.forall2 Ks KTys (k\ kty\ sigma Cs Ck\
+    clause-of Ts Rels (rel R NP tt Ss) kty Cs,
+    if (Cs = [Ck])
+       (sigma Idx Kn Ty P C Name PT TyF PF\ position ClauseList Ck Idx, in-proof Idx Kn,
+        prim-type PT,
+        Ty = prod `prim` PT TyF, P = fun `prim` PT PF,
+        (pi prim\ decl prim `prim` PT =>
+          params-binders NP kty tt [] (ps\ t\ sigma Inst I\ coq.subst-prod ps kty Inst,
+            I = app [Inputs | ps], eq-fire-type R NP Encs prim Spec I Inst t) (TyF prim)),
+        (pi prim\ decl prim `prim` PT =>
+          params-binders NP kty ff [] (ps\ t\ sigma Inst I\ coq.subst-prod ps kty Inst,
+            I = app [Inputs | ps],
+            eq-fire-proof Ts R NP Encs prim Spec I Ck Kn ps [] [] Inst t) (PF prim)),
+        prove "egglog_leaf" Ty P,
+        Name is {coq.gref->id (indc k)} ^ "_fires",
+        coq.env.add-const Name P Ty @opaque! C,
+        coq.hints.add-resolve (const C) "egglog_fire" 0 _)
+       true),
+  congruent-type Encs Spec Inputs (rel R NP tt Ss) CTy,
+  prove "egglog_congruent" CTy CP,
+  coq.env.add-const {calc ({coq.gref->id (indt R)} ^ "_congruent")} CP CTy @opaque! _.
+define-eq-glue _ _ _ _ _ _ _.
+
+% -------------------------------------------------------------------------------------------
 % The command
 
 main [str Name, str "from" | RelNames] :- !,
@@ -759,8 +895,8 @@ main [str Name, str "from" | RelNames] :- !,
   std.flatten [RelKeys, InputKeys, DtKeys] Keys,
   number Keys 1 Dts Tables,
   std.map Tables decl-of Decls, list->term {{ decl }} Decls DeclT,
-  std.map-filter Tables (t\ c\ sigma K N\ t = table K N _ _, std.exists InputKeys (p\ sigma S\ p = pr K S),
-    int->pos N c) InputCodes,
+  std.map-filter Tables (t\ c\ sigma K N\ t = table K N _ _,
+    std.exists InputKeys (p\ sigma S\ p = pr K S), int->pos N c) InputCodes,
   list->term {{ positive }} InputCodes InputT,
   std.fold Rels [] (r\ a\ b\ sigma I KTys Cs\ r = rel I _ _ _,
     coq.env.indt I _ _ _ _ _ KTys,
@@ -793,6 +929,8 @@ main [str Name, str "from" | RelNames] :- !,
   coq.env.add-const "relation" RelationE RelTy @transparent! RelationC,
   define-glue Tables Rels ClauseList SpecT (global (const InputsC))
     (global (const RelationC)),
+  std.map Dts (define-encoder Tables) Encs,
+  std.forall Rels (define-eq-glue Tables Rels ClauseList Encs SpecT (global (const InputsC))),
   coq.env.end-module _.
 main _ :- coq.error "Usage: Egglog <name> from <relation> .. <relation>.".
 
