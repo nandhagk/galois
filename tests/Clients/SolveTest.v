@@ -44,17 +44,24 @@ Module SeedTests.
 
   Local Open Scope positive_scope.
 
-  (** The queries that the seed rows of both clients must answer. *)
+  (** The queries that the seed rows of Steensgaard must answer. *)
   Definition seed_queries : list (positive * list (cell positive)) :=
     [(1, [Val 1; Val 10]);
      (1, [Val 2; Val 20]);
      (2, [Val 3; Val 1]);
      (1, [Val 3; Val 10])].
 
+  (** The same queries with the table codes that the derived Andersen program generates. *)
+  Definition andersen_seed_queries : list (positive * list (cell positive)) :=
+    [(AndersenSig.Andersen.Addr_code, [Val 1; Val 10]);
+     (AndersenSig.Andersen.Addr_code, [Val 2; Val 20]);
+     (AndersenSig.Andersen.Copy_code, [Val 3; Val 1]);
+     (AndersenSig.Andersen.Addr_code, [Val 3; Val 10])].
+
   (** Andersen stores the three input constraints without adding a derived address constraint. *)
   Example andersen_seed_keeps_input_rows :
     map (fun query => fst (SolveDatabase.lookup (fst query) (snd query)
-      (SolveAndersen.seed solve_input))) seed_queries =
+      (SolveAndersen.seed solve_input))) andersen_seed_queries =
     [Some None; Some None; Some None; None].
   Proof.
     vm_compute; reflexivity.

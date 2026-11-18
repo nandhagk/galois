@@ -9,4 +9,5 @@
   Argent
   Galois.Base
   Galois.Egglog
+  Galois.Front
   Galois.Egraph))
