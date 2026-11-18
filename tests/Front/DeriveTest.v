@@ -12,6 +12,9 @@
     - [ConstructorInputTests] A record field of constructors reads one table per constructor.
     - [EquationTests] The clauses of an equational relation over a datatype.
     - [FactTests] The facts list one row per input element, and the conditions accept them.
+    - [PrimitiveSetTests] A primitive set dispatches each generated code to its function.
+    - [PrimitiveReadingTests] Applications of primitives become primitive patterns.
+    - [PrimitiveGlueTests] A glue lemma is stated for the set, or for any primitive function.
 
     Builds on: the derive command, the specifications and the runner conditions. *)
 
@@ -93,6 +96,55 @@ Inductive equiv (merges : list (positive * positive)) : term -> term -> Prop :=
   | equiv_fold x y b : In (x, y) merges -> equiv merges (Add (Num x) b) (Num y).
 
 Egglog Terms from equiv.
+
+(** The primitives of the examples: addition, multiplication and successor on positives. *)
+Egglog Primitives Arith Pos.add Pos.mul Pos.succ.
+
+(** Fibonacci with the successor of an index and the sum of two numbers inside the clauses. *)
+Open Scope positive_scope.
+Inductive fib : positive -> positive -> Prop :=
+  | fib_one : fib 1 1
+  | fib_two : fib 2 1
+  | fib_step x a b : fib x a -> fib (Pos.succ x) b ->
+      fib (Pos.succ (Pos.succ x)) (Pos.add a b).
+
+Close Scope positive_scope.
+
+Egglog Fib from fib with Arith.
+
+(** The primitive codes in a pattern, in order. *)
+Fixpoint pat_ops (p : pat positive) : list positive :=
+  match p with
+  | PVar _ => []
+  | PVal _ => []
+  | PNode _ args =>
+      (fix go (ps : list (pat positive)) : list positive :=
+         match ps with
+         | [] => []
+         | q :: rest => pat_ops q ++ go rest
+         end) args
+  | POp c args =>
+      c :: (fix go (ps : list (pat positive)) : list positive :=
+              match ps with
+              | [] => []
+              | q :: rest => pat_ops q ++ go rest
+              end) args
+  end.
+
+(** The primitive codes in the arguments of a premise, in order. *)
+Definition premise_ops (p : premise positive) : list positive :=
+  match p with
+  | Holds _ args => flat_map pat_ops args
+  | Equals _ args v => flat_map pat_ops args ++ pat_ops v
+  | Computes _ args v => flat_map pat_ops args ++ pat_ops v
+  end.
+
+(** The primitive codes in the arguments of the head of a clause, in order. *)
+Definition head_ops (c : clause positive) : list positive :=
+  match head c with
+  | Derive _ args => flat_map pat_ops args
+  | _ => []
+  end.
 
 (** * Pair inputs *)
 
@@ -352,3 +404,119 @@ Module FactTests.
   Qed.
 
 End FactTests.
+
+(** * Primitive sets *)
+
+Module PrimitiveSetTests.
+
+  Local Open Scope positive_scope.
+
+  (** Every registered function has its own code. *)
+  Example codes_are_distinct :
+    Arith.add_code <> Arith.mul_code /\ Arith.add_code <> Arith.succ_code /\
+    Arith.mul_code <> Arith.succ_code.
+  Proof.
+    vm_compute. repeat split; discriminate.
+  Qed.
+
+  (** The primitive of the addition code adds its two arguments. *)
+  Example add_code_adds :
+    Arith.prim Arith.add_code [2; 3] = Some 5.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The primitive of the multiplication code multiplies its two arguments. *)
+  Example mul_code_multiplies :
+    Arith.prim Arith.mul_code [2; 3] = Some 6.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The primitive of the successor code takes one argument. *)
+  Example succ_code_takes_one_argument :
+    Arith.prim Arith.succ_code [4] = Some 5.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A call with the wrong number of arguments has no result. *)
+  Example wrong_arity_has_no_result :
+    Arith.prim Arith.add_code [2] = None.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A code that is not registered has no result. *)
+  Example unregistered_code_has_no_result :
+    Arith.prim (Pos.succ (Arith.add_code + Arith.mul_code + Arith.succ_code)) [2; 3] = None.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End PrimitiveSetTests.
+
+(** * Reading primitives *)
+
+Module PrimitiveReadingTests.
+
+  (** The clause of the step constructor, the third of Fibonacci. *)
+  Definition fib_step_clause : option (clause positive) := nth_error (clauses Fib.spec) 2.
+
+  (** An application in a premise argument is a primitive pattern with the generated code, and
+      the premise that reads the first index has none. *)
+  Example application_in_premise_becomes_op :
+    option_map (fun c => map premise_ops (body c)) fib_step_clause =
+      Some [[]; [Arith.succ_code]].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** An application in the head is a primitive pattern too, and a nested application keeps its
+      order, outermost first. *)
+  Example application_in_head_becomes_op :
+    option_map head_ops fib_step_clause =
+      Some [Arith.succ_code; Arith.succ_code; Arith.add_code].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The clauses without applications have no primitive pattern. *)
+  Example base_clauses_use_no_primitive :
+    map (fun c => (flat_map premise_ops (body c), head_ops c)) (firstn 2 (clauses Fib.spec)) =
+      [([], []); ([], [])].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (* An equation premise [Pos.add a b = c] should be read as a [Computes] premise with the code of
+     [Pos.add], and the head should use [c]:
+       expected: the command derives the program
+       actual:   [Egglog R from r with Arith] fails without a message on an inductive with the
+                 premise [Pos.succ x = y -> r y]
+     Open problems: the command rejects equation premises over primitives. *)
+
+End PrimitiveReadingTests.
+
+(** * Glue lemmas *)
+
+Module PrimitiveGlueTests.
+
+  (** A program read with a primitive set states its lemma for the primitive function of the
+      set, with no argument for it. *)
+  Example set_fixes_the_primitive_function :
+    forall x v, fib x v <-> derived Arith.prim Fib.spec Fib.inputs Fib.fib_code [x; v].
+  Proof.
+    exact Fib.fib_spec.
+  Qed.
+
+  (** A program read without a set keeps the primitive function as an argument, so its lemma
+      holds for every function. *)
+  Example no_set_keeps_the_generic_function :
+    forall (prim : positive -> list positive -> option positive) edges x y,
+      path edges x y <-> derived prim Path.spec (Path.inputs edges) Path.path_code [x; y].
+  Proof.
+    exact Path.path_spec.
+  Qed.
+
+End PrimitiveGlueTests.
