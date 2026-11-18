@@ -744,7 +744,8 @@ complete-type Ts Spec Inputs (rel R NP _ _) Ty :-
     params-binders NP Arity tt [] (ps\ t\ sigma Inst\ coq.subst-prod ps Arity Inst,
       idx-binders Inst tt [] (xs\ c\ sigma Vs Args RApp I\ list->term {{ positive }} xs Vs,
         std.append ps xs Args, RApp = app [global (indt R) | Args], I = app [Inputs | ps],
-        c = prod `H` RApp (_\ {{ @derived positive lp:prim lp:Spec lp:I lp:Code lp:Vs }})) t) ty) Ty.
+        c = prod `H` RApp
+          (_\ {{ @derived positive lp:prim lp:Spec lp:I lp:Code lp:Vs }})) t) ty) Ty.
 
 % forall params idx, relation params code idx -> R params idx
 pred back-type i:list table, i:term, i:rel, o:term.
@@ -926,7 +927,8 @@ congruent-type Encs Spec Inputs (rel R NP _ _) Ty :-
       idx-binders Inst tt [] (xs\ c\ sigma Args RApp I TL TR A B\ std.append ps xs Args,
         RApp = app [global (indt R) | Args], I = app [Inputs | ps],
         xs = [A, B], TL = app [Enc, A], TR = app [Enc, B],
-        c = prod `H` RApp (_\ {{ @congruent positive lp:prim lp:Spec lp:I lp:TL lp:TR }})) t) ty) Ty.
+        c = prod `H` RApp
+          (_\ {{ @congruent positive lp:prim lp:Spec lp:I lp:TL lp:TR }})) t) ty) Ty.
 
 pred define-eq-glue i:list table, i:list rel, i:list term, i:list (pair inductive term),
   i:term, i:term, i:rel.
@@ -970,7 +972,8 @@ main [str "Primitives", str Name | Fs] :- !,
 main [str Name, str "from" | Rest] :- !,
   split-with Rest RelNames Opt,
   if (Opt = some Set)
-     (coq.locate {calc (Set ^ ".prim")} PrimGR, (fixed-prim (global PrimGR) => derive Name RelNames))
+     (coq.locate {calc (Set ^ ".prim")} PrimGR,
+      (fixed-prim (global PrimGR) => derive Name RelNames))
      (derive Name RelNames).
 main _ :- coq.error "Usage: Egglog <name> from <relation> .. <relation> [with <primitives>]."
   "or Egglog Primitives <name> <function> .. <function>.".
