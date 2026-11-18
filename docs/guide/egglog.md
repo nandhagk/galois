@@ -114,10 +114,13 @@ The first argument of `path_spec` is the primitive function of the program. A pr
 without primitives takes any function, and the lemma holds for all of them.
 
 A client that wants to know whether the program is inside the range of a theorem checks three
-conditions by computation. `spec_ok` checks the sorts of the lowered program, `relational`
-checks that every table is a relation and every rule only computes values and puts rows, and
-`rows_ok` checks that each input row belongs to an input table and has its arity. The command
-already stops when `spec_ok` fails, so a derived program always passes it.
+conditions by computation. `spec_ok` checks the sorts of the lowered program, and it checks
+that every constructor pattern names a constructor table and every lattice premise or head
+names a lattice table. `relational` checks that every table is a relation and every rule only
+computes values and puts rows. `rows_ok` checks that each input row belongs to an input
+relation and has the arity of the first declaration of its table, with a value at every
+argument. The command already stops when `spec_ok` fails, so a derived program always passes
+it.
 
 ```coq
 Example path_is_covered :
@@ -454,47 +457,72 @@ Every lemma is checked, so a wrong reading stops the command. The proofs use the
 
 ## The theorems
 
-Five signatures state what a run guarantees. Each theorem takes the conditions of its kind
-as hypotheses. These are `spec_ok` and `rows_ok`, together with `relational`, `ground` or
-`lattice_spec`, and each is stated over any value module that satisfies the engine's laws. The
-proofs are stubs, so none of these theorems is proved yet.
+Eight signatures state what the lowering, the runner and a run guarantee. Each theorem about
+a run takes the conditions of its kind as hypotheses. These are `spec_ok` and `rows_ok`,
+together with `relational`, `ground` or `lattice_spec`, and each is stated over any value
+module that satisfies the engine's laws. The proofs are stubs, so none of these theorems is
+proved yet.
+
+**The lowering** (`LowerSig.v`). The lemma `lower_sound` says that a row that a well-sorted
+relational program derives from input rows is a derived row, and `lower_complete` says the
+converse. The lemma `lower_closed` says that a view that the rules close holds every row
+derived from its own rows, and `lower_valid` says that a model of a specification that passes
+`spec_ok` validates its rules. Laws about single patterns relate their queries and actions to
+their values, their meanings in a model and the terms that a view represents.
+
+**The runner** (`RunnerSig.v`). The facts of the runner say that the seed holds exactly the
+input rows and that the run contracts of the engine apply to it. A model of the input rows
+satisfies the seed, every outcome keeps the input rows, and the lemma `holds_spec` says that
+`holds` finds a row exactly when the database has it without output. The timed runner states
+that seeding pays for planning, loading and each put (`T_seed_le`), and that a solve pays for
+its seed, planning and the run (`T_solve_split`).
 
 **Relational exactness** (`RelationalSig.v`). For a relational specification, `solve_sound`
 says that every row of every outcome is derived from the input rows, and `solve_complete`
 says that a saturated outcome holds every derived row. So a saturated run computes exactly
 the derived rows. The lemma `solve_saturates` says that a limit of at least
 `2 * herbrand + 3` iterations saturates a program that has no primitives. Together with
-`Path.path_spec`, these give the exactness of `path` itself. The lemma `holds_spec` says that
-`holds` finds a row exactly when the database has it.
+`Path.path_spec`, these give the exactness of `path` itself.
 
-**Ground equational exactness** (`GroundSig.v`). For a ground specification, a specification
-whose clauses are all unions over input rows, `solve_sound` says that two represented terms in
-one class are congruent, and `solve_complete` says that two represented congruent terms share
-a class in a saturated outcome. The lemma `solve_builds` says that a saturated outcome
-represents both sides of every instance, and `solve_saturates` says that enough iterations and
-identifiers saturate the run. With `<R>_congruent`, these give the exactness of an equational
-inductive such as Steensgaard's.
+**Ground equational exactness** (`GroundSig.v`). A ground specification has only unions of
+two constructor terms, whose premises read input rows and primitives and bind every variable
+of the clause outside primitive calls. For a ground specification, `solve_sound` says that two
+represented terms in one class are congruent, and `solve_complete` says that two represented
+congruent terms share a class in a saturated outcome. The lemma `solve_builds` says that a
+saturated outcome represents both sides of every instance. With `<R>_congruent`, these give
+the exactness of an equational inductive such as Steensgaard's.
 
 **Equality saturation** (`RewriteSig.v`). For any specification, the lemma `saturate_sound`
 says that two represented terms in one class of any outcome have the same meaning in every
 model of the specification and its input rows. The lemma `saturate_represents` says that the
 cell of each added term represents it, so `equal_sound` says that `equal` answers `true` only
 for terms with the same meaning in every model. At saturation, `saturate_closed` says that a
-rewrite step from a represented term reaches a term of the same class. Saturation with
-rewrites need not terminate, so a run that stops at a limit has only the soundness claims.
+rewrite step from a represented term reaches a term of the same class.
 
 **Lattice tables** (`LatticeSig.v`). A lattice table keeps, for each key, the merge of the
-values that the clauses assign to it. The lemma `solve_sound` says that a stored value is a
-merge of assigned values, and `solve_complete` says that every assigned value is below the
-stored value in a saturated outcome. The command `Egglog` does not yet derive lattice tables,
-so this theorem covers specifications that a client writes by hand.
+values that the clauses assign to it. A lattice specification has no constructor table, and
+its clauses read relations and primitives and derive rows or assign values. The lemma
+`solve_sound` says that a stored value is a merge of assigned values, and `solve_complete`
+says that every assigned value is below the stored value in a saturated outcome. The command
+`Egglog` does not yet derive lattice tables, so this theorem covers specifications that a
+client writes by hand.
 
 **The exact model** (`CongruenceRefSig.v`). The lemma `exact_model` says that a ground
 specification has a model of its input rows in which two terms are equal exactly when they are
-congruent. The ground theorem uses it to read equalities of classes as congruences.
+congruent. The ground theorem uses it to read equalities of classes as congruences. The model
+comes from the reference closure of `ClosureSig.v`, whose normal forms the tests in
+`tests/Front/ClosureTest.v` run.
+
+**Cheapest terms** (`ExtractionSig.v`). The function `cheapest` extracts a DAG for a class and
+decodes it when the cost that the engine's checker reports for the DAG is at most the cost of
+every best entry of the class, and returns nothing otherwise. The lemma `cheapest_represents`
+says that a returned term is represented by the class, and `cheapest_optimal` says that no
+term that the class represents costs less.
 
 The clients state their own results in terms of these. For example, Andersen's `solve_exact`
-says that a saturated solve answers `may_points q x a` exactly (`AndersenSig.v`).
+says that a saturated solve answers `may_points q x a` exactly (`AndersenSig.v`), and
+Steensgaard's `solve_exact` says that a saturated solve answers
+`pointer_congruence q (Deref (Cell x)) (Cell a)` exactly (`SteensgaardSig.v`).
 
 ## Limits
 
@@ -510,5 +538,9 @@ says that a saturated solve answers `may_points q x a` exactly (`AndersenSig.v`)
   stage 2, so the command cannot express them.
 - The command derives no lattice tables, so a client writes those specifications by hand.
 - The theorems of the previous section are stated and not yet proved.
+- The engine has no termination contract for programs that build terms, so no theorem says
+  when a run of a ground specification or a run with rewrites saturates.
+- A rewrite step reads its premises in the input rows, so `saturate_closed` says nothing about
+  a rewrite whose premises read derived rows.
 - A run that stops at `IterLimit` or `IdLimit` has no completeness guarantee, so a client that
   needs the exact answer checks for `Saturated`.
