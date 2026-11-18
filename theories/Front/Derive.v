@@ -731,6 +731,17 @@ define-spec Ts Spec Inputs Relation Closed (rel R NP Eq Ss) :-
   coq.env.add-const {calc (RName ^ "_spec")} SP1 STy @opaque! _.
 
 % -{93}
+% The name of the code constant of a table.
+pred code-name i:table, o:string.
+code-name (table (tk-rel R) _ _ _) N :- !, N is {coq.gref->id (indt R)} ^ "_code".
+code-name (table (tk-con K) _ _ _) N :- !, N is {coq.gref->id (indc K)} ^ "_code".
+code-name (table (tk-src (global GR)) _ _ _) N :- !, N is {coq.gref->id GR} ^ "_code".
+code-name (table (tk-param I) _ _ _) N :- N is "input" ^ {std.any->string I} ^ "_code".
+
+pred define-code i:table.
+define-code T :- T = table _ N _ _, code-name T Name, int->pos N P,
+  coq.env.add-const Name P {{ positive }} @transparent! _.
+
 % The command
 
 main [str Name, str "from" | RelNames] :- !,
@@ -758,6 +769,7 @@ main [str Name, str "from" | RelNames] :- !,
   Spec = {{ @Spec positive lp:DeclT lp:InputT lp:ClausesT }},
   std.assert-ok! (coq.typecheck Spec {{ spec positive }}) "Egglog: ill-typed specification",
   coq.env.begin-module Name none,
+  std.forall Tables define-code,
   coq.env.add-const "spec" Spec {{ spec positive }} @transparent! SpecC,
   SpecT = global (const SpecC),
   coq.env.add-const "program" {{ @spec_program positive lp:SpecT }}
