@@ -86,6 +86,11 @@ Module ExtractionProofs (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V
     (R : RUN V I J D) (C : COST V) (X : EXTRACT V I D C)
     (K : EXTRACTION_BASE V I J D R C X) <: EXTRACTION V I J D R C X K.
   Include EXTRACTION_SPEC V I J D R C X K.
+  (** The hypotheses of the theorems as a module, so that the plan can take them. *)
+  Module Fits <: EXTRACTION_SPEC V I J D R C X K.
+    Include EXTRACTION_SPEC V I J D R C X K.
+  End Fits.
+  Module P := ExtractionPlan V I J D R C X K Fits.
 
   Lemma cheapest_represents : forall p db c e,
     inventory_fits p db -> K.cheapest p db c = Some e ->

@@ -41,6 +41,8 @@ End RewritePlan.
 
 Module Rewrite (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     (R : RUN V I J D) (X : RUNNER V I J D R) <: REWRITE V I J D R X.
+  Module P := RewritePlan V I J D R X.
+
   Lemma saturate_sound : forall (s : spec V.t) rows es lim st db cs i j t u
       (M : @model V.t),
     spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->

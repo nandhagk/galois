@@ -38,7 +38,9 @@ Module GroundPlan (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
 End GroundPlan.
 
 Module Ground (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
-    (R : RUN V I J D) (X : RUNNER V I J D R) <: GROUND V I J D R X.
+    (R : RUN V I J D) (X : RUNNER V I J D R) (CR : CONGRUENCE_REF V) <: GROUND V I J D R X.
+  Module P := GroundPlan V I J D R X.
+
   Lemma solve_sound : forall (s : spec V.t) rows lim i j t u,
     spec_ok s = true -> ground s = true -> rows_ok s rows = true ->
     represents (D.view (snd (X.solve (spec_program s) rows lim))) (Id i) t ->
