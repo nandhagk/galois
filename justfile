@@ -37,9 +37,23 @@ session-check: fmt-check build test lint frozen
 # Check formatting, build, test, lint and the frozen files.
 check: fmt-check build test lint frozen
 
+# Check the forbidden words, the module rules and the numbered codes.
+lint: words sentences codes
+
 # Print the words that just/lint.rules forbids in code and fail if there are any.
-lint:
-    @awk -f just/lint.awk just/lint.rules $(git ls-files -co --exclude-standard -- '*.v'); awk -f just/r13.awk $(git ls-files -co --exclude-standard -- '*.v')
+[private]
+words:
+    @awk -f just/lint.awk just/lint.rules $(git ls-files -co --exclude-standard -- '*.v')
+
+# Check the module rules of each Rocq sentence.
+[private]
+sentences:
+    @awk -f just/r13.awk $(git ls-files -co --exclude-standard -- '*.v')
+
+# Print numerals written as table codes or variables where programs come from inductives.
+[private]
+codes:
+    @awk -f just/codes.awk $(git ls-files -co --exclude-standard -- 'theories/Clients/*.v' 'tests/Clients/*.v' 'tests/Front/*.v')
 
 # Count admitted statements and placeholder code by package and tag.
 admits:
