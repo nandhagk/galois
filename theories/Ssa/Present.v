@@ -20,7 +20,7 @@
     Builds on: Ssa.Lang. *)
 
 From Stdlib Require Import List PArith NArith ZArith Bool Lia Arith Wf_nat.
-From Argent Require Import Time Tactics Std Complexity BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import Code KeySig Key Trie.
 From Galois.Graph Require Import DigraphSig.
 From Galois.Program Require Import CfgSig VarsSig Vars SsaSig Ssa.
