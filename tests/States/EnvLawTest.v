@@ -8,7 +8,7 @@
     - [WideningTests] Widening of an environment with an unstable binding.
     - [SoundnessTests] The semantic clients of evaluation, assignment and guards.
     - [UpdateTests] Concrete replacements of a key by an update.
-    - [BigOTests] Size and work bounds of the timed environment.
+    - [BoundTests] Size and work bounds of the timed environment.
     - [EmptyKeyTests] The meaning of environments over a key type without elements.
 
     Builds on: Env, Interval and ZLang. *)
@@ -200,9 +200,9 @@ Module UpdateTests.
 
 End UpdateTests.
 
-(** * Big o *)
+(** * Bounds *)
 
-Module BigOTests.
+Module BoundTests.
 
   Module TimedBoolMap := TrieMapT BoolKeyT.
   Module TimedIntValues := IntervalT ZLangT ThresholdsT.
@@ -224,7 +224,7 @@ Module BigOTests.
     vm_compute; discriminate.
   Qed.
 
-End BigOTests.
+End BoundTests.
 
 (** * Empty key *)
 
