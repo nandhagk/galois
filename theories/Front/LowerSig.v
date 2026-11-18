@@ -14,7 +14,7 @@
     Builds on: the specifications, the Egglog syntax and the Egraph syntax. *)
 
 From Stdlib Require Import List PArith.
-From Galois.Egglog Require Import Syntax.
+From Galois.Egglog Require Import Syntax Model.
 From Galois.Egraph Require Import Syntax.
 From Galois.Front Require Import Spec.
 
@@ -256,3 +256,26 @@ Definition spec_rewrites (s : spec V) : list (rewrite V) :=
 Definition spec_program (s : spec V) : program V := Program V (tables s) (spec_rules s).
 
 End Lower.
+
+(** * Laws *)
+
+(** The rows of values without output of a view, as a relation. *)
+Definition view_rows {V} (w : @view V) (r : positive) (vs : list V) : Prop :=
+  row w r (map Val vs) None.
+
+Module Type LOWER_LAWS.
+  (** A row that the lowered relational program derives from value rows of input tables is a
+      derived row of the specification. *)
+  Parameter lower_sound : forall {V} (prim : positive -> list V -> option V) (s : spec V)
+      (w0 : @view V) r k,
+    relational_fragment (spec_program s) = true ->
+    (forall r' k' o', row w0 r' k' o' ->
+      In r' (inputs s) /\ o' = None /\ exists vs, k' = map Val vs) ->
+    derives prim (spec_program s) w0 r k ->
+    exists vs, k = map Val vs /\ derived prim s (view_rows w0) r vs.
+  (** A derived row of a relational specification is derived by its lowered program. *)
+  Parameter lower_complete : forall {V} (prim : positive -> list V -> option V) (s : spec V)
+      (w0 : @view V) r vs,
+    relational_fragment (spec_program s) = true ->
+    derived prim s (view_rows w0) r vs -> derives prim (spec_program s) w0 r (map Val vs).
+End LOWER_LAWS.
