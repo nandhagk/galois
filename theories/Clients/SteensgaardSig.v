@@ -6,6 +6,9 @@
     Main results
     - [points_spec] Queries test whether the pointee term equals the addressed cell in the final
       congruence.
+    - [solve_exact] Saturated query answers are exactly the source congruence approximation.
+    - [pointer_congruence_back] The congruence of the derived program adds no equation to the
+      source congruence.
     - [seed_complexity] Seeding is linear in the constraints and initial pointers at the database
       unit.
     - [compile_complexity] Compilation emits a fixed program, so its cost is a constant, O(1).
@@ -91,6 +94,15 @@ Module Type STEENSGAARD_LAWS (V : VALUE with Definition t := positive)
   (** Saturated query answers contain the source congruence approximation. *)
   Parameter solve_covers : forall q lim db, solve q lim = (Saturated, db) ->
     forall x a, pointer_congruence q (Deref (Cell x)) (Cell a) -> points db x a = true.
+  (** Two terms related by the generated program's congruence are related by the source
+      congruence, so the engine's congruence adds no equation. *)
+  Parameter pointer_congruence_back : forall prim q t u,
+    congruent prim Unification.spec (Unification.inputs q)
+      (Unification.encode_pointer_term t) (Unification.encode_pointer_term u) ->
+    pointer_congruence q t u.
+  (** Saturated query answers are exactly the source congruence approximation. *)
+  Parameter solve_exact : forall q lim db, solve q lim = (Saturated, db) ->
+    forall x a, points db x a = true <-> pointer_congruence q (Deref (Cell x)) (Cell a).
 End STEENSGAARD_LAWS.
 
 Module Type STEENSGAARD (V : VALUE with Definition t := positive)
@@ -195,18 +207,3 @@ Module Type STEENSGAARD_SOUND (V : VALUE with Definition t := positive)
     pointer_reachable (L.initial q) (L.step q) s -> forall x a,
       trie_get x (L.memory s) = Some a -> A.points db x a = true.
 End STEENSGAARD_SOUND.
-
-Module Type STEENSGAARD_EXACT (V : VALUE with Definition t := positive)
-    (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
-    (A : STEENSGAARD V I J D R).
-  (** Two terms related by the generated program's congruence are related by the source
-      congruence, so the engine's congruence adds no equation. *)
-  Parameter pointer_congruence_back : forall prim q t u,
-    congruent prim Unification.spec (Unification.inputs q)
-      (Unification.encode_pointer_term t) (Unification.encode_pointer_term u) ->
-    pointer_congruence q t u.
-
-  (** Saturated query answers are exactly the source congruence approximation. *)
-  Parameter solve_exact : forall q lim db, A.solve q lim = (Saturated, db) ->
-    forall x a, A.points db x a = true <-> pointer_congruence q (Deref (Cell x)) (Cell a).
-End STEENSGAARD_EXACT.

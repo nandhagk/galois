@@ -1,27 +1,24 @@
 (** * Inclusion-based pointer analysis driver
 
-    This driver compiles source constraints and queries their least inclusion solution.
-    The source-semantics lemmas shared with the Steensgaard client stay here.
+    This driver compiles source constraints and queries their least inclusion solution. The
+    file holds the code, the law module, which takes the runner facts and the relational
+    theorems, and the soundness of every concrete run. The timed module [AndersenT] is in
+    [AndersenTime.v]. The source-semantics lemmas shared with the Steensgaard client stay here.
     For example, an address constraint seeds a row used by the first inclusion rule.
 
     Main results
     - [points_spec] Points-to queries reflect canonical relation membership.
     - [solve_exact] A saturated result is exactly the least inclusion solution.
-    - [seed_complexity] Seeding is linear in the constraints and initial pointers at the database
-      unit.
-    - [compile_complexity] Compilation emits a fixed program, so its cost is a constant, O(1).
-    - [points_complexity] A points-to query is linear in the database unit and the bits of its
-      two cells.
-    - [solve_complexity] A solve costs its seed, the cube of the fixed program for planning, and
-      the run.
+    - [concrete_sound] Every reachable concrete pointer appears in every saturated result.
 
-    Builds on: AndersenSig and the relational database and run interfaces. *)
+    Builds on: AndersenSig, the runner facts, the relational theorems and the relational
+    database and run interfaces. *)
 
 From Stdlib Require Import List PArith NArith Bool.
 From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
-From Galois.Front Require Import RunnerSig Runner.
+From Galois.Front Require Import Spec LowerSig RunnerSig RelationalSig.
 From Galois.Clients Require Import AndersenSig.
 Import List.ListNotations.
 Import ComplexityNotations.
@@ -96,7 +93,8 @@ End AndersenCode.
 
 Module Andersen (V : VALUE with Definition t := positive)
     (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
-    (X : RUNNER V I J D R) <: ANDERSEN V I J D R.
+    (X : RUNNER V I J D R) (F : RUNNER_FACTS V I J D R X) (T : RELATIONAL V I J D R X)
+    <: ANDERSEN V I J D R.
   Include AndersenCode V I J D R X.
 
   (** The derived program passes the source sort checker. *)
@@ -110,16 +108,25 @@ Module Andersen (V : VALUE with Definition t := positive)
     reflexivity.
   Qed.
 
-  (* STUB: RELATIONAL_PLAN.seed_rows for [MayPoints.spec], with [rows_ok] by vm_compute. *)
+  (* STUB: the rows of [MayPoints.facts q] are rows of the five input tables with two values
+     each, so a case on each constraint shows that they pass the row check. *)
+  (** Every input row of a pointer input passes the row check. *)
+  Lemma facts_rows_ok : forall q, rows_ok MayPoints.spec (MayPoints.facts q) = true.
+  Proof. Admitted. (* STUB *)
+
+  (* STUB: [F.seed_rows] for [MayPoints.spec], with [spec_ok] by vm_compute and
+     [facts_rows_ok]. *)
   Lemma seed_rows : forall q f k o, row (D.view (seed q)) f k o <->
     o = None /\ exists vs, k = map Val vs /\ In (f, vs) (MayPoints.facts q).
   Proof. Admitted. (* STUB *)
 
-  (* STUB: RELATIONAL_PLAN.seed_ready for [MayPoints.spec], with [spec_ok] by vm_compute. *)
+  (* STUB: [F.seed_ready] for [MayPoints.spec], with [spec_ok] by vm_compute and
+     [facts_rows_ok]. *)
   Lemma seed_loaded : forall q, R.loaded (compile q) (R.plan (compile q)) (seed q).
   Proof. Admitted. (* STUB *)
 
-  (* STUB: RELATIONAL_PLAN.seed_ready for [MayPoints.spec], with [spec_ok] by vm_compute. *)
+  (* STUB: [F.seed_ready] for [MayPoints.spec], with [spec_ok] by vm_compute and
+     [facts_rows_ok]. *)
   Lemma seed_wf : forall q, D.wf (seed q) /\ D.canonical (seed q) /\ R.no_ids (seed q).
   Proof. Admitted. (* STUB *)
 
@@ -131,8 +138,7 @@ Module Andersen (V : VALUE with Definition t := positive)
     apply X.solve_unfold.
   Qed.
 
-  (* STUB: RELATIONAL.holds_spec at [MayPoints.may_points_code], and the sorts of the program
-     give an output-free row. *)
+  (* STUB: [F.holds_spec] at [MayPoints.may_points_code]. *)
   Lemma points_spec : forall db x a, D.wf db -> D.canonical db ->
     reflect (row (D.view db) MayPoints.may_points_code [Val x; Val a] None)
       (points db x a).
@@ -160,100 +166,12 @@ Module Andersen (V : VALUE with Definition t := positive)
     - exact Hfuel.
   Qed.
 
-  (* STUB: RELATIONAL.solve_sound and solve_complete with [MayPoints.may_points_spec], and
-     [points_spec]. *)
+  (* STUB: [T.solve_sound] and [T.solve_complete] with [MayPoints.may_points_spec] at [V.prim],
+     [F.holds_spec], and [spec_ok], [relational] and [facts_rows_ok]. *)
   Lemma solve_exact : forall q lim db, solve q lim = (Saturated, db) ->
     forall x a, points db x a = true <-> may_points q x a.
   Proof. Admitted. (* STUB *)
 End Andersen.
-
-(** * Time *)
-
-Module AndersenT (V : VALUE_T with Definition t := positive)
-    (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I) (R : RUN_T V I J D)
-    <: ANDERSEN_ALL V I J D R.
-  (** The runner with its time functions. *)
-  Module XT := RunnerT V I J D R.
-  Include Andersen V I J D R XT.
-  TimeFun compile.
-  TimeFun seed.
-  TimeFun solve.
-  TimeFun points.
-  Definition k_rules : N := 1. (* STUB *)
-  Definition k_seed : N := 1. (* STUB *)
-  Definition k_wrap : N := 1. (* STUB *)
-  Definition c_andersen : N := 1. (* STUB *)
-
-  Lemma T_seed_le : forall q,
-    (T_seed q <= c_andersen *
-      N.of_nat (length (constraints q) + length (initial_pointers q) + 1) *
-      N.of_nat (D.unit (seed q)) * N.of_nat (N.to_nat (N.log2 (D.ids (seed q))) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_compile_le : forall q, (T_compile q <= c_andersen)%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_points_le : forall db x a, D.wf db ->
-    (T_points db x a <= c_andersen * (N.of_nat (3 * D.unit db) +
-      N.of_nat (cell_bits V.encode (Val x) + cell_bits V.encode (Val a)) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_solve_le : forall q lim, let p := compile q in let cp := R.plan p in
-    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
-      R.T_run p cp lim (seed q) + c_andersen)%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Seeding is linear in the constraints and initial pointers at the database unit. *)
-  Lemma seed_complexity :
-    T_seed q ∈ 𝑂(N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
-      D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1))) for q.
-  Proof. Admitted. (* STUB *)
-
-  (** Compilation emits a fixed program, so its cost is a constant. *)
-  Lemma compile_complexity : T_compile q ∈ 𝑂(0) for q.
-  Proof. Admitted. (* STUB *)
-
-  (** A points-to query is linear in the database unit and the bits of its two cells. *)
-  Lemma points_complexity :
-    T_points db (x : positive) (a : positive) ∈
-      𝑂(N.of_nat (3 * D.unit db + cell_bits V.encode (Val x) + cell_bits V.encode (Val a) + 1))
-      for (db, x, a) | D.wf db.
-  Proof. Admitted. (* STUB *)
-
-  (** A solve costs its seed, the cube of the fixed program for planning, and the run. *)
-  Lemma solve_complexity :
-    T_solve q lim ∈ 𝑂((N.of_nat ((length (constraints q) + length (initial_pointers q) + 1) *
-      D.unit (seed q) * (N.to_nat (N.log2 (D.ids (seed q))) + 1)) +
-      N.of_nat ((R.size_program (compile q) + 1) * (R.size_program (compile q) + 1) *
-        (R.size_program (compile q) + 1)) +
-      R.run_cost B U (compile q) (R.plan (compile q)) lim (seed q))%N)
-      for (B, U, q, lim) |
-        (D.ids (snd (solve q lim)) <= B)%N /\ D.unit (snd (solve q lim)) <= U.
-  Proof. Admitted. (* STUB *)
-
-  Lemma source_closed : forall q, pointer_closed q (may_points q).
-  Proof.
-    exact pointer_source_closed.
-  Qed.
-
-  Lemma source_least : forall q r, pointer_closed q r ->
-    forall x a, may_points q x a -> r x a.
-  Proof.
-    exact pointer_source_least.
-  Qed.
-
-  Lemma step_covered : forall q r instruction before after,
-    pointer_closed q r -> In instruction (constraints q) -> memory_covered r before ->
-    pointer_exec instruction before = Some after -> memory_covered r after.
-  Proof.
-    exact pointer_step_covered.
-  Qed.
-
-  Lemma T_solve_split : forall q lim, let p := compile q in let cp := R.plan p in
-    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
-      R.T_run p cp lim (seed q) + k_wrap)%N.
-  Proof. Admitted. (* STUB *)
-End AndersenT.
 
 Module AndersenSound (V : VALUE with Definition t := positive)
     (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
