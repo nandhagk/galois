@@ -6,7 +6,14 @@
     [P] has its head in [P], every derived row is in [P].
     For example, the derived [Egglog] programs prove their glue lemmas from it.
 
-    Builds on: the specifications. *)
+    Main results
+    - [derived_least] Every relation that contains the inputs and is closed under the clauses
+      contains the derived rows.
+    - [derived_mono] Derived rows grow with the input rows.
+    - [represents_denote] A term that a cell represents means, in a model of the view, what
+      the cell means.
+
+    Builds on: the specifications and the models of the engine. *)
 
 From Stdlib Require Import List PArith.
 From Galois.Egglog Require Import Syntax Model.
@@ -50,6 +57,52 @@ Proof.
 Qed.
 
 End Least.
+
+(** Derived rows grow with the input rows. *)
+Lemma derived_mono {V : Type} (prim : positive -> list V -> option V) (s : spec V)
+    (I1 I2 : positive -> list V -> Prop) :
+  (forall r vs, I1 r vs -> I2 r vs) ->
+  forall r vs, derived prim s I1 r vs -> derived prim s I2 r vs.
+Proof.
+  intros Hsub.
+  apply derived_least.
+  - intros r vs Hin HI.
+    apply derived_input; [exact Hin | exact (Hsub r vs HI)].
+  - intros c e r args vs Hin Hhead Hbody Hvalues.
+    apply (derived_clause prim s I2 c e r args vs Hin Hhead); [| exact Hvalues].
+    clear Hin Hhead Hvalues.
+    induction Hbody as [| p ps Hp Hps IHps]; [constructor |].
+    destruct p as [r' args' | f args' v | q args' v]; cbn in Hp.
+    + destruct Hp as [vs' [Hvalues' Hrow]].
+      exact (derived_row prim s I2 e r' args' vs' ps Hvalues' Hrow IHps).
+    + contradiction.
+    + destruct Hp as [vs' [w [Hvalues' [Hprim Hvalue]]]].
+      exact (derived_computes prim s I2 e q args' v vs' w ps Hvalues' Hprim Hvalue IHps).
+Qed.
+
+(** * Represented terms *)
+
+(** A term that a cell represents in a view means, in a model of the view, what the cell
+    means. *)
+Lemma represents_denote {V : Type} (merge : positive -> V -> V -> V) (M : @model V)
+    (nu : positive -> carrier M) (w : @view V) :
+  sat merge M nu w -> forall c t, represents w c t -> den nu c = denote M t.
+Proof.
+  intros [Hrows [Hsame _]].
+  fix IH 3.
+  intros c t Hrep.
+  destruct Hrep as [v | f k i j args Hrow Hij Hargs].
+  - reflexivity.
+  - cbn [den denote].
+    pose proof (Hrows f k (Some (Id j)) Hrow) as Hholds.
+    unfold holds in Hholds.
+    destruct (kind w f) as [[| |m] |]; try contradiction.
+    rewrite (Hsame i j Hij), <- Hholds.
+    f_equal. f_equal.
+    clear Hrow Hij Hholds.
+    induction Hargs as [| c t k' args' Hc Hrest IHrest]; [reflexivity |].
+    cbn [map]. rewrite (IH c t Hc), IHrest. reflexivity.
+Qed.
 
 (** An environment that binds the variables 1 to n to a list of n values. *)
 Definition env_of {V : Type} (vs : list V) (x : positive) : option V :=

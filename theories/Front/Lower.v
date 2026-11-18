@@ -1,33 +1,28 @@
 (** * Lowering laws
 
-    The lowered program of a relational specification derives exactly its derived rows from a
-    view of input rows. [lower_sound] follows a derivation of the program back to clauses of
-    the specification, and [lower_complete] fires the rule of each clause.
-    For example, the rule of [May_copy] fires on a copy row and a points-to row.
+    The laws of the lowering, assembled from the files that prove their parts.
+    [LowerValues] and [LowerModels] relate patterns to their values, meanings and represented
+    terms. [LowerComplete], [LowerSound] and [LowerValid] prove the laws about whole programs
+    from them, and the soundness and validity proofs share the plan [LowerScopes] on purpose,
+    because both read how a rule scopes its variables.
+    For example, [LowerLaws.lower_sound] and [LowerLaws.lower_complete] together say that the
+    lowered program of a relational specification derives exactly its derived rows.
 
-    Builds on: the lowering, the specifications and the engine models. *)
+    Builds on: the lowering signature and the files of its parts. *)
 
-From Stdlib Require Import List PArith.
-From Galois.Egglog Require Import Syntax Model.
-From Galois.Front Require Import Spec LowerSig.
+From Galois.Front Require Import LowerSig LowerValues LowerModels LowerScopes LowerComplete
+  LowerSound LowerValid.
 
-Import List.ListNotations.
+Module CompleteLaws := LowerComplete LowerValues.
+
+Module SoundLaws := LowerSound LowerValues LowerScopes.
+
+Module ValidLaws := LowerValid LowerValues LowerModels LowerScopes.
 
 Module LowerLaws <: LOWER_LAWS.
-  Lemma lower_sound : forall {V} (prim : positive -> list V -> option V) (s : spec V)
-      (w0 : @view V) r k,
-    relational_fragment (spec_program s) = true ->
-    (forall r' k' o', row w0 r' k' o' ->
-      In r' (inputs s) /\ o' = None /\ exists vs, k' = map Val vs) ->
-    derives prim (spec_program s) w0 r k ->
-    exists vs, k = map Val vs /\ derived prim s (view_rows w0) r vs.
-  Proof.
-  Admitted. (* STUB *)
-
-  Lemma lower_complete : forall {V} (prim : positive -> list V -> option V) (s : spec V)
-      (w0 : @view V) r vs,
-    relational_fragment (spec_program s) = true ->
-    derived prim s (view_rows w0) r vs -> derives prim (spec_program s) w0 r (map Val vs).
-  Proof.
-  Admitted. (* STUB *)
+  Include LowerValues.
+  Include LowerModels.
+  Include CompleteLaws.
+  Include SoundLaws.
+  Include ValidLaws.
 End LowerLaws.
