@@ -46,8 +46,15 @@ Ltac egglog_member :=
       end
   end.
 
-(** Prove an input membership or a row of the inputs, the holes of a fire lemma. *)
-Ltac egglog_leaf := first [simpl; tauto | red; egglog_member].
+(** Prove a hole of a fire lemma: an input membership, a row of the inputs, or a primitive
+    premise [f x1 .. xn = w] read as the result [Some w] of the primitive function. *)
+Ltac egglog_leaf :=
+  first
+    [ simpl; tauto
+    | red; egglog_member
+    | match goal with
+      | H : _ = ?w |- _ = Some ?w => rewrite <- H; reflexivity
+      end ].
 
 (** Each constructor of a relation derives its row, by induction and the fire lemmas. *)
 Ltac egglog_complete :=
@@ -76,11 +83,13 @@ Ltac egglog_unmember H :=
   | _ => idtac
   end.
 
-(** Case on every lookup of an environment [e : positive -> option _] in the hypotheses. *)
+(** Case on every lookup of an environment [e : positive -> option _] in the hypotheses. The
+    environment is a variable, which keeps a value [Some w] from counting as a lookup. *)
 Ltac egglog_env :=
   simpl in *;
   repeat match goal with
   | H : context [?e ?i] |- _ =>
+      is_var e;
       lazymatch type of e with
       | positive -> option _ =>
           let v := fresh "v" in
@@ -148,6 +157,13 @@ Ltac egglog_clause Hc Hh Hb Hvals :=
              simpl in H; destruct H as [? [? [? [? ?]]]]
          end;
   egglog_env;
+  repeat match goal with
+         | H : ?prim ?q ?vs = Some ?w |- _ =>
+             lazymatch type of prim with
+             | positive -> list positive -> option positive =>
+                 cbn in H; injection H; clear H; intros; subst
+             end
+         end;
   repeat match goal with
          | Hrel : _ |- _ =>
              lazymatch type of Hrel with
@@ -370,7 +386,7 @@ pat-of Ts Vars (app [global (indc K) | Args]) {{ @PNode positive lp:Code lp:PArg
 pat-of Ts _ (global (indc K)) {{ @PNode positive lp:Code nil }} :-
   find-table Ts (tk-con K) _ _ O, O = {{ OId }}, !, code-of Ts (tk-con K) Code.
 pat-of Ts Vars (app [global GR | Args]) {{ @POp positive lp:Code lp:PArgs }} :-
-  prim-code GR Code _, !, pats-of Ts Vars Args PArgs.
+  prim-of GR Code, !, pats-of Ts Vars Args PArgs.
 pat-of _ Vars T {{ @PVal positive lp:T }} :-
   not (std.exists Vars (v\ sigma X\ v = pr X _, occurs X T)),
   coq.typecheck T Ty ok, value-type Ty, !.
@@ -396,7 +412,7 @@ premise-of Ts Rels _ Vars (app [global (indt R) | All]) {{ @Holds positive lp:Co
   pats-of Ts Vars Args PArgs.
 premise-of Ts _ _ Vars (app [global (indt Eq), _, app [global GR | Args], V])
     {{ @Computes positive lp:Code lp:PArgs lp:PV }} :-
-  coq.locate "eq" (indt Eq), prim-code GR Code _, !,
+  coq.locate "eq" (indt Eq), prim-of GR Code, !,
   pats-of Ts Vars Args PArgs, pat-of Ts Vars V PV.
 premise-of _ _ _ _ H _ :- coq.error "Egglog: cannot read the premise" {coq.term->string H}.
 
@@ -639,6 +655,12 @@ fire-proof Ts Rels Prim Spec I Ck Kn Ps Vars Hyps (app [global (indt R) | All]) 
 pred body-proof i:list table, i:list rel, i:term, i:term, i:term, i:term, i:list term,
   i:list (pair term term), i:term, o:term.
 body-proof _ _ Prim Spec I Env _ [] _ {{ @derived_nil positive lp:Prim lp:Spec lp:I lp:Env }}.
+body-proof Ts Rels Prim Spec I Env Ps [pr _ Ty | Hs]
+    {{ @cons _ (@Computes _ lp:Q lp:Args lp:V) lp:Rest }} P :- !,
+  body-proof Ts Rels Prim Spec I Env Ps Hs Rest RestP,
+  computes-values Ty Vs W,
+  P = {{ @derived_computes positive lp:Prim lp:Spec lp:I lp:Env lp:Q lp:Args lp:V lp:Vs lp:W
+          lp:Rest eq_refl _ eq_refl lp:RestP }}.
 body-proof Ts Rels Prim Spec I Env Ps [pr H Ty | Hs]
     {{ @cons _ (@Holds _ lp:Code lp:Args) lp:Rest }} P :-
   body-proof Ts Rels Prim Spec I Env Ps Hs Rest RestP,
@@ -679,6 +701,18 @@ bind-prim _ K Out :- fixed-prim F, !, K F Out.
 bind-prim IsProd K Out :- prim-type PT,
   if (IsProd = tt) (Out = prod `prim` PT B) (Out = fun `prim` PT B),
   pi prim\ decl prim `prim` PT => K prim (B prim).
+
+% The code of a primitive in the primitive set that the command names after [with]. A
+% primitive of another set, or of no named set, stops the command.
+pred prim-of i:gref, o:term.
+prim-of GR Code :- fixed-prim F, prim-code GR Code F, !.
+prim-of GR _ :- prim-code GR _ _, !, coq.error "Egglog:" {coq.gref->id GR}
+  "is a primitive of a set that the command does not name after 'with'".
+
+% The arguments and the result of a primitive premise [f x1 .. xn = w].
+pred computes-values i:term, o:term, o:term.
+computes-values (app [global (indt _), _, app [_ | Xs], W]) Vs W :-
+  list->term {{ positive }} Xs Vs.
 
 % The primitive function among the arguments of a lemma that quantifies over it.
 pred prim-args i:term, o:list term.
@@ -910,13 +944,20 @@ eq-fire-proof _ R NP Encs Prim Spec I Ck Kn _ Vals Hyps (app [global (indt R) | 
   P = {{ @congruent_clause positive lp:Prim lp:Spec lp:I lp:Ck lp:Env lp:PL lp:PR lp:TL lp:TR
           lp:Kn lp:Which lp:BodyP eq_refl eq_refl }}.
 
-% The premises of a ground clause hold in the input rows: one hole per input row.
+% The premises of a ground clause hold in the input rows: one hole per input row or primitive.
 pred eq-body-proof i:term, i:term, i:term, i:list term, i:term, o:term.
 eq-body-proof Prim I Env [] _ {{ @Forall_nil _ (@input_premise positive lp:Prim lp:I lp:Env) }}.
-eq-body-proof Prim I Env [_ | Hs] {{ @cons _ lp:Prem lp:Rest }} P :-
+eq-body-proof Prim I Env [H | Hs] {{ @cons _ lp:Prem lp:Rest }} P :-
   eq-body-proof Prim I Env Hs Rest RestP,
+  input-premise-proof H Prem PP,
   P = {{ @Forall_cons _ (@input_premise positive lp:Prim lp:I lp:Env) lp:Prem lp:Rest
-          (ex_intro _ _ (conj eq_refl _)) lp:RestP }}.
+          lp:PP lp:RestP }}.
+
+pred input-premise-proof i:term, i:term, o:term.
+input-premise-proof H {{ @Computes _ _ _ _ }}
+    {{ ex_intro _ lp:Vs (ex_intro _ lp:W (conj eq_refl (conj _ eq_refl))) }} :- !,
+  coq.typecheck H Ty ok, computes-values Ty Vs W.
+input-premise-proof _ _ {{ ex_intro _ _ (conj eq_refl _) }}.
 
 % forall prim params t u, R params t u -> congruent prim spec (inputs params) (enc t) (enc u)
 pred congruent-type i:list (pair inductive term), i:term, i:term, i:rel, o:term.
