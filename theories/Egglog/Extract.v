@@ -6988,6 +6988,7 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V) (Q : PQ
     destruct (best_result cs db) as [costs [Hfinals _]].
     exact (Finals.finalised_nodup (Enumeration.enumerated_rows cs db) costs (best cs db) Hfinals).
   Qed.
+
   (** Canonical-key validation makes lookup's canonicalization an identity. *)
   Lemma checked_key_canonical : forall db k, D.wf db ->
     dag_check_key (D.ids db) (fun i => fst (D.find i db)) k = true ->

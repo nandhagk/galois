@@ -44,8 +44,9 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   TimeFun solve.
   Definition k_rules : N := (R.c_run * 512 * 512 * 512 + 1)%N.
   Definition k_seed : N := (128 * (D.c_db + 1) * (k_rules + 32) * (k_rules + 32))%N.
-  Definition k_wrap : N := 32%N.
-  Definition c_steensgaard : N := (k_seed + D.c_db + k_wrap + 32)%N.
+  Definition k_wrap : N := (XT.c_runner + 32)%N.
+  Definition c_steensgaard : N :=
+    (k_seed + D.c_db + k_wrap + 32 + 32 * (k_rules + 1) * XT.c_runner)%N.
 
   (** Inspecting a lookup result adds only a constant number of constructor tests. *)
   Lemma lookup_id_time : forall f key db,

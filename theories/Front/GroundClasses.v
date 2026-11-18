@@ -21,6 +21,13 @@ Module GroundClasses (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     <: GROUND_CLASS_PLAN V I J D R X.
   Include GROUND_SPEC V I D.
 
+  Lemma outcome_rows : forall (s : spec V.t) rows lim st db f k o,
+    spec_ok s = true -> ground s = true -> rows_ok s rows = true ->
+    X.solve (spec_program s) rows lim = (st, db) -> row (D.view db) f k o ->
+    (o = None /\ exists vs, k = map Val vs /\ In (f, vs) rows) \/ (exists i, o = Some (Id i)).
+  Proof.
+  Admitted. (* STUB *)
+
   Lemma class_sat : forall (s : spec V.t) rows lim st db,
     spec_ok s = true -> ground s = true -> rows_ok s rows = true ->
     X.solve (spec_program s) rows lim = (st, db) ->

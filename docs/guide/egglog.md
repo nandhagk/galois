@@ -465,10 +465,13 @@ proved yet.
 
 **The lowering** (`LowerSig.v`). The lemma `lower_sound` says that a row that a well-sorted
 relational program derives from input rows is a derived row, and `lower_complete` says the
-converse. The lemma `lower_closed` says that a view that the rules close holds every row
-derived from its own rows, and `lower_valid` says that a model of a specification that passes
-`spec_ok` validates its rules. Laws about single patterns relate their queries and actions to
-their values, their meanings in a model and the terms that a view represents.
+converse. The lemma `lower_closed` says that a view that the rules of a well-sorted
+specification close, and whose relation rows have no output, holds every row derived from its
+own rows. The lemma `lower_valid` says that a model of a specification that passes `spec_ok`
+validates its rules. A head whose pattern has no meaning holds in every model, because an
+engine rule stops at a failed primitive. Laws about single patterns relate their queries and
+actions to their values, their meanings in a model and the terms that a view represents, and
+laws about bodies say that the query of a body whose premises hold matches.
 
 **The runner** (`RunnerSig.v`). The facts of the runner say that the seed holds exactly the
 input rows and that the run contracts of the engine apply to it. A model of the input rows
@@ -498,9 +501,10 @@ congruent terms share a class in a saturated outcome. The lemma `solve_builds` s
 saturated outcome represents both sides of every instance. With `<R>_congruent`, these give
 the exactness of an equational inductive such as Steensgaard's.
 
-**Equality saturation** (`RewriteSig.v`). For any specification, the lemma `saturate_sound`
-says that two represented terms in one class of any outcome have the same meaning in every
-model of the specification and its input rows. The lemma `saturate_represents` says that the
+**Equality saturation** (`RewriteSig.v`). For a specification that passes `spec_ok`, with
+input rows that pass `rows_ok` and terms that pass `term_ok`, the lemma `saturate_sound` says
+that two represented terms in one class of any outcome have the same meaning in every model of
+the specification and its input rows. The lemma `saturate_represents` says that the
 cell of each added term represents it, so `equal_sound` says that `equal` answers `true` only
 for terms with the same meaning in every model. At saturation, `saturate_closed` says that a
 rewrite step from a represented term reaches a term of the same class.
@@ -519,9 +523,10 @@ congruent. The ground theorem uses it to read equalities of classes as congruenc
 comes from the reference closure of `ClosureSig.v`, whose normal forms the tests in
 `tests/Front/ClosureTest.v` run.
 
-**Cheapest terms** (`ExtractionSig.v`). The function `cheapest` extracts a DAG for a class and
-decodes it when the cost that the engine's checker reports for the DAG is at most the cost of
-every best entry of the class, and returns nothing otherwise. The lemma `cheapest_represents`
+**Cheapest terms** (`ExtractionSig.v`). The function `cheapest` extracts a checked DAG for a
+class and decodes it, and it returns nothing when the engine extracts nothing. The engine keeps
+one best entry for each class (`best_nodup`), so the extracted DAG has the least cost of the
+class. The lemma `cheapest_represents`
 says that a returned term is represented by the class, and `cheapest_optimal` says that no
 term that the class represents costs less. Decoding unfolds the DAG into a tree, which can be
 exponentially larger than the DAG, so `decode_complexity` and `cheapest_complexity` count the

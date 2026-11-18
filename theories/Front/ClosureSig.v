@@ -219,6 +219,14 @@ End Code.
 
 (** * Proof plan *)
 
+(** The classes of the closure are a fixed point. *)
+Module Type CLOSURE_FIXPOINT (V : VALUE).
+  (** A pass merges nothing on the classes, because the passes stop when one merges nothing,
+      and the fuel of one pass for each position of the universe suffices. *)
+  Parameter classes_closed : forall eqs,
+    pass V.eqb (universe V.eqb eqs) (classes V.eqb eqs) = classes V.eqb eqs.
+End CLOSURE_FIXPOINT.
+
 (** The classes of the closure. *)
 Module Type CLOSURE_CLASSES (V : VALUE).
   (** The universe holds both sides of each equation. *)

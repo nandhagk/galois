@@ -143,6 +143,12 @@ Module Type GROUND_CLASS_PLAN (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATA
   (** Two identifiers of one class are in one class of a well-formed database. *)
   Parameter class_nu_same : forall db i j, D.wf db -> class_nu db i = class_nu db j ->
     same (D.view db) i j.
+  (** Each row of an outcome of a ground specification is an input row of values without
+      output, or has a class as output. *)
+  Parameter outcome_rows : forall (s : spec V.t) rows lim st db f k o,
+    spec_ok s = true -> ground s = true -> rows_ok s rows = true ->
+    X.solve (spec_program s) rows lim = (st, db) -> row (D.view db) f k o ->
+    (o = None /\ exists vs, k = map Val vs /\ In (f, vs) rows) \/ (exists i, o = Some (Id i)).
 End GROUND_CLASS_PLAN.
 
 (** The model of the classes satisfies the specification. *)

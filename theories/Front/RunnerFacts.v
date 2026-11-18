@@ -55,4 +55,13 @@ Module RunnerFacts (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     row (D.view (snd (X.solve (spec_program s) rows lim))) r (map Val vs) None.
   Proof.
   Admitted. (* STUB *)
+
+  (* STUB: [add_terms_ready] of the rewrite plan keeps the rows of the seed, and [R.run_grows]
+     keeps them through the run, as for [solve_keeps]. *)
+  Lemma saturate_keeps : forall (s : spec V.t) rows es lim st db cs r vs,
+    spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->
+    X.saturate (spec_program s) rows es lim = (st, db, cs) -> In (r, vs) rows ->
+    row (D.view db) r (map Val vs) None.
+  Proof.
+  Admitted. (* STUB *)
 End RunnerFacts.

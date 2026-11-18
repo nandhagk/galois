@@ -7,7 +7,8 @@
     For example, an address constraint [Addr x a] makes [Deref (Cell x)] and [Cell a] mean one
     class.
 
-    Builds on: the ground signature, the runner facts and the plan that builds instances. *)
+    Builds on: the ground signature, the runner facts, the rows of an outcome and the plan that
+    builds instances. *)
 
 From Stdlib Require Import List PArith NArith.
 From Galois.Egglog Require Import ValueSig Syntax Model Sorts IndexSig JoinSig DatabaseSig RunSig.
@@ -17,9 +18,13 @@ Import List.ListNotations.
 
 Module GroundSatisfies (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     (R : RUN V I J D) (X : RUNNER V I J D R) (F : RUNNER_FACTS V I J D R X)
-    (B : GROUND_BUILD_PLAN V I J D R X) <: GROUND_SATISFIES_PLAN V I J D R X.
+    (PC : GROUND_CLASS_PLAN V I J D R X) (B : GROUND_BUILD_PLAN V I J D R X)
+    <: GROUND_SATISFIES_PLAN V I J D R X.
   Include GROUND_SPEC V I D.
 
+  (* STUB: the outcome keeps the input rows by [F.solve_keeps], and its relation rows are input
+     rows by [PC.outcome_rows], so a body that holds in the model reads input rows. Then
+     [B.instance_built] gives both sides of the head in one class. *)
   Lemma class_satisfies : forall (s : spec V.t) rows lim db,
     spec_ok s = true -> ground s = true -> rows_ok s rows = true ->
     X.solve (spec_program s) rows lim = (Saturated, db) ->

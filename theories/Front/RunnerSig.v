@@ -17,8 +17,8 @@
     - [seed_rows], [seed_ready] The seed holds exactly the input rows, and the run contracts
       apply to it.
     - [holds_spec] A lookup says whether a database has a row of values without output.
-    - [seed_sat], [solve_keeps] A model of the input rows satisfies the seed, and every
-      outcome keeps the input rows.
+    - [seed_sat], [solve_keeps], [saturate_keeps] A model of the input rows satisfies the seed,
+      and every outcome of a solve or a saturation keeps the input rows.
     - [T_seed_le], [T_solve_split] Seeding pays for planning, loading and each put, and a
       solve pays for its seed, planning and the run.
     - [seed_complexity], [solve_complexity], [saturate_complexity] Seeding, solving and
@@ -418,4 +418,9 @@ Module Type RUNNER_FACTS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE 
   Parameter solve_keeps : forall (s : spec V.t) rows lim r vs,
     spec_ok s = true -> rows_ok s rows = true -> In (r, vs) rows ->
     row (D.view (snd (X.solve (spec_program s) rows lim))) r (map Val vs) None.
+  (** Every outcome of a saturation keeps each input row. *)
+  Parameter saturate_keeps : forall (s : spec V.t) rows es lim st db cs r vs,
+    spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->
+    X.saturate (spec_program s) rows es lim = (st, db, cs) -> In (r, vs) rows ->
+    row (D.view db) r (map Val vs) None.
 End RUNNER_FACTS.

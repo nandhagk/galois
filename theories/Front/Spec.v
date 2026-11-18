@@ -293,14 +293,16 @@ Definition premise_true (e : positive -> option (carrier M + V)) (p : premise V)
       prim q vs = Some w /\ pat_meaning e v = Some (inr w)
   end.
 
-(** A head is true in [M] under [e]. *)
+(** A head is true in [M] under [e] when the meanings of its patterns make its row hold, its
+    value lie in the lattice table, or its two sides equal. A head whose pattern has no meaning
+    holds, because an engine rule stops at a failed primitive. *)
 Definition head_true (e : positive -> option (carrier M + V)) (h : consequence V) : Prop :=
   match h with
-  | Derive r args => exists xs, pat_meanings e args = Some xs /\ rel M r xs
-  | Assign f args v => exists xs w, pat_meanings e args = Some xs /\
-      pat_meaning e v = Some (inr w) /\ lat M f xs w
-  | Unify l r => exists x, pat_meaning e l = Some x /\ pat_meaning e r = Some x
-  | Rewrites l r => exists x, pat_meaning e l = Some x /\ pat_meaning e r = Some x
+  | Derive r args => forall xs, pat_meanings e args = Some xs -> rel M r xs
+  | Assign f args v => forall xs w, pat_meanings e args = Some xs ->
+      pat_meaning e v = Some (inr w) -> lat M f xs w
+  | Unify l r | Rewrites l r => forall x y, pat_meaning e l = Some x ->
+      pat_meaning e r = Some y -> x = y
   end.
 
 (** [M] is a model of [s] over the input rows [I]: the input rows hold, every clause holds

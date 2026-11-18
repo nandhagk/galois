@@ -18,21 +18,24 @@
     Main results
     - [query_pats_complete], [query_pats_sound] A query of patterns matches the values of the
       patterns, and only those.
-    - [build_pats_present], [build_pats_derivation] Building patterns computes their values.
+    - [build_pats_present_sound], [build_pats_derivation] Present actions that build patterns
+      compute their values, and a derivation passes through them.
     - [query_pats_meaning], [build_pats_model] Queries and actions of patterns agree with their
       meanings in a model.
     - [build_pats_represents] The cells that building patterns finds represent their terms.
+    - [query_body_matches], [query_body_lets] The query of a body whose premises hold matches,
+      and its present definitions compute the values of its equations.
     - [lower_complete], [lower_closed] A derived row is derived by the lowered program and
       present in every view that its rules close.
     - [lower_sound] A row that a well-sorted relational program derives is a derived row.
     - [lower_valid] A model of a well-sorted specification validates its lowered rules.
 
-    Builds on: the specifications, and the syntax, models, sorts and rule syntax of the
-    engine. *)
+    Builds on: the specifications and their facts, and the syntax, models, sorts and rule
+    syntax of the engine. *)
 
 From Stdlib Require Import List PArith Bool.
 From Galois.Egglog Require Import Syntax Model Sorts RunSig.
-From Galois.Front Require Import Spec.
+From Galois.Front Require Import Spec SpecFacts.
 
 Import List.ListNotations.
 
@@ -78,6 +81,10 @@ Definition head_top (h : consequence V) : positive :=
 (** The first fresh variable of a clause. *)
 Definition clause_fresh (c : clause V) : positive :=
   Pos.succ (fold_right (fun p m => Pos.max (premise_top p) m) (head_top (head c)) (body c)).
+
+(** The largest variable of a body, at least 1. *)
+Definition body_top (ps : list (premise V)) : positive :=
+  fold_right (fun p m => Pos.max (premise_top p) m) 1 ps.
 
 (** * Actions *)
 
@@ -400,8 +407,8 @@ Definition view_rows {V} (w : @view V) (r : positive) (vs : list V) : Prop :=
 
 (** * Laws *)
 
-(** The query and the actions of patterns agree with the values of the patterns. *)
-Module Type LOWER_VALUES.
+(** The query of patterns agrees with the values of the patterns. *)
+Module Type LOWER_QUERIES.
   (** A query of patterns reads their variables and fresh variables from [next] on. *)
   Parameter query_pats_fresh : forall {V} next (ps : list (pat V)),
     (next <= snd (query_pats next ps))%positive /\
@@ -409,17 +416,6 @@ Module Type LOWER_VALUES.
         flat_map term_vars (snd (fst (query_pats next ps)))) ->
       In x (flat_map pat_vars ps) \/
       ((next <= x)%positive /\ (x < snd (query_pats next ps))%positive).
-  (** The actions that build patterns read their variables and fresh variables from [next] on,
-      and bind distinct fresh variables. *)
-  Parameter build_pats_fresh : forall {V} next (ps : list (pat V)),
-    (next <= snd (build_pats next ps))%positive /\
-    (forall x, In x (flat_map term_vars (flat_map action_terms (fst (fst (build_pats next ps)))) ++
-        flat_map term_vars (snd (fst (build_pats next ps)))) ->
-      In x (flat_map pat_vars ps) \/
-      ((next <= x)%positive /\ (x < snd (build_pats next ps))%positive)) /\
-    (forall x, In x (flat_map action_binds (fst (fst (build_pats next ps)))) ->
-      (next <= x)%positive /\ (x < snd (build_pats next ps))%positive) /\
-    NoDup (flat_map action_binds (fst (fst (build_pats next ps)))).
   (** The query of patterns with values matches when the fresh variables hold the values of
       the subpatterns, and its terms give the values. *)
   Parameter query_pats_complete : forall {V} (prim : positive -> list V -> option V)
@@ -437,17 +433,32 @@ Module Type LOWER_VALUES.
     matches prim w (fst (fst (query_pats next ps))) s ->
     terms_value s (snd (fst (query_pats next ps))) (map Val vs) ->
     pat_values prim (val_env s) ps = Some vs.
-  (** The actions that build patterns with values compute the values, and then the actions
-      that follow hold. *)
-  Parameter build_pats_present : forall {V} (prim : positive -> list V -> option V)
+End LOWER_QUERIES.
+
+(** The actions that build patterns agree with the values of the patterns. *)
+Module Type LOWER_BUILDS.
+  (** The actions that build patterns read their variables and fresh variables from [next] on,
+      and bind distinct fresh variables. *)
+  Parameter build_pats_fresh : forall {V} next (ps : list (pat V)),
+    (next <= snd (build_pats next ps))%positive /\
+    (forall x, In x (flat_map term_vars (flat_map action_terms (fst (fst (build_pats next ps)))) ++
+        flat_map term_vars (snd (fst (build_pats next ps)))) ->
+      In x (flat_map pat_vars ps) \/
+      ((next <= x)%positive /\ (x < snd (build_pats next ps))%positive)) /\
+    (forall x, In x (flat_map action_binds (fst (fst (build_pats next ps)))) ->
+      (next <= x)%positive /\ (x < snd (build_pats next ps))%positive) /\
+    NoDup (flat_map action_binds (fst (fst (build_pats next ps)))).
+  (** Present actions that build patterns with values compute the values, and then the
+      actions that follow are present. *)
+  Parameter build_pats_present_sound : forall {V} (prim : positive -> list V -> option V)
       (merge : positive -> V -> V -> V) (w : @view V) next ps e vs (s : @env V) rest,
     (pats_top ps < next)%positive -> pat_values prim e ps = Some vs ->
     (forall x v, e x = Some v -> s x = Some (Val v)) ->
-    (forall s', (forall x, (x < next)%positive \/ (snd (build_pats next ps) <= x)%positive ->
-        s' x = s x) ->
-      terms_value s' (snd (fst (build_pats next ps))) (map Val vs) ->
-      present prim merge w s' rest) ->
-    present prim merge w s (fst (fst (build_pats next ps)) ++ rest).
+    present prim merge w s (fst (fst (build_pats next ps)) ++ rest) ->
+    exists s', (forall x, (x < next)%positive \/ (snd (build_pats next ps) <= x)%positive ->
+        s' x = s x) /\
+      terms_value s' (snd (fst (build_pats next ps))) (map Val vs) /\
+      present prim merge w s' rest.
   (** A derivation passes through the actions that build patterns with values. *)
   Parameter build_pats_derivation : forall {V} (prim : positive -> list V -> option V)
       next ps e vs (s : @env V) rest f k,
@@ -469,7 +480,10 @@ Module Type LOWER_VALUES.
         s' x = s x) /\
       terms_value s' (snd (fst (build_pats next ps))) (map Val vs) /\
       pat_values prim (val_env s') ps = Some vs /\ derivation_action prim s' rest f k.
-End LOWER_VALUES.
+End LOWER_BUILDS.
+
+(** The query and the actions of patterns agree with the values of the patterns. *)
+Module Type LOWER_VALUES := LOWER_QUERIES <+ LOWER_BUILDS.
 
 (** The query and the actions of patterns agree with models and with represented terms. *)
 Module Type LOWER_MODELS.
@@ -506,6 +520,32 @@ Module Type LOWER_MODELS.
       terms_value s' (snd (fst (build_pats next ps))) cs /\
       Forall2 (represents w) cs ts /\ present prim merge w s' rest.
 End LOWER_MODELS.
+
+(** The query and the definitions of a whole body agree with its premises. *)
+Module Type LOWER_BODY.
+  (** The query of a body whose premises hold in the value rows of a view matches, with fresh
+      variables from [next] on. *)
+  Parameter query_body_matches : forall {V} (prim : positive -> list V -> option V)
+      (w : @view V) bound next ps e (s : @env V),
+    (body_top ps < next)%positive -> Forall (premise_in prim (view_rows w) e) ps ->
+    (forall x v, e x = Some v -> s x = Some (Val v)) ->
+    exists s', (forall x, (x < next)%positive \/ (snd (query_body bound next ps) <= x)%positive ->
+        s' x = s x) /\
+      matches prim w (fst (fst (query_body bound next ps))) s'.
+  (** The definitions of a body whose premises hold, when present, compute the values of the
+      premises, and then the actions that follow are present. *)
+  Parameter query_body_lets : forall {V} (prim : positive -> list V -> option V)
+      (merge : positive -> V -> V -> V) (w : @view V) bound next ps e (s : @env V) rest,
+    (body_top ps < next)%positive -> Forall (premise_in prim (view_rows w) e) ps ->
+    (forall x v, e x = Some v -> s x = Some (Val v)) ->
+    present prim merge w s (snd (fst (query_body bound next ps)) ++ rest) ->
+    exists s', (forall x, (x < next)%positive \/ (snd (query_body bound next ps) <= x)%positive ->
+        s' x = s x) /\ present prim merge w s' rest.
+  (** The checks after the table atoms match exactly when the atoms match. *)
+  Parameter checks_last_matches : forall {V} (prim : positive -> list V -> option V)
+      (w : @view V) q (s : @env V),
+    matches prim w (checks_last q) s <-> matches prim w q s.
+End LOWER_BODY.
 
 (** The lowered program derives the derived rows, and a view that its rules close holds them. *)
 Module Type LOWER_COMPLETE.
@@ -547,20 +587,39 @@ Module Type LOWER_VALID.
 End LOWER_VALID.
 
 Module Type LOWER_LAWS :=
-  LOWER_VALUES <+ LOWER_MODELS <+ LOWER_COMPLETE <+ LOWER_SOUND <+ LOWER_VALID.
+  LOWER_VALUES <+ LOWER_MODELS <+ LOWER_BODY <+ LOWER_COMPLETE <+ LOWER_SOUND <+ LOWER_VALID.
 
 (** * Proof plan *)
 
-(** The well-sorted rules of a specification are scoped. *)
-Module Type LOWER_PLAN.
+(** The kinds and the head variables of well-sorted specifications. *)
+Module Type LOWER_KINDS_PLAN.
   (** A well-sorted relational program has no constructor pattern and no lattice premise or
       head, so it passes the kind check. *)
   Parameter relational_kinds_ok : forall {V} (s : spec V),
     check_program (spec_program s) = true -> relational_fragment (spec_program s) = true ->
     kinds_ok s = true.
+  (** Every variable of the head of a clause of a well-sorted specification is bound by a table
+      premise or by the left side of its rewrite, or is computed by an equation premise. *)
+  Parameter head_vars_bound : forall {V} (s : spec V) c x,
+    check_program (spec_program s) = true -> In c (clauses s) ->
+    In x (match head c with
+          | Derive _ args => flat_map pat_vars args
+          | Assign _ args v => flat_map pat_vars args ++ pat_vars v
+          | Unify l r | Rewrites l r => pat_vars l ++ pat_vars r
+          end) ->
+    In x (body_bound (body c)) \/
+    In x (match head c with Rewrites l _ => pat_bound l | _ => [] end) \/
+    exists q args, In (Computes q args (PVar x)) (body c).
+End LOWER_KINDS_PLAN.
+
+(** The well-sorted rules of a specification are scoped. *)
+Module Type LOWER_SCOPES_PLAN.
   (** The rule of a clause of a well-sorted specification that passes the kind check is
       scoped. *)
   Parameter clause_rule_scoped : forall {V} (s : spec V) c,
     check_program (spec_program s) = true -> kinds_ok s = true -> In c (clauses s) ->
     rule_scoped (clause_rule c) = true.
-End LOWER_PLAN.
+End LOWER_SCOPES_PLAN.
+
+(** The plan of the lowering laws. *)
+Module Type LOWER_PLAN := LOWER_KINDS_PLAN <+ LOWER_SCOPES_PLAN.

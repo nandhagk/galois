@@ -22,6 +22,11 @@ Module RewriteClosed (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     (R : RUN V I J D) (X : RUNNER V I J D R) (F : RUNNER_FACTS V I J D R X) (LW : LOWER_LAWS)
     (PT : REWRITE_TERMS_PLAN V I J D R X) (PM : REWRITE_MATCH_PLAN V I J D R X)
     <: REWRITE_CLOSED V I J D R X.
+  (* STUB: the body of the rewrite step holds in the input rows, which the outcome keeps by
+     [F.saturate_keeps]. The rule of the rewrite matches the class of the term by
+     [LW.query_body_matches], [LW.checks_last_matches] and [PM.query_pat_complete], saturation
+     closes it, and its present actions build the right side in the class by
+     [LW.query_body_lets] and [LW.build_pats_represents]. *)
   Lemma saturate_closed : forall (s : spec V.t) rows es lim db cs i t u,
     spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->
     X.saturate (spec_program s) rows es lim = (Saturated, db, cs) ->
