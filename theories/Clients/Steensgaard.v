@@ -21,7 +21,7 @@ From Stdlib Require Import List PArith NArith Bool Lia.
 From Argent Require Import Time Tactics Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
-From Galois.Front Require Import Spec Runner.
+From Galois.Front Require Import Spec RunnerSig Runner.
 From Galois.Clients Require Import AndersenSig Andersen SteensgaardSig.
 Import List.ListNotations.
 Import ComplexityNotations.
@@ -55,8 +55,7 @@ Qed.
 
 Module SteensgaardCode (V : VALUE_OPS with Definition t := positive)
     (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE_OPS V I)
-    (R : RUN_OPS V I J D) <: STEENSGAARD_OPS V I J D R.
-  Module X := RunnerCode V I J D R.
+    (R : RUN_OPS V I J D) (X : RUNNER_OPS V I J D R) <: STEENSGAARD_OPS V I J D R.
   Definition compile (_ : pointer_input) : program V.t := steensgaard_program.
   Definition seed (q : pointer_input) : D.t := X.seed (compile q) (Unification.facts q).
   Definition solve (q : pointer_input) (lim : limits) : stop * D.t :=
@@ -79,8 +78,9 @@ Module SteensgaardCode (V : VALUE_OPS with Definition t := positive)
 End SteensgaardCode.
 
 Module Steensgaard (V : VALUE with Definition t := positive)
-    (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D) <: STEENSGAARD V I J D R.
-  Include SteensgaardCode V I J D R.
+    (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
+    (X : RUNNER V I J D R) <: STEENSGAARD V I J D R.
+  Include SteensgaardCode V I J D R X.
 
   (** The derived unification program passes the source sort checker. *)
   Lemma program_sorted : forall q, program_ok (compile q).
@@ -109,7 +109,9 @@ Module Steensgaard (V : VALUE with Definition t := positive)
   Lemma solve_run : forall q lim,
     solve q lim = R.run (compile q) (R.plan (compile q)) lim (seed q).
   Proof.
-    reflexivity.
+    intros q lim.
+    unfold solve, seed.
+    apply X.solve_unfold.
   Qed.
 
   (** Identifier lookup is exactly membership at the canonicalized query key. *)
@@ -295,14 +297,14 @@ End Steensgaard.
 Module SteensgaardT (V : VALUE_T with Definition t := positive)
     (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I) (R : RUN_T V I J D)
     <: STEENSGAARD_ALL V I J D R.
-  Include Steensgaard V I J D R.
+  (** The runner with its time functions. *)
+  Module XT := RunnerT V I J D R.
+  Include Steensgaard V I J D R XT.
   TimeFun compile.
   TimeFun lookup_id.
   TimeFun points.
-  (* STUB-CODE: the runner has no time functions yet. *)
-  Definition T_seed (q : pointer_input) : N := 1.
-  (* STUB-CODE: the runner has no time functions yet. *)
-  Definition T_solve (q : pointer_input) (lim : limits) : N := 1.
+  TimeFun seed.
+  TimeFun solve.
   Definition k_rules : N := (R.c_run * 512 * 512 * 512 + 1)%N.
   Definition k_seed : N := (128 * (D.c_db + 1) * (k_rules + 32) * (k_rules + 32))%N.
   Definition k_wrap : N := 32%N.

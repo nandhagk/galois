@@ -15,6 +15,7 @@
 
 From Stdlib Require Import List PArith.
 From elpi Require Import elpi.
+From Argent Require Import Time.
 From Galois.Egglog Require Import Syntax Model.
 From Galois.Front Require Import Spec SpecFacts LowerSig RunnerSig.
 
@@ -242,6 +243,8 @@ Elpi Db egglog.prims lp:{{
 
 Elpi Command Egglog.
 Elpi Accumulate Db egglog.prims.
+Elpi Accumulate Db argent.time.db.
+Elpi Accumulate File argent.time.lib.
 Elpi Accumulate lp:{{
 
 % ---------------------------------------------------------------------------------------------
@@ -1064,8 +1067,8 @@ main [str Name, str "from" | Rest] :- !,
   split-with Rest RelNames Opt,
   if (Opt = some Set)
      (coq.locate {calc (Set ^ ".prim")} PrimGR,
-      (fixed-prim (global PrimGR) => derive Name RelNames))
-     (derive Name RelNames).
+      (fixed-prim (global PrimGR) => derive-program Name RelNames))
+     (derive-program Name RelNames).
 main _ :- coq.error "Usage: Egglog <name> from <relation> .. <relation> [with <primitives>]."
   "or Egglog Primitives <name> <function> .. <function>.".
 
@@ -1074,8 +1077,8 @@ split-with [] [] none.
 split-with [str "with", str Set] [] (some Set) :- !.
 split-with [A | As] [A | Bs] O :- split-with As Bs O.
 
-pred derive i:string, i:list argument.
-derive Name RelNames :-
+pred derive-program i:string, i:list argument.
+derive-program Name RelNames :-
   std.map RelNames (a\ i\ sigma N\ a = str N, coq.locate N (indt i)) Is,
   std.map Is rel-info Rels,
   std.filter Rels (r\ r = rel _ _ ff _) Relational,
@@ -1089,11 +1092,27 @@ derive Name RelNames :-
   datatype-tables Dts [] DtKeys,
   std.flatten [RelKeys, InputKeys, DtKeys] Keys,
   number Keys 1 Dts Tables,
+  std.fold Rels [] (r\ a\ b\ sigma I KTys\ r = rel I _ _ _, coq.env.indt I _ _ _ _ _ KTys,
+    std.fold KTys a (sources-of r) b) Sources,
+  std.forall Sources time-source,
   Rels = [rel R1 NP1 _ _ | _], coq.env.indt R1 _ _ _ Arity1 _ _,
   param-names NP1 Arity1 PNames,
   coq.env.begin-module Name none,
   std.map Tables (define-code PNames) Consts,
-  with-codes Consts (derive-module Name Rels Relational InputKeys Dts Tables NP1 Arity1).
+  with-codes Consts
+    (derive-module Name Rels Relational InputKeys Dts Tables Sources NP1 Arity1).
+
+% Derive the time function of a generated constant beside it, with Argent.
+pred time-function i:string.
+time-function S :- new_safe M, (verify-memo M => timefun S _).
+
+% Derive the time function of a projection that an input table reads, unless it has one. It
+% runs before the module of the program opens, beside the projection.
+pred time-source i:source.
+time-source (source (tk-src (global GR)) _) :- not (timed GR _), !,
+  coq.gref->path GR Path, std.string.concat "." {std.append Path [{coq.gref->id GR}]} S,
+  time-function S.
+time-source _.
 
 % Run a goal with the code constants of the tables.
 pred with-codes i:list (pair tkey term), i:prop.
@@ -1102,8 +1121,8 @@ with-codes [pr K C | Rest] G :- code-const K C => with-codes Rest G.
 
 % The constants of the module of a program, after its code constants.
 pred derive-module i:string, i:list rel, i:list rel, i:list (pair tkey (list term)),
-  i:list inductive, i:list table, i:int, i:term.
-derive-module Name Rels Relational InputKeys Dts Tables NP1 Arity1 :-
+  i:list inductive, i:list table, i:list source, i:int, i:term.
+derive-module Name Rels Relational InputKeys Dts Tables Sources NP1 Arity1 :-
   std.map Tables (decl-of Tables) Decls, list->term {{ decl }} Decls DeclT,
   std.map-filter Tables (t\ c\ sigma K\ t = table K _ _ _,
     std.exists InputKeys (p\ sigma S\ p = pr K S), code-of Tables K c) InputCodes,
@@ -1119,11 +1138,10 @@ derive-module Name Rels Relational InputKeys Dts Tables NP1 Arity1 :-
   SpecT = global (const SpecC),
   coq.env.add-const "program" {{ @spec_program positive lp:SpecT }}
     {{ program positive }} @transparent! _,
-  std.fold Rels [] (r\ a\ b\ sigma I KTys\ r = rel I _ _ _, coq.env.indt I _ _ _ _ _ KTys,
-    std.fold KTys a (sources-of r) b) Sources,
   abs-params NP1 Arity1 [] (ps\ fb\ facts-body Tables Sources ps fb) FactsT,
   std.assert-ok! (coq.elaborate-skeleton FactsT FactsTy FactsE) "Egglog: ill-typed facts",
   coq.env.add-const "facts" FactsE FactsTy @transparent! _,
+  time-function "facts",
   abs-params NP1 Arity1 [] (ps\ f\ sigma FB\ facts-body Tables Sources ps FB,
     mk-inputs-fun FB f) InputsT,
   std.assert-ok! (coq.elaborate-skeleton InputsT InputsTy InputsE) "Egglog: ill-typed inputs",
@@ -1136,6 +1154,7 @@ derive-module Name Rels Relational InputKeys Dts Tables NP1 Arity1 :-
   define-glue Tables Rels ClauseList SpecT (global (const InputsC))
     (global (const RelationC)),
   std.map Dts (define-encoder Tables) Encs,
+  std.forall Dts (d\ time-function {calc ("encode_" ^ {coq.gref->id (indt d)})}),
   std.forall Rels (define-eq-glue Tables Rels ClauseList Encs SpecT (global (const InputsC))),
   coq.env.end-module _.
 

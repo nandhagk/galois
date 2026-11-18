@@ -21,7 +21,7 @@ From Stdlib Require Import List PArith NArith Bool.
 From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
-From Galois.Front Require Import Runner.
+From Galois.Front Require Import RunnerSig Runner.
 From Galois.Clients Require Import AndersenSig.
 Import List.ListNotations.
 Import ComplexityNotations.
@@ -82,8 +82,7 @@ Qed.
 
 Module AndersenCode (V : VALUE_OPS with Definition t := positive)
     (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE_OPS V I)
-    (R : RUN_OPS V I J D) <: ANDERSEN_OPS V I J D R.
-  Module X := RunnerCode V I J D R.
+    (R : RUN_OPS V I J D) (X : RUNNER_OPS V I J D R) <: ANDERSEN_OPS V I J D R.
   Definition compile (_ : pointer_input) : program V.t := andersen_program.
   Definition seed (q : pointer_input) : D.t :=
     X.seed (compile q) (MayPoints.facts q).
@@ -96,8 +95,9 @@ End AndersenCode.
 (** * Laws *)
 
 Module Andersen (V : VALUE with Definition t := positive)
-    (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D) <: ANDERSEN V I J D R.
-  Include AndersenCode V I J D R.
+    (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
+    (X : RUNNER V I J D R) <: ANDERSEN V I J D R.
+  Include AndersenCode V I J D R X.
 
   (** The derived program passes the source sort checker. *)
   Lemma program_sorted : forall q, program_ok (compile q).
@@ -126,7 +126,9 @@ Module Andersen (V : VALUE with Definition t := positive)
   Lemma solve_run : forall q lim,
     solve q lim = R.run (compile q) (R.plan (compile q)) lim (seed q).
   Proof.
-    reflexivity.
+    intros q lim.
+    unfold solve, seed.
+    apply X.solve_unfold.
   Qed.
 
   (* STUB: RELATIONAL.holds_spec at [MayPoints.may_points_code], and the sorts of the program
@@ -170,14 +172,13 @@ End Andersen.
 Module AndersenT (V : VALUE_T with Definition t := positive)
     (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I) (R : RUN_T V I J D)
     <: ANDERSEN_ALL V I J D R.
-  Include Andersen V I J D R.
+  (** The runner with its time functions. *)
+  Module XT := RunnerT V I J D R.
+  Include Andersen V I J D R XT.
   TimeFun compile.
-  (* STUB-CODE: the runner has no time functions yet. *)
-  Definition T_seed (q : pointer_input) : N := 1.
-  (* STUB-CODE: the runner has no time functions yet. *)
-  Definition T_solve (q : pointer_input) (lim : limits) : N := 1.
-  (* STUB-CODE: the runner has no time functions yet. *)
-  Definition T_points (db : D.t) (x a : positive) : N := 1.
+  TimeFun seed.
+  TimeFun solve.
+  TimeFun points.
   Definition k_rules : N := 1. (* STUB *)
   Definition k_seed : N := 1. (* STUB *)
   Definition k_wrap : N := 1. (* STUB *)

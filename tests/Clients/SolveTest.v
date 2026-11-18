@@ -12,6 +12,7 @@
 From Stdlib Require Import List PArith NArith Bool.
 From Galois.Base Require Import Key.
 From Galois.Egglog Require Import ValueSig Syntax Index Join Database Run.
+From Galois.Front Require Import Runner.
 From Galois.Clients Require Import AndersenSig Andersen SteensgaardSig Steensgaard.
 Import List.ListNotations.
 
@@ -27,8 +28,11 @@ Module SolveIndex := IndexCode SolveValue.
 Module SolveJoin := JoinCode SolveValue SolveIndex.
 Module SolveDatabase := DatabaseCode SolveValue SolveIndex.
 Module SolveRun := RunCode SolveValue SolveIndex SolveJoin SolveDatabase.
-Module SolveAndersen := AndersenCode SolveValue SolveIndex SolveJoin SolveDatabase SolveRun.
-Module SolveSteensgaard := SteensgaardCode SolveValue SolveIndex SolveJoin SolveDatabase SolveRun.
+Module SolveRunner := RunnerCode SolveValue SolveIndex SolveJoin SolveDatabase SolveRun.
+Module SolveAndersen :=
+  AndersenCode SolveValue SolveIndex SolveJoin SolveDatabase SolveRun SolveRunner.
+Module SolveSteensgaard :=
+  SteensgaardCode SolveValue SolveIndex SolveJoin SolveDatabase SolveRun SolveRunner.
 
 (** Pointer one holds address ten, pointer two holds address twenty, and pointer three copies
     pointer one. *)
