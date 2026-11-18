@@ -133,9 +133,9 @@ that they may refer to each other. The module `P` receives the definitions that 
 sections describe. The reading follows these rules.
 
 **Sorts.** Each argument of a relation has a sort that comes from its Rocq type. An argument of
-type `positive` is a value. An argument whose type is an inductive datatype, such as `term`
-below, is a class, the identifier of an equivalence class of the engine's e-graph. Any other
-type is an error.
+type `positive` or of a registered value type (see "Value types") is a value. An argument
+whose type is an inductive datatype, such as `term` below, is a class, the identifier of an
+equivalence class of the engine's e-graph. Any other type is an error.
 
 **Inputs.** A premise `In e (field q)` or `In e q` reads an input list. Here `q` is a parameter
 of the relation, `field` is a record projection of `q`, and `e` is a pair or a constructor of a
@@ -261,7 +261,8 @@ A primitive is a function on values that the engine calls while it runs a rule, 
 addition on `positive`. The command `Egglog Primitives P f1 .. fn.` defines a module `P` with
 the constants `P.<fi>_code` and the function `P.prim`. The function `P.prim` takes a code and
 a list of values and returns the result of the function with that code. Each function takes
-one to three arguments of type `positive` and returns a `positive`. A program uses the set
+one to three arguments and returns a result. Their types are `positive` or registered value
+types. A program uses the set
 with `Egglog Q from R1 .. Rn with P.`
 
 ```coq
@@ -330,6 +331,106 @@ A call in the right side of a rewrite computes its value when the rule fires, so
 fold constants. The tests `TermTests` in `tests/Front/PrimitiveTest.v` fold `2 * 3` into `6`
 and join `2 * (x + 3)` with `6 + 2 * x`, as in the egglog tutorial.
 
+## Value types
+
+The engine runs on `positive` values. A relation over another type, such as `Z`, `N`, `bool`
+or `string`, needs an encoder of that type into `positive`. An encoder is a module of the
+module type `ENCODE` in `theories/Front/EncodeSig.v`. It has the type `t`, the function
+`encode : t -> positive`, the function `decode : positive -> option t` and the lemma
+`decode_encode : forall x, decode (encode x) = Some x`. The lemma makes `encode` injective, so
+two values are equal exactly when their encodings are equal.
+
+The command `Egglog Value T M.` registers the module `M` as the encoder of the type `T`. It
+stops when `M.encode` or `M.decode` has another type, when `T` is `positive`, and when `T`
+already has an encoder. A registered type is a value, as `positive` is. The file
+`theories/Front/Encode.v` registers `ZEncode` for `Z`, `NEncode` for `N`, `BoolEncode` for
+`bool` and `StringEncode` for `string`. A client writes the module of any other type in the
+same way, and the encoder needs a time function for each function, as the other code of the
+library does.
+
+```coq
+From Stdlib Require Import ZArith.
+From Argent Require Import Time.
+From Galois.Front Require Import EncodeSig Encode.
+
+Inductive color : Type :=
+  | Red
+  | Green
+  | Blue.
+
+Module ColorEncode <: ENCODE.
+  Definition t : Type := color.
+  Definition encode (c : color) : positive :=
+    match c with
+    | Red => 1
+    | Green => 2
+    | Blue => 3
+    end.
+  Definition decode (p : positive) : option color :=
+    match p with
+    | 1 => Some Red
+    | 2 => Some Green
+    | 3 => Some Blue
+    | _ => None
+    end.
+  TimeFun encode.
+  TimeFun decode.
+
+  Lemma decode_encode : forall x, decode (encode x) = Some x.
+  Proof. intros [| |]; reflexivity. Qed.
+End ColorEncode.
+
+Egglog Value color ColorEncode.
+```
+
+The command encodes a value of a registered type wherever it gives the engine a value. A row of
+`facts` holds `ZEncode.encode x` for an input `x : Z`, and a literal `c : Z` in a clause becomes
+the literal `ZEncode.encode c`. The generated lemmas state rows the same way, so
+`Offsets.offset_spec` below relates `offset steps x y` to the derived row
+`[ZEncode.encode x; ZEncode.encode y]`. A value of type `positive` has no encoder and no
+wrapper, so the programs and lemmas over `positive` keep their shape.
+
+A primitive may take registered types as well. The function `P.prim` of a set decodes each
+argument, calls the function and encodes the result. It has no result when an argument does not
+decode. The following program adds integers, and the run reads its rows through the encoder.
+
+```coq
+Egglog Primitives IntOps Z.add.
+
+(** [offset steps x y] says that [y] is [x] plus a step of the list. *)
+Inductive offset (steps : list (Z * Z)) : Z -> Z -> Prop :=
+  | offset_by x k y : In (x, k) steps -> Z.add x k = y -> offset steps x y.
+
+Egglog Offsets from offset with IntOps.
+
+Module IntOpsValue <: VALUE_OPS.
+  Include PosKeyCode.
+  Definition prim := IntOps.prim.
+  Definition merge (_ : positive) := Pos.max.
+End IntOpsValue.
+
+Module IntOpsIndex := IndexCode IntOpsValue.
+Module IntOpsJoin := JoinCode IntOpsValue IntOpsIndex.
+Module IntOpsDatabase := DatabaseCode IntOpsValue IntOpsIndex.
+Module IntOpsRun := RunCode IntOpsValue IntOpsIndex IntOpsJoin IntOpsDatabase.
+Module IntOpsRunner :=
+  RunnerCode IntOpsValue IntOpsIndex IntOpsJoin IntOpsDatabase IntOpsRun.
+
+Local Open Scope Z_scope.
+
+Definition steps : list (Z * Z) := [(1, -3)].
+
+Example negative_step_is_reached :
+  IntOpsRunner.holds Offsets.offset_code [ZEncode.encode 1; ZEncode.encode (-2)]
+    (snd (IntOpsRunner.solve Offsets.program (Offsets.facts steps) example_limits)) = true.
+Proof. vm_compute. reflexivity. Qed.
+```
+
+The command adds the lemma `decode_encode` to the hint database `egglog_decode` and defines
+the lemma `<M>_encode_inj`, which says that `encode` is injective, in the hint database
+`egglog_inj`. The tactics that prove the generated lemmas use both. A relation of an
+unregistered type stops the command with a message that names the type.
+
 ## The generated module
 
 For a command `Egglog P from R1 .. Rn` the module `P` has the following members.
@@ -397,7 +498,11 @@ says that a saturated solve answers `may_points q x a` exactly (`AndersenSig.v`)
 
 ## Limits
 
-- The engine has one value type, `positive`. An argument of any other type is an error.
+- A value type other than `positive` needs a registered encoder. A type without one that is an
+  inductive type is read as a datatype when both indices of a relation have it, and stops the
+  command where a value is needed, such as in an input pair.
+- An encoder need not be onto. A primitive whose argument is a positive that decodes to no
+  value has no result.
 - A primitive has one to three arguments. A call inside a premise argument applies to
   variables that a relation or input premise binds, so a nested call there is not supported.
 - The engine has no rulesets and no `run-schedule`. It has no `subsume` and no `delete`, and

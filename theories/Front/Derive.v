@@ -6,7 +6,9 @@
     meaning of each table ([P.relation]). A relation over values is a table. A relation [R t u]
     over a datatype is an equation, and the constructors of the datatype are tables. A premise
     [In e (f q)] reads an input table, and a premise [Ri ..] reads a relation. Variables are
-    numbered in binder order, and every table code and variable number is generated.
+    numbered in binder order, and every table code and variable number is generated. The
+    command [Egglog Value T M.] registers the encoder module [M] of a value type [T], and the
+    values of [T] enter the engine through [M.encode].
 
     For example, [Egglog Andersen from may_points.] defines [Andersen.spec] with one clause per
     constructor of [may_points], and [Andersen.facts q] lists the input rows of [q].
@@ -21,6 +23,129 @@ From Galois.Front Require Import Spec SpecFacts LowerSig RunnerSig.
 
 Import List.ListNotations.
 
+(** * Primitives over encoded values
+
+    A primitive function takes values of registered types. The primitive of a set decodes each
+    argument, calls the function and encodes the result, and has no result when a decoding
+    fails. [id_decode] and [id_encode] are the encoder of [positive], which is its own
+    engine value. *)
+
+Create HintDb egglog_decode.
+Create HintDb egglog_inj.
+
+Definition id_decode (p : positive) : option positive := Some p.
+
+Definition id_encode (p : positive) : positive := p.
+
+(** Decoding the identity encoding gives the value back. *)
+Lemma id_decode_encode : forall x, id_decode (id_encode x) = Some x.
+Proof.
+  reflexivity.
+Qed.
+
+#[export] Hint Resolve id_decode_encode : egglog_decode.
+
+(** An encoder that decodes its own encodings is injective. *)
+Lemma encode_inj_of {A : Type} (enc : A -> positive) (dec : positive -> option A)
+    (Hdec : forall x, dec (enc x) = Some x) (x y : A) : enc x = enc y -> x = y.
+Proof.
+  intros Henc. apply (f_equal dec) in Henc. rewrite !Hdec in Henc. injection Henc as Hxy.
+  exact Hxy.
+Qed.
+
+(** The primitive of a set of arity 1, 2 or 3 on a list of engine values. *)
+Definition prim1d {A R : Type} (da : positive -> option A) (er : R -> positive) (f : A -> R)
+    (vs : list positive) : option positive :=
+  match vs with
+  | [a] =>
+      match da a with
+      | Some x => Some (er (f x))
+      | None => None
+      end
+  | _ => None
+  end.
+
+Definition prim2d {A B R : Type} (da : positive -> option A) (db : positive -> option B)
+    (er : R -> positive) (f : A -> B -> R) (vs : list positive) : option positive :=
+  match vs with
+  | [a; b] =>
+      match da a, db b with
+      | Some x, Some y => Some (er (f x y))
+      | _, _ => None
+      end
+  | _ => None
+  end.
+
+Definition prim3d {A B C R : Type} (da : positive -> option A) (db : positive -> option B)
+    (dc : positive -> option C) (er : R -> positive) (f : A -> B -> C -> R)
+    (vs : list positive) : option positive :=
+  match vs with
+  | [a; b; c] =>
+      match da a, db b, dc c with
+      | Some x, Some y, Some z => Some (er (f x y z))
+      | _, _, _ => None
+      end
+  | _ => None
+  end.
+
+(** The result of the primitive with code [c] when [p] is [c], and [rest] otherwise. *)
+Definition prim_case (p c : positive) (call : list positive -> option positive)
+    (vs : list positive) (rest : option positive) : option positive :=
+  if Pos.eqb p c then call vs else rest.
+
+Arguments prim1d : simpl never.
+Arguments prim2d : simpl never.
+Arguments prim3d : simpl never.
+
+(** A call on decoded arguments has the encoded result. *)
+Lemma prim1d_some {A R : Type} (da : positive -> option A) (er : R -> positive) (f : A -> R) a x :
+  da a = Some x -> prim1d da er f [a] = Some (er (f x)).
+Proof.
+  intros Ha. unfold prim1d. rewrite Ha. reflexivity.
+Qed.
+
+Lemma prim2d_some {A B R : Type} (da : positive -> option A) (db : positive -> option B)
+    (er : R -> positive) (f : A -> B -> R) a b x y :
+  da a = Some x -> db b = Some y -> prim2d da db er f [a; b] = Some (er (f x y)).
+Proof.
+  intros Ha Hb. unfold prim2d. rewrite Ha, Hb. reflexivity.
+Qed.
+
+Lemma prim3d_some {A B C R : Type} (da : positive -> option A) (db : positive -> option B)
+    (dc : positive -> option C) (er : R -> positive) (f : A -> B -> C -> R) a b c x y z :
+  da a = Some x -> db b = Some y -> dc c = Some z ->
+  prim3d da db dc er f [a; b; c] = Some (er (f x y z)).
+Proof.
+  intros Ha Hb Hc. unfold prim3d. rewrite Ha, Hb, Hc. reflexivity.
+Qed.
+
+(** A result of a call comes from decoded arguments. *)
+Lemma prim1d_inv {A R : Type} (da : positive -> option A) (er : R -> positive) (f : A -> R) a w :
+  prim1d da er f [a] = Some w -> exists x, da a = Some x /\ w = er (f x).
+Proof.
+  unfold prim1d. destruct (da a) as [x|]; intros Hw; try discriminate.
+  injection Hw as Hw. exists x. auto.
+Qed.
+
+Lemma prim2d_inv {A B R : Type} (da : positive -> option A) (db : positive -> option B)
+    (er : R -> positive) (f : A -> B -> R) a b w :
+  prim2d da db er f [a; b] = Some w ->
+  exists x y, da a = Some x /\ db b = Some y /\ w = er (f x y).
+Proof.
+  unfold prim2d. destruct (da a) as [x|], (db b) as [y|]; intros Hw; try discriminate.
+  injection Hw as Hw. exists x, y. auto.
+Qed.
+
+Lemma prim3d_inv {A B C R : Type} (da : positive -> option A) (db : positive -> option B)
+    (dc : positive -> option C) (er : R -> positive) (f : A -> B -> C -> R) a b c w :
+  prim3d da db dc er f [a; b; c] = Some w ->
+  exists x y z, da a = Some x /\ db b = Some y /\ dc c = Some z /\ w = er (f x y z).
+Proof.
+  unfold prim3d. destruct (da a) as [x|], (db b) as [y|], (dc c) as [z|]; intros Hw;
+    try discriminate.
+  injection Hw as Hw. exists x, y, z. auto.
+Qed.
+
 (** * Glue tactics
 
     The command proves, for each relation [R] over values, that [R] holds exactly when its row
@@ -29,6 +154,89 @@ Import List.ListNotations.
     one clause, applied to rows of the relation, gives a row of the relation. *)
 
 Create HintDb egglog_fire discriminated.
+
+(** A value whose encoding is a known positive: decoding the equation [encode x = k] gives the
+    value [x]. *)
+Ltac egglog_decode_literal Hinj e x :=
+  let E := fresh "E" in
+  eassert (_ (e x) = Some x) as E by (eauto with egglog_decode);
+  rewrite Hinj in E; cbv in E;
+  injection E as E; clear Hinj; subst.
+
+(** Equal encodings come from equal values: the injectivity lemma of each registered encoder
+    turns a hypothesis [encode x = encode y] into [x = y], and the decoder turns [encode x = k]
+    for a literal [k] into the value of [k]. *)
+Ltac egglog_inj :=
+  repeat match goal with
+  | Hinj : ?e ?x = ?e ?y |- _ =>
+      let E := fresh "E" in
+      assert (x = y) as E by (eauto with egglog_inj);
+      clear Hinj; try subst
+  | Hinj : ?e ?x = _ |- _ => is_var x; egglog_decode_literal Hinj e x
+  | Hinj : _ = ?e ?x |- _ => is_var x; symmetry in Hinj; egglog_decode_literal Hinj e x
+  end.
+
+(** A hypothesis [d (e x) = Some y] that decodes an encoding gives [x = y]. *)
+Ltac egglog_decoded H :=
+  cbv [id_decode id_encode] in H;
+  try match type of H with
+  | ?d (?e ?x) = Some _ =>
+      let E := fresh "E" in
+      assert (d (e x) = Some x) as E by (eauto with egglog_decode);
+      rewrite E in H; clear E
+  end;
+  injection H; clear H; intros; try subst.
+
+(** Unfold the primitive function of a set in the goal, down to the call of its function. *)
+Ltac egglog_unfold_prims :=
+  repeat match goal with
+  | |- context [?p ?q ?vs] =>
+      lazymatch type of p with
+      | positive -> list positive -> option positive => is_const p; unfold p
+      end
+  end;
+  cbv [prim_case Pos.eqb].
+
+(** Replace each call of a primitive function on encodings by the encoding of its result. *)
+Ltac egglog_eval_prims :=
+  repeat match goal with
+  | |- context [@prim1d _ _ ?da ?er ?f [?a]] =>
+      let E := fresh "E" in
+      eassert (prim1d da er f [a] = Some _) as E
+        by (eapply prim1d_some; eauto with egglog_decode);
+      rewrite E; clear E
+  | |- context [@prim2d _ _ _ ?da ?db ?er ?f [?a; ?b]] =>
+      let E := fresh "E" in
+      eassert (prim2d da db er f [a; b] = Some _) as E
+        by (eapply prim2d_some; eauto with egglog_decode);
+      rewrite E; clear E
+  | |- context [@prim3d _ _ _ _ ?da ?db ?dc ?er ?f [?a; ?b; ?c]] =>
+      let E := fresh "E" in
+      eassert (prim3d da db dc er f [a; b; c] = Some _) as E
+        by (eapply prim3d_some; eauto with egglog_decode);
+      rewrite E; clear E
+  end.
+
+(** An equation between the values of patterns, which holds by evaluation of the primitives. *)
+Ltac egglog_values :=
+  simpl; egglog_unfold_prims; egglog_eval_prims; simpl; reflexivity.
+
+(** A call of a primitive function on encoded arguments has the encoded result, which an
+    equation premise [f x1 .. xn = w] names. *)
+Ltac egglog_prim_goal :=
+  lazymatch goal with
+  | |- ?p _ _ = _ =>
+      unfold p; cbv [prim_case Pos.eqb];
+      first [eapply prim1d_some | eapply prim2d_some | eapply prim3d_some];
+      eauto with egglog_decode
+  end.
+
+(** The goal [prim q vs = Some w] from a premise [f x1 .. xn = w] among the hypotheses. *)
+Ltac egglog_prim_leaf :=
+  match goal with
+  | H : _ = _ |- _ = Some _ =>
+      try rewrite <- H; first [reflexivity | egglog_prim_goal]
+  end.
 
 (** A row is in the rows of the inputs when its element is in its input list. *)
 Ltac egglog_member :=
@@ -50,11 +258,11 @@ Ltac egglog_member :=
     premise [f x1 .. xn = w] read as the result [Some w] of the primitive function. *)
 Ltac egglog_leaf :=
   first
-    [ simpl; tauto
+    [ reflexivity
+    | simpl; tauto
     | red; egglog_member
-    | match goal with
-      | H : _ = ?w |- _ = Some ?w => rewrite <- H; reflexivity
-      end ].
+    | egglog_prim_leaf
+    | egglog_values ].
 
 (** Each constructor of a relation derives its row, by induction and the fire lemmas. *)
 Ltac egglog_complete :=
@@ -73,12 +281,12 @@ Ltac egglog_unmember H :=
              | _ \/ _ => destruct H as [H | H]
              | False => contradiction
              end;
-      try (inversion H; subst; clear H)
+      try (inversion H; subst; clear H; try egglog_inj)
   | In _ (map _ _) =>
       let p := fresh "p" in
       let Hp := fresh "Hp" in
       apply in_map_iff in H; destruct H as [p [H Hp]]; destruct p; simpl in H;
-      inversion H; subst; clear H
+      inversion H; subst; clear H; try egglog_inj
   | In _ [] => simpl in H; contradiction
   | _ => idtac
   end.
@@ -115,7 +323,7 @@ Ltac egglog_row Hrel :=
     repeat match type of Hrel with
            | exists _, _ => destruct Hrel as [? Hrel]
            end;
-    destruct Hrel as [Hvs Hrel]; inversion Hvs; subst; clear Hvs ].
+    destruct Hrel as [Hvs Hrel]; inversion Hvs; subst; clear Hvs; try egglog_inj ].
 
 (** The relation of a program holds of a row of a relation over values when the relation
     holds of its indices. *)
@@ -128,6 +336,21 @@ Ltac egglog_pick :=
     [ split; [reflexivity | egglog_conclude]
     | left; split; [reflexivity | egglog_conclude]
     | right; egglog_pick ].
+
+(** A hypothesis [p q vs = Some w] on the call of a primitive function: the arguments decode to
+    values, and [w] is the encoding of the result. *)
+Ltac egglog_prim_in H :=
+  try (lazymatch type of H with
+       | ?p _ _ = _ => is_const p; unfold p in H
+       end);
+  cbv [prim_case Pos.eqb] in H;
+  first
+    [ apply prim1d_inv in H; destruct H as [? [Ha Hw]]; egglog_decoded Ha
+    | apply prim2d_inv in H; destruct H as [? [? [Ha [Hb Hw]]]];
+      egglog_decoded Ha; egglog_decoded Hb
+    | apply prim3d_inv in H; destruct H as [? [? [? [Ha [Hb [Hc Hw]]]]]];
+      egglog_decoded Ha; egglog_decoded Hb; egglog_decoded Hc ];
+  subst.
 
 (** One clause, applied to rows of the relation of a program, gives a row of it. *)
 Ltac egglog_clause Hc Hh Hb Hvals :=
@@ -158,13 +381,6 @@ Ltac egglog_clause Hc Hh Hb Hvals :=
          end;
   egglog_env;
   repeat match goal with
-         | H : ?prim ?q ?vs = Some ?w |- _ =>
-             lazymatch type of prim with
-             | positive -> list positive -> option positive =>
-                 cbn in H; injection H; clear H; intros; subst
-             end
-         end;
-  repeat match goal with
          | Hrel : _ |- _ =>
              lazymatch type of Hrel with
              | ?Rel ?r ?vs =>
@@ -173,6 +389,10 @@ Ltac egglog_clause Hc Hh Hb Hvals :=
                  end
              end
          end;
+  repeat match goal with
+         | H : _ = Some _ |- _ => egglog_prim_in H
+         end;
+  try egglog_inj;
   red; right; egglog_pick.
 
 (** The arguments of a congruence: each is related by a hypothesis or equal. *)
@@ -211,30 +431,10 @@ Ltac egglog_back :=
   match goal with Hrel : _ |- _ => egglog_row Hrel end;
   assumption.
 
-(** The primitive of a set of arity 1, 2 or 3 on a list of positives. *)
-Definition prim1 (f : positive -> positive) (vs : list positive) : option positive :=
-  match vs with
-  | [a] => Some (f a)
-  | _ => None
-  end.
-
-Definition prim2 (f : positive -> positive -> positive) (vs : list positive) : option positive :=
-  match vs with
-  | [a; b] => Some (f a b)
-  | _ => None
-  end.
-
-Definition prim3 (f : positive -> positive -> positive -> positive) (vs : list positive) :
-    option positive :=
-  match vs with
-  | [a; b; c] => Some (f a b c)
-  | _ => None
-  end.
-
-(** The result of the primitive with code [c] when [p] is [c], and [rest] otherwise. *)
-Definition prim_case (p c : positive) (call : list positive -> option positive)
-    (vs : list positive) (rest : option positive) : option positive :=
-  if Pos.eqb p c then call vs else rest.
+Elpi Db egglog.values lp:{{
+  % A registered value type: the type, its encoder and its decoder.
+  pred value-enc o:term, o:term, o:term.
+}}.
 
 Elpi Db egglog.prims lp:{{
   % A registered primitive: its function, its code and the primitive function of its set.
@@ -243,6 +443,7 @@ Elpi Db egglog.prims lp:{{
 
 Elpi Command Egglog.
 Elpi Accumulate Db egglog.prims.
+Elpi Accumulate Db egglog.values.
 Elpi Accumulate Db argent.time.db.
 Elpi Accumulate File argent.time.lib.
 Elpi Accumulate lp:{{
@@ -251,18 +452,48 @@ Elpi Accumulate lp:{{
 % Types
 
 pred value-type i:term.
-value-type T :- coq.locate "positive" GR, T = global GR.
+value-type T :- coq.locate "positive" GR, T = global GR, !.
+value-type T :- value-enc T _ _.
+
+% The engine value of a value of type Ty: its encoder applied, or the value itself of positive.
+pred enc-by-ty i:term, i:term, o:term.
+enc-by-ty Ty X (app [Enc, X]) :- value-enc Ty Enc _, !.
+enc-by-ty _ X X.
+
+% The engine value of a value term, by the type of the term.
+pred enc-term i:term, o:term.
+enc-term X Y :- coq.typecheck X Ty ok, enc-by-ty Ty X Y.
+
+% The decoder of a value type.
+pred dec-of-type i:term, o:term.
+dec-of-type Ty Dec :- value-enc Ty _ Dec, !.
+dec-of-type Ty {{ id_decode }} :- value-type Ty, !.
+dec-of-type Ty _ :- coq.error "Egglog: a primitive has type" {coq.term->string Ty}
+  "which is neither positive nor a registered value type".
+
+% The encoder of a value type.
+pred enc-of-type i:term, o:term.
+enc-of-type Ty Enc :- value-enc Ty Enc _, !.
+enc-of-type Ty {{ id_encode }} :- value-type Ty, !.
+enc-of-type Ty _ :- coq.error "Egglog: a primitive has type" {coq.term->string Ty}
+  "which is neither positive nor a registered value type".
 
 pred datatype i:term, o:inductive.
 datatype (global (indt I)) I :-
   not (value-type (global (indt I))),
   coq.env.indt I tt 0 _ Arity _ _, not (Arity = sort prop).
 
+% The type of a value of a table, which must be positive or a registered value type.
+pred check-value i:term.
+check-value T :- value-type T, !.
+check-value T :- coq.error "Egglog: the type" {coq.term->string T}
+  "is neither positive nor a registered value type. Register an encoder with Egglog Value.".
+
 pred sort-term i:term, o:term.
 sort-term T {{ SVal }} :- value-type T, !.
 sort-term T {{ SId }} :- datatype T _, !.
 sort-term T _ :- coq.error "Egglog: a table argument has type" {coq.term->string T}
-  "which is neither positive nor a datatype".
+  "which is neither a registered value type nor a datatype".
 
 % ---------------------------------------------------------------------------------------------
 % Numerals and lists
@@ -275,6 +506,10 @@ int->pos N {{ xI lp:P }} :- M is N div 2, int->pos M P.
 pred list->term i:term, i:list term, o:term.
 list->term Ty [] {{ @nil lp:Ty }}.
 list->term Ty [X | Xs] {{ @cons lp:Ty lp:X lp:T }} :- list->term Ty Xs T.
+
+% The list of engine values of a list of value terms.
+pred enc-list i:list term, o:term.
+enc-list Xs L :- std.map Xs enc-term Es, list->term {{ positive }} Es L.
 
 % ---------------------------------------------------------------------------------------------
 % Tables
@@ -370,7 +605,8 @@ pred rel-info i:inductive, o:rel.
 rel-info I (rel I NP Eq Sorts) :-
   coq.env.indt I tt NP _ Arity _ _,
   index-types NP Arity Tys,
-  if (Tys = [T, T], datatype T _) (Eq = tt, Sorts = []) (Eq = ff, std.map Tys sort-term Sorts).
+  if (Tys = [T, T], datatype T _) (Eq = tt, Sorts = [])
+     (Eq = ff, std.forall Tys check-value, std.map Tys sort-term Sorts).
 
 pred index-types i:int, i:term, o:list term.
 index-types 0 (prod _ Ty F) [Ty | Tys] :- !, pi x\ index-types 0 (F x) Tys.
@@ -393,9 +629,9 @@ pat-of Ts _ (global (indc K)) {{ @PNode positive lp:Code nil }} :-
   find-table Ts (tk-con K) _ _ O, O = {{ OId }}, !, code-of Ts (tk-con K) Code.
 pat-of Ts Vars (app [global GR | Args]) {{ @POp positive lp:Code lp:PArgs }} :-
   prim-of GR Code, !, pats-of Ts Vars Args PArgs.
-pat-of _ Vars T {{ @PVal positive lp:T }} :-
+pat-of _ Vars T {{ @PVal positive lp:E }} :-
   not (std.exists Vars (v\ sigma X\ v = pr X _, occurs X T)),
-  coq.typecheck T Ty ok, value-type Ty, !.
+  coq.typecheck T Ty ok, value-type Ty, !, enc-by-ty Ty T E.
 pat-of _ _ T _ :- coq.error "Egglog: cannot read the term" {coq.term->string T}.
 
 pred pats-of i:list table, i:list (pair term int), i:list term, o:term.
@@ -561,23 +797,25 @@ pred mk-lams i:list term, i:list term, i:(list term -> term -> prop), o:term.
 mk-lams [] Acc K T :- std.rev Acc Xs, K Xs T.
 mk-lams [Ty | Tys] Acc K (fun `x` Ty B) :- pi x\ decl x `x` Ty => mk-lams Tys [x | Acc] K (B x).
 
-pred row-list i:option term, i:list term, o:term.
+pred row-list i:option term, i:term, o:term.
 row-list none _ {{ @nil (positive * list positive) }}.
-row-list (some Code) Xs
-    {{ @cons (positive * list positive) (lp:Code, lp:Vals) (@nil (positive * list positive)) }} :-
-  list->term {{ positive }} Xs Vals.
+row-list (some Code) Vals
+    {{ @cons (positive * list positive) (lp:Code, lp:Vals) (@nil (positive * list positive)) }}.
 
 pred branch-of i:list table, i:constructor, i:term, o:term.
 branch-of Ts K KTy B :- arg-types KTy Tys,
   if (find-table Ts (tk-con K) _ _ _) (code-of Ts (tk-con K) Code, Row = some Code)
      (Row = none),
-  mk-lams Tys [] (xs\ body\ row-list Row xs body) B.
+  mk-lams Tys [] (xs\ body\ sigma Vals\ enc-list xs Vals, row-list Row Vals body) B.
 
 pred rows-of i:list table, i:list term, i:source, o:term.
-rows-of Ts Ps (source Key {{ prod lp:A lp:B }}) T :- !, code-of Ts Key Code,
-  source-coll Ps Key Coll,
-  T = {{ @map (lp:A * lp:B) (positive * list positive)
-           (fun p => (lp:Code, [@fst lp:A lp:B p; @snd lp:A lp:B p])) lp:Coll }}.
+rows-of Ts Ps (source Key {{ prod lp:A lp:B }}) T :- !, check-value A, check-value B,
+  code-of Ts Key Code,
+  source-coll Ps Key Coll, PTy = {{ prod lp:A lp:B }},
+  (pi p\ sigma E1 E2\ enc-by-ty A {{ @fst lp:A lp:B lp:p }} E1,
+     enc-by-ty B {{ @snd lp:A lp:B lp:p }} E2, Row p = {{ (lp:Code, [lp:E1; lp:E2]) }}),
+  RowF = fun `p` PTy Row,
+  T = {{ @map lp:PTy (positive * list positive) lp:RowF lp:Coll }}.
 rows-of Ts Ps (source Key (global (indt I))) T :- !, source-coll Ps Key Coll,
   coq.env.indt I _ _ _ _ Ks KTys,
   std.map2 Ks KTys (branch-of Ts) Bs,
@@ -607,7 +845,7 @@ mk-exists [Ty | Tys] Acc K {{ @ex lp:Ty lp:F }} :-
 pred rel-disjunct i:list table, i:list term, i:term, i:term, i:rel, o:term.
 rel-disjunct Ts Ps R0 VS (rel R NP _ _) D :-
   code-of Ts (tk-rel R) Code, coq.env.indt R _ _ _ Ar _ _, index-types NP Ar Tys,
-  mk-exists Tys [] (xs\ b\ sigma Vs Args RApp\ list->term {{ positive }} xs Vs,
+  mk-exists Tys [] (xs\ b\ sigma Vs Args RApp\ enc-list xs Vs,
     std.append Ps xs Args, RApp = app [global (indt R) | Args],
     b = {{ lp:VS = lp:Vs /\ lp:RApp }}) Ex,
   D = {{ lp:R0 = lp:Code /\ lp:Ex }}.
@@ -655,7 +893,7 @@ pred derived-of i:list table, i:list rel, i:term, i:term, i:term, i:term, o:term
 derived-of Ts Rels Prim Spec I (app [global (indt R) | All])
     {{ @derived positive lp:Prim lp:Spec lp:I lp:Code lp:Vs }} :-
   find-rel Rels R NP ff, !, drop NP All Idx, code-of Ts (tk-rel R) Code,
-  list->term {{ positive }} Idx Vs.
+  enc-list Idx Vs.
 derived-of _ _ _ _ _ T T.
 
 % The proof of a fire lemma: lambdas over the binders and premises, and the clause applied to
@@ -672,13 +910,13 @@ fire-proof Ts Rels Prim Spec I Ck Kn Ps Vars Hyps (prod N Ty F) (fun N Ty1 B) :-
         fire-proof Ts Rels Prim Spec I Ck Kn Ps Vars1 Hyps (F x) (B x)).
 fire-proof Ts Rels Prim Spec I Ck Kn Ps Vars Hyps (app [global (indt R) | All]) P :-
   find-rel Rels R NP ff, drop NP All Idx, code-of Ts (tk-rel R) Code,
-  list->term {{ positive }} Idx Vs,
-  std.map Vars (v\ x\ v = pr x _) Xs, list->term {{ positive }} Xs EnvL,
+  enc-list Idx Vs,
+  std.map Vars (v\ x\ v = pr x _) Xs, enc-list Xs EnvL,
   Env = {{ @env_of positive lp:EnvL }},
   Ck = {{ @Clause positive lp:BodyT (@Derive positive _ lp:ArgsP) }},
   body-proof Ts Rels Prim Spec I Env Ps Hyps BodyT BodyP,
   P = {{ @derived_clause positive lp:Prim lp:Spec lp:I lp:Ck lp:Env lp:Code lp:ArgsP lp:Vs
-          lp:Kn eq_refl lp:BodyP eq_refl }}.
+          lp:Kn eq_refl lp:BodyP _ }}.
 
 pred body-proof i:list table, i:list rel, i:term, i:term, i:term, i:term, i:list term,
   i:list (pair term term), i:term, o:term.
@@ -688,19 +926,19 @@ body-proof Ts Rels Prim Spec I Env Ps [pr _ Ty | Hs]
   body-proof Ts Rels Prim Spec I Env Ps Hs Rest RestP,
   computes-values Ty Vs W,
   P = {{ @derived_computes positive lp:Prim lp:Spec lp:I lp:Env lp:Q lp:Args lp:V lp:Vs lp:W
-          lp:Rest eq_refl _ eq_refl lp:RestP }}.
+          lp:Rest _ _ _ lp:RestP }}.
 body-proof Ts Rels Prim Spec I Env Ps [pr H Ty | Hs]
     {{ @cons _ (@Holds _ lp:Code lp:Args) lp:Rest }} P :-
   body-proof Ts Rels Prim Spec I Env Ps Hs Rest RestP,
   hyp-row Ts Rels Prim Spec I Ps H Ty Code Vs Row,
-  P = {{ @derived_row positive lp:Prim lp:Spec lp:I lp:Env lp:Code lp:Args lp:Vs lp:Rest eq_refl
+  P = {{ @derived_row positive lp:Prim lp:Spec lp:I lp:Env lp:Code lp:Args lp:Vs lp:Rest _
           lp:Row lp:RestP }}.
 
 % The derived row of a premise: an input row, or the premise itself for a relation.
 pred hyp-row i:list table, i:list rel, i:term, i:term, i:term, i:list term, i:term, i:term,
   o:term, o:term, o:term.
 hyp-row Ts _ Prim Spec I Ps _ Ty Code Vs Row :- in-premise Ty Elem Coll, !,
-  input-key Ps Elem Coll Key Args _, code-of Ts Key Code, list->term {{ positive }} Args Vs,
+  input-key Ps Elem Coll Key Args _, code-of Ts Key Code, enc-list Args Vs,
   Row = {{ @derived_input positive lp:Prim lp:Spec lp:I lp:Code lp:Vs
             _ _ }}.
 hyp-row _ _ _ _ _ _ H {{ @derived positive _ _ _ lp:Code lp:Vs }} Code Vs H.
@@ -749,24 +987,36 @@ prim-of GR _ :- prim-code GR _ _, !, coq.error "Egglog:" {coq.gref->id GR}
 
 % The arguments and the result of a primitive premise [f x1 .. xn = w].
 pred computes-values i:term, o:term, o:term.
-computes-values (app [global (indt _), _, app [_ | Xs], W]) Vs W :-
-  list->term {{ positive }} Xs Vs.
+computes-values (app [global (indt _), _, app [_ | Xs], W0]) Vs W :-
+  enc-list Xs Vs, enc-term W0 W.
 
 % The primitive function among the arguments of a lemma that quantifies over it.
 pred prim-args i:term, o:list term.
 prim-args _ [] :- fixed-prim _, !.
 prim-args P [P].
 
-% The arity of a primitive on positives.
+% The arity of a primitive.
 pred prim-arity i:term, o:int.
 prim-arity (prod _ _ F) N :- !, (pi x\ prim-arity (F x) M), N is M + 1.
 prim-arity _ 0.
 
-pred prim-apply i:int, i:term, o:term.
-prim-apply 1 F {{ prim1 lp:F }} :- !.
-prim-apply 2 F {{ prim2 lp:F }} :- !.
-prim-apply 3 F {{ prim3 lp:F }} :- !.
-prim-apply N _ _ :- coq.error "Egglog: a primitive has arity" N "and only 1 to 3 are supported".
+% The type of the result of a function type.
+pred prim-result i:term, o:term.
+prim-result (prod _ _ F) R :- !, pi x\ prim-result (F x) R.
+prim-result R R.
+
+% The call of a function on engine values: its arguments are decoded and its result is encoded.
+pred prim-apply i:int, i:term, i:term, o:term.
+prim-apply N F Ty Call :- arg-types Ty Tys, prim-result Ty R,
+  std.map Tys dec-of-type Decs, enc-of-type R Enc, prim-apply-with N F Decs Enc Call.
+
+pred prim-apply-with i:int, i:term, i:list term, i:term, o:term.
+prim-apply-with 1 F [Da] E {{ @prim1d _ _ lp:Da lp:E lp:F }} :- !.
+prim-apply-with 2 F [Da, Db] E {{ @prim2d _ _ _ lp:Da lp:Db lp:E lp:F }} :- !.
+prim-apply-with 3 F [Da, Db, Dc] E
+    {{ @prim3d _ _ _ _ lp:Da lp:Db lp:Dc lp:E lp:F }} :- !.
+prim-apply-with N _ _ _ _ :-
+  coq.error "Egglog: a primitive has arity" N "and only 1 to 3 are supported".
 
 % The body of the primitive function of a set: a test of each code in turn.
 pred prim-body i:list (pair term term), i:term, i:term, o:term.
@@ -779,7 +1029,7 @@ define-prims [] _ [] [].
 define-prims [GR | GRs] N [pr GR (global (const C)) | Cs] [pr (global (const C)) Call | Bs] :-
   int->pos N P, Name is {coq.gref->id GR} ^ "_code",
   coq.env.add-const Name P {{ positive }} @transparent! C,
-  coq.env.typeof GR Ty, prim-arity Ty A, prim-apply A (global GR) Call,
+  coq.env.typeof GR Ty, prim-arity Ty A, prim-apply A (global GR) Ty Call,
   M is N + 1, define-prims GRs M Cs Bs.
 
 pred params-binders i:int, i:term, i:bool, i:list term, i:(list term -> term -> prop), o:term.
@@ -820,7 +1070,7 @@ complete-type Ts Spec Inputs (rel R NP _ _) Ty :-
   coq.env.indt R _ _ _ Arity _ _, code-of Ts (tk-rel R) Code,
   bind-prim tt (prim\ ty\
     params-binders NP Arity tt [] (ps\ t\ sigma Inst\ coq.subst-prod ps Arity Inst,
-      idx-binders Inst tt [] (xs\ c\ sigma Vs Args RApp I\ list->term {{ positive }} xs Vs,
+      idx-binders Inst tt [] (xs\ c\ sigma Vs Args RApp I\ enc-list xs Vs,
         std.append ps xs Args, RApp = app [global (indt R) | Args], I = app [Inputs | ps],
         c = prod `H` RApp
           (_\ {{ @derived positive lp:prim lp:Spec lp:I lp:Code lp:Vs }})) t) ty) Ty.
@@ -830,7 +1080,7 @@ pred back-type i:list table, i:term, i:rel, o:term.
 back-type Ts Relation (rel R NP _ _) T :-
   coq.env.indt R _ _ _ Arity _ _, code-of Ts (tk-rel R) Code,
   params-binders NP Arity tt [] (ps\ t\ sigma Inst\ coq.subst-prod ps Arity Inst,
-    idx-binders Inst tt [] (xs\ c\ sigma Vs Args RApp Rel\ list->term {{ positive }} xs Vs,
+    idx-binders Inst tt [] (xs\ c\ sigma Vs Args RApp Rel\ enc-list xs Vs,
       std.append ps xs Args, RApp = app [global (indt R) | Args],
       Rel = app [Relation | {std.append ps [Code, Vs]}], c = prod `H` Rel (_\ RApp)) t) T.
 
@@ -850,7 +1100,7 @@ spec-proof Ts (rel R NP _ _) Complete Back Closed _Inputs P :-
   bind-prim ff (prim\ pf\ sigma PA\ prim-args prim PA,
     params-binders NP Arity ff [] (ps\ t\ sigma Inst\ coq.subst-prod ps Arity Inst,
       idx-binders Inst ff [] (xs\ c\ sigma Vs Args C1 B1 K1 CA KA\
-        list->term {{ positive }} xs Vs,
+        enc-list xs Vs,
         std.append ps xs Args, std.append PA Args CA, std.append PA ps KA,
         C1 = app [Complete | CA], B1 = app [Back | Args], K1 = app [Closed | KA],
         c = {{ conj lp:C1 (fun h => lp:B1 (lp:K1 lp:Code lp:Vs h)) }}) t) pf) P.
@@ -861,7 +1111,7 @@ spec-type Ts Spec Inputs (rel R NP _ _) Ty :-
   coq.env.indt R _ _ _ Arity _ _, code-of Ts (tk-rel R) Code,
   bind-prim tt (prim\ ty\
     params-binders NP Arity tt [] (ps\ t\ sigma Inst\ coq.subst-prod ps Arity Inst,
-      idx-binders Inst tt [] (xs\ c\ sigma Vs Args RApp I\ list->term {{ positive }} xs Vs,
+      idx-binders Inst tt [] (xs\ c\ sigma Vs Args RApp I\ enc-list xs Vs,
         std.append ps xs Args, RApp = app [global (indt R) | Args], I = app [Inputs | ps],
         c = {{ lp:RApp <-> @derived positive lp:prim lp:Spec lp:I lp:Code lp:Vs }}) t) ty) Ty.
 
@@ -931,7 +1181,7 @@ define-code PNames T (pr K (global (const C))) :- T = table K N _ _,
 % The expression of a constructor argument: the encoder on the datatype, a literal on a value.
 pred encode-arg i:inductive, i:term, i:term, i:term, o:term.
 encode-arg D F Ty X {{ lp:F lp:X }} :- Ty = global (indt D), !.
-encode-arg _ _ Ty X {{ @Model.ELit positive lp:X }} :- value-type Ty, !.
+encode-arg _ _ Ty X {{ @Model.ELit positive lp:E }} :- value-type Ty, !, enc-by-ty Ty X E.
 encode-arg _ _ Ty _ _ :- coq.error "Egglog: a datatype argument has type"
   {coq.term->string Ty} "which is neither positive nor the datatype itself".
 
@@ -972,7 +1222,7 @@ eq-fire-type R NP Encs Prim Spec I (app [global (indt R) | All])
 
 % The term of a binder in the environment of an equational clause.
 pred binder-expr i:list (pair inductive term), i:term, i:term, o:term.
-binder-expr _ Ty X {{ @Model.ELit positive lp:X }} :- value-type Ty, !.
+binder-expr _ Ty X {{ @Model.ELit positive lp:E }} :- value-type Ty, !, enc-by-ty Ty X E.
 binder-expr Encs Ty X (app [Enc, X]) :- enc-of Encs Ty Enc.
 
 pred eq-fire-proof i:list table, i:inductive, i:int, i:list (pair inductive term), i:term,
@@ -995,7 +1245,7 @@ eq-fire-proof _ R NP Encs Prim Spec I Ck Kn _ Vals Hyps (app [global (indt R) | 
      (Head = {{ @Rewrites positive lp:PL lp:PR }}, Which = {{ or_intror eq_refl }}),
   eq-body-proof Prim I Env Hyps BodyT BodyP,
   P = {{ @congruent_clause positive lp:Prim lp:Spec lp:I lp:Ck lp:Env lp:PL lp:PR lp:TL lp:TR
-          lp:Kn lp:Which lp:BodyP eq_refl eq_refl }}.
+          lp:Kn lp:Which lp:BodyP _ _ }}.
 
 % The premises of a ground clause hold in the input rows: one hole per input row or primitive.
 pred eq-body-proof i:term, i:term, i:term, i:list term, i:term, o:term.
@@ -1008,7 +1258,7 @@ eq-body-proof Prim I Env [H | Hs] {{ @cons _ lp:Prem lp:Rest }} P :-
 
 pred input-premise-proof i:term, i:term, o:term.
 input-premise-proof H {{ @Computes _ _ _ _ }}
-    {{ ex_intro _ lp:Vs (ex_intro _ lp:W (conj eq_refl (conj _ eq_refl))) }} :- !,
+    {{ ex_intro _ lp:Vs (ex_intro _ lp:W (conj _ (conj _ _))) }} :- !,
   coq.typecheck H Ty ok, computes-values Ty Vs W.
 input-premise-proof _ _ {{ ex_intro _ _ (conj eq_refl _) }}.
 
@@ -1069,8 +1319,30 @@ main [str Name, str "from" | Rest] :- !,
      (coq.locate {calc (Set ^ ".prim")} PrimGR,
       (fixed-prim (global PrimGR) => derive-program Name RelNames))
      (derive-program Name RelNames).
+main [str "Value", str Ty, str Mod] :- !, register-value Ty Mod.
 main _ :- coq.error "Usage: Egglog <name> from <relation> .. <relation> [with <primitives>]."
   "or Egglog Primitives <name> <function> .. <function>.".
+
+% Register a value type with its encoder module: a later program encodes the values of the type.
+pred register-value i:string, i:string.
+register-value Ty Mod :-
+  coq.locate Ty TyGR, T = global TyGR,
+  if (value-type T) (coq.error "Egglog:" Ty "is already a value type") true,
+  coq.locate {calc (Mod ^ ".encode")} EncGR, Enc = global EncGR,
+  coq.locate {calc (Mod ^ ".decode")} DecGR, Dec = global DecGR,
+  coq.locate {calc (Mod ^ ".decode_encode")} LemGR, Lem = global LemGR,
+  std.assert-ok! (coq.typecheck Enc {{ lp:T -> positive }})
+    "Egglog: the encoder is not a function from the type to positive",
+  std.assert-ok! (coq.typecheck Dec {{ positive -> option lp:T }})
+    "Egglog: the decoder is not a function from positive to the type",
+  std.assert-ok! (coq.typecheck Lem {{ forall x : lp:T, lp:Dec (lp:Enc x) = Some x }})
+    "Egglog: decode_encode does not say that decoding undoes encoding",
+  std.assert-ok! (coq.elaborate-skeleton {{ @encode_inj_of lp:T lp:Enc lp:Dec lp:Lem }} InjTy InjE)
+    "Egglog: the injectivity lemma is ill-typed",
+  coq.env.add-const {calc (Mod ^ "_encode_inj")} InjE InjTy @opaque! InjC,
+  coq.hints.add-resolve (const InjC) "egglog_inj" 0 _,
+  coq.hints.add-resolve LemGR "egglog_decode" 0 _,
+  coq.elpi.accumulate library "egglog.values" (clause _ _ (value-enc T Enc Dec)).
 
 pred split-with i:list argument, o:list argument, o:option string.
 split-with [] [] none.
@@ -1162,6 +1434,7 @@ derive-module Name Rels Relational InputKeys Dts Tables Sources NP1 Arity1 :-
 #[synterp] Elpi Accumulate lp:{{
 main [str "Primitives", str Name | _] :- !, coq.env.begin-module Name none, coq.env.end-module _.
 main [str Name, str "from" | _] :- !, coq.env.begin-module Name none, coq.env.end-module _.
+main [str "Value", _, _] :- !.
 main _.
 }}.
 Elpi Export Egglog.
