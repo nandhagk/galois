@@ -1,8 +1,10 @@
 (** * Running derived programs
 
     [seed] loads a program with its planned slots and puts each input row, [solve] runs the
-    program on the seed, and [holds] reads the lookup of a row. [saturate] also adds terms
-    before the run, and [equal] says whether the run puts two terms in one class.
+    program on the seed, and [holds] says whether a lookup finds a row without output.
+    [saturate] also adds terms before the run, and [equal] says whether the run puts two terms
+    in one class. The timed runner [RunnerT] is in [RunnerFacts.v], with the facts that the
+    theorems use.
     For example, [holds MayPoints.may_points_code [x; a] db] says whether [x] may point to [a]
     in the result [db] of [solve MayPoints.program (MayPoints.facts q) lim].
 
@@ -27,8 +29,8 @@ Module RunnerCode (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATA
     R.run p (R.plan p) lim (seed p rows).
   Definition holds (r : positive) (vs : list V.t) (db : D.t) : bool :=
     match fst (D.lookup r (map Val vs) db) with
-    | Some _ => true
-    | None => false
+    | Some None => true
+    | _ => false
     end.
   Fixpoint add_term (e : @expr V.t) (db : D.t) : cell V.t * D.t :=
     match e with
@@ -89,8 +91,8 @@ Module Runner (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE
   Qed.
   Lemma holds_unfold : forall r vs db,
     holds r vs db = match fst (D.lookup r (map Val vs) db) with
-                    | Some _ => true
-                    | None => false
+                    | Some None => true
+                    | _ => false
                     end.
   Proof.
     reflexivity.
@@ -163,17 +165,3 @@ Module Runner (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE
     reflexivity.
   Qed.
 End Runner.
-
-Module RunnerT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
-    (R : RUN_T V I J D).
-  Include Runner V I J D R.
-  TimeFun put_row.
-  TimeFun seed.
-  TimeFun solve.
-  TimeFun holds.
-  TimeFun add_term.
-  TimeFun add_terms.
-  TimeFun saturate.
-  TimeFun same_cell.
-  TimeFun equal.
-End RunnerT.

@@ -2,16 +2,28 @@
 
     A derived program runs on a database that holds its input rows. [seed] loads the program
     with its planned slots and puts each input row, [solve] runs the program on the seed, and
-    [holds] looks a row up. [saturate] adds terms to the seed before the run, and [equal] says
-    whether the run puts two terms in one class. The specification conditions say which
-    programs and rows the theorems cover. [spec_ok] checks the sorts of the lowered program,
-    and [rows_ok] checks that each input row belongs to an input table and has its arity.
+    [holds] says whether a database has a row of values without output. [saturate] adds terms
+    to the seed before the run, and [equal] says whether the run puts two terms in one class.
+    The specification conditions say which programs and rows the theorems cover. [spec_ok]
+    checks the sorts of the lowered program and the kinds of the patterns, and [rows_ok]
+    checks that each input row belongs to an input relation and has the arity of its first
+    declaration, with values at every argument.
     For example, [solve MayPoints.program (MayPoints.facts q) lim] is Andersen's analysis of
     [q].
 
+    Main results
+    - [seed_rows], [seed_ready] The seed holds exactly the input rows, and the run contracts
+      apply to it.
+    - [holds_spec] A lookup says whether a database has a row of values without output.
+    - [seed_sat], [solve_keeps] A model of the input rows satisfies the seed, and every
+      outcome keeps the input rows.
+    - [T_seed_le], [T_solve_split] Seeding pays for planning, loading and each put, and a
+      solve pays for its seed, planning and the run.
+
     Builds on: the specifications, their lowering, and the run contracts. *)
 
-From Stdlib Require Import List PArith Bool.
+From Stdlib Require Import List PArith NArith Bool.
+From Argent Require Import Time.
 From Galois.Egglog Require Import ValueSig Syntax Model Sorts IndexSig JoinSig DatabaseSig RunSig.
 From Galois.Front Require Import Spec LowerSig.
 
@@ -23,13 +35,14 @@ Import List.ListNotations.
 Definition rows_in {V} (rows : list (positive * list V)) (r : positive) (vs : list V) : Prop :=
   In (r, vs) rows.
 
-(** The lowered program of a specification is well sorted. *)
-Definition spec_ok {V} (s : spec V) : bool := check_program (spec_program s).
+(** The lowered program of a specification is well sorted, and its patterns name tables of the
+    right kinds. *)
+Definition spec_ok {V} (s : spec V) : bool := check_program (spec_program s) && kinds_ok s.
 
 (** The lowered program of a specification is relational. *)
 Definition relational {V} (s : spec V) : bool := relational_fragment (spec_program s).
 
-(** A term to add is well sorted: each application is of a constructor table of the
+(** A term to add is well sorted. Each application is of a constructor table of the
     specification, with literals at its value arguments and applications at its class
     arguments. *)
 Fixpoint term_ok {V} (s : spec V) (e : @expr V) {struct e} : bool :=
@@ -49,15 +62,18 @@ Fixpoint term_ok {V} (s : spec V) (e : @expr V) {struct e} : bool :=
       end
   end.
 
-(** Each row belongs to an input table of the specification and has the arity of its
-    declaration. *)
+(** Each row belongs to an input relation of the specification, and has the arity of the first
+    declaration of its table, which takes only values. The engine reads the first declaration
+    of a name, so a later declaration of the same name does not count. *)
 Definition rows_ok {V} (s : spec V) (rows : list (positive * list V)) : bool :=
   forallb (fun row =>
     existsb (Pos.eqb (fst row)) (inputs s) &&
-    existsb (fun d => Pos.eqb (name d) (fst row) &&
-      Nat.eqb (length (arg_sorts d)) (length (snd row)) &&
-      forallb (fun s => match s with SVal => true | SId => false end) (arg_sorts d))
-      (tables s)) rows.
+    match lookup_kind (tables s) (fst row), lookup_sorts (tables s) (fst row) with
+    | Some ORel, Some ss =>
+        Nat.eqb (length ss) (length (snd row)) &&
+        forallb (fun so => match so with SVal => true | SId => false end) ss
+    | _, _ => false
+    end) rows.
 
 (** * Operations *)
 
@@ -95,11 +111,11 @@ Module Type RUNNER_LAWS (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I)
   (** A solve runs the planned program on its seed. *)
   Parameter solve_unfold : forall p rows lim,
     solve p rows lim = R.run p (R.plan p) lim (seed p rows).
-  (** A row holds when its lookup finds it. *)
+  (** A row holds when its lookup finds it without output. *)
   Parameter holds_unfold : forall r vs db,
     holds r vs db = match fst (D.lookup r (map Val vs) db) with
-                    | Some _ => true
-                    | None => false
+                    | Some None => true
+                    | _ => false
                     end.
   (** A literal adds nothing. *)
   Parameter add_term_lit : forall v db, add_term (ELit v) db = (Val v, db).
@@ -143,3 +159,65 @@ End RUNNER_LAWS.
 
 Module Type RUNNER (V : VALUE_OPS) (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE_OPS V I)
     (R : RUN_OPS V I J D) := RUNNER_OPS V I J D R <+ RUNNER_LAWS V I J D R.
+
+(** * Time *)
+
+Module Type RUNNER_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
+    (R : RUN_T V I J D) (Import X : RUNNER V I J D R).
+  Parameter T_seed : program V.t -> list (positive * list V.t) -> N.
+  Parameter T_solve : program V.t -> list (positive * list V.t) -> limits -> N.
+  Parameter c_runner : N.
+  (** Seeding pays for planning, for loading and for each put at the unit and the identifier
+      width of the seed, with the slots of the plan. *)
+  Parameter T_seed_le : forall B U (s : spec V.t) rows,
+    spec_ok s = true -> rows_ok s rows = true ->
+    (D.ids (seed (spec_program s) rows) <= B)%N -> D.unit (seed (spec_program s) rows) <= U ->
+    (T_seed (spec_program s) rows <=
+      R.T_plan (spec_program s) + R.T_load (spec_program s) (R.plan (spec_program s)) +
+      c_runner * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (length (Syntax.slots V.t (R.plan (spec_program s))) + 1) *
+        N.of_nat (fold_right
+          (fun row n => ((length (snd row) + 2) * (length (snd row) + 2) + n)%nat) 0%nat rows +
+          1))%N.
+  (** A solve pays for its seed, for planning and for the run. *)
+  Parameter T_solve_split : forall p rows lim,
+    (T_solve p rows lim <=
+      T_seed p rows + R.T_plan p + R.T_run p (R.plan p) lim (seed p rows) + c_runner)%N.
+End RUNNER_TIME.
+
+Module Type RUNNER_T (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
+    (R : RUN_T V I J D) := RUNNER V I J D R <+ RUNNER_TIME V I J D R.
+
+(** * Facts *)
+
+(** What the theorems need from the seed and from a lookup, for every runner. *)
+Module Type RUNNER_FACTS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
+    (R : RUN V I J D) (X : RUNNER V I J D R).
+  (** The planned program of a specification that passes its checks passes the plan check. *)
+  Parameter plan_ok : forall (s : spec V.t), spec_ok s = true ->
+    R.plans_ok (spec_program s) (R.plan (spec_program s)).
+  (** The seed holds exactly the input rows, as rows of values without output. *)
+  Parameter seed_rows : forall (s : spec V.t) rows r k o,
+    spec_ok s = true -> rows_ok s rows = true ->
+    row (D.view (X.seed (spec_program s) rows)) r k o <->
+      o = None /\ exists vs, k = map Val vs /\ In (r, vs) rows.
+  (** The seed is well formed, canonical and loaded with the planned program, and it has no
+      identifier. *)
+  Parameter seed_ready : forall (s : spec V.t) rows,
+    spec_ok s = true -> rows_ok s rows = true ->
+    D.wf (X.seed (spec_program s) rows) /\ D.canonical (X.seed (spec_program s) rows) /\
+    R.loaded (spec_program s) (R.plan (spec_program s)) (X.seed (spec_program s) rows) /\
+    R.no_ids (X.seed (spec_program s) rows).
+  (** A lookup says whether a well-formed database has a row of values without output. *)
+  Parameter holds_spec : forall db r vs, D.wf db ->
+    X.holds r vs db = true <-> row (D.view db) r (map Val vs) None.
+  (** A model of the input rows satisfies the seed under every valuation. *)
+  Parameter seed_sat : forall (s : spec V.t) rows (M : @model V.t) nu,
+    spec_ok s = true -> rows_ok s rows = true ->
+    satisfies V.prim V.merge M s (rows_in rows) ->
+    sat V.merge M nu (D.view (X.seed (spec_program s) rows)).
+  (** Every outcome keeps each input row. *)
+  Parameter solve_keeps : forall (s : spec V.t) rows lim r vs,
+    spec_ok s = true -> rows_ok s rows = true -> In (r, vs) rows ->
+    row (D.view (snd (X.solve (spec_program s) rows lim))) r (map Val vs) None.
+End RUNNER_FACTS.
