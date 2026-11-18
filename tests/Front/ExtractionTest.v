@@ -10,6 +10,8 @@
     - [FoldingTests] A class that folds to a literal returns the literal.
     - [PlainTests] A class without folding returns an equal term that is no bigger.
     - [MissingTests] A class that does not exist has no term.
+    - [BoundTests] The extracted DAG passes the bound check, and a costlier DAG of the same
+      class fails it.
 
     Builds on: the extraction functor, the derive command, the runner and the engine. *)
 
@@ -256,3 +258,104 @@ Module MissingTests.
   Qed.
 
 End MissingTests.
+
+(** * Bound check *)
+
+Module BoundTests.
+
+  Local Open Scope positive_scope.
+
+  (** The inventory of the arithmetic program. *)
+  Definition math_inventory : list (positive * (N * nat)) :=
+    ArithExtract.inventory (decls positive Math.program)
+      (planned_slots (ArithRun.plan Math.program)).
+
+  (** Whether the extracted DAG of the class of a saturated term passes the bound check. *)
+  Definition bound_checked (lim : limits) (t : term) : bool :=
+    match saturated_with lim t with
+    | (db, Some (Id i)) =>
+        let c := fst (ArithDatabase.find i db) in
+        match ArithExtract.extract math_inventory db c with
+        | Some g => ArithExtraction.best_bounded Math.program db c g
+        | None => false
+        end
+    | _ => false
+    end.
+
+  (** The extracted DAG of the folded sum passes the check. *)
+  Example folded_sum_passes_the_check :
+    bound_checked term_limits (Add (Num 1) (Num 2)) = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The extracted DAG of a sum that no rule has folded passes the check. *)
+  Example unfolded_sum_passes_the_check :
+    bound_checked no_rounds (Add (Num 1) (Num 2)) = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The extracted DAG of the distributed class passes the check. *)
+  Example distributed_class_passes_the_check :
+    bound_checked term_limits (Mul (Num 2) (Add (Var x_var) (Num 3))) = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The extracted DAG of a variable passes the check. *)
+  Example variable_passes_the_check :
+    bound_checked term_limits (Var x_var) = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The identifier of the output of a constructor row, when the row exists. *)
+  Definition row_id (db : ArithDatabase.t) (f : positive) (k : list (cell positive)) :
+      option positive :=
+    match fst (ArithDatabase.lookup f k db) with
+    | Some (Some (Id i)) => Some i
+    | _ => None
+    end.
+
+  (** The saturated database of the sum, its class, and the DAG of the sum itself in it. *)
+  Definition sum_dag : option (ArithDatabase.t * positive * extraction_dag positive) :=
+    let db := fst (saturated_with term_limits (Add (Num 1) (Num 2))) in
+    match row_id db Math.Num_code [Val 1], row_id db Math.Num_code [Val 2] with
+    | Some a, Some b =>
+        match row_id db Math.Add_code [Id a; Id b] with
+        | Some c =>
+            Some (db, c,
+              [(a, (Math.Num_code, [Val 1])); (b, (Math.Num_code, [Val 2]));
+               (c, (Math.Add_code, [Id a; Id b]))])
+        | None => None
+        end
+    | _, _ => None
+    end.
+
+  (** The DAG of the sum is a certificate of its class, and the checker accepts it. *)
+  Example sum_dag_is_checked :
+    match sum_dag with
+    | Some (db, c, g) =>
+        match ArithExtract.check_dag db c g with
+        | Some n => n
+        | None => 0%N
+        end
+    | None => 0%N
+    end = 5%N.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The DAG of the sum costs five where the literal of its class costs two, so it fails the
+      check. *)
+  Example costly_dag_fails_the_check :
+    match sum_dag with
+    | Some (db, c, g) => ArithExtraction.best_bounded Math.program db c g
+    | None => true
+    end = false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+End BoundTests.
