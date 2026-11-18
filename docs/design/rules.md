@@ -437,3 +437,12 @@ and 7 are the textual steps that a lane file gives to Luna.
 Deliver the patch series and completed handoff specified in the session prompt. Record
 closed and open items, tagged defects, and `just admits` before and after. If the final
 full check fails, revert the last failing commit and report it in the handoff.
+
+## 14. Egglog programs
+
+- An Egglog program is the inductive of its specification, derived with `Egglog P from R.` A
+  client or a test does not write a `spec`, a clause or a program by hand.
+- A client or a test never writes a table code or a variable number. It names a table through
+  the generated constant `P.<Table>_code` and a row through `P.facts` and `P.inputs`.
+- A lemma about a derived program uses the generated lemmas `P.<R>_spec` and `P.<R>_congruent`.
+  `docs/guide/egglog.md` describes the command and the generated module.
