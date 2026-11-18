@@ -7,7 +7,7 @@
     - [CoverageTests] Coverage of parts by labels.
     - [JoinTests] Joins of parts, with and without a label overflow.
     - [WideningTests] Routed widening of parts, and the widening coverage theorem.
-    - [BigOTests] The size and work bounds of the timed partition and disjunction.
+    - [BoundTests] The size and work bounds of the timed partition and disjunction.
 
     Builds on: Partition, Env, Interval and ZLang. *)
 
@@ -132,9 +132,9 @@ Module WideningTests.
 
 End WideningTests.
 
-(** * Big o *)
+(** * Bounds *)
 
-Module BigOTests.
+Module BoundTests.
 
   (** A concrete reachability state supplies the timed partition's two join budgets. *)
   Module TimedValues := IntervalT ZLangT ThresholdsT.
@@ -364,4 +364,4 @@ Module BigOTests.
   Proof.
     vm_compute; discriminate.
   Qed.
-End BigOTests.
+End BoundTests.

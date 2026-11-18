@@ -5,7 +5,7 @@
     Builds on: WordSig and BitsLang. *)
 
 From Stdlib Require Import List ZArith NArith Bool Lia.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std Complexity.
 From Galois.Bits Require Import Word.
 From Galois.Domains Require Import LangSig WordSig HarnessSig Harness BitsLang.
 

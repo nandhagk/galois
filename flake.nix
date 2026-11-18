@@ -2,7 +2,7 @@
   description = "Galois: general, composable program analyses in Rocq";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/c9fe7d12cd78d1adcd12dd15e24432dde5b155a0";
-  inputs.argent.url = "github:nandhagk/argent/23341be2dec5be487f52054f7bc492df40c8eeda";
+  inputs.argent.url = "github:nandhagk/argent/e5f6fee6ae94ea540420c9a5bdad189bd51ef12e";
   inputs.argent.inputs.nixpkgs.follows = "nixpkgs";
 
   outputs =

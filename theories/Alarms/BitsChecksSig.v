@@ -10,7 +10,7 @@
     Builds on: ChecksSig, BitsLang and ValueSig. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Std Complexity.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import LangSig ValueSig BitsLang.
 From Galois.Alarms Require Import ChecksSig.
