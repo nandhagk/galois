@@ -17,6 +17,17 @@ let
     pkgs.perl
     pkgs.zstd
   ];
+  # The OCaml libraries of the expect tests and the benchmark harness, in both shells.
+  ocamlLibs = [
+    ocaml.core
+    ocaml.core_unix
+    ocaml.ppx_jane
+    ocaml.ppx_expect
+    ocaml.ppx_inline_test
+    ocaml.ppx_bench
+    ocaml.core_bench
+    ocaml.textutils
+  ];
   shellHook = ''
     export DUNE_CACHE=enabled
     export DUNE_CACHE_STORAGE_MODE=hardlink
@@ -26,20 +37,11 @@ let
 in
 {
   devShell = pkgs.mkShell {
-    packages = common ++ [ rocq.flocq ocaml.core ocaml.core_unix ocaml.ppx_jane ocaml.ppx_expect ];
+    packages = common ++ [ rocq.flocq ] ++ ocamlLibs;
     inherit shellHook;
   };
   sessionShell = pkgs.mkShell {
-    packages = common ++ [
-      ocaml.core
-      ocaml.core_unix
-      ocaml.ppx_jane
-      ocaml.ppx_expect
-      ocaml.ppx_inline_test
-      ocaml.ppx_bench
-      ocaml.core_bench
-      ocaml.textutils
-    ];
+    packages = common ++ ocamlLibs;
     inherit shellHook;
   };
 }
