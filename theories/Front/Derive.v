@@ -17,9 +17,162 @@ From Stdlib Require Import List PArith.
 From elpi Require Import elpi.
 From Galois.Egglog Require Import Syntax.
 From Galois.Egraph Require Import Syntax.
-From Galois.Front Require Import Spec LowerSig.
+From Galois.Front Require Import Spec SpecFacts LowerSig.
 
 Import List.ListNotations.
+
+(** * Glue tactics
+
+    The command proves, for each relation [R] over values, that [R] holds exactly when its row
+    is derived. These tactics prove the generated lemmas. [egglog_member] and
+    [egglog_unmember] move between an input element and its row. [egglog_clause] shows that
+    one clause, applied to rows of the relation, gives a row of the relation. *)
+
+Create HintDb egglog_fire discriminated.
+
+(** A row is in the rows of the inputs when its element is in its input list. *)
+Ltac egglog_member :=
+  lazymatch goal with
+  | |- In _ (_ ++ _) => apply in_or_app; first [left; egglog_member | right; egglog_member]
+  | |- In _ (flat_map _ ?l) =>
+      apply in_flat_map;
+      match goal with
+      | H : In ?c l |- _ => exists c; split; [exact H | simpl; left; reflexivity]
+      end
+  | |- In _ (map _ ?l) =>
+      apply in_map_iff;
+      match goal with
+      | H : In ?c l |- _ => exists c; split; [reflexivity | exact H]
+      end
+  end.
+
+(** Prove an input membership or a row of the inputs, the holes of a fire lemma. *)
+Ltac egglog_leaf := first [simpl; tauto | red; egglog_member].
+
+(** Each constructor of a relation derives its row, by induction and the fire lemmas. *)
+Ltac egglog_complete :=
+  intros; match goal with H : _ |- _ => induction H end; eauto with egglog_fire.
+
+(** A row in the rows of the inputs comes from an element of an input list. *)
+Ltac egglog_unmember H :=
+  lazymatch type of H with
+  | In _ (_ ++ _) =>
+      apply in_app_or in H; destruct H as [H | H]; egglog_unmember H
+  | In _ (flat_map _ _) =>
+      let c := fresh "c" in
+      let Hc := fresh "Hc" in
+      apply in_flat_map in H; destruct H as [c [Hc H]]; destruct c; simpl in H;
+      repeat match type of H with
+             | _ \/ _ => destruct H as [H | H]
+             | False => contradiction
+             end;
+      try (inversion H; subst; clear H)
+  | In _ (map _ _) =>
+      let p := fresh "p" in
+      let Hp := fresh "Hp" in
+      apply in_map_iff in H; destruct H as [p [H Hp]]; destruct p; simpl in H;
+      inversion H; subst; clear H
+  | _ => idtac
+  end.
+
+(** Case on every lookup of an environment [e : positive -> option _] in the hypotheses. *)
+Ltac egglog_env :=
+  simpl in *;
+  repeat match goal with
+  | H : context [?e ?i] |- _ =>
+      lazymatch type of e with
+      | positive -> option _ =>
+          let v := fresh "v" in
+          let E := fresh "E" in
+          remember (e i) as v eqn:E in *; clear E; destruct v; simpl in *; try discriminate
+      end
+  end;
+  repeat match goal with
+  | H : Some _ = Some _ |- _ => injection H; clear H; intros; subst
+  end.
+
+(** A hypothesis [Hrel] that a row is in the relation of a program: an input element, or a
+    row of a relation over values. *)
+Ltac egglog_row Hrel :=
+  red in Hrel; destruct Hrel as [Hrel | Hrel];
+  [ egglog_unmember Hrel
+  | repeat match type of Hrel with
+           | _ \/ _ => destruct Hrel as [Hrel | Hrel]
+           end;
+    let Hcode := fresh "Hcode" in
+    let Hvs := fresh "Hvs" in
+    destruct Hrel as [Hcode Hrel]; try discriminate Hcode;
+    repeat match type of Hrel with
+           | exists _, _ => destruct Hrel as [? Hrel]
+           end;
+    destruct Hrel as [Hvs Hrel]; inversion Hvs; subst; clear Hvs ].
+
+(** The relation of a program holds of a row of a relation over values when the relation
+    holds of its indices. *)
+Ltac egglog_conclude :=
+  repeat match goal with |- exists _, _ => eexists end;
+  split; [reflexivity | solve [econstructor; eauto]].
+
+Ltac egglog_pick :=
+  first
+    [ split; [reflexivity | egglog_conclude]
+    | left; split; [reflexivity | egglog_conclude]
+    | right; egglog_pick ].
+
+(** One clause, applied to rows of the relation of a program, gives a row of it. *)
+Ltac egglog_clause Hc Hh Hb Hvals :=
+  simpl in Hc;
+  repeat match goal with
+         | Hc : _ = _ \/ _ |- _ => destruct Hc as [Hc | Hc]
+         | Hc : False |- _ => contradiction
+         end;
+  match goal with Hc : _ = ?c |- _ => subst c end;
+  simpl in Hh, Hb, Hvals;
+  match goal with
+  | Hh : Derive _ _ = Derive _ _ |- _ => injection Hh; clear Hh; intros; subst
+  end;
+  repeat match goal with
+         | Hb : Forall _ (_ :: _) |- _ => apply Forall_cons_iff in Hb; destruct Hb as [? Hb]
+         | Hb : Forall _ [] |- _ => clear Hb
+         end;
+  repeat match goal with
+         | H : premise_in _ _ _ (Holds _ _) |- _ =>
+             let vs := fresh "vs" in
+             let Hv := fresh "Hv" in
+             let Hrel := fresh "Hrel" in
+             simpl in H; destruct H as [vs [Hv Hrel]]
+         end;
+  egglog_env;
+  repeat match goal with
+         | Hrel : _ |- _ =>
+             lazymatch type of Hrel with
+             | ?Rel _ ?r ?vs =>
+                 lazymatch type of Rel with
+                 | _ -> positive -> list positive -> Prop => egglog_row Hrel
+                 end
+             end
+         end;
+  red; right; egglog_pick.
+
+(** Every derived row is in the relation of the program. *)
+Ltac egglog_closed :=
+  intros;
+  match goal with
+  | H : derived ?prim ?s ?I ?r ?vs |- ?P ?r ?vs =>
+      revert H; apply (derived_least prim s I P);
+      [ let Hin := fresh "Hin" in intros ? ? _ Hin; red; left; exact Hin
+      | let Hc := fresh "Hc" in
+        let Hh := fresh "Hh" in
+        let Hb := fresh "Hb" in
+        let Hvals := fresh "Hvals" in
+        intros ? ? ? ? ? Hc Hh Hb Hvals; egglog_clause Hc Hh Hb Hvals ]
+  end.
+
+(** A row of the relation of a program for a relation over values gives the relation. *)
+Ltac egglog_back :=
+  intros;
+  match goal with Hrel : _ |- _ => egglog_row Hrel end;
+  assumption.
 
 Elpi Command Egglog.
 Elpi Accumulate lp:{{
@@ -281,6 +434,303 @@ decl-of (table _ N Ss Out) {{ Decl lp:P lp:SL lp:Out }} :-
   int->pos N P, list->term {{ sort }} Ss SL.
 
 % ---------------------------------------------------------------------------------------------
+% Input sources and facts
+
+kind source type.
+type source tkey -> term -> source.   % the list (tk-src Head or tk-param I) and its element type
+
+pred add-source i:list term, i:term, i:list source, o:list source.
+add-source Ps H Acc Out :- in-premise H Elem Coll, !, source-key Ps Coll Key,
+  coq.typecheck Elem Ty ok,
+  if (std.exists Acc (s\ sigma T\ s = source Key T)) (Out = Acc)
+     (std.append Acc [source Key Ty] Out).
+add-source _ _ Acc Acc.
+
+pred sources-of i:rel, i:term, i:list source, o:list source.
+sources-of (rel _ NP _ _) KTy Acc Out :-
+  with-params NP KTy [] (ps\ sigma Inst\
+    coq.subst-prod ps KTy Inst,
+    walk Inst [] [] (_\ hyps\ _\ std.fold hyps Acc (add-source ps) Out)).
+
+pred source-coll i:list term, i:tkey, o:term.
+source-coll Ps (tk-param I) P :- !, J is I - 1, std.nth J Ps P.
+source-coll Ps (tk-src Head) (app [Head | Ps]).
+
+pred mk-lams i:list term, i:list term, i:(list term -> term -> prop), o:term.
+mk-lams [] Acc K T :- std.rev Acc Xs, K Xs T.
+mk-lams [Ty | Tys] Acc K (fun `x` Ty B) :- pi x\ decl x `x` Ty => mk-lams Tys [x | Acc] K (B x).
+
+pred row-list i:option term, i:list term, o:term.
+row-list none _ {{ @nil (positive * list positive) }}.
+row-list (some Code) Xs
+    {{ @cons (positive * list positive) (lp:Code, lp:Vals) (@nil (positive * list positive)) }} :-
+  list->term {{ positive }} Xs Vals.
+
+pred branch-of i:list table, i:constructor, i:term, o:term.
+branch-of Ts K KTy B :- arg-types KTy Tys,
+  if (find-table Ts (tk-con K) N _ _) (int->pos N Code, Row = some Code) (Row = none),
+  mk-lams Tys [] (xs\ body\ row-list Row xs body) B.
+
+pred rows-of i:list table, i:list term, i:source, o:term.
+rows-of Ts Ps (source Key {{ prod lp:A lp:B }}) T :- !, code-of Ts Key Code,
+  source-coll Ps Key Coll,
+  T = {{ @map (lp:A * lp:B) (positive * list positive)
+           (fun p => (lp:Code, [@fst lp:A lp:B p; @snd lp:A lp:B p])) lp:Coll }}.
+rows-of Ts Ps (source Key (global (indt I))) T :- !, source-coll Ps Key Coll,
+  coq.env.indt I _ _ _ _ Ks KTys,
+  std.map2 Ks KTys (branch-of Ts) Bs,
+  ElemTy = global (indt I),
+  RetTy = {{ list (positive * list positive) }},
+  F = fun `e` ElemTy (e\ match e (fun `e` ElemTy _\ RetTy) Bs),
+  T = {{ @flat_map lp:ElemTy (positive * list positive) lp:F lp:Coll }}.
+rows-of _ _ (source _ Ty) _ :- coq.error "Egglog: an input list has elements of type"
+  {coq.term->string Ty} "which is neither an inductive nor a pair".
+
+pred concat-rows i:list term, o:term.
+concat-rows [] {{ @nil (positive * list positive) }}.
+concat-rows [T] T :- !.
+concat-rows [T | Ts] {{ @app (positive * list positive) lp:T lp:R }} :- concat-rows Ts R.
+
+pred abs-params i:int, i:term, i:list term, i:(list term -> term -> prop), o:term.
+abs-params 0 _ Acc K T :- !, std.rev Acc Ps, K Ps T.
+abs-params N (prod Name Ty F) Acc K (fun Name Ty B) :- M is N - 1,
+  pi p\ decl p Name Ty => abs-params M (F p) [p | Acc] K (B p).
+
+pred mk-exists i:list term, i:list term, i:(list term -> term -> prop), o:term.
+mk-exists [] Acc K T :- std.rev Acc Xs, K Xs T.
+mk-exists [Ty | Tys] Acc K {{ @ex lp:Ty lp:F }} :-
+  F = fun `x` Ty B, pi x\ decl x `x` Ty => mk-exists Tys [x | Acc] K (B x).
+
+% The meaning of the rows of a relation over values: [r] is its code and [vs] its indices.
+pred rel-disjunct i:list table, i:list term, i:term, i:term, i:rel, o:term.
+rel-disjunct Ts Ps R0 VS (rel R NP _ _) D :-
+  code-of Ts (tk-rel R) Code, coq.env.indt R _ _ _ Ar _ _, index-types NP Ar Tys,
+  mk-exists Tys [] (xs\ b\ sigma Vs Args RApp\ list->term {{ positive }} xs Vs,
+    std.append Ps xs Args, RApp = app [global (indt R) | Args],
+    b = {{ lp:VS = lp:Vs /\ lp:RApp }}) Ex,
+  D = {{ lp:R0 = lp:Code /\ lp:Ex }}.
+
+pred disj i:list term, o:term.
+disj [T] T :- !.
+disj [T | Ts] {{ lp:T \/ lp:R }} :- disj Ts R.
+
+pred mk-rel-fun i:list table, i:list term, i:list rel, i:term, o:term.
+mk-rel-fun Ts Ps Relational FB
+    (fun `r` {{ positive }} r\ fun `vs` {{ list positive }} vs\ B r vs) :-
+  pi r vs\ sigma Ds Inp\ std.map Relational (rel-disjunct Ts Ps r vs) Ds,
+    Inp = {{ In (lp:r, lp:vs) lp:FB }}, disj [Inp | Ds] (B r vs).
+
+pred mk-inputs-fun i:term, o:term.
+mk-inputs-fun FB
+    (fun `r` {{ positive }} r\ fun `vs` {{ list positive }} vs\ {{ In (lp:r, lp:vs) lp:FB }}).
+
+pred facts-body i:list table, i:list source, i:list term, o:term.
+facts-body Ts Sources Ps FB :- std.map Sources (rows-of Ts Ps) Rows, concat-rows Rows FB.
+
+% ---------------------------------------------------------------------------------------------
+% ---------------------------------------------------------------------------------------------
+% Glue: each relational constructor fires its clause
+
+% The position of an element in a list, from 0.
+pred position i:list term, i:term, o:int.
+position [X | _] X 0 :- !.
+position [_ | L] X N :- position L X M, N is M + 1.
+
+% A proof that the N-th element of a concrete list is in it.
+pred in-proof i:int, o:term.
+in-proof 0 {{ or_introl eq_refl }} :- !.
+in-proof N {{ or_intror lp:P }} :- M is N - 1, in-proof M P.
+
+% The type of a fire lemma: the constructor type with each relational premise and the
+% conclusion read as derived rows.
+pred fire-type i:list table, i:list rel, i:term, i:term, i:term, i:term, o:term.
+fire-type Ts Rels Prim Spec I (prod N Ty F) (prod N Ty1 F1) :- !,
+  derived-of Ts Rels Prim Spec I Ty Ty1,
+  pi x\ decl x N Ty => fire-type Ts Rels Prim Spec I (F x) (F1 x).
+fire-type Ts Rels Prim Spec I C C1 :- derived-of Ts Rels Prim Spec I C C1.
+
+pred derived-of i:list table, i:list rel, i:term, i:term, i:term, i:term, o:term.
+derived-of Ts Rels Prim Spec I (app [global (indt R) | All])
+    {{ @derived positive lp:Prim lp:Spec lp:I lp:Code lp:Vs }} :-
+  find-rel Rels R NP ff, !, drop NP All Idx, code-of Ts (tk-rel R) Code,
+  list->term {{ positive }} Idx Vs.
+derived-of _ _ _ _ _ T T.
+
+% The proof of a fire lemma: lambdas over the binders and premises, and the clause applied to
+% the environment of the binders.
+pred fire-proof i:list table, i:list rel, i:term, i:term, i:term, i:term, i:term, i:list term,
+  i:list (pair term int), i:list (pair term term), i:term, o:term.
+fire-proof Ts Rels Prim Spec I Ck Kn Ps Vars Hyps (prod N Ty F) (fun N Ty1 B) :- !,
+  derived-of Ts Rels Prim Spec I Ty Ty1,
+  pi x\ sigma Hyps1 L J Vars1\ decl x N Ty1 =>
+    if (is-prop Ty)
+       (std.append Hyps [pr x Ty1] Hyps1,
+        fire-proof Ts Rels Prim Spec I Ck Kn Ps Vars Hyps1 (F x) (B x))
+       (std.length Vars L, J is L + 1, std.append Vars [pr x J] Vars1,
+        fire-proof Ts Rels Prim Spec I Ck Kn Ps Vars1 Hyps (F x) (B x)).
+fire-proof Ts Rels Prim Spec I Ck Kn Ps Vars Hyps (app [global (indt R) | All]) P :-
+  find-rel Rels R NP ff, drop NP All Idx, code-of Ts (tk-rel R) Code,
+  list->term {{ positive }} Idx Vs,
+  std.map Vars (v\ x\ v = pr x _) Xs, list->term {{ positive }} Xs EnvL,
+  Env = {{ @env_of positive lp:EnvL }},
+  Ck = {{ @Clause positive lp:BodyT (@Derive positive _ lp:ArgsP) }},
+  body-proof Ts Rels Prim Spec I Env Ps Hyps BodyT BodyP,
+  P = {{ @derived_clause positive lp:Prim lp:Spec lp:I lp:Ck lp:Env lp:Code lp:ArgsP lp:Vs
+          lp:Kn eq_refl lp:BodyP eq_refl }}.
+
+pred body-proof i:list table, i:list rel, i:term, i:term, i:term, i:term, i:list term,
+  i:list (pair term term), i:term, o:term.
+body-proof _ _ Prim Spec I Env _ [] _ {{ @derived_nil positive lp:Prim lp:Spec lp:I lp:Env }}.
+body-proof Ts Rels Prim Spec I Env Ps [pr H Ty | Hs]
+    {{ @cons _ (@Holds _ lp:Code lp:Args) lp:Rest }} P :-
+  body-proof Ts Rels Prim Spec I Env Ps Hs Rest RestP,
+  hyp-row Ts Rels Prim Spec I Ps H Ty Code Vs Row,
+  P = {{ @derived_row positive lp:Prim lp:Spec lp:I lp:Env lp:Code lp:Args lp:Vs lp:Rest eq_refl
+          lp:Row lp:RestP }}.
+
+% The derived row of a premise: an input row, or the premise itself for a relation.
+pred hyp-row i:list table, i:list rel, i:term, i:term, i:term, i:list term, i:term, i:term,
+  o:term, o:term, o:term.
+hyp-row Ts _ Prim Spec I Ps _ Ty Code Vs Row :- in-premise Ty Elem Coll, !,
+  input-key Ps Elem Coll Key Args _, code-of Ts Key Code, list->term {{ positive }} Args Vs,
+  Row = {{ @derived_input positive lp:Prim lp:Spec lp:I lp:Code lp:Vs
+            _ _ }}.
+hyp-row _ _ _ _ _ _ H {{ @derived positive _ _ _ lp:Code lp:Vs }} Code Vs H.
+
+pred run-tactic i:string, i:sealed-goal.
+run-tactic Name G :- coq.ltac.open (g\ gl\ coq.ltac.call Name [] g gl ok) G [].
+
+
+% Prove a type with an Ltac tactic, which runs on every hole of the proof term.
+pred prove i:string, i:term, o:term.
+prove Name Ty P :-
+  std.assert-ok! (coq.typecheck P Ty) "Egglog: an ill-typed proof",
+  coq.ltac.collect-goals P Goals _,
+  if (std.forall Goals (run-tactic Name)) true
+     (coq.error "Egglog: the tactic" Name "failed").
+
+
+
+pred params-binders i:int, i:term, i:bool, i:list term, i:(list term -> term -> prop), o:term.
+params-binders 0 _ _ Acc K T :- !, std.rev Acc Ps, K Ps T.
+params-binders N (prod Name Ty F) IsProd Acc K Out :- M is N - 1,
+  if (IsProd = tt) (Out = prod Name Ty B) (Out = fun Name Ty B),
+  pi p\ decl p Name Ty => params-binders M (F p) IsProd [p | Acc] K (B p).
+
+pred prim-type o:term.
+prim-type {{ positive -> list positive -> option positive }}.
+
+% The type and proof of the fire lemma of one constructor, whose clause is the Idx-th.
+pred fire-lemma i:list table, i:list rel, i:term, i:term, i:int, i:term, i:term, i:int,
+  o:term, o:term.
+fire-lemma Ts Rels Spec Inputs NP KTy Ck Idx (prod `prim` PT TyF) (fun `prim` PT PF) :-
+  prim-type PT, in-proof Idx Kn,
+  (pi prim\ decl prim `prim` PT =>
+     params-binders NP KTy tt [] (ps\ t\ sigma Inst I\ coq.subst-prod ps KTy Inst,
+       I = app [Inputs | ps], fire-type Ts Rels prim Spec I Inst t) (TyF prim)),
+  (pi prim\ decl prim `prim` PT =>
+     params-binders NP KTy ff [] (ps\ t\ sigma Inst I\ coq.subst-prod ps KTy Inst,
+       I = app [Inputs | ps], fire-proof Ts Rels prim Spec I Ck Kn ps [] [] Inst t) (PF prim)).
+
+pred idx-binders i:term, i:bool, i:list term, i:(list term -> term -> prop), o:term.
+idx-binders (prod N Ty F) IsProd Acc K Out :- !,
+  if (IsProd = tt) (Out = prod N Ty B) (Out = fun N Ty B),
+  pi x\ decl x N Ty => idx-binders (F x) IsProd [x | Acc] K (B x).
+idx-binders _ _ Acc K T :- std.rev Acc Xs, K Xs T.
+
+% forall prim params idx, R params idx -> derived prim spec (inputs params) code idx
+pred complete-type i:list table, i:term, i:term, i:rel, o:term.
+complete-type Ts Spec Inputs (rel R NP _ _) (prod `prim` PT TyF) :-
+  coq.env.indt R _ _ _ Arity _ _, prim-type PT, code-of Ts (tk-rel R) Code,
+  (pi prim\ decl prim `prim` PT =>
+    params-binders NP Arity tt [] (ps\ t\ sigma Inst\ coq.subst-prod ps Arity Inst,
+      idx-binders Inst tt [] (xs\ c\ sigma Vs Args RApp I\ list->term {{ positive }} xs Vs,
+        std.append ps xs Args, RApp = app [global (indt R) | Args], I = app [Inputs | ps],
+        c = prod `H` RApp (_\ {{ @derived positive lp:prim lp:Spec lp:I lp:Code lp:Vs }})) t)
+    (TyF prim)).
+
+% forall params idx, relation params code idx -> R params idx
+pred back-type i:list table, i:term, i:rel, o:term.
+back-type Ts Relation (rel R NP _ _) T :-
+  coq.env.indt R _ _ _ Arity _ _, code-of Ts (tk-rel R) Code,
+  params-binders NP Arity tt [] (ps\ t\ sigma Inst\ coq.subst-prod ps Arity Inst,
+    idx-binders Inst tt [] (xs\ c\ sigma Vs Args RApp Rel\ list->term {{ positive }} xs Vs,
+      std.append ps xs Args, RApp = app [global (indt R) | Args],
+      Rel = app [Relation | {std.append ps [Code, Vs]}], c = prod `H` Rel (_\ RApp)) t) T.
+
+% forall prim params r vs, derived prim spec (inputs params) r vs -> relation params r vs
+pred closed-type i:term, i:term, i:term, i:int, i:term, o:term.
+closed-type Spec Inputs Relation NP Arity (prod `prim` PT TyF) :- prim-type PT,
+  (pi prim\ decl prim `prim` PT =>
+    params-binders NP Arity tt [] (ps\ t\ sigma I Rel\ I = app [Inputs | ps],
+      Rel = app [Relation | ps],
+      t = {{ forall (r : positive) (vs : list positive),
+               @derived positive lp:prim lp:Spec lp:I r vs -> lp:Rel r vs }}) (TyF prim)).
+
+% The equivalence of R with its derived rows, from the two directions.
+pred spec-proof i:list table, i:rel, i:term, i:term, i:term, i:term, o:term.
+spec-proof Ts (rel R NP _ _) Complete Back Closed _Inputs P :-
+  coq.env.indt R _ _ _ Arity _ _, prim-type PT, code-of Ts (tk-rel R) Code,
+  P = fun `prim` PT PF,
+  (pi prim\ decl prim `prim` PT =>
+    params-binders NP Arity ff [] (ps\ t\ sigma Inst\ coq.subst-prod ps Arity Inst,
+      idx-binders Inst ff [] (xs\ c\ sigma Vs Args C1 B1 K1\ list->term {{ positive }} xs Vs,
+        std.append ps xs Args,
+        C1 = app [Complete, prim | Args], B1 = app [Back | Args],
+        K1 = app [Closed, prim | ps],
+        c = {{ conj lp:C1 (fun h => lp:B1 (lp:K1 lp:Code lp:Vs h)) }}) t) (PF prim)).
+
+% forall prim params idx, R params idx <-> derived prim spec (inputs params) code idx
+pred spec-type i:list table, i:term, i:term, i:rel, o:term.
+spec-type Ts Spec Inputs (rel R NP _ _) (prod `prim` PT TyF) :-
+  coq.env.indt R _ _ _ Arity _ _, prim-type PT, code-of Ts (tk-rel R) Code,
+  (pi prim\ decl prim `prim` PT =>
+    params-binders NP Arity tt [] (ps\ t\ sigma Inst\ coq.subst-prod ps Arity Inst,
+      idx-binders Inst tt [] (xs\ c\ sigma Vs Args RApp I\ list->term {{ positive }} xs Vs,
+        std.append ps xs Args, RApp = app [global (indt R) | Args], I = app [Inputs | ps],
+        c = {{ lp:RApp <-> @derived positive lp:prim lp:Spec lp:I lp:Code lp:Vs }}) t)
+    (TyF prim)).
+
+% Define the glue of the relational relations of a program.
+pred define-glue i:list table, i:list rel, i:list term, i:term, i:term, i:term.
+define-glue Ts Rels ClauseList Spec Inputs Relation :-
+  std.filter Rels (r\ r = rel _ _ ff _) Relational,
+  Relational = [rel R1 NP _ _ | _], !,
+  coq.env.indt R1 _ _ _ Arity1 _ _,
+  std.forall Relational (define-fires Ts Rels ClauseList Spec Inputs),
+  closed-type Spec Inputs Relation NP Arity1 ClosedTy,
+  prove "egglog_closed" ClosedTy ClosedP,
+  coq.env.add-const "closed" ClosedP ClosedTy @opaque! ClosedC,
+  std.forall Relational (define-spec Ts Spec Inputs Relation (global (const ClosedC))).
+
+define-glue _ _ _ _ _ _.
+
+pred define-fires i:list table, i:list rel, i:list term, i:term, i:term, i:rel.
+define-fires Ts Rels ClauseList Spec Inputs (rel R NP Eq Ss) :-
+  coq.env.indt R _ _ _ _ Ks KTys,
+  std.forall2 Ks KTys (k\ kty\ sigma Ck Idx Ty P C Name\
+    clause-of Ts Rels (rel R NP Eq Ss) kty [Ck], position ClauseList Ck Idx,
+    fire-lemma Ts Rels Spec Inputs NP kty Ck Idx Ty P,
+    prove "egglog_leaf" Ty P,
+    Name is {coq.gref->id (indc k)} ^ "_fires",
+    coq.env.add-const Name P Ty @opaque! C,
+    coq.hints.add-resolve (const C) "egglog_fire" 0 _).
+
+pred define-spec i:list table, i:term, i:term, i:term, i:term, i:rel.
+define-spec Ts Spec Inputs Relation Closed (rel R NP Eq Ss) :-
+  RName = {coq.gref->id (indt R)},
+  complete-type Ts Spec Inputs (rel R NP Eq Ss) CTy,
+  prove "egglog_complete" CTy CP,
+  coq.env.add-const {calc (RName ^ "_derived")} CP CTy @opaque! CC,
+  back-type Ts Relation (rel R NP Eq Ss) BTy,
+  prove "egglog_back" BTy BP,
+  coq.env.add-const {calc (RName ^ "_back")} BP BTy @opaque! BC,
+  spec-proof Ts (rel R NP Eq Ss) (global (const CC)) (global (const BC)) Closed Inputs SP,
+  spec-type Ts Spec Inputs (rel R NP Eq Ss) STy,
+  std.assert-ok! (coq.elaborate-skeleton SP STy SP1) "Egglog: the glue lemma failed",
+  coq.env.add-const {calc (RName ^ "_spec")} SP1 STy @opaque! _.
+
+% -{93}
 % The command
 
 main [str Name, str "from" | RelNames] :- !,
@@ -314,6 +764,23 @@ main [str Name, str "from" | RelNames] :- !,
     {{ program positive }} @transparent! _,
   coq.env.add-const "rewrites" {{ @spec_rewrites positive lp:SpecT }}
     {{ list (rewrite positive) }} @transparent! _,
+  std.fold Rels [] (r\ a\ b\ sigma I KTys\ r = rel I _ _ _, coq.env.indt I _ _ _ _ _ KTys,
+    std.fold KTys a (sources-of r) b) Sources,
+  Rels = [rel R1 NP1 _ _ | _], coq.env.indt R1 _ _ _ Arity1 _ _,
+  abs-params NP1 Arity1 [] (ps\ fb\ facts-body Tables Sources ps fb) FactsT,
+  std.assert-ok! (coq.elaborate-skeleton FactsT FactsTy FactsE) "Egglog: ill-typed facts",
+  coq.env.add-const "facts" FactsE FactsTy @transparent! _,
+  abs-params NP1 Arity1 [] (ps\ f\ sigma FB\ facts-body Tables Sources ps FB,
+    mk-inputs-fun FB f) InputsT,
+  std.assert-ok! (coq.elaborate-skeleton InputsT InputsTy InputsE) "Egglog: ill-typed inputs",
+  coq.env.add-const "inputs" InputsE InputsTy @transparent! InputsC,
+  abs-params NP1 Arity1 [] (ps\ f\ sigma FB\ facts-body Tables Sources ps FB,
+    mk-rel-fun Tables ps Relational FB f) RelationT,
+  std.assert-ok! (coq.elaborate-skeleton RelationT RelTy RelationE)
+    "Egglog: ill-typed relation",
+  coq.env.add-const "relation" RelationE RelTy @transparent! RelationC,
+  define-glue Tables Rels ClauseList SpecT (global (const InputsC))
+    (global (const RelationC)),
   coq.env.end-module _.
 main _ :- coq.error "Usage: Egglog <name> from <relation> .. <relation>.".
 
