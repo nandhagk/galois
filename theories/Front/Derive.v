@@ -16,8 +16,7 @@
 From Stdlib Require Import List PArith.
 From elpi Require Import elpi.
 From Galois.Egglog Require Import Syntax Model.
-From Galois.Egraph Require Import Syntax.
-From Galois.Front Require Import Spec SpecFacts LowerSig.
+From Galois.Front Require Import Spec SpecFacts LowerSig RunnerSig.
 
 Import List.ListNotations.
 
@@ -290,7 +289,11 @@ pred find-table i:list table, i:tkey, o:int, o:list term, o:term.
 find-table [table K N S O | _] K N S O :- !.
 find-table [_ | Ts] K N S O :- find-table Ts K N S O.
 
+% The code constant of a table, once the command has defined it.
+pred code-const o:tkey, o:term.
+
 pred code-of i:list table, i:tkey, o:term.
+code-of _ K P :- code-const K P, !.
 code-of Ts K P :- find-table Ts K N _ _, !, int->pos N P.
 code-of _ K _ :- coq.error "Egglog: no table for" K.
 
@@ -439,6 +442,27 @@ pred mentions i:term, i:list (pair term int), o:list int.
 mentions T Vars Is :- std.filter Vars (v\ sigma X\ v = pr X _, occurs X T) Ws,
   std.map Ws (w\ i\ w = pr _ i) Is.
 
+% The variables that the premises bind, in premise order: the variables of relation and input
+% premises outside primitive applications, and the result of each equation premise whose
+% arguments are bound.
+pred bound-vars i:list term, i:list (pair term int), i:list int, o:list int.
+bound-vars [] _ B B.
+bound-vars [H | Hs] Vars B Out :- premise-binds H Vars B B1, bound-vars Hs Vars B1 Out.
+
+pred premise-binds i:term, i:list (pair term int), i:list int, o:list int.
+premise-binds (app [global (indt Eq), _, app [global GR | Args], V]) Vars B Out :-
+  coq.locate "eq" (indt Eq), prim-code GR _ _, !,
+  mentions (app [global GR | Args]) Vars Used,
+  if (std.forall Used (i\ std.mem! B i), var-index Vars V I) (Out = [I | B]) (Out = B).
+premise-binds H Vars B Out :- table-vars Vars H Is, std.append Is B Out.
+
+% The variables of a term outside primitive applications.
+pred table-vars i:list (pair term int), i:term, o:list int.
+table-vars Vars X [I] :- var-index Vars X I, !.
+table-vars _ (app [global GR | _]) [] :- prim-code GR _ _, !.
+table-vars Vars (app [_ | Args]) Is :- !, std.map Args (table-vars Vars) Iss, std.flatten Iss Is.
+table-vars _ _ [].
+
 pred clause-of i:list table, i:list rel, i:rel, i:term, o:list term.
 clause-of Ts Rels (rel R NP Eq _) KTy Out :-
   with-params NP KTy [] (ps\ sigma Inst\
@@ -453,7 +477,7 @@ clause-body Ts Rels R NP Eq Params Vars Hyps (app [global (indt R) | All]) [C] :
   drop NP All Args,
   if (Eq = tt)
      (Args = [L, Rt], pat-of Ts Vars L PL, pat-of Ts Vars Rt PR,
-      std.fold Hyps [] (h\ a\ b\ sigma M\ mentions h Vars M, std.append a M b) Bound,
+      bound-vars Hyps Vars [] Bound,
       mentions (app [L, Rt]) Vars Used,
       if (std.forall Used (i\ std.mem! Bound i))
          (Head = {{ @Unify positive lp:PL lp:PR }})
@@ -503,9 +527,9 @@ pred con-of i:inductive, i:term.
 con-of D (prod _ _ F) :- !, pi x\ con-of D (F x).
 con-of D (global (indt D)).
 
-pred decl-of i:table, o:term.
-decl-of (table _ N Ss Out) {{ Decl lp:P lp:SL lp:Out }} :-
-  int->pos N P, list->term {{ sort }} Ss SL.
+pred decl-of i:list table, i:table, o:term.
+decl-of Ts (table K _ Ss Out) {{ Decl lp:P lp:SL lp:Out }} :-
+  code-of Ts K P, list->term {{ sort }} Ss SL.
 
 % ---------------------------------------------------------------------------------------------
 % Input sources and facts
@@ -542,7 +566,8 @@ row-list (some Code) Xs
 
 pred branch-of i:list table, i:constructor, i:term, o:term.
 branch-of Ts K KTy B :- arg-types KTy Tys,
-  if (find-table Ts (tk-con K) N _ _) (int->pos N Code, Row = some Code) (Row = none),
+  if (find-table Ts (tk-con K) _ _ _) (code-of Ts (tk-con K) Code, Row = some Code)
+     (Row = none),
   mk-lams Tys [] (xs\ body\ row-list Row xs body) B.
 
 pred rows-of i:list table, i:list term, i:source, o:term.
@@ -677,6 +702,16 @@ hyp-row Ts _ Prim Spec I Ps _ Ty Code Vs Row :- in-premise Ty Elem Coll, !,
             _ _ }}.
 hyp-row _ _ _ _ _ _ H {{ @derived positive _ _ _ lp:Code lp:Vs }} Code Vs H.
 
+% The engine accepts the sorts of the lowered program, or the command stops before it defines
+% anything.
+pred check-sorts i:string, i:term.
+check-sorts Name Spec :-
+  coq.reduction.vm.norm {{ @spec_ok positive lp:Spec }} {{ bool }} B,
+  if (B = {{ true }}) true
+     (coq.error {calc ("Egglog: the engine rejects the sorts of the program " ^ Name ^ ".")}
+       "A primitive in a premise argument must apply to variables that a relation premise"
+       "binds, and an equation premise must compute its result from such variables.").
+
 pred run-tactic i:string, i:sealed-goal.
 run-tactic Name G :- coq.ltac.open (g\ gl\ coq.ltac.call Name [] g gl ok) G [].
 
@@ -765,10 +800,16 @@ fire-lemma Ts Rels Spec Inputs NP KTy Ck Idx Ty P :-
     fire-proof Ts Rels prim Spec I Ck Kn ps [] [] Inst t) p) P.
 
 pred idx-binders i:term, i:bool, i:list term, i:(list term -> term -> prop), o:term.
-idx-binders (prod N Ty F) IsProd Acc K Out :- !,
+idx-binders (prod N0 Ty F) IsProd Acc K Out :- !, std.length Acc I, idx-name N0 I N,
   if (IsProd = tt) (Out = prod N Ty B) (Out = fun N Ty B),
   pi x\ decl x N Ty => idx-binders (F x) IsProd [x | Acc] K (B x).
 idx-binders _ _ Acc K T :- std.rev Acc Xs, K Xs T.
+
+% The name of an index binder: its own name, or a letter by its position when it has none.
+pred idx-name i:name, i:int, o:name.
+idx-name N I M :- coq.name->id N "_", I < 8, !,
+  std.nth I ["a", "b", "c", "d", "e", "f", "g", "h"] S, coq.id->name S M.
+idx-name N _ N.
 
 % forall prim params idx, R params idx -> derived prim spec (inputs params) code idx
 pred complete-type i:list table, i:term, i:term, i:rel, o:term.
@@ -860,17 +901,26 @@ define-spec Ts Spec Inputs Relation Closed (rel R NP Eq Ss) :-
   std.assert-ok! (coq.elaborate-skeleton SP STy SP1) "Egglog: the glue lemma failed",
   coq.env.add-const {calc (RName ^ "_spec")} SP1 STy @opaque! _.
 
-% -{93}
-% The name of the code constant of a table.
-pred code-name i:table, o:string.
-code-name (table (tk-rel R) _ _ _) N :- !, N is {coq.gref->id (indt R)} ^ "_code".
-code-name (table (tk-con K) _ _ _) N :- !, N is {coq.gref->id (indc K)} ^ "_code".
-code-name (table (tk-src (global GR)) _ _ _) N :- !, N is {coq.gref->id GR} ^ "_code".
-code-name (table (tk-param I) _ _ _) N :- N is "input" ^ {std.any->string I} ^ "_code".
+% ---------------------------------------------------------------------------------------------
+% The name of the code constant of a table. A parameter that is an input list names its table.
+pred code-name i:list string, i:table, o:string.
+code-name _ (table (tk-rel R) _ _ _) N :- !, N is {coq.gref->id (indt R)} ^ "_code".
+code-name _ (table (tk-con K) _ _ _) N :- !, N is {coq.gref->id (indc K)} ^ "_code".
+code-name _ (table (tk-src (global GR)) _ _ _) N :- !, N is {coq.gref->id GR} ^ "_code".
+code-name PNames (table (tk-param I) _ _ _) N :- std.nth {calc (I - 1)} PNames P,
+  N is P ^ "_code".
 
-pred define-code i:table.
-define-code T :- T = table _ N _ _, code-name T Name, int->pos N P,
-  coq.env.add-const Name P {{ positive }} @transparent! _.
+% The names of the first N binders of a type: the parameters of a relation.
+pred param-names i:int, i:term, o:list string.
+param-names 0 _ [] :- !.
+param-names N (prod Name _ F) [S | Ss] :- coq.name->id Name S, M is N - 1,
+  pi x\ param-names M (F x) Ss.
+
+% Define the code constant of a table.
+pred define-code i:list string, i:table, o:pair tkey term.
+define-code PNames T (pr K (global (const C))) :- T = table K N _ _,
+  code-name PNames T Name, int->pos N P,
+  coq.env.add-const Name P {{ positive }} @transparent! C.
 
 % ---------------------------------------------------------------------------------------------
 % Encoders of datatypes
@@ -1039,9 +1089,24 @@ derive Name RelNames :-
   datatype-tables Dts [] DtKeys,
   std.flatten [RelKeys, InputKeys, DtKeys] Keys,
   number Keys 1 Dts Tables,
-  std.map Tables decl-of Decls, list->term {{ decl }} Decls DeclT,
-  std.map-filter Tables (t\ c\ sigma K N\ t = table K N _ _,
-    std.exists InputKeys (p\ sigma S\ p = pr K S), int->pos N c) InputCodes,
+  Rels = [rel R1 NP1 _ _ | _], coq.env.indt R1 _ _ _ Arity1 _ _,
+  param-names NP1 Arity1 PNames,
+  coq.env.begin-module Name none,
+  std.map Tables (define-code PNames) Consts,
+  with-codes Consts (derive-module Name Rels Relational InputKeys Dts Tables NP1 Arity1).
+
+% Run a goal with the code constants of the tables.
+pred with-codes i:list (pair tkey term), i:prop.
+with-codes [] G :- G.
+with-codes [pr K C | Rest] G :- code-const K C => with-codes Rest G.
+
+% The constants of the module of a program, after its code constants.
+pred derive-module i:string, i:list rel, i:list rel, i:list (pair tkey (list term)),
+  i:list inductive, i:list table, i:int, i:term.
+derive-module Name Rels Relational InputKeys Dts Tables NP1 Arity1 :-
+  std.map Tables (decl-of Tables) Decls, list->term {{ decl }} Decls DeclT,
+  std.map-filter Tables (t\ c\ sigma K\ t = table K _ _ _,
+    std.exists InputKeys (p\ sigma S\ p = pr K S), code-of Tables K c) InputCodes,
   list->term {{ positive }} InputCodes InputT,
   std.fold Rels [] (r\ a\ b\ sigma I KTys Cs\ r = rel I _ _ _,
     coq.env.indt I _ _ _ _ _ KTys,
@@ -1049,17 +1114,13 @@ derive Name RelNames :-
   list->term {{ clause positive }} ClauseList ClausesT,
   Spec = {{ @Spec positive lp:DeclT lp:InputT lp:ClausesT }},
   std.assert-ok! (coq.typecheck Spec {{ spec positive }}) "Egglog: ill-typed specification",
-  coq.env.begin-module Name none,
-  std.forall Tables define-code,
+  check-sorts Name Spec,
   coq.env.add-const "spec" Spec {{ spec positive }} @transparent! SpecC,
   SpecT = global (const SpecC),
   coq.env.add-const "program" {{ @spec_program positive lp:SpecT }}
     {{ program positive }} @transparent! _,
-  coq.env.add-const "rewrites" {{ @spec_rewrites positive lp:SpecT }}
-    {{ list (rewrite positive) }} @transparent! _,
   std.fold Rels [] (r\ a\ b\ sigma I KTys\ r = rel I _ _ _, coq.env.indt I _ _ _ _ _ KTys,
     std.fold KTys a (sources-of r) b) Sources,
-  Rels = [rel R1 NP1 _ _ | _], coq.env.indt R1 _ _ _ Arity1 _ _,
   abs-params NP1 Arity1 [] (ps\ fb\ facts-body Tables Sources ps fb) FactsT,
   std.assert-ok! (coq.elaborate-skeleton FactsT FactsTy FactsE) "Egglog: ill-typed facts",
   coq.env.add-const "facts" FactsE FactsTy @transparent! _,

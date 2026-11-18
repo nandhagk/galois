@@ -1,25 +1,27 @@
 (** * Primitives in programs on the engine
 
-    Two programs of the egglog web demo that compute with primitives, written as inductives and
-    derived with [Egglog P from R with Arith]. [fib] is the Fibonacci relation. It never
-    saturates, so the run stops at an iteration limit. [equiv] is the equality of arithmetic
-    terms of [eqsat-basic.egg], solved by equality saturation. The generated glue lemma of [fib]
-    connects its rows to the inductive.
+    Programs that compute with primitives, written as inductives and derived with
+    [Egglog P from R with Arith]. Two of them come from the egglog web demo. [fib] is the
+    Fibonacci relation. It never saturates, so the run stops at an iteration limit. [equiv] is
+    the equality of arithmetic terms of [eqsat-basic.egg], solved by equality saturation.
+    [shifted] and [sums_to] compute values in equation premises. The generated glue lemmas
+    connect the rows and classes to the inductives.
     For example, after eight iterations the table of [fib] holds the row [7, 13], because the
     seventh Fibonacci number is 13.
 
     Groups:
     - [FibonacciTests] The relation [fib] under an iteration limit.
-    - [TermTests] Saturating arithmetic terms with commutativity and distributivity.
+    - [TermTests] Saturating arithmetic terms with commutativity, distributivity and folding.
+    - [EquationPremiseTests] Equation premises that compute values, in a relation and in
+      an equation.
     - [GlueTests] The generated lemma turns a derived row into the inductive and back.
 
-    Builds on: the derive command, the runner, the saturation front end and the engine. *)
+    Builds on: the derive command, the runner and the engine. *)
 
 From Stdlib Require Import List PArith NArith.
 From Galois.Base Require Import Key.
 From Galois.Egglog Require Import ValueSig Syntax Model Index Join Database Run.
-From Galois.Egraph Require Import Syntax Compile Saturate.
-From Galois.Front Require Import Spec LowerSig Runner Derive.
+From Galois.Front Require Import Spec LowerSig RunnerSig Runner Derive.
 Import List.ListNotations.
 
 (** * Fixtures *)
@@ -40,9 +42,6 @@ Module ArithDatabase := DatabaseCode ArithValue ArithIndex.
 Module ArithRun := RunCode ArithValue ArithIndex ArithJoin ArithDatabase.
 Module ArithRunner :=
   RunnerCode ArithValue ArithIndex ArithJoin ArithDatabase ArithRun.
-Module ArithCompile := CompileCode ArithValue.
-Module ArithSaturate :=
-  SaturateCode ArithValue ArithIndex ArithJoin ArithDatabase ArithRun ArithCompile.
 
 (** The Fibonacci relation. The index starts at one, where egglog starts at zero, so [fib n v]
     says that [v] is the [n]-th Fibonacci number with [fib 1 1] and [fib 2 1] as the base. *)
@@ -64,8 +63,8 @@ Inductive term : Type :=
   | Add (a b : term)
   | Mul (a b : term).
 
-(** Equality of terms: the closure laws, commutativity of both operations and distributivity
-    of multiplication over addition. Constant folding is missing, see the end of [TermTests]. *)
+(** Equality of terms: the closure laws, commutativity of both operations, distributivity of
+    multiplication over addition, and the folding of constants with the primitives. *)
 Inductive equiv : term -> term -> Prop :=
   | equiv_refl a : equiv a a
   | equiv_sym a b : equiv a b -> equiv b a
@@ -74,9 +73,35 @@ Inductive equiv : term -> term -> Prop :=
   | equiv_mul a a' b b' : equiv a a' -> equiv b b' -> equiv (Mul a b) (Mul a' b')
   | equiv_comm_add a b : equiv (Add a b) (Add b a)
   | equiv_comm_mul a b : equiv (Mul a b) (Mul b a)
-  | equiv_distrib a b c : equiv (Mul a (Add b c)) (Add (Mul a b) (Mul a c)).
+  | equiv_distrib a b c : equiv (Mul a (Add b c)) (Add (Mul a b) (Mul a c))
+  | equiv_fold_add x y : equiv (Add (Num x) (Num y)) (Num (Pos.add x y))
+  | equiv_fold_mul x y : equiv (Mul (Num x) (Num y)) (Num (Pos.mul x y)).
 
 Egglog Math from equiv with Arith.
+
+(** Points moved by offsets: [y] is [x] moved by [k]. The equation premise computes [y]. *)
+Inductive shifted (offsets : list (positive * positive)) : positive -> positive -> Prop :=
+  | shift x k y : In (x, k) offsets -> Pos.add x k = y -> shifted offsets x y.
+
+Egglog Shifts from shifted with Arith.
+
+(** Sums of numbers. *)
+Inductive sum_term : Type :=
+  | Number (n : positive)
+  | Plus (a b : sum_term).
+
+(** Sums equal their value for each listed pair. The equation premise computes the value, so
+    the clause is a union. *)
+Inductive sums_to (pairs : list (positive * positive)) : sum_term -> sum_term -> Prop :=
+  | sums_to_refl a : sums_to pairs a a
+  | sums_to_sym a b : sums_to pairs a b -> sums_to pairs b a
+  | sums_to_trans a b c : sums_to pairs a b -> sums_to pairs b c -> sums_to pairs a c
+  | sums_to_plus a a' b b' : sums_to pairs a a' -> sums_to pairs b b' ->
+      sums_to pairs (Plus a b) (Plus a' b')
+  | sums_to_pair x y z : In (x, y) pairs -> Pos.add x y = z ->
+      sums_to pairs (Plus (Number x) (Number y)) (Number z).
+
+Egglog Sums from sums_to with Arith.
 
 (** * Fibonacci *)
 
@@ -143,13 +168,13 @@ Module FibonacciTests.
     vm_compute. reflexivity.
   Qed.
 
-  (* The lowered program of [fib] is not accepted by the sort check, so the theorems of the
-     runner do not cover it yet.
-       expected: [spec_ok Fib.spec = true]
-       actual:   [spec_ok Fib.spec = false]
-     The check [query_prim] requires the result of a primitive atom to be bound before the
-     atom, but a primitive inside a premise argument is lowered to an atom with a fresh
-     result. Open problems: sort check of primitive atoms with fresh results. *)
+  (** The engine accepts the sorts of the lowered program, so the theorems of the runner cover
+      it. The successor in a premise argument is a check after the table atoms. *)
+  Example fib_program_is_well_sorted :
+    spec_ok Fib.spec = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
 
 End FibonacciTests.
 
@@ -174,62 +199,42 @@ Module TermTests.
   (** A different sum of the same parts, [2 + 2 * x]. *)
   Definition other_sum : term := Add (Num 2) (Mul (Num 2) (Var x_var)).
 
-  (** The flat nodes of an expression, in post-order, and the index of its root. *)
-  Fixpoint flat (ns : list (enode positive)) (e : @Model.expr positive) :
-      list (enode positive) * nat :=
-    match e with
-    | Model.ELit v => (ns ++ [ELit v], length ns)
-    | Model.EApp f args =>
-        let '(ns1, children) :=
-          (fix go (ns : list (enode positive)) (args : list (@Model.expr positive)) :
-              list (enode positive) * list nat :=
-             match args with
-             | [] => (ns, [])
-             | a :: rest =>
-                 let '(ns1, i) := flat ns a in
-                 let '(ns2, others) := go ns1 rest in
-                 (ns2, i :: others)
-             end) ns args in
-        (ns1 ++ [EApp f children], length ns1)
-    end.
-
-  (** The input of the engine that adds a term, through the generated encoder. *)
-  Definition input_of (t : term) : fexpr positive :=
-    let '(ns, root) := flat [] (Math.encode_term t) in FExpr positive ns root.
-
   (** Twenty iterations and a thousand identifiers are far more than these terms need. *)
   Definition term_limits : limits := Limits 20%N 1000%N.
 
-  (** The saturation of two terms with the rewrites of [Math]. *)
-  Definition saturate_pair (a b : term) :=
-    ArithSaturate.saturate (tables Math.spec) Math.rewrites (spec_rules Math.spec) term_limits
-      [input_of a; input_of b].
-
-  (** Whether saturating two terms puts them in one class. *)
+  (** Whether saturating the rules of [Math] with two terms puts them in one class. *)
   Definition joined (a b : term) : bool :=
-    match saturate_pair a b with
-    | inr (_, db, [i; j]) => Pos.eqb (fst (ArithDatabase.find i db)) (fst (ArithDatabase.find j db))
-    | _ => false
-    end.
+    ArithRunner.equal Math.program [] term_limits (Math.encode_term a) (Math.encode_term b).
 
-  (** The stop reason of saturating two terms. *)
-  Definition stopped (a b : term) : option stop :=
-    match saturate_pair a b with
-    | inr (st, _, _) => Some st
-    | inl _ => None
-    end.
+  (** The stop reason of saturating the rules of [Math] with two terms. *)
+  Definition stopped (a b : term) : stop :=
+    fst (fst (ArithRunner.saturate Math.program []
+      [Math.encode_term a; Math.encode_term b] term_limits)).
 
-  (** The front end accepts the rewrites that [Math] derives and the encoded inputs. *)
-  Example front_end_accepts_the_program :
-    ArithSaturate.check_front (tables Math.spec) Math.rewrites (spec_rules Math.spec)
-      [input_of two_times_sum; input_of distributed] = None.
+  (** The engine accepts the sorts of the rules that [Math] derives. *)
+  Example math_program_is_well_sorted :
+    spec_ok Math.spec = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
 
-  (** Without folding the rewrites stop growing, so saturation reaches a fixpoint. *)
+  (** Encoded terms are well sorted, so the theorems about saturation cover them. *)
+  Example encoded_terms_are_well_sorted :
+    term_ok Math.spec (Math.encode_term two_times_sum) = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A number whose argument is a term instead of a value is not well sorted. *)
+  Example misplaced_term_is_not_well_sorted :
+    term_ok Math.spec (Model.EApp Math.Num_code [Math.encode_term (Num 1)]) = false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The rules stop adding terms, so saturation reaches a fixpoint. *)
   Example saturation_reaches_a_fixpoint :
-    stopped two_times_sum distributed = Some Saturated.
+    stopped two_times_sum distributed = Saturated.
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -262,18 +267,123 @@ Module TermTests.
     vm_compute. reflexivity.
   Qed.
 
-  (* The tutorial also folds constants, with the clauses
-       [equiv_fold_add x y : equiv (Add (Num x) (Num y)) (Num (Pos.add x y))]
-       [equiv_fold_mul x y : equiv (Mul (Num x) (Num y)) (Num (Pos.mul x y))]
-     so that [6 + 2 * x] joins the class of [2 * (x + 3)]. The command derives both clauses as
-     rewrites, but the front end rejects the first of them:
-       expected: [joined two_times_sum (Add (Num 6) (Mul (Num 2) (Var x_var))) = true]
-       actual:   [check_front .. = Some (BadRewrite 3)]
-     The right side of a folding rewrite is a hole that a primitive atom of the condition
-     binds. The check [query_prim] requires that atom's result to be bound already. Open
-     problems: sort check of primitive atoms in rewrites that fold constants. *)
+  (** Distributing and folding [2 * 3] puts [2 * (x + 3)] in the class of [6 + 2 * x], as in
+      the tutorial. *)
+  Example folding_joins_the_tutorial_terms :
+    joined two_times_sum (Add (Num 6) (Mul (Num 2) (Var x_var))) = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
 
 End TermTests.
+
+(** * Equation premises *)
+
+Module EquationPremiseTests.
+
+  Local Open Scope positive_scope.
+
+  (** The kind of an engine action. *)
+  Variant action_kind : Type :=
+    | KindMake
+    | KindPut
+    | KindUnion
+    | KindLet.
+
+  Definition action_kind_of (a : action positive) : action_kind :=
+    match a with
+    | Make _ _ _ => KindMake
+    | Put _ _ _ => KindPut
+    | Union _ _ => KindUnion
+    | Let _ _ _ => KindLet
+    end.
+
+  (** The kinds of the actions of each rule of a program. *)
+  Definition rule_action_kinds (p : program positive) : list (list action_kind) :=
+    map (fun r => map action_kind_of (actions positive r)) (rules positive p).
+
+  (** Two offsets, from 1 by 2 and from 5 by 10. *)
+  Definition two_offsets : list (positive * positive) := [(1, 2); (5, 10)].
+
+  (** The database after shifting the two offsets. *)
+  Definition shifted_result : ArithDatabase.t :=
+    snd (ArithRunner.solve Shifts.program (Shifts.facts two_offsets) (Limits 4%N 100%N)).
+
+  (** The equation defines [y], so the rule computes it with [Let] before it puts the row. *)
+  Example equation_defines_its_result :
+    rule_action_kinds Shifts.program = [[KindLet; KindPut]].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The program is relational, so the theorems about relations cover it. *)
+  Example shifted_program_is_relational :
+    spec_ok Shifts.spec = true /\ relational Shifts.spec = true.
+  Proof.
+    vm_compute. split; reflexivity.
+  Qed.
+
+  (** Each offset gives its moved point. *)
+  Example offsets_give_moved_points :
+    ArithRunner.holds Shifts.shifted_code [1; 3] shifted_result = true /\
+    ArithRunner.holds Shifts.shifted_code [5; 15] shifted_result = true.
+  Proof.
+    vm_compute. split; reflexivity.
+  Qed.
+
+  (** A point is not moved by an offset of another point. *)
+  Example offsets_stay_with_their_points :
+    ArithRunner.holds Shifts.shifted_code [1; 11] shifted_result = false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The glue lemma turns the inductive into a derived row. *)
+  Example shift_gives_derived_row :
+    derived Arith.prim Shifts.spec (Shifts.inputs two_offsets) Shifts.shifted_code [1; 3].
+  Proof.
+    apply (proj1 (Shifts.shifted_spec two_offsets 1 3)).
+    apply (shift two_offsets 1 2 3); [left; reflexivity | reflexivity].
+  Qed.
+
+  (** The equation of [sums_to] computes its value from bound variables, so the clause is one
+      rule that builds both sides and joins them. *)
+  Example sum_clause_builds_and_joins :
+    rule_action_kinds Sums.program =
+      [[KindLet; KindMake; KindMake; KindMake; KindMake; KindUnion]].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Whether saturation with the listed pairs puts two sums in one class. *)
+  Definition joined (pairs : list (positive * positive)) (a b : sum_term) : bool :=
+    ArithRunner.equal Sums.program (Sums.facts pairs) (Limits 4%N 100%N)
+      (Sums.encode_sum_term a) (Sums.encode_sum_term b).
+
+  (** A listed pair joins its sum with its value. *)
+  Example listed_sum_joins_its_value :
+    joined [(1, 2)] (Plus (Number 1) (Number 2)) (Number 3) = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A sum of a pair that is not listed stays apart from its value. *)
+  Example unlisted_sum_stays_apart :
+    joined [] (Plus (Number 1) (Number 2)) (Number 3) = false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The glue lemma turns each instance of [sums_to] into a congruence of the encodings. *)
+  Example sum_gives_congruence :
+    congruent Arith.prim Sums.spec (Sums.inputs [(1, 2)])
+      (Sums.encode_sum_term (Plus (Number 1) (Number 2))) (Sums.encode_sum_term (Number 3)).
+  Proof.
+    apply Sums.sums_to_congruent.
+    apply (sums_to_pair [(1, 2)] 1 2 3); [left; reflexivity | reflexivity].
+  Qed.
+
+End EquationPremiseTests.
 
 (** * Glue *)
 

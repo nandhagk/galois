@@ -20,7 +20,7 @@
 
 From Stdlib Require Import List PArith.
 From Galois.Egglog Require Import Syntax.
-From Galois.Front Require Import Spec RunnerSig Derive.
+From Galois.Front Require Import Spec LowerSig RunnerSig Derive.
 Import List.ListNotations.
 
 (** * Fixtures *)
@@ -152,14 +152,14 @@ Module PairInputTests.
 
   (** A list of pairs is one input table, so the program declares the relation and that table. *)
   Example pair_list_is_one_table :
-    map name (tables Path.spec) = [Path.path_code; Path.input1_code].
+    map name (tables Path.spec) = [Path.path_code; Path.edges_code].
   Proof.
     vm_compute. reflexivity.
   Qed.
 
   (** Only the table of the pair list takes rows from the input. *)
   Example pair_table_is_the_only_input :
-    inputs Path.spec = [Path.input1_code].
+    inputs Path.spec = [Path.edges_code].
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -182,7 +182,7 @@ Module PairInputTests.
       the input table. *)
   Example premises_read_their_tables :
     map body_tables (clauses Path.spec) =
-      [[Path.input1_code]; [Path.path_code; Path.input1_code]].
+      [[Path.edges_code]; [Path.path_code; Path.edges_code]].
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -266,9 +266,16 @@ Module EquationTests.
     vm_compute. reflexivity.
   Qed.
 
-  (** Only the rewrite clauses become rewrites of the program. *)
-  Example rewrite_clauses_become_rewrites :
-    length Terms.rewrites = 2.
+  (** The tables that the query of a rule reads, in order. *)
+  Definition rule_tables (r : rule positive) : list positive :=
+    map (fun a => match a with Fun _ f _ _ => f | Prim _ p _ _ => p end) (query positive r).
+
+  (** Each clause is one rule. The union reads its input row, and a rewrite reads the tables of
+      the constructors of its left side after its premises. *)
+  Example rewrites_match_their_left_sides :
+    map rule_tables (spec_rules Terms.spec) =
+      [[Terms.merges_code]; [Terms.Add_code];
+       [Terms.merges_code; Terms.Num_code; Terms.Add_code]].
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -276,7 +283,7 @@ Module EquationTests.
   (** An equational relation has no table of its own. The input list and the constructors of
       the datatype are the tables. *)
   Example datatype_constructors_are_tables :
-    map name (tables Terms.spec) = [Terms.input1_code; Terms.Num_code; Terms.Add_code].
+    map name (tables Terms.spec) = [Terms.merges_code; Terms.Num_code; Terms.Add_code].
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -314,7 +321,7 @@ Module FactTests.
 
   (** A pair list gives one row for each pair, in its table. *)
   Example pairs_give_one_row_each :
-    Path.facts two_edges = [(Path.input1_code, [1; 2]); (Path.input1_code, [2; 3])].
+    Path.facts two_edges = [(Path.edges_code, [1; 2]); (Path.edges_code, [2; 3])].
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -342,7 +349,7 @@ Module FactTests.
 
   (** An equational relation takes the rows of its input list too. *)
   Example equation_inputs_give_rows :
-    Terms.facts two_merges = [(Terms.input1_code, [1; 2]); (Terms.input1_code, [3; 4])].
+    Terms.facts two_merges = [(Terms.merges_code, [1; 2]); (Terms.merges_code, [3; 4])].
   Proof.
     vm_compute. reflexivity.
   Qed.
@@ -398,7 +405,7 @@ Module FactTests.
 
   (** An input row of the wrong arity is rejected. *)
   Example wrong_arity_row_is_rejected :
-    rows_ok Path.spec [(Path.input1_code, [1])] = false.
+    rows_ok Path.spec [(Path.edges_code, [1])] = false.
   Proof.
     vm_compute. reflexivity.
   Qed.
