@@ -305,6 +305,9 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
   Include Indexed L S.
   Definition row_work (p : prog) (B : nat) : N := S.row_work (program p) B.
   Definition kw (p : prog) : nat := S.kw (program p).
+  (** Rows are numbered from one to the row count n, so each row code has at most as many bits
+      as n + 1. *)
+  Definition rcw (p : prog) : nat := Pos.size_nat (Pos.of_succ_nat (length (S.rows (program p)))).
   TimeFun key_code.
   TimeFun key_eqb.
   TimeFun rows.
@@ -434,6 +437,15 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
     { eapply N.le_trans; [exact Hget|apply N.mul_le_mono_l, Hwidth]. }
     rewrite !N.mul_add_distr_r; lia.
   Qed.
+
+  (** Row codes of listed rows fit the row-code width. *)
+  Lemma row_code_bits_le : forall p r, wf p -> In r (rows p) ->
+    Pos.size_nat (row_code r) <= rcw p.
+  Proof. Admitted. (* STUB *)
+
+  (** The index lists a row once for each key. *)
+  Lemma rows_of_nodup : forall p x, wf p -> NoDup (rows_of p x).
+  Proof. Admitted. (* STUB *)
 
   (** One bits pay for the carry work of consecutive binary increments. *)
   Fixpoint number_credit (id : positive) : N :=

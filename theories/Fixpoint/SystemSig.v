@@ -190,6 +190,13 @@ Module Type LOCAL_TIME (L : LATTICE_T) (Import S : LOCAL_SYSTEM L).
   (** Indexed lookup pays for its key and every returned row. *)
   Parameter T_rows_of_le : forall p x, wf p ->
     (T_rows_of p x <= c_loc * N.of_nat (length (rows_of p x) + key_bits x + 1))%N.
+  (* spec: rcw *)
+  Parameter rcw : prog -> nat.
+  (** Row codes of listed rows fit the row-code width. *)
+  Parameter row_code_bits_le : forall p r, wf p -> In r (rows p) ->
+    Pos.size_nat (row_code r) <= rcw p.
+  (** The index lists a row once for each key. *)
+  Parameter rows_of_nodup : forall p x, wf p -> NoDup (rows_of p x).
 End LOCAL_TIME.
 
 Module Type LOCAL_SYSTEM_T (L : LATTICE_T) :=
