@@ -1,26 +1,26 @@
 (** * Time of adding terms
 
-    The second part of the timed runner. Adding a well-sorted term to a database that is loaded
+    The third part of the timed runner. Adding a well-sorted term to a database that is loaded
     with the planned program allocates one constructor row for each application. Each
     allocation pays the amortized budget of the database at the unit bound and the identifier
     width of the result, and the potential that it leaves pays for the deferred rebuild.
     For example, adding [Add (Num 1) (Num 2)] pays for three allocations, of arities two, one
     and one.
 
-    Builds on: the runner signature, the first part of the timed runner, and the time contracts
-    of the database. *)
+    Builds on: the runner signature, the first two parts of the timed runner, and the time
+    contracts of the database. *)
 
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Tactics Std Complexity.
 From Galois.Egglog Require Import ValueSig Syntax Model Sorts IndexSig JoinSig DatabaseSig RunSig.
-From Galois.Front Require Import Spec LowerSig RunnerSig RunnerSeedTime.
+From Galois.Front Require Import Spec LowerSig RunnerSig RunnerQueryTime.
 
 Import List.ListNotations.
 Import ComplexityNotations.
 
 Module RunnerTermsT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     (R : RUN_T V I J D).
-  Include RunnerSeedT V I J D R.
+  Include RunnerQueryT V I J D R.
   Definition c_terms : N := 1. (* STUB *)
 
   (* STUB: induction on the terms with [D.unit_mono_make]. Each make keeps the database well
@@ -32,10 +32,20 @@ Module RunnerTermsT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE
   Proof.
   Admitted. (* STUB *)
 
+  (* STUB: the same induction, with [D.layout_make], which allocates the identifier of each
+     constructor, and [D.make_spec], which keeps every identifier allocated. *)
+  Lemma add_terms_allocated : forall (s : spec V.t) es db i,
+    spec_ok s = true -> D.wf db -> R.loaded (spec_program s) (R.plan (spec_program s)) db ->
+    forallb (term_ok s) es = true -> In (Id i) (fst (add_terms es db)) ->
+    D.allocated (snd (add_terms es db)) i.
+  Proof.
+  Admitted. (* STUB *)
+
   (* STUB: one nested induction on the term proves this lemma and [T_add_terms_amort]. Each
      constructor meets [D.T_make_amort]. The identifier count only grows, by [D.make_spec] on
      the constructor tables that [R.loaded] declares, and [D.unit_mono_make] keeps every unit
-     below [U]. *)
+     below [U]. [c_terms] must be at least [2 * D.c_db] plus the overheads of the derived time
+     functions. *)
   Lemma T_add_term_amort : forall B U (s : spec V.t) e db,
     spec_ok s = true -> D.wf db -> R.loaded (spec_program s) (R.plan (spec_program s)) db ->
     term_ok s e = true ->

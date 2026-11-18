@@ -3,9 +3,10 @@
     A saturated outcome is closed under the rule of each rewrite. A rewrite step from a
     represented term has a body that holds in the input rows, which the outcome keeps, and a
     left side that the term matches, so the rule fires on the class of the term. Its actions
-    are then present, so they build the right side and join it with the class. The theorem takes
-    on purpose the plans of [RewriteTerms.v] and [RewriteMatch.v], which [Rewrite.v]
-    instantiates.
+    are then present, so they build the right side and join it with the class. The right side
+    is an application, because the sort check accepts a union only of two classes. The theorem
+    takes on purpose the plans of [RewriteTerms.v], [RewriteMatch.v] and [RewriteSorts.v],
+    which [Rewrite.v] instantiates.
     For example, at saturation the class of [Add a b] also represents [Add b a] under the
     commutativity rewrite.
 
@@ -21,12 +22,13 @@ Import List.ListNotations.
 Module RewriteClosed (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     (R : RUN V I J D) (X : RUNNER V I J D R) (F : RUNNER_FACTS V I J D R X) (LW : LOWER_LAWS)
     (PT : REWRITE_TERMS_PLAN V I J D R X) (PM : REWRITE_MATCH_PLAN V I J D R X)
-    <: REWRITE_CLOSED V I J D R X.
+    (PR : REWRITE_SORTS_PLAN V) <: REWRITE_CLOSED V I J D R X.
   (* STUB: the body of the rewrite step holds in the input rows, which the outcome keeps by
      [F.saturate_keeps]. The rule of the rewrite matches the class of the term by
      [LW.query_body_matches], [LW.checks_last_matches] and [PM.query_pat_complete], saturation
      closes it, and its present actions build the right side in the class by
-     [LW.query_body_lets] and [LW.build_pats_represents]. *)
+     [LW.query_body_lets] and [LW.build_pats_represents]. [PR.rewrite_right_app] makes the right
+     side an application, which a class represents. *)
   Lemma saturate_closed : forall (s : spec V.t) rows es lim db cs i t u,
     spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->
     X.saturate (spec_program s) rows es lim = (Saturated, db, cs) ->

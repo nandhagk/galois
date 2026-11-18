@@ -6,7 +6,7 @@
     For example, the rule of a clause with the premise [f x = y], where no table atom binds
     [y], computes [y] with one [Let] that no query atom reads.
 
-    Builds on: the lowering signature and the sort checker. *)
+    Builds on: the lowering signature, its pattern laws and the sort checker. *)
 
 From Stdlib Require Import List PArith Bool.
 From Galois.Egglog Require Import Syntax Model Sorts.
@@ -14,7 +14,7 @@ From Galois.Front Require Import Spec LowerSig.
 
 Import List.ListNotations.
 
-Module LowerScopes <: LOWER_SCOPES_PLAN.
+Module LowerScopes (PV : LOWER_VALUES) <: LOWER_SCOPES_PLAN.
   Lemma clause_rule_scoped : forall {V} (s : spec V) c,
     check_program (spec_program s) = true -> kinds_ok s = true -> In c (clauses s) ->
     rule_scoped (clause_rule c) = true.

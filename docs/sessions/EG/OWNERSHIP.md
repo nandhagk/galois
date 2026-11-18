@@ -12,13 +12,15 @@ hours are estimates, and every card is at most ~6 hours.
 | LW-BD | `theories/Front/LowerBodies.v` | `query_body_matches`, `query_body_lets`, `checks_last_matches` | ~5 |
 | LW-K | `theories/Front/LowerKinds.v` | `relational_kinds_ok`, `head_vars_bound` | ~4 |
 | LW-S | `theories/Front/LowerScopes.v` | `clause_rule_scoped` | ~4 |
-| LW-C | `theories/Front/LowerComplete.v` | `lower_complete`, `lower_closed` | ~4 |
+| LW-CP | `theories/Front/LowerCompleteness.v` | `lower_complete` | ~2.5 |
+| LW-C | `theories/Front/LowerComplete.v` | `lower_closed` | ~4 |
 | LW-SD | `theories/Front/LowerSound.v` | `lower_sound` | ~5 |
 | LW-V | `theories/Front/LowerValid.v` | `lower_valid` | ~5 |
 | R-1 | `theories/Front/RunnerFacts.v` | `plan_ok`, `seed_rows`, `seed_ready`, `holds_spec`, `seed_sat`, `solve_keeps`, `saturate_keeps` | ~5.5 |
-| RT-1 | `theories/Front/RunnerSeedTime.v` | constant `c_runner`, `T_seed_amort`, `T_seed_le`, `seed_complexity`, `T_solve_split`, `T_holds_le`, `holds_complexity`, `T_same_cell_le`, `same_cell_complexity` | ~6 |
-| RT-2 | `theories/Front/RunnerTermsTime.v` | constant `c_terms`, `add_terms_unit`, `T_add_term_amort`, `T_add_terms_amort`, `add_term_complexity`, `add_terms_complexity` | ~5.5 |
-| RT-3 | `theories/Front/RunnerTime.v` | constant `c_saturate`, `solve_complexity`, `T_saturate_split`, `saturate_complexity`, `T_equal_split`, `equal_complexity` | ~5.5 |
+| RT-1 | `theories/Front/RunnerSeedTime.v` | constant `c_runner`, `T_seed_amort`, `T_seed_le`, `seed_complexity`, `T_solve_split` | ~4 |
+| RT-Q | `theories/Front/RunnerQueryTime.v` | constant `c_query`, `T_holds_le`, `holds_complexity`, `T_same_cell_le`, `same_cell_complexity` | ~2.5 |
+| RT-2 | `theories/Front/RunnerTermsTime.v` | constant `c_terms`, `add_terms_unit`, `add_terms_allocated`, `T_add_term_amort`, `T_add_terms_amort`, `add_term_complexity`, `add_terms_complexity` | ~6 |
+| RT-3 | `theories/Front/RunnerTime.v` | constant `c_saturate`, `solve_complexity`, `T_saturate_split`, `saturate_complexity`, `T_equal_split`, `equal_complexity` | ~5 |
 | R-2 | `theories/Front/Relational.v` | `solve_sound`, `solve_complete`, `solve_saturates` | ~4 |
 | CC-F | `theories/Front/ClosureFixpoint.v` | `classes_closed` | ~3 |
 | CC-A | `theories/Front/ClosureClasses.v` | `universe_eqs`, `universe_args`, `rep_of_universe`, `rep_of_sound`, `rep_of_eqs`, `rep_of_cong` | ~4.5 |
@@ -35,6 +37,7 @@ hours are estimates, and every card is at most ~6 hours.
 | RW-2 | `theories/Front/RewriteSound.v` | `saturate_sound`, `saturate_represents`, `equal_sound` | ~5 |
 | RW-3 | `theories/Front/RewriteMatch.v` | `query_pat_complete` | ~4 |
 | RW-4 | `theories/Front/RewriteClosed.v` | `saturate_closed` | ~5 |
+| RW-5 | `theories/Front/RewriteSorts.v` | `rewrite_right_app` | ~3 |
 | LT-1 | `theories/Front/LatticeSound.v` | `lattice_model`, `solve_sound` | ~5 |
 | LT-2 | `theories/Front/LatticeComplete.v` | `lower_assigned`, `solve_complete` | ~4.5 |
 | EX | `theories/Front/Extraction.v` | `fits_inventory`, `decode_agrees_unfold`, `cheapest_represents`, `cheapest_optimal` | ~4 |

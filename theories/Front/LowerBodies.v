@@ -7,7 +7,7 @@
     For example, the body [Holds edge [PVar 1; PVar 2]; Computes succ [PVar 2] (PVar 3)], where
     no table atom binds variable 3, has one query atom and one [Let] of variable 3.
 
-    Builds on: the lowering signature and the facts of the specifications. *)
+    Builds on: the lowering signature, its pattern laws and the facts of the specifications. *)
 
 From Stdlib Require Import List PArith.
 From Galois.Egglog Require Import Syntax Model RunSig.
@@ -15,7 +15,7 @@ From Galois.Front Require Import Spec SpecFacts LowerSig.
 
 Import List.ListNotations.
 
-Module LowerBodies <: LOWER_BODY.
+Module LowerBodies (PV : LOWER_VALUES) <: LOWER_BODY.
   Lemma query_body_matches : forall {V} (prim : positive -> list V -> option V)
       (w : @view V) bound next ps e (s : @env V),
     (body_top ps < next)%positive -> Forall (premise_in prim (view_rows w) e) ps ->

@@ -8,7 +8,8 @@
     element in which no lattice value holds.
     For example, the row [Cell 7 -> 3] of an outcome makes [Cell 7] mean the class of 3.
 
-    Builds on: the ground signature, the runner facts and the run contracts. *)
+    Builds on: the ground signature, the runner facts, the lowering laws and the run
+    contracts. *)
 
 From Stdlib Require Import List PArith NArith.
 From Galois.Egglog Require Import ValueSig Syntax Model Sorts IndexSig JoinSig DatabaseSig RunSig.
@@ -17,10 +18,13 @@ From Galois.Front Require Import Spec SpecFacts LowerSig RunnerSig CongruenceRef
 Import List.ListNotations.
 
 Module GroundClasses (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
-    (R : RUN V I J D) (X : RUNNER V I J D R) (F : RUNNER_FACTS V I J D R X)
+    (R : RUN V I J D) (X : RUNNER V I J D R) (F : RUNNER_FACTS V I J D R X) (LW : LOWER_LAWS)
     <: GROUND_CLASS_PLAN V I J D R X.
   Include GROUND_SPEC V I D.
 
+  (* STUB: a model of one point that holds only the input rows satisfies the specification, so
+     [LW.lower_valid] and [R.run_sat], from the seed by [F.seed_sat], make every row of the
+     outcome an input row or a row with a class output. *)
   Lemma outcome_rows : forall (s : spec V.t) rows lim st db f k o,
     spec_ok s = true -> ground s = true -> rows_ok s rows = true ->
     X.solve (spec_program s) rows lim = (st, db) -> row (D.view db) f k o ->
@@ -28,6 +32,8 @@ Module GroundClasses (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   Proof.
   Admitted. (* STUB *)
 
+  (* STUB: [R.run_sat] with the model of the classes, which [LW.lower_valid] makes valid, read
+     through [outcome_rows]. *)
   Lemma class_sat : forall (s : spec V.t) rows lim st db,
     spec_ok s = true -> ground s = true -> rows_ok s rows = true ->
     X.solve (spec_program s) rows lim = (st, db) ->

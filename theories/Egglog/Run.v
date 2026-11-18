@@ -11887,6 +11887,19 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       apply rebuild_grows; assumption.
   Qed.
 
+  Lemma run_ids : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    (D.ids db <= D.ids (snd (run p cp lim db)))%N.
+  Proof.
+    intros p cp lim db Hchecked Hwf Hloaded.
+    pose proof (run_loop_state p cp lim (limits_iter lim) false db Hchecked Hwf Hloaded)
+      as Hloop. unfold run.
+    destruct (loopN (driver p cp lim) (limits_iter lim) (false, db))
+      as [[flag final]|[status final]]; cbn [snd] in *.
+    all: destruct Hloop as [Hfinal [Hloadfinal Hids]].
+    all: destruct (run_rebuild_state p cp final Hfinal Hloadfinal) as [_ [_ Hrebuiltids]].
+    all: rewrite Hrebuiltids; exact Hids.
+  Qed.
+
   Lemma run_sat : forall p cp lim db (M : model (V := V.t)) nu,
     plans_ok p cp -> D.wf db -> loaded p cp db -> valid_sorted V.prim V.merge M p ->
     sat V.merge M nu (D.view db) -> exists nu',
@@ -15242,6 +15255,31 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       reflexivity. }
     rewrite Hunitadvance in Hunit. rewrite round_eq_jobs.
     eapply Nat.le_trans; [exact Hunit|]. apply D.unit_mono_rebuild. exact Happlied.
+  Qed.
+
+  Lemma run_unit : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    D.unit db <= D.unit (snd (run p cp lim db)).
+  Proof.
+    intros p cp lim db Hchecked Hwf Hloaded.
+    assert (Hloop : match loopN (driver p cp lim) (limits_iter lim) (false, db) with
+      | inl next => D.wf (snd next) /\ loaded p cp (snd next) /\ D.unit db <= D.unit (snd next)
+      | inr result => D.wf (snd result) /\ loaded p cp (snd result) /\
+          D.unit db <= D.unit (snd result)
+      end).
+    { refine (run_loop_database_invariant p cp lim
+        (fun current => D.wf current /\ loaded p cp current /\ D.unit db <= D.unit current)
+        _ (limits_iter lim) false db _).
+      - intros flag current [Hcurrent [Hloadcurrent Hunit]].
+        destruct (round_monotone p cp flag current Hchecked Hcurrent Hloadcurrent)
+          as [Hnext [Hloadnext [_ Hunitnext]]].
+        split; [exact Hnext|]. split; [exact Hloadnext|].
+        exact (Nat.le_trans _ _ _ Hunit Hunitnext).
+      - split; [exact Hwf|]. split; [exact Hloaded|]. apply Nat.le_refl. }
+    unfold run.
+    destruct (loopN (driver p cp lim) (limits_iter lim) (false, db))
+      as [[flag final]|[status final]]; cbn [snd] in *.
+    all: destruct Hloop as [Hfinal [_ Hunit]].
+    all: exact (Nat.le_trans _ _ _ Hunit (D.unit_mono_rebuild final Hfinal)).
   Qed.
 
 

@@ -547,13 +547,17 @@ Module Type LOWER_BODY.
     matches prim w (checks_last q) s <-> matches prim w q s.
 End LOWER_BODY.
 
-(** The lowered program derives the derived rows, and a view that its rules close holds them. *)
-Module Type LOWER_COMPLETE.
+(** The lowered program derives the derived rows. *)
+Module Type LOWER_COMPLETENESS.
   (** A derived row of a relational specification is derived by its lowered program. *)
   Parameter lower_complete : forall {V} (prim : positive -> list V -> option V) (s : spec V)
       (w0 : @view V) r vs,
     relational_fragment (spec_program s) = true ->
     derived prim s (view_rows w0) r vs -> derives prim (spec_program s) w0 r (map Val vs).
+End LOWER_COMPLETENESS.
+
+(** A view that the rules of a specification close holds the derived rows. *)
+Module Type LOWER_CLOSED.
   (** A view that the rules of a well-sorted specification close, and whose relation rows have
       no output, holds every row derived from its own rows. *)
   Parameter lower_closed : forall {V} (prim : positive -> list V -> option V)
@@ -561,7 +565,10 @@ Module Type LOWER_COMPLETE.
     check_program (spec_program s) = true -> closed prim merge (spec_program s) w ->
     (forall f k o, row w f k o -> lookup_kind (tables s) f = Some ORel -> o = None) ->
     derived prim s (view_rows w) r vs -> view_rows w r vs.
-End LOWER_COMPLETE.
+End LOWER_CLOSED.
+
+(** The lowered program derives the derived rows, and a view that its rules close holds them. *)
+Module Type LOWER_COMPLETE := LOWER_COMPLETENESS <+ LOWER_CLOSED.
 
 (** The rows that the lowered program derives are derived rows. *)
 Module Type LOWER_SOUND.
@@ -598,10 +605,11 @@ Module Type LOWER_KINDS_PLAN.
   Parameter relational_kinds_ok : forall {V} (s : spec V),
     check_program (spec_program s) = true -> relational_fragment (spec_program s) = true ->
     kinds_ok s = true.
-  (** Every variable of the head of a clause of a well-sorted specification is bound by a table
-      premise or by the left side of its rewrite, or is computed by an equation premise. *)
+  (** Every variable of the head of a clause of a well-sorted specification that passes the kind
+      check is bound by a table premise or by the left side of its rewrite, or is computed by
+      an equation premise. *)
   Parameter head_vars_bound : forall {V} (s : spec V) c x,
-    check_program (spec_program s) = true -> In c (clauses s) ->
+    check_program (spec_program s) = true -> kinds_ok s = true -> In c (clauses s) ->
     In x (match head c with
           | Derive _ args => flat_map pat_vars args
           | Assign _ args v => flat_map pat_vars args ++ pat_vars v

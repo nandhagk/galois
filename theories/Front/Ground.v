@@ -18,7 +18,7 @@ Module Ground (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     (R : RUN V I J D) (X : RUNNER V I J D R) (F : RUNNER_FACTS V I J D R X) (LW : LOWER_LAWS)
     (CR : CONGRUENCE_REF V) <: GROUND V I J D R X.
   Module Denote := GroundDenote V.
-  Module Classes := GroundClasses V I J D R X F.
+  Module Classes := GroundClasses V I J D R X F LW.
   Module Build := GroundBuild V I J D R X F LW.
   Module Satisfies := GroundSatisfies V I J D R X F Classes Build.
   Module SoundLaws := GroundSound V I J D R X F LW CR.

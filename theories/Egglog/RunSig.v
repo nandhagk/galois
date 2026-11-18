@@ -10,6 +10,8 @@
     - [load_spec] Loading initializes precisely the declarations and compiled index slots.
     - [run_least] A saturated relational result is included in every closed extension of its seed
       that keeps the program's kinds and sorts, so a relation row of the extension has no output.
+    - [run_ids], [run_unit] A checked run never lowers the identifier count or the spending
+      unit.
     - [plan_complexity] Planning is cubic in the program text, because sorting the positions of an
       atom compares unary join indices.
     - [load_complexity] Loading is linear in its declarations and slots, with the layout work of
@@ -322,6 +324,10 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   (** Every old equality and row persists modulo the final canonicalization. *)
   Parameter run_grows : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     grows db (snd (run p cp lim db)).
+  (** A checked run never lowers the identifier count, so it keeps every identifier
+      allocated. *)
+  Parameter run_ids : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    (D.ids db <= D.ids (snd (run p cp lim db)))%N.
   (** Running rules that are valid on well-sorted environments keeps every satisfying model and
       the meaning of every old allocated identifier. *)
   Parameter run_sat : forall p cp lim db (M : model (V := V.t)) nu,
@@ -485,6 +491,9 @@ Module Type RUN_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
       for (B, U, p, cp, lim, db) |
         plans_ok p cp /\ D.wf db /\ loaded p cp db /\
         (D.ids (snd (run p cp lim db)) <= B)%N /\ D.unit (snd (run p cp lim db)) <= U.
+  (** A checked run never lowers the spending unit. *)
+  Parameter run_unit : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    D.unit db <= D.unit (snd (run p cp lim db)).
   Parameter trace_with : program V.t -> compiled V.t -> limits -> sched -> D.t ->
     list (mode * D.t).
   (** The bookkeeping of one round. Each plan reads its rule's table entry, and each entry is

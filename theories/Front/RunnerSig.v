@@ -207,6 +207,7 @@ Module Type RUNNER_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATA
   Parameter T_equal : program V.t -> list (positive * list V.t) -> limits -> @expr V.t ->
     @expr V.t -> N.
   Parameter c_runner : N.
+  Parameter c_query : N.
   Parameter c_terms : N.
   Parameter c_saturate : N.
   (** The cost of a seed at identifier bound [B] and unit bound [U]. Planning is cubic in the
@@ -263,19 +264,20 @@ Module Type RUNNER_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATA
     (T_solve p rows lim <=
       T_seed p rows + R.T_plan p + R.T_run p (R.plan p) lim (seed p rows) + c_runner)%N.
   (** A solve costs its seed and the rounds of its run. The puts and the rounds are paid at an
-      identifier bound [B] of the outcome and at a unit bound [U] of the seed and the outcome,
-      so the credit that the puts leave pays for the deferred rebuilds of the run. *)
+      identifier bound [B] and a unit bound [U] of the outcome, which bound the seed too because
+      a run never lowers them, so the credit that the puts leave pays for the deferred rebuilds
+      of the run. *)
   Parameter solve_complexity :
     T_solve (spec_program s) rows lim ∈ 𝑂(saturate_cost B U (spec_program s) rows [] lim)
       for (B, U, s, rows, lim) |
-        spec_ok s = true /\ rows_ok s rows = true /\ D.unit (seed (spec_program s) rows) <= U /\
+        spec_ok s = true /\ rows_ok s rows = true /\
         (D.ids (snd (solve (spec_program s) rows lim)) <= B)%N /\
         D.unit (snd (solve (spec_program s) rows lim)) <= U.
 
   (** A lookup of a row of values pays for its key at the unit of the database and for the bits
       of its values. *)
   Parameter T_holds_le : forall r vs db, D.wf db ->
-    (T_holds r vs db <= c_runner * N.of_nat ((length vs + 1) * D.unit db +
+    (T_holds r vs db <= c_query * N.of_nat ((length vs + 1) * D.unit db +
       fold_right (fun v n => (cell_bits V.encode (Val v) + n)%nat) 0%nat vs + 1))%N.
   (** A lookup of a row of values is linear in its key at the unit of the database and in the
       bits of its values. *)
@@ -290,6 +292,12 @@ Module Type RUNNER_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATA
   Parameter add_terms_unit : forall (s : spec V.t) es db,
     spec_ok s = true -> D.wf db -> R.loaded (spec_program s) (R.plan (spec_program s)) db ->
     forallb (term_ok s) es = true -> D.unit db <= D.unit (snd (add_terms es db)).
+  (** Adding well-sorted terms to a database that is loaded with the planned program returns
+      identifier cells that the result allocates, which the bound of [equal] reads. *)
+  Parameter add_terms_allocated : forall (s : spec V.t) es db i,
+    spec_ok s = true -> D.wf db -> R.loaded (spec_program s) (R.plan (spec_program s)) db ->
+    forallb (term_ok s) es = true -> In (Id i) (fst (add_terms es db)) ->
+    D.allocated (snd (add_terms es db)) i.
   (** Adding a well-sorted term to a database that is loaded with the planned program gives
       each constructor the budget of one allocation in [D.T_make_amort], at the unit bound [U]
       and the identifier bound [B] of the result. The time and the potential that it leaves,
@@ -340,13 +348,11 @@ Module Type RUNNER_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATA
       T_seed p rows + T_add_terms es (seed p rows) + R.T_plan p +
       R.T_run p (R.plan p) lim (snd (add_terms es (seed p rows))) + c_saturate)%N.
   (** A saturation costs its seed, the constructors of its terms and the rounds of its run, at
-      bounds [B] and [U] of the database before the run and of the outcome. *)
+      bounds [B] and [U] of the outcome. *)
   Parameter saturate_complexity :
     T_saturate (spec_program s) rows es lim ∈ 𝑂(saturate_cost B U (spec_program s) rows es lim)
       for (B, U, s, rows, es, lim) |
         spec_ok s = true /\ rows_ok s rows = true /\ forallb (term_ok s) es = true /\
-        (D.ids (snd (add_terms es (seed (spec_program s) rows))) <= B)%N /\
-        D.unit (snd (add_terms es (seed (spec_program s) rows))) <= U /\
         (D.ids (snd (fst (saturate (spec_program s) rows es lim))) <= B)%N /\
         D.unit (snd (fst (saturate (spec_program s) rows es lim))) <= U.
 
@@ -356,7 +362,7 @@ Module Type RUNNER_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATA
   Parameter T_same_cell_le : forall a b db, D.wf db ->
     (forall i, In (Id i) [a; b] -> D.allocated db i) ->
     (T_same_cell a b db <=
-      c_runner * N.of_nat (2 * D.unit db + cell_bits V.encode (D.canon db a) + 1))%N.
+      c_query * N.of_nat (2 * D.unit db + cell_bits V.encode (D.canon db a) + 1))%N.
   (** Comparing two cells is linear in the unit of the database and in the bits of the first
       cell after canonicalization. *)
   Parameter same_cell_complexity :
@@ -369,8 +375,7 @@ Module Type RUNNER_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATA
     saturate p rows [t; u] lim = (st, db, [c; d]) ->
     (T_equal p rows lim t u <= T_saturate p rows [t; u] lim + T_same_cell c d db + c_saturate)%N.
   (** Deciding equality costs the saturation with the two terms and the comparison of their
-      cells. The run contracts do not say that a run keeps identifiers allocated, so the bound
-      assumes that both cells are allocated in the outcome. *)
+      cells in the outcome. *)
   Parameter equal_complexity :
     T_equal (spec_program s) rows lim t u ∈
       𝑂(saturate_cost B U (spec_program s) rows [t; u] lim +
@@ -378,9 +383,7 @@ Module Type RUNNER_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATA
       for (B, U, s, rows, lim, t, u, st, db, c, d) |
         spec_ok s = true /\ rows_ok s rows = true /\ term_ok s t = true /\ term_ok s u = true /\
         saturate (spec_program s) rows [t; u] lim = (st, db, [c; d]) /\
-        (D.ids (snd (add_terms [t; u] (seed (spec_program s) rows))) <= B)%N /\
-        D.unit (snd (add_terms [t; u] (seed (spec_program s) rows))) <= U /\
-        (D.ids db <= B)%N /\ D.unit db <= U /\ (forall i, In (Id i) [c; d] -> D.allocated db i).
+        (D.ids db <= B)%N /\ D.unit db <= U.
 End RUNNER_TIME.
 
 Module Type RUNNER_T (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)

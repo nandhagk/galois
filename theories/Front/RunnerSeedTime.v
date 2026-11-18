@@ -1,12 +1,13 @@
-(** * Time of seeding and of queries
+(** * Time of seeding
 
     The first part of the timed runner. It derives the time function of each operation of the
-    runner and bounds seeding, solving, lookups and comparisons of cells. A seed starts from a
-    load without potential, and each put pays for its share of the deferred rebuild at the unit
-    bound. [RunnerTermsTime.v] adds the bounds of adding terms, and [RunnerTime.v] the bounds of
+    runner and bounds seeding and the parts of a solve. A seed starts from a load without
+    potential, and each put pays for its share of the deferred rebuild at the unit bound.
+    [RunnerQueryTime.v] adds the bounds of lookups and comparisons of cells,
+    [RunnerTermsTime.v] the bounds of adding terms, and [RunnerTime.v] the bounds of solving,
     saturation and equality.
-    For example, [T_holds_le] bounds the points-to query of Andersen's analysis by one lookup of
-    a key of two values.
+    For example, the seed of [Path.program] on two edges pays for two puts of two values
+    each.
 
     Builds on: the runner signature, the runner and the time contracts of the database and the
     run. *)
@@ -86,36 +87,6 @@ Module RunnerSeedT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_
   Lemma T_solve_split : forall p rows lim,
     (T_solve p rows lim <=
       T_seed p rows + R.T_plan p + R.T_run p (R.plan p) lim (seed p rows) + c_runner)%N.
-  Proof.
-  Admitted. (* STUB *)
-
-  (* STUB: [D.T_lookup_le] on the key [map Val vs], whose unit is at least one. *)
-  Lemma T_holds_le : forall r vs db, D.wf db ->
-    (T_holds r vs db <= c_runner * N.of_nat ((length vs + 1) * D.unit db +
-      fold_right (fun v n => (cell_bits V.encode (Val v) + n)%nat) 0%nat vs + 1))%N.
-  Proof.
-  Admitted. (* STUB *)
-
-  Lemma holds_complexity :
-    T_holds r vs db ∈
-      𝑂(N.of_nat ((length vs + 1) * D.unit db +
-        fold_right (fun v n => (cell_bits V.encode (Val v) + n)%nat) 0%nat vs))
-      for (r, vs, db) | D.wf db.
-  Proof.
-  Admitted. (* STUB *)
-
-  (* STUB: [D.T_find_le] for both identifiers, [D.find_spec] and [Std.Pos.T_eqb_le] for the
-     representatives, and [V.T_eqb_le] for values. *)
-  Lemma T_same_cell_le : forall a b db, D.wf db ->
-    (forall i, In (Id i) [a; b] -> D.allocated db i) ->
-    (T_same_cell a b db <=
-      c_runner * N.of_nat (2 * D.unit db + cell_bits V.encode (D.canon db a) + 1))%N.
-  Proof.
-  Admitted. (* STUB *)
-
-  Lemma same_cell_complexity :
-    T_same_cell a b db ∈ 𝑂(N.of_nat (D.unit db + cell_bits V.encode (D.canon db a)))
-      for (a, b, db) | D.wf db /\ (forall i, In (Id i) [a; b] -> D.allocated db i).
   Proof.
   Admitted. (* STUB *)
 End RunnerSeedT.

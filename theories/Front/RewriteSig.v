@@ -109,3 +109,16 @@ Module Type REWRITE_MATCH_PLAN (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DAT
       (forall x u, In x (pat_vars p) -> e x = Some u ->
         exists c, env x = Some c /\ represents (D.view db) c u).
 End REWRITE_MATCH_PLAN.
+
+(** The right sides of the rewrites of a well-sorted specification. *)
+Module Type REWRITE_SORTS_PLAN (V : VALUE).
+  (** In a well-sorted specification with input rows of values, the right side of a rewrite
+      instance whose left side a class represents in a sorted view is an application. *)
+  Parameter rewrite_right_app : forall (s : spec V.t) rows (w : @view V.t) c e l r tl tr i,
+    spec_ok s = true -> rows_ok s rows = true ->
+    view_sorted (program_sorts (spec_program s)) w ->
+    In c (clauses s) -> head c = Rewrites l r ->
+    Forall (input_premise V.prim (rows_in rows) e) (body c) ->
+    pat_term V.prim e l = Some tl -> pat_term V.prim e r = Some tr ->
+    represents w (Id i) tl -> exists f us, tr = EApp f us.
+End REWRITE_SORTS_PLAN.
