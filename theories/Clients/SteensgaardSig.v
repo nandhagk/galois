@@ -20,6 +20,7 @@ From Stdlib Require Import List PArith NArith Bool.
 From Argent Require Import Time Std Complexity.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model ValueSig IndexSig JoinSig DatabaseSig RunSig.
+From Galois.Front Require Import Spec Derive.
 From Galois.Clients Require Import AndersenSig.
 Import List.ListNotations.
 Import ComplexityNotations.
@@ -47,54 +48,10 @@ Inductive pointer_congruence (q : pointer_input) : pointer_term -> pointer_term 
   | Cong_store : forall x y, In (Store x y) (constraints q) ->
       pointer_congruence q (Deref (Deref (Cell x))) (Deref (Cell y)).
 
-Fixpoint pointer_denote {A} (cell : positive -> A) (deref : A -> A) (t : pointer_term) : A :=
-  match t with
-  | Cell x => cell x
-  | Deref u => deref (pointer_denote cell deref u)
-  end.
-TimeFun pointer_denote.
+(** The engine program is derived from [pointer_congruence], and every table code is generated. *)
+Egglog Unification from pointer_congruence.
 
-Fixpoint pointer_expression (t : pointer_term) : expr (V := positive) :=
-  match t with
-  | Cell x => EApp 6 [ELit x]
-  | Deref u => EApp 7 [pointer_expression u]
-  end.
-TimeFun pointer_expression.
-
-(** This provider interprets exactly the source congruence in a unary algebra. *)
-Module Type POINTER_QUOTIENT.
-  (* spec: carrier cell deref *)
-  Parameter carrier : pointer_input -> Type.
-  Parameter cell : forall q, positive -> carrier q.
-  Parameter deref : forall q, carrier q -> carrier q.
-  (** Algebra equality reflects the independently generated source congruence. *)
-  Parameter source_exact : forall q t u,
-    pointer_denote (cell q) (deref q) t = pointer_denote (cell q) (deref q) u <->
-      pointer_congruence q t u.
-End POINTER_QUOTIENT.
-
-Definition steensgaard_program : program positive := Program positive
-  [Decl 1 [SVal; SVal] ORel; Decl 2 [SVal; SVal] ORel; Decl 3 [SVal; SVal] ORel;
-   Decl 4 [SVal; SVal] ORel; Decl 6 [SVal] OId; Decl 7 [SId] OId]
-  [Rule positive [Fun positive 1 [Var 1; Var 2] None]
-    [Make 3 6 [Var 1]; Make 4 6 [Var 2]; Make 5 7 [Var 3]; Union (Var 5) (Var 4)];
-   Rule positive [Fun positive 2 [Var 1; Var 2] None]
-    [Make 3 6 [Var 1]; Make 4 6 [Var 2]; Make 5 7 [Var 3]; Make 6 7 [Var 4];
-      Union (Var 5) (Var 6)];
-   Rule positive [Fun positive 3 [Var 1; Var 2] None]
-    [Make 3 6 [Var 1]; Make 4 6 [Var 2]; Make 5 7 [Var 3]; Make 6 7 [Var 4];
-      Make 7 7 [Var 6]; Union (Var 5) (Var 7)];
-   Rule positive [Fun positive 4 [Var 1; Var 2] None]
-    [Make 3 6 [Var 1]; Make 4 6 [Var 2]; Make 5 7 [Var 3]; Make 6 7 [Var 4];
-      Make 7 7 [Var 5]; Union (Var 7) (Var 6)]].
-
-Definition steensgaard_seed_row (q : pointer_input) f (k : list (cell positive))
-    (o : option (cell positive)) :=
-  o = None /\ exists x y, k = [Val x; Val y] /\
-    ((f = 1%positive /\ (In (Addr x y) (constraints q) \/ In (x, y) (initial_pointers q))) \/
-     (f = 2%positive /\ In (Copy x y) (constraints q)) \/
-     (f = 3%positive /\ In (Load x y) (constraints q)) \/
-     (f = 4%positive /\ In (Store x y) (constraints q))).
+Definition steensgaard_program : program positive := Unification.program.
 
 Module Type STEENSGAARD_OPS (V : VALUE_OPS with Definition t := positive)
     (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE_OPS V I)
@@ -111,9 +68,9 @@ Module Type STEENSGAARD_LAWS (V : VALUE with Definition t := positive)
     (Import A : STEENSGAARD_OPS V I J D R).
   (** Compilation emits exactly the four instruction equations as identifier unions. *)
   Parameter compile_rules : forall q, compile q = steensgaard_program.
-  (** Seeding includes source constraints and treats initial pointers as address equations. *)
-  Parameter seed_rows : forall q f k o,
-    row (D.view (seed q)) f k o <-> steensgaard_seed_row q f k o.
+  (** Seeds contain exactly the input rows of the source constraints and initial pointers. *)
+  Parameter seed_rows : forall q f k o, row (D.view (seed q)) f k o <->
+    o = None /\ exists vs, k = map Val vs /\ In (f, vs) (Unification.facts q).
   (** Seeds carry the compiled declarations, the layout of the compiled plan and
       well-sorted rows. *)
   Parameter seed_loaded : forall q, R.loaded (compile q) (R.plan (compile q)) (seed q).
@@ -124,8 +81,10 @@ Module Type STEENSGAARD_LAWS (V : VALUE with Definition t := positive)
     solve q lim = R.run (compile q) (R.plan (compile q)) lim (seed q).
   (** Queries test whether the pointee term equals the addressed cell in the final congruence. *)
   Parameter points_spec : forall db x a, D.wf db -> D.canonical db ->
-    reflect (exists i j, represents (D.view db) (Id i) (pointer_expression (Deref (Cell x))) /\
-      represents (D.view db) (Id j) (pointer_expression (Cell a)) /\ same (D.view db) i j)
+    reflect (exists i j,
+      represents (D.view db) (Id i) (Unification.encode_pointer_term (Deref (Cell x))) /\
+      represents (D.view db) (Id j) (Unification.encode_pointer_term (Cell a)) /\
+      same (D.view db) i j)
       (points db x a).
   (** Every returned database is canonical and well formed. *)
   Parameter solve_wf : forall q lim, D.wf (snd (solve q lim)) /\ D.canonical (snd (solve q lim)).
@@ -204,13 +163,13 @@ Module Type STEENSGAARD_PLAN (V : VALUE_T with Definition t := positive)
   (** Saturation makes each source equation's two ground terms equal in the database. *)
   Parameter saturated_equations : forall q lim db, solve q lim = (Saturated, db) ->
     forall t u, pointer_congruence q t u ->
-    forall i j, represents (D.view db) (Id i) (pointer_expression t) ->
-      represents (D.view db) (Id j) (pointer_expression u) -> same (D.view db) i j.
+    forall i j, represents (D.view db) (Id i) (Unification.encode_pointer_term t) ->
+      represents (D.view db) (Id j) (Unification.encode_pointer_term u) -> same (D.view db) i j.
   (** Congruence consequences queried as pointers have represented endpoint terms. *)
   Parameter endpoints_represented : forall q lim db x a,
     solve q lim = (Saturated, db) -> pointer_congruence q (Deref (Cell x)) (Cell a) ->
-    (exists i, represents (D.view db) (Id i) (pointer_expression (Deref (Cell x)))) /\
-    (exists j, represents (D.view db) (Id j) (pointer_expression (Cell a))).
+    (exists i, represents (D.view db) (Id i) (Unification.encode_pointer_term (Deref (Cell x)))) /\
+    (exists j, represents (D.view db) (Id j) (Unification.encode_pointer_term (Cell a))).
   (** Concrete instruction updates retain coverage by the source congruence. *)
   Parameter step_covered : forall q instruction before after,
     In instruction (constraints q) ->
@@ -239,37 +198,13 @@ End STEENSGAARD_SOUND.
 
 Module Type STEENSGAARD_EXACT (V : VALUE with Definition t := positive)
     (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
-    (A : STEENSGAARD V I J D R) (Q : POINTER_QUOTIENT).
-  Definition source_relation q f x y :=
-    (f = 1%positive /\ (In (Addr x y) (constraints q) \/ In (x, y) (initial_pointers q))) \/
-    (f = 2%positive /\ In (Copy x y) (constraints q)) \/
-    (f = 3%positive /\ In (Load x y) (constraints q)) \/
-    (f = 4%positive /\ In (Store x y) (constraints q)).
-  Definition concrete_model q : model (V := V.t) :=
-    Model (Q.carrier q)
-      (fun f args => exists x y, args = [inr x; inr y] /\ source_relation q f x y)
-      (fun f args =>
-        match f, args with
-        | 6%positive, [inr x] => Q.cell q x
-        | 7%positive, [inl address] => Q.deref q address
-        | _, _ => Q.cell q 1%positive
-        end)
-      (fun _ _ _ => False).
-  (** Address constraints equate the pointer's dereference with the addressed cell. *)
-  Parameter addr_equation : forall q x a,
-    In (Addr x a) (constraints q) \/ In (x, a) (initial_pointers q) ->
-    Q.deref q (Q.cell q x) = Q.cell q a.
-  (** Copy constraints equate their two dereference terms. *)
-  Parameter copy_equation : forall q x y, In (Copy x y) (constraints q) ->
-    Q.deref q (Q.cell q x) = Q.deref q (Q.cell q y).
-  (** Load constraints equate a result's dereference with the operand's second dereference. *)
-  Parameter load_equation : forall q x y, In (Load x y) (constraints q) ->
-    Q.deref q (Q.cell q x) = Q.deref q (Q.deref q (Q.cell q y)).
-  (** Store constraints equate the destination's second dereference with the stored pointer. *)
-  Parameter store_equation : forall q x y, In (Store x y) (constraints q) ->
-    Q.deref q (Q.deref q (Q.cell q x)) = Q.deref q (Q.cell q y).
-  (** Source equations establish validity of all generated union rules. *)
-  Parameter rules_valid : forall q, valid V.prim V.merge (concrete_model q) (A.compile q).
+    (A : STEENSGAARD V I J D R).
+  (** Two terms related by the generated program's congruence are related by the source
+      congruence, so the engine's congruence adds no equation. *)
+  Parameter pointer_congruence_back : forall prim q t u,
+    congruent prim Unification.spec (Unification.inputs q)
+      (Unification.encode_pointer_term t) (Unification.encode_pointer_term u) ->
+    pointer_congruence q t u.
 
   (** Saturated query answers are exactly the source congruence approximation. *)
   Parameter solve_exact : forall q lim db, A.solve q lim = (Saturated, db) ->

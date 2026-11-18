@@ -12,7 +12,7 @@
 From Stdlib Require Import List PArith NArith Bool.
 From Galois.Base Require Import Key.
 From Galois.Egglog Require Import ValueSig Syntax Index Join Database Run.
-From Galois.Clients Require Import AndersenSig Andersen Steensgaard.
+From Galois.Clients Require Import AndersenSig Andersen SteensgaardSig Steensgaard.
 Import List.ListNotations.
 
 (** * Fixtures *)
@@ -44,12 +44,13 @@ Module SeedTests.
 
   Local Open Scope positive_scope.
 
-  (** The queries that the seed rows of Steensgaard must answer. *)
-  Definition seed_queries : list (positive * list (cell positive)) :=
-    [(1, [Val 1; Val 10]);
-     (1, [Val 2; Val 20]);
-     (2, [Val 3; Val 1]);
-     (1, [Val 3; Val 10])].
+  (** The queries that the seed rows of Steensgaard must answer, with the table codes that its
+      derived program generates. *)
+  Definition steensgaard_seed_queries : list (positive * list (cell positive)) :=
+    [(Unification.Addr_code, [Val 1; Val 10]);
+     (Unification.Addr_code, [Val 2; Val 20]);
+     (Unification.Copy_code, [Val 3; Val 1]);
+     (Unification.Addr_code, [Val 3; Val 10])].
 
   (** The same queries with the table codes that the derived Andersen program generates. *)
   Definition andersen_seed_queries : list (positive * list (cell positive)) :=
@@ -70,7 +71,7 @@ Module SeedTests.
   (** Steensgaard stores the same three source constraints in its seed database. *)
   Example steensgaard_seed_keeps_input_rows :
     map (fun query => fst (SolveDatabase.lookup (fst query) (snd query)
-      (SolveSteensgaard.seed solve_input))) seed_queries =
+      (SolveSteensgaard.seed solve_input))) steensgaard_seed_queries =
     [Some None; Some None; Some None; None].
   Proof.
     vm_compute; reflexivity.
