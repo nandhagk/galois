@@ -12,10 +12,11 @@ hours are estimates, and every card is at most ~6 hours.
 | LW-BD | `theories/Front/LowerBodies.v` | `query_body_matches`, `query_body_lets`, `checks_last_matches` | ~5 |
 | LW-K | `theories/Front/LowerKinds.v` | `relational_kinds_ok`, `head_vars_bound` | ~4 |
 | LW-S | `theories/Front/LowerScopes.v` | `clause_rule_scoped` | ~4 |
+| LW-SO | `theories/Front/LowerSorts.v` | `clause_sorts_query` | ~4.5 |
 | LW-CP | `theories/Front/LowerCompleteness.v` | `lower_complete` | ~2.5 |
 | LW-C | `theories/Front/LowerComplete.v` | `lower_closed` | ~4 |
 | LW-SD | `theories/Front/LowerSound.v` | `lower_sound` | ~5 |
-| LW-V | `theories/Front/LowerValid.v` | `lower_valid` | ~5 |
+| LW-V | `theories/Front/LowerValid.v` | `lower_valid` | ~5.75 |
 | R-1 | `theories/Front/RunnerFacts.v` | `plan_ok`, `seed_rows`, `seed_ready`, `holds_spec`, `seed_sat`, `solve_keeps`, `saturate_keeps` | ~5.5 |
 | RT-1 | `theories/Front/RunnerSeedTime.v` | constant `c_runner`, `T_seed_amort`, `T_seed_le`, `seed_complexity`, `T_solve_split` | ~4 |
 | RT-Q | `theories/Front/RunnerQueryTime.v` | constant `c_query`, `T_holds_le`, `holds_complexity`, `T_same_cell_le`, `same_cell_complexity` | ~2.5 |
@@ -28,7 +29,7 @@ hours are estimates, and every card is at most ~6 hours.
 | CC-C | `theories/Front/CongruenceClosure.v` | `closure_model` | ~4 |
 | REF-1 | `theories/Front/CongruenceInstances.v` | `instances_listed`, `instances_apps` | ~5 |
 | REF-2 | `theories/Front/CongruenceRef.v` | `congruent_closure`, `exact_model` | ~4 |
-| G-1 | `theories/Front/GroundSound.v` | `congruent_denote`, `solve_sound` | ~5 |
+| G-1 | `theories/Front/GroundSound.v` | `congruent_denote`, `solve_sound` | ~6 |
 | G-2a | `theories/Front/GroundClasses.v` | `outcome_rows`, `class_sat`, `class_nu_same` | ~6 |
 | G-2b | `theories/Front/GroundSatisfies.v` | `class_satisfies` | ~3.5 |
 | G-3a | `theories/Front/GroundBuild.v` | `instance_built` | ~4 |
@@ -40,6 +41,18 @@ hours are estimates, and every card is at most ~6 hours.
 | RW-5 | `theories/Front/RewriteSorts.v` | `rewrite_right_app` | ~5.5 |
 | LT-1 | `theories/Front/LatticeSound.v` | `lattice_model`, `solve_sound` | ~5 |
 | LT-2 | `theories/Front/LatticeComplete.v` | `lower_assigned`, `solve_complete` | ~4.5 |
+| LR-1 | `theories/Front/LatticeReadSound.v` | `read_model`, `solve_sound`, `solve_rows_sound` | ~5.5 |
+| LR-2 | `theories/Front/LatticeReadQueries.v` | `query_body_next`, `query_body_stored_matches`, `query_body_stored_lets` | ~6 |
+| LR-3 | `theories/Front/LatticeReadRaise.v` | `body_reads_raise`, `head_keys_raise`, `derive_head_rel` | ~5 |
+| LR-4 | `theories/Front/LatticeReadClosed.v` | `lower_reads_closed` | ~6 |
+| LR-5 | `theories/Front/LatticeReadComplete.v` | `solve_complete`, `solve_rows_complete` | ~2 |
+| RR-1 | `theories/Front/RewriteReadModel.v` | `unit_model_satisfies` | ~5 |
+| RR-3 | `theories/Front/RewriteReadSound.v` | `saturate_rows_sound`, `saturate_values_sound` | ~2.25 |
+| RR-4 | `theories/Front/RewriteReadValues.v` | `read_premise_values` | ~2 |
+| RR-5 | `theories/Front/RewriteReadSorts.v` | `read_right_app` | ~5.5 |
+| RR-6 | `theories/Front/RewriteReadClosed.v` | `saturate_reads_closed` | ~6 |
+| RR-7 | `theories/Front/RewriteReadRows.v` | `saturate_rows_complete`, `saturate_derived_closed` | ~2.5 |
+| RR-8 | `theories/Front/RewriteReadHeads.v` | `equation_sides_class` | ~2 |
 | EX | `theories/Front/Extraction.v` | `fits_inventory`, `decode_agrees_unfold`, `cheapest_represents`, `cheapest_optimal` | ~4 |
 | EX-T | `theories/Front/ExtractionTime.v` | constant `c_extraction`, `T_decode_le`, `decode_complexity`, `T_cheapest_split`, `cheapest_complexity` | ~6 |
 | AN-1 | `theories/Clients/Andersen.v` | `facts_rows_ok`, `seed_rows`, `seed_loaded`, `seed_wf`, `points_spec`, `solve_exact` | ~4 |
