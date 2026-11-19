@@ -9,7 +9,7 @@
     equational clause, and [egglog_read_congruent] shows that every instance of an equation is a
     read congruence of the encodings of its two sides.
 
-    For example, the fire lemma of the rewrite [known xs x c -> Mul (Var x) a => Scale c a] reads
+    For example, the fire lemma of the rewrite [known xs x c -> Mul (Ref x) a => Scale c a] reads
     its premise [known xs x c] as a derived row by the generated lemma [known_derived].
 
     Builds on: the meaning of equations that read derived rows, the meaning of lattice reads, the

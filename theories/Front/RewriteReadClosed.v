@@ -10,7 +10,7 @@
     [RewriteReadValues.v] and [RewriteReadSorts.v] as parameters.
 
     For example, when the outcome stores the row [known 1 5], the class of
-    [Mul (Var 1) (Var 2)] also represents [Scale 5 (Var 2)].
+    [Mul (Ref 1) (Ref 2)] also represents [Scale 5 (Ref 2)].
 
     Builds on: the signature of rewrites that read rows and its plans, the plans of lattice
     reads and of rewrites, the runner facts, the lowering laws and the run contracts. *)
@@ -36,7 +36,8 @@ Module RewriteReadClosed (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE 
      [LW.build_pats_represents] build the right side, and [RS.read_right_app] makes it an
      application, which the union joins with the class. *)
   Lemma saturate_reads_closed : forall (s : spec V.t) rows es lim db cs i t u,
-    spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->
+    spec_ok s = true -> value_tables s = true -> rows_ok s rows = true ->
+    forallb (term_ok s) es = true ->
     X.saturate (spec_program s) rows es lim = (Saturated, db, cs) ->
     represents (D.view db) (Id i) t ->
     read_step V.prim s (view_rows (D.view db)) (stored_at (D.view db)) t u ->

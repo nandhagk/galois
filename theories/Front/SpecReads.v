@@ -1,7 +1,7 @@
 (** * Equations that read derived rows and lattice values
 
     A clause of an equation may read the rows of a relation over values and the values of a
-    lattice table, as the rewrite [known x c -> Mul (Var x) a => Scale c a] reads the rows of the
+    lattice table, as the rewrite [known x c -> Mul (Ref x) a => Scale c a] reads the rows of the
     relation [known]. This file gives such clauses a meaning over a relation [P] of rows and a
     relation [Q] of read values. [read_premise] says that a premise holds under an environment
     of terms, [read_step] is one step of rewriting, and [read_congruent] is the least congruence
@@ -11,7 +11,7 @@
     premises read what the relations over values derive.
 
     For example, when [known 1 5] is a derived row, the step of the rewrite above takes the term
-    [Mul (Var 1) (Var 2)] to [Scale 5 (Var 2)], and the two terms are read-congruent.
+    [Mul (Ref 1) (Ref 2)] to [Scale 5 (Ref 2)], and the two terms are read-congruent.
 
     Main results
     - [input_read_premise] With no read values, a premise holds in the input rows exactly when it

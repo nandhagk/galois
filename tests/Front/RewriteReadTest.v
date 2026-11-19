@@ -363,6 +363,7 @@ Module TheoremTests.
     - vm_compute. reflexivity.
     - vm_compute. reflexivity.
     - vm_compute. reflexivity.
+    - vm_compute. reflexivity.
     - exact Hsat.
     - exact Hrep.
     - exact (Folds.fold_known_steps FoldValue.prim prog 1 5 (Ref 2) one_is_known).

@@ -1,7 +1,7 @@
 (** * Rewrites that read derived rows and lattice values
 
     A clause of an equation may read the rows of relations over values and the values of
-    lattice tables, as the rewrite [known x c -> Mul (Var x) a => Scale c a] reads the rows of
+    lattice tables, as the rewrite [known x c -> Mul (Ref x) a => Scale c a] reads the rows of
     the relation [known]. [SpecReads.v] gives such clauses their meaning, and this file states
     what a run of such a specification computes. When every relation and every lattice table
     takes only values ([value_tables]), the classes of the e-graph never reach them. In every
@@ -13,7 +13,7 @@
     premises read derived rows ([saturate_derived_closed]).
 
     For example, when [known 1 5] is a derived row, a saturated outcome that represents
-    [Mul (Var 1) (Var 2)] by a class also represents [Scale 5 (Var 2)] by that class.
+    [Mul (Ref 1) (Ref 2)] by a class also represents [Scale 5 (Ref 2)] by that class.
 
     Main results
     - [saturate_rows_sound] In every outcome a stored row of values is a row of the meaning of
@@ -105,7 +105,8 @@ Module Type REWRITE_READ_CLOSED (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DA
   (** At saturation, a rewrite step whose premises read the rows and the stored values of the
       outcome, from a represented term, reaches a term of its class. *)
   Parameter saturate_reads_closed : forall (s : spec V.t) rows es lim db cs i t u,
-    spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->
+    spec_ok s = true -> value_tables s = true -> rows_ok s rows = true ->
+    forallb (term_ok s) es = true ->
     X.saturate (spec_program s) rows es lim = (Saturated, db, cs) ->
     represents (D.view db) (Id i) t ->
     read_step V.prim s (view_rows (D.view db)) (stored_at (D.view db)) t u ->
@@ -123,7 +124,8 @@ Module Type REWRITE_READ_ROWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATA
   (** At saturation, a rewrite step whose premises read derived rows, from a represented term,
       reaches a term of its class. *)
   Parameter saturate_derived_closed : forall (s : spec V.t) rows es lim db cs i t u,
-    spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->
+    spec_ok s = true -> value_tables s = true -> rows_ok s rows = true ->
+    forallb (term_ok s) es = true ->
     X.saturate (spec_program s) rows es lim = (Saturated, db, cs) ->
     represents (D.view db) (Id i) t ->
     read_step V.prim s (derived V.prim s (rows_in rows)) no_values t u ->
@@ -177,7 +179,8 @@ Module Type REWRITE_READ_SORTS_PLAN (V : VALUE).
       application. *)
   Parameter read_right_app : forall (s : spec V.t) (P : positive -> list V.t -> Prop)
       (Q : positive -> list V.t -> V.t -> Prop) (w : @view V.t) c e l r tl tr i,
-    spec_ok s = true -> view_sorted (program_sorts (spec_program s)) w ->
+    spec_ok s = true -> value_tables s = true ->
+    view_sorted (program_sorts (spec_program s)) w ->
     In c (clauses s) -> head c = Rewrites l r ->
     Forall (read_premise V.prim P Q e) (body c) ->
     pat_term V.prim e l = Some tl -> pat_term V.prim e r = Some tr ->

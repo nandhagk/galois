@@ -7,7 +7,7 @@
     well-sorted environments, which the soundness of [RewriteReadSound.v] needs beside the
     clauses of the relations.
 
-    For example, the rule of the rewrite [Mul (Var x) a => Scale c a] builds [Scale c a] and
+    For example, the rule of the rewrite [Mul (Ref x) a => Scale c a] builds [Scale c a] and
     joins it with the matched class, and both are the one class of the model.
 
     Builds on: the signature of rewrites that read rows, the specifications, their lowering and

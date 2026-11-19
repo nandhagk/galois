@@ -9,8 +9,8 @@
     of [RewriteTerms.v] and the closure of [RewriteReadClosed.v] as parameters.
 
     For example, a saturated outcome of constant propagation with rewrites stores [known 1 5]
-    when [known 1 5] is a derived row, so it joins [Mul (Var 1) (Var 2)] with
-    [Scale 5 (Var 2)].
+    when [known 1 5] is a derived row, so it joins [Mul (Ref 1) (Ref 2)] with
+    [Scale 5 (Ref 2)].
 
     Builds on: the signature of rewrites that read rows, the meaning of equations that read
     rows, the facts of specifications, the runner facts, the lowering laws, the plan of added
@@ -43,7 +43,8 @@ Module RewriteReadRows (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V 
      [saturate_rows_complete], and to its stored values, because [no_values] holds of no
      value. [RC.saturate_reads_closed] concludes. *)
   Lemma saturate_derived_closed : forall (s : spec V.t) rows es lim db cs i t u,
-    spec_ok s = true -> rows_ok s rows = true -> forallb (term_ok s) es = true ->
+    spec_ok s = true -> value_tables s = true -> rows_ok s rows = true ->
+    forallb (term_ok s) es = true ->
     X.saturate (spec_program s) rows es lim = (Saturated, db, cs) ->
     represents (D.view db) (Id i) t ->
     read_step V.prim s (derived V.prim s (rows_in rows)) no_values t u ->
