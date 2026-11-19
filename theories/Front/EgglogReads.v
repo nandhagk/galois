@@ -7,8 +7,9 @@
     [closed] skips the clauses of the equations, which derive no row. An instance of an equation
     is then a read congruence of [SpecReads.v] over the derived rows, or over the rows and the
     merges of the meaning of lattice reads in a program with lattice tables. An instance of a
-    rewrite is also a read step, by its lemma [<C>_steps]. The tactics of [DeriveReads.v] prove
-    these lemmas.
+    rewrite is also a read step, by its lemma [<C>_steps]. A pair that a list of a clause holds
+    as a variable is two terms of the environment of these lemmas, as it is in [egglog.glue].
+    The tactics of [DeriveReads.v] prove these lemmas.
 
     For example, [Egglog Folds from known fold] reads the relation [known] and the equation
     [fold], and [Folds.fold_congruent] says that [fold prog t u] gives
@@ -109,10 +110,13 @@ read-fire-type K R NP Encs Lats Prim Spec I (app [global (indt R) | All]) C :-
   read-meaning Lats Prim Spec I PR QR, read-conclusion K Prim Spec PR QR TL TR C.
 
 % The proof of a lemma of a clause of an equation: lambdas over the binders and the premises,
-% and the clause applied to the environment of the terms of the binders.
+% and the clause applied to the environment of the terms of the binders. A pair that a list
+% holds as a variable is two terms of the environment, as split-read-fire says.
 pred read-fire-proof i:readlemma, i:list table, i:inductive, i:int,
   i:list (pair inductive term), i:list rel, i:term, i:term, i:term, i:term, i:term,
   i:list term, i:list term, i:term, o:term.
+read-fire-proof K Ts R NP Encs Lats Prim Spec I Ck Kn Vals Hyps (prod N T F) (fun N T B) :-
+  split-read-fire K Ts R NP Encs Lats Prim Spec I Ck Kn Vals Hyps N T F B, !.
 read-fire-proof K Ts R NP Encs Lats Prim Spec I Ck Kn Vals Hyps (prod N Ty F) (fun N Ty B) :- !,
   pi x\ sigma Vals1 Hyps1 E\ decl x N Ty =>
     if (is-prop Ty)
@@ -132,6 +136,17 @@ read-fire-proof K _ R NP Encs Lats Prim Spec I Ck Kn Vals Hyps (app [global (ind
      (Head = {{ @Rewrites positive lp:PL lp:PRt }}, Which = {{ or_intror eq_refl }}),
   read-body-proof Prim PR QR Input Env Hyps BodyT BodyP,
   read-clause-proof K Prim Spec PR QR Ck Env PL PRt TL TR Kn Which BodyP P.
+
+% The proof of a lemma of a clause of an equation, where the two variables of the pair are the
+% terms of its projections, as in split-eq-fire.
+pred split-read-fire i:readlemma, i:list table, i:inductive, i:int,
+  i:list (pair inductive term), i:list rel, i:term, i:term, i:term, i:term, i:term,
+  i:list term, i:list term, i:name, i:term, i:(term -> term), o:(term -> term).
+split-read-fire K Ts R NP Encs Lats Prim Spec I Ck Kn Vals Hyps N T F B :-
+  split-pair T F A B2, !,
+  pi x\ sigma Vals1\ decl x N T =>
+    (pair-vals Ts Encs A B2 x Vals Vals1,
+     read-fire-proof K Ts R NP Encs Lats Prim Spec I Ck Kn Vals1 Hyps (F x) (B x)).
 
 % The clause of a read congruence or of a read step, applied to the proof of its body.
 pred read-clause-proof i:readlemma, i:term, i:term, i:term, i:term, i:term, i:term, i:term,

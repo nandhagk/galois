@@ -4,7 +4,9 @@
     command proves that each relation over values holds exactly when its row is derived, and
     that each instance of an equation is a congruence of the encodings of its two sides. Each
     constructor with a clause gets a fire lemma, which says that its clause derives the
-    conclusion from the premises. The tactics of [DeriveTactics.v] and [DeriveCongruence.v]
+    conclusion from the premises. In the fire lemma of an equation, a variable of a list type is
+    the chain of the cons nodes of the list, and a pair that a list holds as a variable is two
+    terms, one for each side. The tactics of [DeriveTactics.v] and [DeriveCongruence.v]
     prove the fire lemmas, the lemma [closed] and the lemmas [<R>_back] and [<R>_congruent], and
     the command calls them by name. The lemma [<R>_derived] says that each instance of [R] has
     its derived row. The command builds its proof as a fixpoint that takes an instance apart
@@ -386,16 +388,21 @@ eq-fire-type R NP Encs Prim Spec I (app [global (indt R) | All])
   drop NP All [L, Rt], coq.env.indt R _ _ _ Ar _ _, index-types NP Ar [T, _],
   enc-of Encs T Enc, TL = app [Enc, L], TR = app [Enc, Rt].
 
-% The term of a binder in the environment of an equational clause: a literal for a value, the
-% encoder for a datatype, and the encoder of its lists for a list.
+% The term of a binder in the environment of an equational clause is the chain of cons nodes for
+% a list, also of values, a literal for a value, and the encoder for a datatype.
 pred binder-expr i:list table, i:list (pair inductive term), i:term, i:term, o:term.
+binder-expr Ts Encs Ty X (app [Enc, X]) :- list-of Ty E,
+  list-encoder Ts (binder-expr Ts Encs) E Enc, !.
 binder-expr _ _ Ty X {{ @Model.ELit positive lp:E }} :- value-type Ty, !, enc-by-ty Ty X E.
 binder-expr _ Encs Ty X (app [Enc, X]) :- enc-of Encs Ty Enc, !.
-binder-expr Ts Encs Ty X (app [Enc, X]) :- list-of Ty E,
-  list-encoder Ts (binder-expr Ts Encs) E Enc.
 
+% The proof of a fire lemma of an equation takes the binders and the premises, and applies the
+% clause to the environment of the terms of the binders. A pair that a list holds as a variable
+% is two terms of the environment, as split-eq-fire says.
 pred eq-fire-proof i:list table, i:inductive, i:int, i:list (pair inductive term), i:term,
   i:term, i:term, i:term, i:term, i:list term, i:list term, i:list term, i:term, o:term.
+eq-fire-proof Ts R NP Encs Prim Spec I Ck Kn Ps Vals Hyps (prod N T F) (fun N T B) :-
+  split-eq-fire Ts R NP Encs Prim Spec I Ck Kn Ps Vals Hyps N T F B, !.
 eq-fire-proof Ts R NP Encs Prim Spec I Ck Kn Ps Vals Hyps (prod N Ty F) (fun N Ty B) :- !,
   pi x\ sigma Vals1 Hyps1 E\ decl x N Ty =>
     if (is-prop Ty)
@@ -415,6 +422,26 @@ eq-fire-proof _ R NP Encs Prim Spec I Ck Kn _ Vals Hyps (app [global (indt R) | 
   eq-body-proof Prim I Env Hyps BodyT BodyP,
   P = {{ @congruent_clause positive lp:Prim lp:Spec lp:I lp:Ck lp:Env lp:PL lp:PR lp:TL lp:TR
           lp:Kn lp:Which lp:BodyP _ _ }}.
+
+% The proof of a fire lemma of an equation, where the two variables of the pair are the terms of
+% its projections. A relation reads a list only as a value, where a variable element stops the
+% command, so a fire lemma of a relation has no such pair.
+pred split-eq-fire i:list table, i:inductive, i:int, i:list (pair inductive term), i:term,
+  i:term, i:term, i:term, i:term, i:list term, i:list term, i:list term, i:name, i:term,
+  i:(term -> term), o:(term -> term).
+split-eq-fire Ts R NP Encs Prim Spec I Ck Kn Ps Vals Hyps N T F B :- split-pair T F A B2, !,
+  pi x\ sigma Vals1\ decl x N T =>
+    (pair-vals Ts Encs A B2 x Vals Vals1,
+     eq-fire-proof Ts R NP Encs Prim Spec I Ck Kn Ps Vals1 Hyps (F x) (B x)).
+
+% The terms Vals of an environment, followed by the terms of the two sides of the pair X of type
+% [A * B].
+pred pair-vals i:list table, i:list (pair inductive term), i:term, i:term, i:term,
+  i:list term, o:list term.
+pair-vals Ts Encs A B X Vals Vals1 :-
+  binder-expr Ts Encs A {{ @fst lp:A lp:B lp:X }} EA,
+  binder-expr Ts Encs B {{ @snd lp:A lp:B lp:X }} EB,
+  std.append Vals [EA, EB] Vals1.
 
 % The premises of a ground clause hold in the input rows: one hole per input row or primitive.
 pred eq-body-proof i:term, i:term, i:term, i:list term, i:term, o:term.

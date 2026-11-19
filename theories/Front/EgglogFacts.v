@@ -3,10 +3,12 @@
     This file declares the Elpi file [egglog.facts] of the command [Egglog] of [Derive.v].
     It defines the input rows of a program as a function of the parameters of its first
     relation, the meaning of each table as a relation on rows, and the encoder of each
-    datatype, which writes a term of the datatype as an expression of the engine. An input
-    list holds pairs of values or constructors of an input type. Each pair is a row of the
-    input table of the list, and each constructor that a premise reads is a row of the table
-    of that constructor.
+    datatype, which writes a term of the datatype as an expression of the engine. The encoder
+    of a datatype writes a term of another datatype that it holds with the encoder of that
+    datatype, so the command stops at two datatypes that hold each other. An input list holds
+    pairs of values or constructors of an input type. Each pair is a row of the input table of
+    the list, and each constructor that a premise reads is a row of the table of that
+    constructor.
 
     For example, [Path.facts edges] holds the row [(Path.edges_code, [x; y])] for each pair
     [(x, y)] of [edges], and [Vectors.encode_math] encodes a term of the datatype [math].
@@ -124,26 +126,39 @@ facts-body Ts Sources Ps FB :- std.map Sources (rows-of Ts Ps) Rows, concat-rows
 % ---------------------------------------------------------------------------------------------
 % Encoders of datatypes
 
-% The expression of a constructor argument: the encoder [F] on the datatype [D], a literal on a
-% value, and a chain of cons nodes on a list.
+% The datatypes whose encoders the command is building.
+pred encoding o:inductive.
+
+% The expression of a constructor argument of the datatype D. A list, also of values, is a chain
+% of cons nodes, a term of another datatype D2 is the encoder of D2 applied to it, a term of D
+% is the encoder [F] applied to it, and a value is a literal. The encoder of D2 comes inside the
+% encoder of D, so D2 must not hold D.
 pred encode-arg i:list table, i:inductive, i:term, i:term, i:term, o:term.
-encode-arg _ D F Ty X {{ lp:F lp:X }} :- Ty = global (indt D), !.
-encode-arg _ _ _ Ty X {{ @Model.ELit positive lp:E }} :- value-type Ty, !, enc-by-ty Ty X E.
 encode-arg Ts D F Ty X (app [Enc, X]) :- list-of Ty E, !,
   list-encoder Ts (encode-arg Ts D F) E Enc.
+encode-arg Ts D _ Ty X (app [Fix, X]) :- datatype Ty D2, not (D2 = D), !,
+  if (encoding D2)
+     (coq.error "Egglog: the datatypes" {coq.gref->id (indt D)} "and"
+       {coq.gref->id (indt D2)} "hold each other, and the command encodes no datatypes that"
+       "hold each other.")
+     (encoder Ts D2 Fix).
+encode-arg _ D F Ty X {{ lp:F lp:X }} :- Ty = global (indt D), !.
+encode-arg _ _ _ Ty X {{ @Model.ELit positive lp:E }} :- value-type Ty, !, enc-by-ty Ty X E.
 encode-arg _ _ _ Ty _ _ :- coq.error "Egglog: a datatype argument has type"
-  {coq.term->string Ty} "which is neither a value type, the datatype itself nor a list".
+  {coq.term->string Ty} "which is neither a value type, a datatype nor a list".
 
 pred encode-branch i:list table, i:inductive, i:term, i:constructor, i:term, o:term.
 encode-branch Ts D F K KTy B :- arg-types KTy Tys, code-of Ts (tk-con K) Code,
   mk-lams Tys [] (xs\ body\ sigma Es L\ std.map2 Tys xs (encode-arg Ts D F) Es,
     list->term {{ @Model.expr positive }} Es L, body = {{ @Model.EApp positive lp:Code lp:L }}) B.
 
+% The encoder of the datatype D is a fixpoint over the terms of D. Each datatype that D holds
+% gets its own encoder inside it, while D is among the datatypes that the command is encoding.
 pred encoder i:list table, i:inductive, o:term.
 encoder Ts D Fix :-
   T = global (indt D), RetTy = {{ @Model.expr positive }},
   coq.env.indt D _ _ _ _ Ks KTys,
-  (pi f\ std.map2 Ks KTys (encode-branch Ts D f) (Bs f)),
+  (encoding D => pi f\ std.map2 Ks KTys (encode-branch Ts D f) (Bs f)),
   Fix = fix `encode` 0 {{ lp:T -> lp:RetTy }}
           (f\ fun `t` T (t\ match t (fun `t` T _\ RetTy) (Bs f))).
 

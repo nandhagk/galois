@@ -3,11 +3,14 @@
     This file declares the Elpi file [egglog.reading] of the command [Egglog] of [Derive.v].
     It reads the type of an index as a sort, walks the binders of a constructor into numbered
     variables and premises, reads an input premise [In e (f q)] as the key of an input table,
-    and reads a relation as a table over values or as an equation over a datatype. The tables
-    of a program are keys with codes, and the code of a table is a constant once the command
-    has defined it. The relations over values that read each other through their premises
-    form a group, and the groups come in an order where each group comes after the groups
-    that it reads.
+    and reads a relation as a table over values or as an equation over a datatype. The
+    datatypes of a program are the datatype of the indices of each equation and every datatype
+    that its constructors reach, directly or through the elements of lists. A pair that a list
+    of a clause holds as one variable [p] is two variables of the clause, one for each side.
+    The tables of a program are keys with codes, and the code of a table is a constant once the
+    command has defined it. The relations over values that read each other through their
+    premises form a group, and the groups come in an order where each group comes after the
+    groups that it reads.
 
     For example, [rel-info] reads the relation [path edges : positive -> positive -> Prop] as
     a relation over values with the sorts [[SVal; SVal]], and [walk] numbers the binders
@@ -37,10 +40,38 @@ sort-term T {{ SId }} :- datatype T _, !.
 sort-term T _ :- coq.error "Egglog: a table argument has type" {coq.term->string T}
   "which is neither a registered value type nor a datatype".
 
-% The datatypes that a term or type mentions, by its constructors.
+% The element type of a list type.
+pred list-of i:term, o:term.
+list-of {{ list lp:E }} E.
+
+% The components of a list element: the two sides of a pair, or the element itself.
+pred elem-parts i:term, o:list term.
+elem-parts {{ prod lp:A lp:B }} [A, B] :- !.
+elem-parts E [E].
+
+% The datatypes of a relation index of type T: the datatype T, and every datatype that it
+% reaches through the arguments of its constructors and the elements of their lists, in the
+% order of a walk from T.
 pred datatypes-of-type i:term, o:list inductive.
-datatypes-of-type T [I] :- datatype T I, !.
+datatypes-of-type T Ds :- datatype T I, !, reachable-datatypes [I] [] Ds.
 datatypes-of-type _ [].
+
+pred reachable-datatypes i:list inductive, i:list inductive, o:list inductive.
+reachable-datatypes [] Acc Out :- std.rev Acc Out.
+reachable-datatypes [I | Is] Acc Out :- std.mem! Acc I, !, reachable-datatypes Is Acc Out.
+reachable-datatypes [I | Is] Acc Out :-
+  coq.env.indt I _ _ _ _ _ KTys,
+  std.map KTys (kty\ ds\ sigma Tys\ arg-types kty Tys,
+    std.flatten {std.map Tys type-datatypes} ds) Dss,
+  std.flatten Dss Ds, std.append Ds Is Next,
+  reachable-datatypes Next [I | Acc] Out.
+
+% The datatypes of a constructor argument of type T: T itself, or those of the elements of a
+% list.
+pred type-datatypes i:term, o:list inductive.
+type-datatypes T [I] :- datatype T I, !.
+type-datatypes T Ds :- list-of T E, !, std.flatten {std.map {elem-parts E} type-datatypes} Ds.
+type-datatypes _ [].
 
 % ---------------------------------------------------------------------------------------------
 % Tables
@@ -80,9 +111,11 @@ pred is-prop i:term.
 is-prop Ty :- coq.typecheck Ty S ok, coq.reduction.lazy.whd S (sort prop).
 
 % walk Ty Vars Hyps K: binders of data become numbered variables, binders of propositions
-% become hypotheses, and K receives them with the conclusion.
+% become hypotheses, and K receives them with the conclusion. A pair that a list holds as an
+% element becomes two variables, as split-walk says.
 pred walk i:term, i:list (pair term int), i:list term,
   i:(list (pair term int) -> list term -> term -> prop).
+walk (prod Name Ty F) Vars Hyps K :- split-walk Name Ty F Vars Hyps K, !.
 walk (prod Name Ty F) Vars Hyps K :- is-prop Ty, !,
   pi h\ decl h Name Ty => walk (F h) Vars [Ty | Hyps] K.
 walk (prod Name Ty F) Vars Hyps K :- !, std.length Vars N, I is N + 1,
@@ -92,6 +125,55 @@ walk C Vars Hyps K :- std.rev Vars Vs, std.rev Hyps Hs, K Vs Hs C.
 pred drop i:int, i:list term, o:list term.
 drop 0 L L :- !.
 drop N [_ | L] R :- M is N - 1, drop M L R.
+
+% ---------------------------------------------------------------------------------------------
+% Pairs written as variables in lists
+
+% A binder of type [A * B] that a list holds as an element, as in [p :: rest]. The command reads
+% such a pair as its two sides, which are two variables of the clause.
+pred split-pair i:term, i:(term -> term), o:term, o:term.
+split-pair {{ prod lp:A lp:B }} F A B :- pi x\ list-elem x (F x).
+
+% The term T holds X as an element of a list.
+pred list-elem i:term, i:term.
+list-elem X {{ @cons _ lp:X _ }} :- !.
+list-elem X (app Ts) :- !, std.exists Ts (list-elem X).
+list-elem X (prod _ T F) :- !, (list-elem X T ; pi y\ list-elem X (F y)).
+list-elem X (fun _ T F) :- !, (list-elem X T ; pi y\ list-elem X (F y)).
+
+% Walk the binders of a clause, where the pair [p] becomes two variables [a] and [b]. The clause
+% reads [(a, b)] wherever it has [p], and [a] and [b] where it has [fst p] and [snd p].
+pred split-walk i:name, i:term, i:(term -> term), i:list (pair term int), i:list term,
+  i:(list (pair term int) -> list term -> term -> prop).
+split-walk N T F Vars Hyps K :- split-pair T F A B, !,
+  std.length Vars L, I is L + 1, J is L + 2,
+  coq.name->id N S, coq.id->name {calc (S ^ "_1")} NA, coq.id->name {calc (S ^ "_2")} NB,
+  pi a b\ sigma P Body\ decl a NA A => decl b NB B =>
+    (P = {{ @pair lp:A lp:B lp:a lp:b }}, unproject (F P) Body,
+     if (pair-outside-list P Body)
+        (coq.error "Egglog: the pair" S "is an element of a list in a pattern, so it stands for"
+          "its two sides, and the clause uses it in another place as well. Write its sides as"
+          "two variables, or use only fst" S "and snd" S "there.")
+        true,
+     walk Body [pr b J, pr a I | Vars] Hyps K).
+
+% The pair P occurs in the term T outside the elements of lists.
+pred pair-outside-list i:term, i:term.
+pair-outside-list P {{ @cons _ lp:X lp:Rest }} :- !,
+  (not (X = P), pair-outside-list P X ; pair-outside-list P Rest).
+pair-outside-list P P :- !.
+pair-outside-list P (app Ts) :- !, std.exists Ts (pair-outside-list P).
+pair-outside-list P (prod _ T F) :- !, (pair-outside-list P T ; pi y\ pair-outside-list P (F y)).
+pair-outside-list P (fun _ T F) :- !, (pair-outside-list P T ; pi y\ pair-outside-list P (F y)).
+
+% The term T with each projection of an explicit pair replaced by its side.
+pred unproject i:term, o:term.
+unproject T U :-
+  (pi A B A2 B2 X Y X1\
+    copy {{ @fst lp:A lp:B (@pair lp:A2 lp:B2 lp:X lp:Y) }} X1 :- !, copy X X1) =>
+  (pi A B A2 B2 X Y Y1\
+    copy {{ @snd lp:A lp:B (@pair lp:A2 lp:B2 lp:X lp:Y) }} Y1 :- !, copy Y Y1) =>
+  copy T U.
 
 % ---------------------------------------------------------------------------------------------
 % Input premises

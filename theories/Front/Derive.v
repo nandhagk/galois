@@ -9,12 +9,15 @@
     so relations may read each other, as those of a mutual inductive do. Variables are
     numbered in binder order, and every table code and variable number is generated. The
     command [Egglog Value T M.] registers the encoder module [M] of a value type [T], and the
-    values of [T] enter the engine through [M.encode]. After [with Ops], the declaration
-    [merge R g] makes [R] a lattice table, whose last index is its value and whose merge is the
-    primitive [g] of [Ops]. A constructor of [R] assigns a value, and a premise over [R] reads
-    the stored value. An argument of type [list T] of a constructor of a datatype is a class,
-    which the tables [nil_T] and [cons_T] build as a chain of nodes, and the law
-    [Forall2 R xs ys -> R (C xs) (C ys)] is the congruence of [C] in such an argument. The
+    values of [T] enter the engine through [M.encode]. A pair, an option and a list of value
+    types are value types too. After [with Ops], the declaration [merge R g] makes [R] a
+    lattice table, whose last index is its value and whose merge is the primitive [g] of [Ops].
+    A constructor of [R] assigns a value, and a premise over [R] reads the stored value. A
+    constructor of a datatype may hold another datatype, directly or in a list. An argument of
+    type [list T] of a constructor of a datatype is a class, which the tables [nil_T] and
+    [cons_T] build as a chain of nodes, and the law [Forall2 R xs ys -> R (C xs) (C ys)] is the
+    congruence of [C] in such an argument. The laws [Forall2 (pair_rel ra rb) xs ys] of two
+    lists of pairs and [xs = ys] of two equal arguments are congruences as well. The
     declaration [ruleset S C1 .. Ck] defines [P.S] as the positions of the rules of [C1] to
     [Ck] in increasing order. [P.default] holds the positions of the rules that no ruleset
     lists, and [P.all] holds the positions of all rules.
@@ -23,21 +26,20 @@
     declares, and the command accumulates the parts in this order, so that each part reads the
     predicates of the parts before it.
     - [EgglogPrimitives.v] reads value types and primitives.
-    - [EgglogReading.v] reads inductives and groups the relations that read each other.
+    - [EgglogReading.v] reads inductives and the datatypes that they reach, splits the pairs
+      that clauses write as variables in lists, and groups the relations that read each other.
     - [EgglogLists.v] reads lists and rulesets.
     - [EgglogTables.v] collects and numbers the tables.
-    - [EgglogPatterns.v] reads clauses.
+    - [EgglogPatterns.v] reads clauses and the congruence laws of equations.
     - [EgglogFacts.v] defines the facts and the encoders.
     - [EgglogGlue.v] proves the glue lemmas.
     - [EgglogLattice.v] reads lattice tables and proves their glue lemmas.
     - [EgglogReads.v] proves the glue lemmas of equations beside relations over values.
-    - [EgglogContainers.v] reads other datatypes, nested lists and the laws of lists of values
-      and of pairs, with rules that take precedence over those of the earlier parts.
     The tactics of [DerivePrimitives.v], [DeriveTactics.v], [DeriveCongruence.v],
-    [DeriveLattice.v], [DeriveReads.v] and [DeriveContainers.v] prove the generated lemmas that
-    the command does not build as terms, and the command calls them by name. This file exports
-    them with the definitions of [DeriveHelpers.v], so a client that imports [Derive] has
-    everything that the command uses.
+    [DeriveLattice.v] and [DeriveReads.v] prove the generated lemmas that the command does not
+    build as terms, and the command calls them by name. This file exports them with the
+    definitions of [DeriveHelpers.v], so a client that imports [Derive] has everything that the
+    command uses.
 
     For example, [Egglog Andersen from may_points.] defines [Andersen.spec] with one clause per
     constructor of [may_points], and [Andersen.facts q] lists the input rows of [q].
@@ -51,9 +53,9 @@ From Argent Require Import Time.
 From Galois.Egglog Require Import Syntax.
 From Galois.Front Require Import Spec LowerSig.
 From Galois.Front Require Export DeriveHelpers DerivePrimitives DeriveTactics DeriveCongruence
-  DeriveLattice DeriveReads DeriveContainers.
+  DeriveLattice DeriveReads.
 From Galois.Front Require EgglogPrimitives EgglogReading EgglogLists EgglogTables EgglogPatterns
-  EgglogFacts EgglogGlue EgglogLattice EgglogReads EgglogContainers.
+  EgglogFacts EgglogGlue EgglogLattice EgglogReads.
 
 (** * The command
 
@@ -75,7 +77,6 @@ Elpi Accumulate File egglog.facts.
 Elpi Accumulate File egglog.glue.
 Elpi Accumulate File egglog.lattice.
 Elpi Accumulate File egglog.reads.
-Elpi Accumulate File egglog.containers.
 Elpi Accumulate lp:{{
 
 % ---------------------------------------------------------------------------------------------
@@ -149,7 +150,7 @@ derive-program Name RelNames Merges RsDecls :-
   distinct-lattices Decls,
   std.map RsDecls (ruleset-of Is) Rulesets,
   distinct-rulesets Rulesets,
-  with-lattices Decls (with-containers (derive-relations Name Is Rulesets)).
+  with-lattices Decls (derive-relations Name Is Rulesets).
 
 % Derive the program of the relations, with the lattice tables in scope.
 pred derive-relations i:string, i:list inductive, i:list ruleset.

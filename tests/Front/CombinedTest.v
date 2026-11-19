@@ -67,7 +67,7 @@ Inductive free (jobs : list job) : positive -> Prop :=
 
 Egglog Waits from odd_wait even_wait waits free with JobOps.
 
-(** Schedules: a job, or a list of schedules that run in order. *)
+(** A schedule is a job, or a list of schedules that run in order. *)
 Inductive sched : Type :=
   | Task (i : positive)
   | Seq (ss : list sched).
@@ -113,8 +113,8 @@ Inductive cap (caps : list (positive * option positive)) : positive -> option po
 
 Egglog Caps from cap with CapOps merge cap tighter.
 
-(** A statement of a program: register [x] holds the constant [c], or the value of register
-    [y]. *)
+(** A statement of a program says that register [x] holds the constant [c], or the value of
+    register [y]. *)
 Inductive stmt : Type :=
   | Init (x c : positive)
   | Copy (x y : positive).
@@ -129,7 +129,7 @@ Inductive atom : Type :=
   | Ref (x : positive)
   | Const (c : positive).
 
-(** Terms: an atom, a sum of a list of terms, a record of fields named by keys, and a tuple of
+(** A term is an atom, a sum of a list of terms, a record of fields named by keys, or a tuple of
     values. *)
 Inductive term : Type :=
   | Leaf (a : atom)

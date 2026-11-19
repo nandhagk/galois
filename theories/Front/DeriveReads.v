@@ -7,16 +7,19 @@
     calls by name. [egglog_mixed_closed] shows that every derived row of the program is in the
     meaning of its relations, [egglog_read_leaf] proves the premises of the fire lemma of an
     equational clause, and [egglog_read_congruent] shows that every instance of an equation is a
-    read congruence of the encodings of its two sides.
+    read congruence of the encodings of its two sides. It reads the congruence laws that
+    [egglog_congruent] of [DeriveCongruence.v] reads.
 
     For example, the fire lemma of the rewrite [known xs x c -> Mul (Ref x) a => Scale c a] reads
     its premise [known xs x c] as a derived row by the generated lemma [known_derived].
 
     Builds on: the meaning of equations that read derived rows, the meaning of lattice reads, the
-    derived rows of specifications and the glue tactics of relations. *)
+    derived rows of specifications, the definitions that derived programs call and the glue
+    tactics of relations. *)
 
 From Stdlib Require Import List PArith.
-From Galois.Front Require Import Spec SpecFacts SpecLattice SpecReads DeriveTactics.
+From Galois.Front Require Import Spec SpecFacts SpecLattice SpecReads DeriveHelpers
+  DeriveTactics.
 
 Import List.ListNotations.
 
@@ -79,16 +82,51 @@ Ltac egglog_read_list_args IH :=
       end
   end.
 
+(** The read congruence of one side of two cons nodes of lists of pairs. The two sides are equal
+    by [Hside], or [IH] relates them. *)
+Ltac egglog_read_pair_side IH Hside :=
+  first [rewrite Hside; apply read_refl | apply IH; exact Hside].
+
+(** A goal [read_congruent _ _ _ _ (e xs) (e ys)], where [e] encodes lists of pairs as chains
+    of cons nodes and a hypothesis [Forall2 (pair_rel ra rb) xs ys] relates the two lists
+    element by element. The proof recurses on the hypothesis with [IHL], and each pair of sides
+    is equal or related through [IH]. *)
+Ltac egglog_read_pair_list_args IH :=
+  lazymatch goal with
+  | |- read_congruent _ _ _ _ (_ ?xs) (_ ?ys) =>
+      lazymatch goal with
+      | Hall : Forall2 (pair_rel _ _) xs ys |- _ =>
+          let IHL := fresh "IHL" in
+          let Hfst := fresh "Hfst" in
+          let Hsnd := fresh "Hsnd" in
+          let Hrest := fresh "Hrest" in
+          revert xs ys Hall; fix IHL 3; intros ? ? Hall;
+          destruct Hall as [| [? ?] [? ?] ? ? [Hfst Hsnd] Hrest];
+          [ apply read_refl
+          | simpl in Hfst, Hsnd |- *; apply read_cong;
+            apply Forall2_cons; [egglog_read_pair_side IH Hfst |];
+            apply Forall2_cons; [egglog_read_pair_side IH Hsnd |];
+            apply Forall2_cons; [apply IHL; exact Hrest |];
+            apply Forall2_nil ]
+      end
+  end.
+
 (** The arguments of a read congruence. Each pair of arguments is related by a hypothesis
-    through the recursive call [IH], equal, or a pair of lists related element by element. *)
+    through the recursive call [IH], equal, a pair of lists related element by element, or a
+    pair of lists of pairs related side by side. *)
 Ltac egglog_read_args IH :=
   repeat (apply Forall2_cons;
-    [first [apply IH; assumption | apply read_refl | egglog_read_list_args IH] | ]);
+    [first
+       [ apply IH; assumption
+       | apply read_refl
+       | egglog_read_list_args IH
+       | egglog_read_pair_list_args IH ] | ]);
   apply Forall2_nil.
 
 (** Each instance of an equational relation is a read congruence of the encodings, by recursion
     on the instance with [IH]. The fire lemmas give its clauses, and the congruence rules give
-    its closure laws. *)
+    its closure laws. The equalities of a congruence law are substituted first, so that their
+    two arguments are one. *)
 Ltac egglog_read_congruent :=
   intros;
   lazymatch goal with
@@ -102,4 +140,4 @@ Ltac egglog_read_congruent :=
     | apply read_refl
     | apply read_sym; apply IH; assumption
     | eapply read_trans; apply IH; eassumption
-    | simpl; apply read_cong; egglog_read_args IH ].
+    | subst; simpl; apply read_cong; egglog_read_args IH ].

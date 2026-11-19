@@ -26,15 +26,6 @@ Elpi File egglog.lists lp:{{
 % ---------------------------------------------------------------------------------------------
 % Lists in datatypes
 
-% The element type of a list type.
-pred list-of i:term, o:term.
-list-of {{ list lp:E }} E.
-
-% The components of a list element: the two sides of a pair, or the element itself.
-pred elem-parts i:term, o:list term.
-elem-parts {{ prod lp:A lp:B }} [A, B] :- !.
-elem-parts E [E].
-
 % The type of a component of a list element is a value type, a datatype, or a list type whose
 % elements have components of these kinds.
 pred elem-part i:term.
