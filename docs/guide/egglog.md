@@ -568,7 +568,9 @@ clauses that are monotone in the values that they read. The check `reads_ok` say
 read value is a variable that occurs once in its body and in no key of the head. The hypothesis
 `monotone` says that a larger value read gives a larger value assigned, in the orders of the
 merges. For shortest paths, `d + w` grows with `d`, and the test `shortest_paths_are_monotone`
-of `tests/Front/LatticeTest.v` proves `monotone` for its program.
+of `tests/Front/LatticeTest.v` proves `monotone` for its program with the merge
+`prim_merge Ops.prim`. The lemma `monotone_agrees` of `theories/Front/LatticeRead.v` moves the
+proof to any merge that agrees with it at the code of `Pos.min`.
 
 A run of a monotone program that passes these checks saturates only when, at each key with an
 assigned value, some merge of assigned values is above all of them (`unbounded_unsaturated`).
@@ -671,8 +673,8 @@ clauses of a lattice specification, and its premises may read lattice tables. In
 values, and `solve_rows_sound` says that a stored row is derived. For a specification that
 passes `reads_ok` and is `monotone`, `solve_complete` and `solve_rows_complete` say that a
 saturated outcome stores a value above every assigned value and every derived row. The lemma
-`solve_exact` combines the two, and `unbounded_unsaturated` says that no run saturates when the
-assigned values at a key have no merge above all of them.
+`solve_exact` combines the two, and `unbounded_unsaturated` says that no run saturates when a
+key has an assigned value and no merge of assigned values there is above all of them.
 
 **The exact model** (`CongruenceRefSig.v`). The lemma `exact_model` says that a ground
 specification has a model of its input rows in which two terms are equal exactly when they are
@@ -714,11 +716,19 @@ Steensgaard's `solve_exact` says that a saturated solve answers
 - The theorems take a value module whose merge has the laws of the engine at every code. The
   merge `prim_merge P.prim` has them only when every binary primitive of `P` is commutative,
   associative and idempotent. So a client that applies the theorems writes a merge with these
-  laws that agrees with `P.prim` at the codes of its merges, and `lat_merge_agrees` moves the
-  glue lemmas to that merge.
+  laws that agrees with `prim_merge P.prim` at the codes of the lattice tables, on the
+  encodings of values. For `positive` and `Z`, whose decoders accept every positive, the merge
+  can agree at every value, and `lat_merge_agrees` moves the glue lemmas to it. For `N`, `bool`
+  and every other type whose decoder rejects some positive, `prim_merge P.prim` returns its
+  first argument where the primitive has no result, so no commutative merge agrees with it at
+  every value. Then `lat_merge_agrees_on` moves the glue lemmas with the predicate
+  `fun v => exists x, v = encode x`. The generated lemma `closed` gives this predicate for
+  every assigned value, and the merge of the primitive keeps it.
 - Completeness with reads assumes `reads_ok` and `monotone`. A read value that a key of the head
   or another premise uses fails `reads_ok`, and `monotone` is a hypothesis that the client
-  proves, as the test of shortest paths does.
+  proves, as the test of shortest paths does. A run of a program that fails either condition
+  can store fewer rows and values than the relations hold, because a read sees the stored value
+  and no smaller merge. The test `read_key_misses_a_value` shows such a run.
 - The theorems of the previous section are stated and not yet proved.
 - The engine has no termination contract for programs that build terms or have lattice tables,
   so no theorem says when a run of a ground specification, a run with rewrites or a run with

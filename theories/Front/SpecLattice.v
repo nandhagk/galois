@@ -29,6 +29,8 @@
     - [fold_lat_merged], [lat_merged_fold] A merge that a read sees is a fold of the merge over
       assigned values.
     - [lat_merge_agrees] The meaning depends on the merge only at the codes of lattice tables.
+    - [lat_merge_agrees_on] The same, at the values of a predicate that holds of every assigned
+      value.
 
     Builds on: the specifications and their facts, and the models of the engine. *)
 
@@ -470,4 +472,91 @@ Proof.
   split; [intros r vs; split; [apply Hrows | apply Hrows'] |].
   split; [intros f ks w; split; [apply Hvalues | apply Hvalues'] |].
   intros f ks w; split; [apply Hmerged | apply Hmerged'].
+Qed.
+
+(** A premise that holds in two relations holds in two larger ones. *)
+Lemma premise_lat_in_impl {V : Type} (prim : positive -> list V -> option V)
+    (P P' : positive -> list V -> Prop) (Q Q' : positive -> list V -> V -> Prop) e p :
+  (forall r vs, P r vs -> P' r vs) -> (forall f ks w, Q f ks w -> Q' f ks w) ->
+  premise_lat_in prim P Q e p -> premise_lat_in prim P' Q' e p.
+Proof.
+  intros HP HQ.
+  destruct p as [r args | f args v | q args v]; cbn.
+  - intros [vs [Hvs Hrow]]. exists vs. split; [exact Hvs | exact (HP r vs Hrow)].
+  - intros [ks [w [Hks [Hw Hq]]]]. exists ks, w.
+    split; [exact Hks |]. split; [exact Hw | exact (HQ f ks w Hq)].
+  - intros Hp. exact Hp.
+Qed.
+
+(** The meaning depends on the merge only at the codes of the lattice tables and at the values
+    of [ok], when [ok] holds of every value that the clauses assign with [merge1] and the merge
+    keeps it. *)
+Lemma lat_merge_agrees_on {V : Type} (prim : positive -> list V -> option V)
+    (merge1 merge2 : positive -> V -> V -> V) (ok : V -> Prop) (s : spec V)
+    (I : positive -> list V -> Prop) :
+  (forall f m a b, lookup_kind (tables s) f = Some (OLat m) -> ok a -> ok b ->
+    merge1 m a b = merge2 m a b) ->
+  (forall f m a b, lookup_kind (tables s) f = Some (OLat m) -> ok a -> ok b ->
+    ok (merge1 m a b)) ->
+  (forall f ks w, lat_assigned prim merge1 s I f ks w -> ok w) ->
+  (forall r vs, lat_derived prim merge1 s I r vs <-> lat_derived prim merge2 s I r vs) /\
+  (forall f ks w, lat_assigned prim merge1 s I f ks w <-> lat_assigned prim merge2 s I f ks w) /\
+  (forall f ks w, lat_merged prim merge1 s I f ks w <-> lat_merged prim merge2 s I f ks w).
+Proof.
+  intros Hagree Hclosed Hok.
+  destruct (lat_least prim merge1 s I
+    (fun r vs => lat_derived prim merge1 s I r vs /\ lat_derived prim merge2 s I r vs)
+    (fun f ks w => lat_assigned prim merge1 s I f ks w /\ lat_assigned prim merge2 s I f ks w)
+    (fun f ks w => lat_merged prim merge1 s I f ks w /\ ok w /\
+      lat_merged prim merge2 s I f ks w))
+    as [Hrows [Hvalues Hmerged]].
+  - intros r vs Hin HI. split; apply lat_derived_input; assumption.
+  - intros f ks w [H1 H2].
+    split; [exact (lat_merged_one prim merge1 s I f ks w H1) |].
+    split; [exact (Hok f ks w H1) | exact (lat_merged_one prim merge2 s I f ks w H2)].
+  - intros f m ks a b Hkind [Ha1 [Haok Ha2]] [Hb1 [Hbok Hb2]].
+    split; [exact (lat_merged_merge prim merge1 s I f m ks a b Hkind Ha1 Hb1) |].
+    split; [exact (Hclosed f m a b Hkind Haok Hbok) |].
+    rewrite (Hagree f m a b Hkind Haok Hbok).
+    exact (lat_merged_merge prim merge2 s I f m ks a b Hkind Ha2 Hb2).
+  - intros c e r args vs Hin Hhead Hbody Hvs. split.
+    + apply (lat_derived_clause prim merge1 s I c e r args vs Hin Hhead); [| exact Hvs].
+      apply lat_body_intro. refine (Forall_impl _ _ Hbody). intros p.
+      apply premise_lat_in_impl; [intros ? ? [H _] | intros ? ? ? [H _]]; exact H.
+    + apply (lat_derived_clause prim merge2 s I c e r args vs Hin Hhead); [| exact Hvs].
+      apply lat_body_intro. refine (Forall_impl _ _ Hbody). intros p.
+      apply premise_lat_in_impl; [intros ? ? [_ H] | intros ? ? ? [_ [_ H]]]; exact H.
+  - intros c e f args v ks w Hin Hhead Hbody Hks Hw. split.
+    + apply (lat_assigned_clause prim merge1 s I c e f args v ks w Hin Hhead);
+        [| exact Hks | exact Hw].
+      apply lat_body_intro. refine (Forall_impl _ _ Hbody). intros p.
+      apply premise_lat_in_impl; [intros ? ? [H _] | intros ? ? ? [H _]]; exact H.
+    + apply (lat_assigned_clause prim merge2 s I c e f args v ks w Hin Hhead);
+        [| exact Hks | exact Hw].
+      apply lat_body_intro. refine (Forall_impl _ _ Hbody). intros p.
+      apply premise_lat_in_impl; [intros ? ? [_ H] | intros ? ? ? [_ [_ H]]]; exact H.
+  - destruct (lat_least prim merge2 s I (lat_derived prim merge1 s I)
+      (lat_assigned prim merge1 s I) (fun f ks w => ok w /\ lat_merged prim merge1 s I f ks w))
+      as [Hrows' [Hvalues' Hmerged']].
+    + intros r vs Hin HI. apply lat_derived_input; assumption.
+    + intros f ks w Hw.
+      split; [exact (Hok f ks w Hw) | exact (lat_merged_one prim merge1 s I f ks w Hw)].
+    + intros f m ks a b Hkind [Haok Ha] [Hbok Hb].
+      rewrite <- (Hagree f m a b Hkind Haok Hbok).
+      split; [exact (Hclosed f m a b Hkind Haok Hbok) |].
+      exact (lat_merged_merge prim merge1 s I f m ks a b Hkind Ha Hb).
+    + intros c e r args vs Hin Hhead Hbody Hvs.
+      apply (lat_derived_clause prim merge1 s I c e r args vs Hin Hhead); [| exact Hvs].
+      apply lat_body_intro. refine (Forall_impl _ _ Hbody). intros p.
+      apply premise_lat_in_impl; [intros ? ? H | intros ? ? ? [_ H]]; exact H.
+    + intros c e f args v ks w Hin Hhead Hbody Hks Hw.
+      apply (lat_assigned_clause prim merge1 s I c e f args v ks w Hin Hhead);
+        [| exact Hks | exact Hw].
+      apply lat_body_intro. refine (Forall_impl _ _ Hbody). intros p.
+      apply premise_lat_in_impl; [intros ? ? H | intros ? ? ? [_ H]]; exact H.
+    + split; [intros r vs; split; [intros H; exact (proj2 (Hrows r vs H)) | apply Hrows'] |].
+      split; [intros f ks w; split; [intros H; exact (proj2 (Hvalues f ks w H)) |
+        apply Hvalues'] |].
+      intros f ks w; split; [intros H; exact (proj2 (proj2 (Hmerged f ks w H))) |].
+      intros H. exact (proj2 (Hmerged' f ks w H)).
 Qed.

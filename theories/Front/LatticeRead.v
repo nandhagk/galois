@@ -4,16 +4,20 @@
     parts. [LatticeReadSound.v] proves that stored values and rows are sound,
     [LatticeReadQueries.v], [LatticeReadRaise.v] and [LatticeReadClosed.v] prove that a closed
     view holds the meaning, and [LatticeReadComplete.v] proves completeness at saturation. This
-    file derives exactness and the condition for saturation from soundness and completeness.
+    file derives exactness and the condition for saturation from soundness and completeness. It
+    also moves a proof of [monotone] from one merge to another that agrees with it at the codes
+    of the lattice tables.
 
     For example, [LatticeRead] applied to a runner of shortest paths says that a saturated run
     stores at each pair of nodes the length of a shortest path.
 
     Main results
+    - [monotone_agrees] [monotone] depends on the merge only at the codes of the lattice
+      tables.
     - [solve_exact] In a saturated outcome of a monotone specification the stored value is a
       merge of assigned values that is above every assigned value.
-    - [unbounded_unsaturated] No run of a monotone specification saturates when the assigned
-      values at a key have no merge above all of them.
+    - [unbounded_unsaturated] No run of a monotone specification saturates when a key has an
+      assigned value and no merge of assigned values there is above all of them.
 
     Builds on: the lattice-read signature and the files of its parts. *)
 
@@ -23,6 +27,35 @@ From Galois.Front Require Import Spec SpecLattice LowerSig RunnerSig LatticeRead
   LatticeReadSound LatticeReadQueries LatticeReadRaise LatticeReadClosed LatticeReadComplete.
 
 Import List.ListNotations.
+
+(** * Monotonicity under another merge *)
+
+(** Raising the reads of a clause depends on the merge only at the codes of the lattice
+    tables. *)
+Lemma env_below_agrees {V} (merge1 merge2 : positive -> V -> V -> V) (s : spec V) c e e' :
+  (forall f m a b, lookup_kind (tables s) f = Some (OLat m) -> merge1 m a b = merge2 m a b) ->
+  env_below merge2 s c e e' -> env_below merge1 s c e e'.
+Proof.
+  intros Hagree Hbelow x.
+  destruct (Hbelow x) as [Hx | [f [args [m [u [u' [Hin [Hkind [He [He' Hle]]]]]]]]]].
+  - left. exact Hx.
+  - right. exists f, args, m, u, u'. repeat split; try assumption.
+    rewrite (Hagree f m u u' Hkind). exact Hle.
+Qed.
+
+(** [monotone] depends on the merge only at the codes of the lattice tables. *)
+Lemma monotone_agrees {V} (prim : positive -> list V -> option V)
+    (merge1 merge2 : positive -> V -> V -> V) (s : spec V) :
+  (forall f m a b, lookup_kind (tables s) f = Some (OLat m) -> merge1 m a b = merge2 m a b) ->
+  monotone prim merge1 s -> monotone prim merge2 s.
+Proof.
+  intros Hagree Hmono c f args v m e e' u Hin Hhead Hkind Hbelow Hvalue.
+  destruct (Hmono c f args v m e e' u Hin Hhead Hkind
+    (env_below_agrees merge1 merge2 s c e e' Hagree Hbelow) Hvalue) as [u' [Hu' Hle]].
+  exists u'. split; [exact Hu' |]. rewrite <- (Hagree f m u u' Hkind). exact Hle.
+Qed.
+
+(** * The theorems *)
 
 Module LatticeRead (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     (R : RUN V I J D) (X : RUNNER V I J D R) (F : RUNNER_FACTS V I J D R X) (LW : LOWER_LAWS)
@@ -75,8 +108,8 @@ Module LatticeRead (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
       exact Hle.
   Qed.
 
-  (** No run of a monotone specification saturates when a key has an assigned value and every
-      merge of assigned values there lies below some other assigned value. *)
+  (** No run of a monotone specification saturates when a key has an assigned value and no
+      merge of assigned values there is above all of them. *)
   Lemma unbounded_unsaturated : forall (s : spec V.t) rows lim f m ks w0,
     spec_ok s = true -> lattice_reads s = true -> reads_ok s = true -> rows_ok s rows = true ->
     monotone V.prim V.merge s -> lookup_kind (tables s) f = Some (OLat m) ->

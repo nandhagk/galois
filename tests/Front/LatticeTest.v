@@ -18,7 +18,8 @@
     - [UnionTests] A merge that returns neither of its arguments.
     - [SaturationTests] A run saturates only when each key has a merge above every value.
     - [GlueTests] The generated lemmas relate the inductives and the meaning of the tables.
-    - [ConditionTests] The conditions of the theorems of [LatticeReadSig.v].
+    - [ConditionTests] The conditions of the theorems of [LatticeReadSig.v], and a saturated
+      run that misses a value when a read value is a key.
     - [RejectionTests] The command stops at a malformed declaration of a lattice table.
 
     Builds on: the derive command, the meaning of lattice reads, the conditions of their
@@ -503,6 +504,36 @@ Module ConditionTests.
   (** A read value that is a key of the head breaks the frame. *)
   Example read_key_breaks_the_frame :
     reads_ok Hops.spec = false.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Two edges from 1 to 2, of weights 5 and 3. *)
+  Definition parallel : list edge := [Edge 1 2 5; Edge 1 2 3].
+
+  (** The run of [hop] on the two parallel edges. *)
+  Definition parallel_run : stop * OpsDatabase.t :=
+    OpsRunner.solve Hops.program (Hops.facts parallel) example_limits.
+
+  (** The run of [hop] on the parallel edges saturates. *)
+  Example read_key_run_saturates :
+    fst parallel_run = Saturated.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The edge of weight 5 gives [hop parallel 5 1 5] by [hop_back]. *)
+  Example missed_value_holds :
+    hop parallel 5 1 5.
+  Proof.
+    apply (hop_back parallel 1 2 5).
+    apply hop_edge. simpl. auto.
+  Qed.
+
+  (** The run reads only the stored weight 3 at [[1; 2]], so it stores no value at [[5; 1]],
+      although [missed_value_holds] gives one. *)
+  Example read_key_misses_a_value :
+    stored Hops.hop_code [5; 1] (snd parallel_run) = None.
   Proof.
     vm_compute. reflexivity.
   Qed.
