@@ -28,7 +28,7 @@ From Stdlib Require Import List PArith NArith ZArith Lia.
 From Galois.Base Require Import Key.
 From Galois.Egglog Require Import ValueSig Syntax Model Index Join Database Run.
 From Galois.Front Require Import Spec SpecLattice LowerSig RunnerSig Runner Derive Encode
-  LatticeReadSig.
+  LatticeSig LatticeReadSig.
 Import List.ListNotations.
 
 (** * Fixtures *)
@@ -510,6 +510,13 @@ Module ConditionTests.
   (** A program without reads has the meaning of [derived] and [assigned]. *)
   Example aggregation_reads_nothing :
     no_reads Heaviest.spec = true.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A derived program without reads is a lattice specification of [LatticeSig.v]. *)
+  Example aggregation_is_a_lattice_specification :
+    lattice_spec Heaviest.spec = true.
   Proof.
     vm_compute. reflexivity.
   Qed.
