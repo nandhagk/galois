@@ -151,7 +151,8 @@ derives the rows of all the others.
 its conclusion is the head. A premise `Ri ..` of a relation over values reads that relation's
 table. Binders of data are numbered as variables in binder order, and binders of propositions
 are premises. A premise `f x1 .. xn = y`, where `f` is a primitive (see Primitives), computes a
-value.
+value. A constructor of a lattice table assigns a value, and a premise over a lattice table
+reads the stored value (see Lattice tables).
 
 **Equations.** A relation `R t u` whose two indices have the same datatype is an equation. It
 gets no table of its own, because the constructors of the datatype are its tables. The
@@ -434,6 +435,150 @@ the lemma `<M>_encode_inj`, which says that `encode` is injective, in the hint d
 `egglog_inj`. The tactics that prove the generated lemmas use both. A relation of an
 unregistered type stops the command with a message that names the type.
 
+## Lattice tables
+
+A lattice table keeps one value at each key, the merge of all the values that the clauses
+assign at that key. For shortest paths, a key is a pair of nodes, the values are the lengths
+of the paths between them, and the merge `Pos.min` keeps the shortest length. A relation whose
+last index is its value can be a lattice table. The command declares it with `merge R g` after
+`with P`, where `g` is a primitive of the set `P` that takes two values of the type of the last
+index of `R` and returns one.
+
+```coq
+From Galois.Front Require Import SpecLattice.
+
+Egglog Primitives PathOps Pos.add Pos.min.
+
+(** An edge from a source node to a target node, with a weight. *)
+Inductive edge : Type :=
+  | Edge (source target weight : positive).
+
+(** [dist edges a b d] says that some path from [a] to [b] has length [d]. *)
+Inductive dist (edges : list edge) : positive -> positive -> positive -> Prop :=
+  | dist_edge a b w : In (Edge a b w) edges -> dist edges a b w
+  | dist_step a b c d w : dist edges a b d -> In (Edge b c w) edges ->
+      dist edges a c (Pos.add d w).
+
+Egglog Distances from dist with PathOps merge dist Pos.min.
+```
+
+The table `Distances.dist_code` has the kind `OLat PathOps.min_code`, and its keys are the
+first two indices of `dist`. Each constructor assigns a value, so its clause has an `Assign`
+head. The premise `dist edges a b d` of `dist_step` reads the value that the table stores at
+`[a; b]`, so it becomes an `Equals` premise. The engine merges two values with the `merge` of
+its value module, and `prim_merge PathOps.prim` merges as the primitive set computes. A lookup
+of the database reads the stored value. On the following graph, the path from 1 through 2 to 3
+is shorter than the direct edge, and the table stores its length.
+
+```coq
+Module PathOpsValue <: VALUE_OPS.
+  Include PosKeyCode.
+  Definition prim := PathOps.prim.
+  Definition merge := prim_merge PathOps.prim.
+End PathOpsValue.
+
+Module PathOpsIndex := IndexCode PathOpsValue.
+Module PathOpsJoin := JoinCode PathOpsValue PathOpsIndex.
+Module PathOpsDatabase := DatabaseCode PathOpsValue PathOpsIndex.
+Module PathOpsRun := RunCode PathOpsValue PathOpsIndex PathOpsJoin PathOpsDatabase.
+Module PathOpsRunner :=
+  RunnerCode PathOpsValue PathOpsIndex PathOpsJoin PathOpsDatabase PathOpsRun.
+
+Local Open Scope positive_scope.
+
+Definition triangle : list edge := [Edge 1 2 1; Edge 2 3 1; Edge 1 3 5].
+
+Definition triangle_result : PathOpsDatabase.t :=
+  snd (PathOpsRunner.solve Distances.program (Distances.facts triangle) example_limits).
+
+(** The value that a database stores at a key of a lattice table, if it stores one. *)
+Definition stored (f : positive) (ks : list positive) (db : PathOpsDatabase.t) :
+    option positive :=
+  match fst (PathOpsDatabase.lookup f (map Val ks) db) with
+  | Some (Some (Val v)) => Some v
+  | _ => None
+  end.
+
+Example shortest_distance_is_stored :
+  stored Distances.dist_code [1; 3] triangle_result = Some 2.
+Proof. vm_compute. reflexivity. Qed.
+```
+
+A read of a lattice table sees the stored value, which is a merge of the values that the
+clauses have assigned at its key. The file `theories/Front/SpecLattice.v` gives a
+specification with such reads its meaning, as four relations defined together.
+`lat_assigned` holds of the values that a clause assigns at a key, `lat_merged` of the merges of
+those values, which a read sees, `lat_derived` of the derived rows and `lat_body` of the bodies
+that hold. On a specification without reads, `lat_derived_agrees` and `lat_assigned_agrees`
+say that the derived rows and the assigned values are those of `derived` and `assigned`. The
+generated lemma `Distances.dist_spec` says that `dist edges a b d` holds exactly when `d` is a
+value that the clauses assign at `[a; b]`.
+
+```coq
+Example path_gives_assigned_value :
+  lat_assigned PathOps.prim (prim_merge PathOps.prim) Distances.spec
+    (Distances.inputs triangle) Distances.dist_code [1; 3] 2.
+Proof.
+  apply (proj1 (Distances.dist_spec triangle 1 3 2)).
+  apply (dist_step triangle 1 2 3 1 1).
+  - apply dist_edge. simpl. auto.
+  - simpl. auto.
+Qed.
+```
+
+The converse half of `dist_spec` needs a merge of two values of `dist` at one key to be a
+value of `dist` again, because a read sees a merge. For each lattice relation that a clause
+reads, the command proves this closure as the lemma `<R>_merges`, here `Distances.dist_merges`.
+The proof succeeds when the merge returns one of its two arguments, as `Pos.min`, `Pos.max` and
+`Z.min` do, or when a constructor of the relation merges two values. The union of two sets
+returns neither of them, so a relation of sets that a clause reads needs a constructor that
+merges, such as `reaching_union` below. Without it, the command stops with a message that names
+the relation.
+
+```coq
+Egglog Primitives SetOps N.lor.
+
+(** Node [n] defines the set [s] of variables, as bits, or control flows between two nodes. *)
+Inductive flow_fact : Type :=
+  | Gen (node : positive) (defs : N)
+  | Flow (source target : positive).
+
+(** [reaching facts n s] says that the definitions of [s] may reach node [n]. *)
+Inductive reaching (facts : list flow_fact) : positive -> N -> Prop :=
+  | reaching_gen n s : In (Gen n s) facts -> reaching facts n s
+  | reaching_flow m n s : reaching facts m s -> In (Flow m n) facts -> reaching facts n s
+  | reaching_union n s t : reaching facts n s -> reaching facts n t ->
+      reaching facts n (N.lor s t).
+
+Egglog Reaching from reaching with SetOps merge reaching N.lor.
+```
+
+A relation over values may read a lattice table too, as `reach` does with the constructor
+`reach_dist a b d : dist edges a b d -> reach edges a b` in
+`Egglog Reach from dist reach with PathOps merge dist Pos.min`. In a program with lattice
+tables, the lemma `<R>_spec` of such a relation relates it to `lat_derived`. The command reads
+the relations in the order that it names them, and a relation comes after the relations that
+its premises read.
+
+The theorems of `theories/Front/LatticeReadSig.v` describe the runs. In every outcome, a stored
+value is a merge of assigned values and a stored row is derived (`solve_sound`,
+`solve_rows_sound`). In a saturated outcome, every assigned value is below the stored value and
+every derived row is stored (`solve_complete`, `solve_rows_complete`). Completeness needs
+clauses that are monotone in the values that they read. The check `reads_ok` says that each
+read value is a variable that occurs once in its body and in no key of the head. The hypothesis
+`monotone` says that a larger value read gives a larger value assigned, in the orders of the
+merges. For shortest paths, `d + w` grows with `d`, and the test `shortest_paths_are_monotone`
+of `tests/Front/LatticeTest.v` proves `monotone` for its program.
+
+A run of a monotone program that passes these checks saturates only when, at each key with an
+assigned value, some merge of assigned values is above all of them (`unbounded_unsaturated`).
+With `Pos.min` the shortest length is such a merge, so a run of shortest paths can saturate,
+also on a cycle. With `Pos.max`, the lengths of the paths around a cycle have no largest one,
+so no run of longest paths on a cycle saturates, and the test
+`longest_paths_never_saturate_on_a_cycle` stops at its iteration limit. No theorem says that a
+run with lattice tables saturates, because the engine has no termination contract for such
+programs.
+
 ## The generated module
 
 For a command `Egglog P from R1 .. Rn` the module `P` has the following members.
@@ -445,11 +590,13 @@ For a command `Egglog P from R1 .. Rn` the module `P` has the following members.
 | `facts` | A function from the parameters of the first relation to the list of input rows. |
 | `inputs` | The input rows as a relation `positive -> list positive -> Prop`, for the lemmas. |
 | `relation` | The meaning of each table, as a relation on rows. |
+| `lattice` | In a program with lattice tables, the meaning of the lattice tables, as a relation on codes, keys and values. |
 | `<Table>_code` | One constant for each table. A relation has `<R>_code`, a constructor table has `<Constructor>_code`, and an input list that is a parameter has `<parameter>_code`. |
 | `encode_<T>` | One encoder for each datatype `T`, which maps a value of `T` to the engine's expression. |
 | `<Constructor>_fires` | One lemma for each constructor, which says that the clause derives the conclusion from the premises. The command adds each to the hint database `egglog_fire`. |
-| `closed` | The derived rows are closed under the clauses of `relation`. It is the converse half of the glue. |
-| `<R>_spec` | For a relation over values, the equivalence of `R` with its derived row, as in `Path.path_spec`. |
+| `closed` | The derived rows are closed under the clauses of `relation`. It is the converse half of the glue. In a program with lattice tables, it also says that every assigned value is in `lattice`. |
+| `<R>_merges` | For a lattice relation that a clause reads, the closure of `R` under its merge. |
+| `<R>_spec` | For a relation over values, the equivalence of `R` with its derived row, as in `Path.path_spec`. For a lattice relation, the equivalence of `R` with its assigned value, as in `Distances.dist_spec`. |
 | `<R>_congruent` | For an equational relation, the implication from `R t u` to the congruence of the encodings of `t` and `u`. |
 
 Every lemma is checked, so a wrong reading stops the command. The proofs use the tactics of
@@ -457,11 +604,11 @@ Every lemma is checked, so a wrong reading stops the command. The proofs use the
 
 ## The theorems
 
-Eight signatures state what the lowering, the runner and a run guarantee. Each theorem about
+Nine signatures state what the lowering, the runner and a run guarantee. Each theorem about
 a run takes the conditions of its kind as hypotheses. These are `spec_ok` and `rows_ok`,
-together with `relational`, `ground` or `lattice_spec`, and each is stated over any value
-module that satisfies the engine's laws. The proofs are stubs, so none of these theorems is
-proved yet.
+together with `relational`, `ground`, `lattice_spec` or `lattice_reads`, and each is stated
+over any value module that satisfies the engine's laws. The proofs are stubs, so none of these
+theorems is proved yet.
 
 **The lowering** (`LowerSig.v`). The lemma `lower_sound` says that a row that a well-sorted
 relational program derives from input rows is a derived row, and `lower_complete` says the
@@ -513,9 +660,19 @@ rewrite step from a represented term reaches a term of the same class.
 values that the clauses assign to it. A lattice specification has no constructor table, and
 its clauses read relations and primitives and derive rows or assign values. The lemma
 `solve_sound` says that a stored value is a merge of assigned values, and `solve_complete`
-says that every assigned value is below the stored value in a saturated outcome. The command
-`Egglog` does not yet derive lattice tables, so this theorem covers specifications that a
-client writes by hand.
+says that every assigned value is below the stored value in a saturated outcome. A program that
+the command derives with lattice tables and no reads is a lattice specification, and
+`lat_derived_agrees` and `lat_assigned_agrees` turn its glue lemmas into `derived` and
+`assigned`.
+
+**Lattice reads** (`LatticeReadSig.v`). A specification that passes `lattice_reads` has the
+clauses of a lattice specification, and its premises may read lattice tables. In the meaning of
+`SpecLattice.v`, `solve_sound` says that a stored value of every outcome is a merge of assigned
+values, and `solve_rows_sound` says that a stored row is derived. For a specification that
+passes `reads_ok` and is `monotone`, `solve_complete` and `solve_rows_complete` say that a
+saturated outcome stores a value above every assigned value and every derived row. The lemma
+`solve_exact` combines the two, and `unbounded_unsaturated` says that no run saturates when the
+assigned values at a key have no merge above all of them.
 
 **The exact model** (`CongruenceRefSig.v`). The lemma `exact_model` says that a ground
 specification has a model of its input rows in which two terms are equal exactly when they are
@@ -550,10 +707,22 @@ Steensgaard's `solve_exact` says that a saturated solve answers
 - The engine has no rulesets and no `run-schedule`. It has no `subsume` and no `delete`, and
   its containers cannot hold class identifiers. These features wait for engine support after
   stage 2, so the command cannot express them.
-- The command derives no lattice tables, so a client writes those specifications by hand.
+- A lattice table that a clause reads needs a merge that returns one of its two arguments, or a
+  constructor that merges two values, and the command stops otherwise. A program with lattice
+  tables has no equation, and each of its relations comes after the relations that its
+  premises read.
+- The theorems take a value module whose merge has the laws of the engine at every code. The
+  merge `prim_merge P.prim` has them only when every binary primitive of `P` is commutative,
+  associative and idempotent. So a client that applies the theorems writes a merge with these
+  laws that agrees with `P.prim` at the codes of its merges, and `lat_merge_agrees` moves the
+  glue lemmas to that merge.
+- Completeness with reads assumes `reads_ok` and `monotone`. A read value that a key of the head
+  or another premise uses fails `reads_ok`, and `monotone` is a hypothesis that the client
+  proves, as the test of shortest paths does.
 - The theorems of the previous section are stated and not yet proved.
-- The engine has no termination contract for programs that build terms, so no theorem says
-  when a run of a ground specification or a run with rewrites saturates.
+- The engine has no termination contract for programs that build terms or have lattice tables,
+  so no theorem says when a run of a ground specification, a run with rewrites or a run with
+  lattice tables saturates.
 - A rewrite step reads its premises in the input rows, so `saturate_closed` says nothing about
   a rewrite whose premises read derived rows.
 - A run that stops at `IterLimit` or `IdLimit` has no completeness guarantee, so a client that

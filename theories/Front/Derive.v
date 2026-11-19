@@ -1828,7 +1828,10 @@ define-lat-spec Ts Prim Merge Spec Inputs Relation Lattice Closed (rel R NP Eq S
   if (lattice-of R _ _) (Suffix = "_assigned", BackTac = "egglog_lat_back")
      (Suffix = "_derived", BackTac = "egglog_back_lat"),
   lat-complete-type Ts Prim Merge Spec Inputs (rel R NP Eq Ss) CTy,
-  prove "egglog_complete" CTy CP,
+  prove-or "egglog_complete" CTy CP
+    {calc ("Egglog: the tactic egglog_complete failed on " ^ RName ^ ". The command reads" ^
+      " the relations in the order that it names them, so name each relation that a premise" ^
+      " of " ^ RName ^ " reads before " ^ RName ^ ".")},
   coq.env.add-const {calc (RName ^ Suffix)} CP CTy @opaque! CC,
   coq.hints.add-resolve (const CC) "egglog_fire" 0 _,
   lat-back-type Ts Relation Lattice (rel R NP Eq Ss) BTy,

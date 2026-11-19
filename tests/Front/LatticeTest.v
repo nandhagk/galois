@@ -639,4 +639,7 @@ Module RejectionTests.
   (** An equation beside a lattice table. *)
   Fail Egglog Mixed from dist joined with Ops merge dist Pos.min.
 
+  (** A relation named before the lattice table that its premise reads. *)
+  Fail Egglog Backwards from reach dist with Ops merge dist Pos.min.
+
 End RejectionTests.
