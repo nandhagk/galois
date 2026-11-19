@@ -1280,8 +1280,11 @@ relational program derives from input rows is a derived row, and `lower_complete
 converse. The lemma `lower_closed` says that a view that the rules of a well-sorted
 specification close, and whose relation rows have no output, holds every row derived from its
 own rows. The lemma `lower_valid` says that a model of a specification that passes `spec_ok`
-validates its rules. A head whose pattern has no meaning holds in every model, because an
-engine rule stops at a failed primitive. Laws about single patterns relate their queries and
+validates its rules. A model needs each clause only under environments that give every variable
+a meaning of the sort at which the clause uses it, as the sorted environments of the engine do.
+So a rewrite such as `x * 1 => x` has models, among them the one that evaluates terms. A head
+whose pattern has no meaning holds in every model, because an engine rule stops at a failed
+primitive. Laws about single patterns relate their queries and
 actions to their values, their meanings in a model and the terms that a view represents, and
 laws about bodies say that the query of a body whose premises hold matches.
 
