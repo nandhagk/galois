@@ -138,7 +138,8 @@ of the tables and of the rules. The module `P` receives the definitions that the
 describe. The reading follows these rules.
 
 **Sorts.** Each argument of a relation has a sort that comes from its Rocq type. An argument of
-type `positive` or of a registered value type (see "Value types") is a value. An argument
+a value type is a value. A value type is `positive`, a type with a registered encoder, or a
+pair, an option or a list of value types (see "Value types"). An argument
 whose type is an inductive datatype, such as `term` below, is a class, the identifier of an
 equivalence class of the engine's e-graph. An argument of type `list T` of a constructor of a
 datatype is a class as well (see "Lists in datatypes"). Any other type is an error.
@@ -322,7 +323,7 @@ A primitive is a function on values that the engine calls while it runs a rule, 
 addition on `positive`. The command `Egglog Primitives P f1 .. fn.` defines a module `P` with
 the constants `P.<fi>_code` and the function `P.prim`. The function `P.prim` takes a code and
 a list of values and returns the result of the function with that code. Each function takes
-one to three arguments and returns a result. Their types are `positive` or registered value
+any number of arguments and returns a result, and the arguments and the result have value
 types. A program uses the set
 with `Egglog Q from R1 .. Rn with P.`
 
@@ -392,6 +393,25 @@ A call in the right side of a rewrite computes its value when the rule fires, so
 fold constants. The tests `TermTests` in `tests/Front/PrimitiveTest.v` fold `2 * 3` into `6`
 and join `2 * (x + 3)` with `6 + 2 * x`, as in the egglog tutorial.
 
+The function `P.prim` decodes the arguments of a call one at a time, with one step for each
+argument, and then encodes the result. It has no result when the number of values in the call
+differs from the number of arguments of the function.
+
+```coq
+(** Two products added, [a * b + c * d]. *)
+Definition blend (a b c d : positive) : positive := Pos.add (Pos.mul a b) (Pos.mul c d).
+
+Egglog Primitives Blends blend.
+
+Example blend_takes_four_values :
+  Blends.prim Blends.blend_code [1; 2; 3; 4] = Some 14 /\
+  Blends.prim Blends.blend_code [1; 2; 3] = None.
+Proof. vm_compute. auto. Qed.
+```
+
+The tests of `tests/Front/ArityTest.v` call `blend` in a conclusion and in the right side of a
+rewrite, and a function of a boolean and four integers in an equation premise.
+
 ## Value types
 
 The engine runs on `positive` values. A relation over another type, such as `Z`, `N`, `bool`
@@ -405,7 +425,11 @@ The command `Egglog Value T M.` registers the module `M` as the encoder of the t
 stops when `M.encode` or `M.decode` has another type, when `T` is `positive`, and when `T`
 already has an encoder. A registered type is a value, as `positive` is. The file
 `theories/Front/Encode.v` registers `ZEncode` for `Z`, `NEncode` for `N`, `BoolEncode` for
-`bool` and `StringEncode` for `string`. A client writes the module of any other type in the
+`bool` and `StringEncode` for `string`. The files `theories/Front/EncodeNat.v` and
+`theories/Front/EncodeAscii.v` register `NatEncode` for `nat` and `AsciiEncode` for `ascii`, and
+a client loads them to read these types as values. A client that does not load them reads `nat`
+and `ascii` as datatypes, so a relation over two natural numbers is then an equation over the
+terms of `O` and `S`. A client writes the module of any other type in the
 same way, and the encoder needs a time function for each function, as the other code of the
 library does.
 
@@ -489,8 +513,78 @@ Proof. vm_compute. reflexivity. Qed.
 
 The command adds the lemma `decode_encode` to the hint database `egglog_decode` and defines
 the lemma `<M>_encode_inj`, which says that `encode` is injective, in the hint database
-`egglog_inj`. The tactics that prove the generated lemmas use both. A relation of an
-unregistered type stops the command with a message that names the type.
+`egglog_inj`. The tactics that prove the generated lemmas use both. The command also declares
+`M.encode` with `simpl never`, so the encoding of a literal `c` keeps the form `M.encode c` in
+the proofs, and the tactics decode it as they decode the encoding of a variable. A relation of
+an unregistered type stops the command with a message that names the type.
+
+## Pairs, options and lists of values
+
+A pair, an option and a list of value types are value types too. The command builds their
+encoders from the encoders of their parts with `encode_pair`, `encode_option` and
+`encode_list` of `theories/Front/DeriveHelpers.v`, and their decoders with `decode_pair`,
+`decode_option` and `decode_list`. An encoding writes each bit of a part after a one and ends
+the part with a zero, so a decoder reads the parts back. The lemmas `decode_encode_pair`,
+`decode_encode_option` and `decode_encode_list` say that each decoder undoes its encoder, so two
+values with equal encodings are equal. A relation index, a column of an input row, an argument
+of an input constructor and an argument of a primitive may each have such a type. The engine
+holds such a value as one positive, so a pattern writes it as a variable or as a term without
+variables.
+
+The following program reads jobs, each with the list of the jobs that it waits for. The
+premise of `idle_job` reads a job whose list is empty, and the primitive `waits_for` finds a
+job in a list.
+
+```coq
+Local Open Scope positive_scope.
+
+(** A job with its number and the numbers of the jobs that it waits for. *)
+Inductive job : Type :=
+  | Job (id : positive) (deps : list positive).
+
+(** Whether the job [d] is among the jobs [ds]. *)
+Definition waits_for (d : positive) (ds : list positive) : bool := existsb (Pos.eqb d) ds.
+
+Egglog Primitives JobOps waits_for.
+
+(** [blocked jobs i d] says that the job [i] waits for the job [d]. *)
+Inductive blocked (jobs : list job) : positive -> positive -> Prop :=
+  | blocked_on i ds d es : In (Job i ds) jobs -> In (Job d es) jobs ->
+      waits_for d ds = true -> blocked jobs i d.
+
+(** [idle jobs i] says that the job [i] waits for no job. *)
+Inductive idle (jobs : list job) : positive -> Prop :=
+  | idle_job i : In (Job i []) jobs -> idle jobs i.
+
+Egglog Jobs from blocked idle with JobOps.
+
+Module JobOpsValue <: VALUE_OPS.
+  Include PosKeyCode.
+  Definition prim := JobOps.prim.
+  Definition merge (_ : positive) := Pos.max.
+End JobOpsValue.
+
+Module JobOpsIndex := IndexCode JobOpsValue.
+Module JobOpsJoin := JoinCode JobOpsValue JobOpsIndex.
+Module JobOpsDatabase := DatabaseCode JobOpsValue JobOpsIndex.
+Module JobOpsRun := RunCode JobOpsValue JobOpsIndex JobOpsJoin JobOpsDatabase.
+Module JobOpsRunner :=
+  RunnerCode JobOpsValue JobOpsIndex JobOpsJoin JobOpsDatabase JobOpsRun.
+
+Definition jobs_result : JobOpsDatabase.t :=
+  snd (JobOpsRunner.solve Jobs.program (Jobs.facts [Job 1 []; Job 2 [1; 3]]) example_limits).
+
+Example job_two_waits_for_job_one :
+  JobOpsRunner.holds Jobs.blocked_code [2; 1] jobs_result = true /\
+  JobOpsRunner.holds Jobs.idle_code [1] jobs_result = true /\
+  JobOpsRunner.holds Jobs.idle_code [2] jobs_result = false.
+Proof. vm_compute. auto. Qed.
+```
+
+A row of `Jobs.facts` holds the list of a job as one value. For the job 2, the row is
+`(Jobs.Job_code, [2; encode_list id_encode [1; 3]])`, and the generated lemmas state rows the
+same way. The tests of `tests/Front/CompositeTest.v` run relations over `nat`, `ascii`, pairs
+of integers, options and lists, with the generated lemmas in both directions.
 
 ## Lattice tables
 
@@ -845,8 +939,9 @@ instance of the inductive. The test `class_of_product_holds_the_scaling` of
 
 ## Lists in datatypes
 
-A constructor of a datatype may hold a list. The elements of the list have the type of the
-datatype itself, a registered value type, or a pair of these. For each element type `T`, the
+A constructor of a datatype may hold a list. An element of the list is a pair of two
+components or one component, and a component is a value, a term of a datatype of the program,
+or a list of such elements. For each element type `T`, the
 command adds two constructor tables, `P.nil_T_code` and `P.cons_T_code`, and the encoder of the
 datatype maps a list to a chain of nodes of these tables. A node of `cons_T` takes the
 components of an element and the class of the rest of the list, and the chain ends in the node
@@ -983,6 +1078,120 @@ The cons table of the association list is `Items.cons_positive_item_code`. It ta
 the class of the value and the class of the rest. The tests of `tests/Front/ContainerTest.v`
 also run lists of integers, nested vectors and records with a repeated key.
 
+## Datatypes that hold datatypes
+
+A constructor may hold a term of another datatype, directly or in a list, and a list may hold
+lists. The command adds every datatype that the datatypes of the relations reach in this way to
+the program, with the tables of its constructors and its own encoder. The encoder of a datatype
+encodes a term of another datatype as the encoder of that datatype does. So two datatypes that
+hold each other, as a mutual inductive defines them, stop the command. In the following program,
+a block holds a list of instructions. A union of two values joins the instructions that store them,
+and then the blocks that hold these instructions.
+
+```coq
+(** An instruction is a skip or a store of a value into a variable. *)
+Inductive instr : Type :=
+  | Skip
+  | Store (x v : positive).
+
+(** Blocks of instructions, and an instruction that guards a block. *)
+Inductive block : Type :=
+  | Block (body : list instr)
+  | Guard (s : instr) (rest : block).
+
+(** [instr_eq same s t] says that [s] and [t] are equal once the two values of each pair of
+    [same] are equal. *)
+Inductive instr_eq (same : list (positive * positive)) : instr -> instr -> Prop :=
+  | instr_refl s : instr_eq same s s
+  | instr_sym s t : instr_eq same s t -> instr_eq same t s
+  | instr_trans s t u : instr_eq same s t -> instr_eq same t u -> instr_eq same s u
+  | instr_same x v w : In (v, w) same -> instr_eq same (Store x v) (Store x w).
+
+(** [block_eq same b c] says that [b] and [c] are equal, and a skip at the front of a block
+    does nothing. *)
+Inductive block_eq (same : list (positive * positive)) : block -> block -> Prop :=
+  | block_refl b : block_eq same b b
+  | block_sym b c : block_eq same b c -> block_eq same c b
+  | block_trans b c d : block_eq same b c -> block_eq same c d -> block_eq same b d
+  | block_skip rest : block_eq same (Block (Skip :: rest)) (Block rest).
+
+Egglog Programs from instr_eq block_eq.
+
+Example blocks_of_joined_instructions_are_equal :
+  ExampleRunner.equal Programs.program (Programs.facts [(2, 3)]) example_limits
+    (Programs.encode_block (Block [Skip; Store 1 2]))
+    (Programs.encode_block (Block [Store 1 3])) = true.
+Proof. vm_compute. reflexivity. Qed.
+```
+
+The list tables of the body of a block are `Programs.nil_instr_code` and
+`Programs.cons_instr_code`. A list of lists, such as `rows : list (list T)`, has the tables
+`nil_list_T` and `cons_list_T` of its outer list besides the tables of its rows, and each row is
+a class. The tests of `tests/Front/NestingTest.v` join grids of lists of lists at their inner
+elements.
+
+## Pairs as variables and laws of lists
+
+A pattern may write an element of a list of pairs as one variable `p`, as in `p :: rest`. The
+command reads such a pair as its two sides, which are two variables of the clause. So the
+clause uses `p` as an element of a list, or through `fst p` and `snd p`, and the command stops
+when the clause uses `p` in another place.
+
+A congruence law of a constructor may relate two lists of pairs by
+`Forall2 (pair_rel ra rb) xs ys`. The relation `pair_rel` of `theories/Front/DeriveHelpers.v`
+relates two pairs when `ra` relates their first sides and `rb` their second sides, and each of
+`ra` and `rb` is the equality or the relation of the law. A law may also relate two arguments by
+their equality, such as two lists of values. The command reads such laws as closure laws, which
+give no clause, and the lemma `<R>_congruent` covers them. The relation of such a law nests
+through `pair_rel`, which is a conjunction, so `theories/Front/DeriveHelpers.v` registers
+`Scheme All for and` as well.
+
+```coq
+(** Leaves, rows of integers, objects of fields named by keys, and the value of the first
+    field of an object. *)
+Inductive doc : Type :=
+  | Leaf (n : positive)
+  | Row (vs : list Z)
+  | Obj (fs : list (positive * doc))
+  | Head (d : doc).
+
+(** Equality of documents. Rows of equal integers are equal, and so are objects whose keys
+    are equal and whose values are equal. The first two fields of an object swap, and [Head]
+    reads the value of the first field. *)
+Inductive doc_eq : doc -> doc -> Prop :=
+  | doc_refl a : doc_eq a a
+  | doc_sym a b : doc_eq a b -> doc_eq b a
+  | doc_trans a b c : doc_eq a b -> doc_eq b c -> doc_eq a c
+  | doc_row vs ws : vs = ws -> doc_eq (Row vs) (Row ws)
+  | doc_obj fs gs : Forall2 (pair_rel eq doc_eq) fs gs -> doc_eq (Obj fs) (Obj gs)
+  | doc_head a b : doc_eq a b -> doc_eq (Head a) (Head b)
+  | obj_swap p q rest : doc_eq (Obj (p :: q :: rest)) (Obj (q :: p :: rest))
+  | head_value p rest : doc_eq (Head (Obj (p :: rest))) (snd p).
+
+Egglog Docs from doc_eq.
+
+Example swapped_fields_are_equal :
+  ExampleRunner.equal Docs.program Docs.facts example_limits
+    (Docs.encode_doc (Obj [(1, Leaf 10); (2, Leaf 20)]))
+    (Docs.encode_doc (Obj [(2, Leaf 20); (1, Leaf 10)])) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Example related_objects_are_congruent :
+  forall fs gs, Forall2 (pair_rel eq doc_eq) fs gs ->
+    congruent ExampleValue.prim Docs.spec Docs.inputs
+      (Docs.encode_doc (Obj fs)) (Docs.encode_doc (Obj gs)).
+Proof. intros fs gs Hall. apply Docs.doc_eq_congruent. exact (doc_obj fs gs Hall). Qed.
+```
+
+Programs with relations that read each other, lattice tables or equations that read relations
+read these values and containers in the same way. In the tests of `tests/Front/CombinedTest.v`,
+two relations that read each other and a lattice table read lists of values in their input
+rows, and a lattice table keeps options of values. Three equations there hold lists, records
+and terms of another datatype. Their premises read a relation over values, one of two
+relations that read each other, and a lattice table, and two of them have rewrites that write
+pairs as variables. The lemma `<R>_congruent` of each covers the laws over `Forall2 R`, over
+`Forall2 (pair_rel ra rb)` and over equalities, with the read congruence as its conclusion.
+
 ## Rulesets
 
 A ruleset is a set of constructors whose rules a schedule of egglog runs together. The
@@ -1041,7 +1250,7 @@ For a command `Egglog P from R1 .. Rn` the module `P` has the following members.
 | `inputs` | The input rows as a relation `positive -> list positive -> Prop`, for the lemmas. |
 | `relation` | The meaning of each table, as a relation on rows. |
 | `lattice` | In a program with lattice tables, the meaning of the lattice tables, as a relation on codes, keys and values. |
-| `<Table>_code` | One constant for each table. A relation has `<R>_code`, a constructor table has `<Constructor>_code`, and an input list that is a parameter has `<parameter>_code`. The list tables of an element type `T` have `nil_<T>_code` and `cons_<T>_code`, and a pair type `A * B` is named `<A>_<B>` there. |
+| `<Table>_code` | One constant for each table. A relation has `<R>_code`, a constructor table has `<Constructor>_code`, and an input list that is a parameter has `<parameter>_code`. The list tables of an element type `T` have `nil_<T>_code` and `cons_<T>_code`. There a pair type `A * B` is named `<A>_<B>`, a list type `list A` is named `list_<A>` and an option type `option A` is named `option_<A>`. |
 | `<S>` | For each declaration `ruleset S C1 .. Ck`, the positions of the rules of `C1` to `Ck`, as a `list N` in increasing order. |
 | `default` | The positions of the rules that no ruleset lists. |
 | `all` | The positions of all rules. |
@@ -1050,7 +1259,7 @@ For a command `Egglog P from R1 .. Rn` the module `P` has the following members.
 | `closed` | The derived rows are closed under the clauses of `relation`. It is the converse half of the glue. In a program with lattice tables, it also says that every assigned value is in `lattice`. |
 | `<R>_merges` | For a lattice relation that a clause of a relation over values reads, the closure of `R` under its merge. A lemma that the client proves before the command, named `<R>_merges` or in the hint database `egglog_merges`, can give it. |
 | `<R>_spec` | For a relation over values, the equivalence of `R` with its derived row, as in `Path.path_spec`. For a lattice relation, the equivalence of `R` with its assigned value, as in `Distances.dist_spec`. |
-| `<R>_congruent` | For an equational relation, the implication from `R t u` to the congruence of the encodings of `t` and `u`. It covers the congruence laws over `Forall2`. Beside relations over values, the conclusion is the read congruence over the meaning of the relations (see Equations that read relations). |
+| `<R>_congruent` | For an equational relation, the implication from `R t u` to the congruence of the encodings of `t` and `u`. It covers the congruence laws over `Forall2 R`, over `Forall2 (pair_rel ra rb)` and over equalities. Beside relations over values, the conclusion is the read congruence over the meaning of the relations (see Equations that read relations). |
 | `<C>_steps` | For a rewrite of an equation beside relations over values, the lemma that its instance is a step `read_step` over the meaning of the relations. |
 
 Every lemma is checked, so a wrong reading stops the command. The proofs use the tactics that
@@ -1163,30 +1372,39 @@ Steensgaard's `solve_exact` says that a saturated solve answers
 
 ## Limits
 
-- A value type other than `positive` needs a registered encoder. A type without one that is an
-  inductive type is read as a datatype when both indices of a relation have it, and stops the
-  command where a value is needed, such as in an input pair.
+- A value type is `positive`, a type with a registered encoder, or a pair, an option or a list
+  of value types. A type without an encoder that is an inductive type is read as a datatype when
+  both indices of a relation have it, and stops the command where a value is needed, such as in
+  an input pair. A client reads `nat` and `ascii` as values only when it loads
+  `theories/Front/EncodeNat.v` or `theories/Front/EncodeAscii.v`.
+- The engine holds a pair, an option or a list of values as one positive, so a pattern writes
+  such a value as a variable or as a term without variables. A pattern such as `Some x` stops
+  the command, and so does `x :: xs` where the list is a value.
 - An encoder need not be onto. A primitive whose argument is a positive that decodes to no
   value has no result.
-- A primitive has one to three arguments. A call inside a premise argument applies to
-  variables that a relation or input premise binds, so a nested call there is not supported.
+- A call inside a premise argument applies to variables that a relation or input premise
+  binds, so a nested call there is not supported. The command finds no encoders for a primitive
+  whose type depends on an argument, such as `rev`, so a client wraps such a primitive in a
+  function of a fixed type.
 - The command defines the constants of rulesets. The engine runs the rules of a whole program,
   and it has no `run-schedule`, no `subsume` and no `delete`. These features wait for engine
   support after stage 2, so a run reads no ruleset and the command cannot express `subsume` or
   `delete`.
-- A list in a datatype holds elements of the datatype itself, of a registered value type, or
-  pairs of these. A list of another datatype, a list of lists and a list in an input
-  constructor stop the command, and so does a pattern that writes an element of a list of
-  pairs as a variable. The command reads the congruence law `Forall2 R xs ys` of a list of the
-  datatype itself. A list of values or of pairs has no congruence law that the command reads.
-  The congruence closure of the engine still applies to the nodes of such a list.
+- Two datatypes that hold each other, as a mutual inductive defines them, stop the command,
+  because the encoder of each would hold the encoder of the other.
+- A pattern that writes an element of a list of pairs as a variable `p` uses `p` as such an
+  element or through `fst p` and `snd p`, and the command stops at any other use of `p`.
+- The command reads the congruence laws `Forall2 R xs ys` of a list of the datatype itself,
+  `Forall2 (pair_rel ra rb) xs ys` of a list of pairs and `xs = ys` of any argument. A list of
+  another datatype or of lists has no congruence law that the command reads, and the congruence
+  closure of the engine still applies to the nodes of such a list.
+- In an equation, a variable of a list type is a class, so the command stops when a premise
+  of the equation reads the variable as a value, of an input row or of a relation over values.
 - A list keeps the order and the repetitions of its elements. Sets, multisets and maps keyed
   by classes need the database to keep their keys in a normal form under the equivalence of
   classes, so they wait for a later change of the engine.
 - Relations that read each other are relations over values or lattice tables, because a
-  premise over an equation stops the command. The datatypes of an equation hold no term of
-  another datatype, so two datatypes that hold each other, as a mutual inductive can define
-  them, stop the command too.
+  premise over an equation stops the command.
 - Relations and lattice tables take only values, so the command stops at a lattice table keyed
   by a class, such as an analysis of the classes of an e-graph in egglog. The completeness of
   lattice reads of `LatticeReadSig.v` covers only specifications without constructor tables, so

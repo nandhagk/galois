@@ -518,33 +518,6 @@ End GlueTests.
 
 Module RejectionTests.
 
-  (** A datatype with one constructor. *)
-  Inductive other : Type :=
-    | Other.
-
-  (** A list of another datatype. *)
-  Inductive foreign : Type :=
-    | Foreigners (xs : list other)
-    | Alone.
-
-  (** Equality of [foreign], with reflexivity only. *)
-  Inductive foreign_eq : foreign -> foreign -> Prop :=
-    | foreign_refl a : foreign_eq a a.
-
-  (** A list of lists. *)
-  Inductive nest : Type :=
-    | Nest (xss : list (list nest))
-    | Bottom.
-
-  (** Equality of [nest], with reflexivity only. *)
-  Inductive nest_eq : nest -> nest -> Prop :=
-    | nest_refl a : nest_eq a a.
-
-  (** A pattern that names a field of a record by one variable. *)
-  Inductive field_eq : item -> item -> Prop :=
-    | field_refl a : field_eq a a
-    | field_first p rest : field_eq (Fields (p :: rest)) (Tag 1).
-
   (** Another relation between the elements of two vectors. *)
   Inductive other_rel : math -> math -> Prop :=
     | other_same a : other_rel a a.
@@ -562,19 +535,10 @@ Module RejectionTests.
   Inductive batched (bs : list batch) : positive -> Prop :=
     | batched_one x : In (Batch [x]) bs -> batched bs x.
 
-  (** The elements of a list are of another datatype. *)
-  Fail Egglog Foreigners from foreign_eq.
-
-  (** The elements of a list are lists. *)
-  Fail Egglog Nested from nest_eq.
-
-  (** An element of a list of pairs is a variable. *)
-  Fail Egglog FieldVariables from field_eq.
-
   (** The law of a list argument relates the elements by another relation. *)
   Fail Egglog Related from related_eq.
 
-  (** An input constructor holds a list. *)
+  (** An input constructor holds a list value, and a pattern writes a variable inside it. *)
   Fail Egglog Batches from batched.
 
 End RejectionTests.

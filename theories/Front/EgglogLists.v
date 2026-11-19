@@ -4,12 +4,14 @@
     argument of type [list T] of a constructor of a datatype is a class, which the tables
     [nil_T] and [cons_T] build as a chain of nodes. A cons node takes the components of an
     element and the class of the rest of the list. The components of a pair are its two sides,
-    and any other element is its own component. The declaration [ruleset S C1 .. Ck] defines
-    [P.S] as the positions of the rules of [C1] to [Ck].
+    and any other element is its own component. A component is a value, a class of a datatype
+    of the program, or a list, which is a class as well. The declaration [ruleset S C1 .. Ck]
+    defines [P.S] as the positions of the rules of [C1] to [Ck].
 
     For example, the constructor [MyVec (xs : list math)] adds the tables [nil_math] and
     [cons_math], and the encoder of [math] writes [[a; b]] as two cons nodes in front of a nil
-    node.
+    node. The constructor [Rows (xss : list (list math))] adds the tables [nil_list_math] and
+    [cons_list_math] of the outer list as well.
 
     Builds on: the Egglog syntax and model, the reading of [egglog.reading], and Elpi. *)
 
@@ -33,15 +35,23 @@ pred elem-parts i:term, o:list term.
 elem-parts {{ prod lp:A lp:B }} [A, B] :- !.
 elem-parts E [E].
 
-% A list in a constructor of the datatype D has elements of D, of a value type, or pairs of
-% these.
+% The type of a component of a list element is a value type, a datatype, or a list type whose
+% elements have components of these kinds.
+pred elem-part i:term.
+elem-part T :- value-type T, !.
+elem-part T :- datatype T _, !.
+elem-part T :- list-of T E, elem-ok E.
+
+% The elements of a list in a datatype have components of the kinds of [elem-part].
+pred elem-ok i:term.
+elem-ok E :- std.forall {elem-parts E} elem-part.
+
 pred check-elem i:inductive, i:term.
-check-elem D E :-
-  std.forall {elem-parts E} (t\ (t = global (indt D) ; value-type t)), !.
+check-elem _ E :- elem-ok E, !.
 check-elem D E :-
   coq.error "Egglog: a list in the datatype" {coq.gref->id (indt D)} "has elements of type"
-    {coq.term->string E} "which is neither the datatype, a registered value type nor a pair"
-    "of these.".
+    {coq.term->string E} "which is neither a value type, a datatype, a list of these nor a"
+    "pair of these.".
 
 % The sort of an argument of a constructor of the datatype D. A list is a class, the chain of its
 % cons nodes.
@@ -49,21 +59,29 @@ pred con-arg-sort i:inductive, i:term, o:term.
 con-arg-sort D T {{ SId }} :- list-of T E, !, check-elem D E.
 con-arg-sort _ T S :- sort-term T S.
 
+% The sort of a component of a list element. A list is a class, as in a constructor.
+pred part-sort i:term, o:term.
+part-sort T {{ SId }} :- list-of T _, !.
+part-sort T S :- sort-term T S.
+
 % The name of an element type in the names of its list tables.
 pred type-name i:term, o:string.
 type-name {{ prod lp:A lp:B }} N :- !, N is {type-name A} ^ "_" ^ {type-name B}.
+type-name {{ list lp:A }} N :- !, N is "list_" ^ {type-name A}.
+type-name {{ option lp:A }} N :- !, N is "option_" ^ {type-name A}.
 type-name (global GR) N :- coq.gref->id GR N.
 
 % The tables nil and cons of the element type of each list argument of a constructor, unless an
 % earlier constructor added them. A cons node takes the components of an element and the rest
-% of the list.
+% of the list. A component that is a list adds the tables of its own elements after them.
 pred list-tables i:term, i:list (pair tkey (list term)), o:list (pair tkey (list term)).
 list-tables KTy Acc Out :- arg-types KTy Tys, std.fold Tys Acc add-list-tables Out.
 
 pred add-list-tables i:term, i:list (pair tkey (list term)), o:list (pair tkey (list term)).
 add-list-tables T Acc Out :- list-of T E, not (std.exists Acc (p\ sigma S\ p = pr (tk-nil E) S)),
-  !, std.map {elem-parts E} sort-term Ss, std.append Ss [{{ SId }}] ConsSorts,
-  std.append Acc [pr (tk-nil E) [], pr (tk-cons E) ConsSorts] Out.
+  !, std.map {elem-parts E} part-sort Ss, std.append Ss [{{ SId }}] ConsSorts,
+  std.append Acc [pr (tk-nil E) [], pr (tk-cons E) ConsSorts] Acc1,
+  std.fold {elem-parts E} Acc1 add-list-tables Out.
 add-list-tables _ Acc Acc.
 
 % The code of a list table, which a constructor of a datatype of the program declares.
@@ -90,17 +108,14 @@ list-encoder Ts Part E Fix :-
       [{{ @Model.EApp positive lp:NilCode (@nil (@Model.expr positive)) }},
        fun `x` E (x\ fun `rest` LTy (rest\ Cons go x rest))])).
 
-% The cons node of the element [X] in front of the list [Rest], where [Go] encodes the rest. A
-% pair is matched into its two components.
+% The cons node of the element [X] in front of the list [Rest], where [Go] encodes the rest. The
+% components of a pair are its two projections, so that the node of a pair that a clause binds
+% as a variable [p] is the node of the components [fst p] and [snd p].
 pred cons-expr i:(pred i:term, i:term, o:term), i:term, i:term, i:term, i:term, i:term,
   o:term.
-cons-expr Part {{ prod lp:A lp:B }} Code Go X Rest
-    (match X (fun `p` {{ prod lp:A lp:B }} _\ {{ @Model.expr positive }})
-      [fun `a` A (a\ fun `b` B (b\ Node a b))]) :- !,
-  pi a b\ decl a `a` A => decl b `b` B =>
-    (sigma EA EB L\ Part A a EA, Part B b EB,
-     list->term {{ @Model.expr positive }} [EA, EB, app [Go, Rest]] L,
-     Node a b = {{ @Model.EApp positive lp:Code lp:L }}).
+cons-expr Part {{ prod lp:A lp:B }} Code Go X Rest {{ @Model.EApp positive lp:Code lp:L }} :- !,
+  Part A {{ @fst lp:A lp:B lp:X }} EA, Part B {{ @snd lp:A lp:B lp:X }} EB,
+  list->term {{ @Model.expr positive }} [EA, EB, app [Go, Rest]] L.
 cons-expr Part E Code Go X Rest {{ @Model.EApp positive lp:Code lp:L }} :-
   Part E X EX, list->term {{ @Model.expr positive }} [EX, app [Go, Rest]] L.
 
