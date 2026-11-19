@@ -11,7 +11,12 @@
     values of [T] enter the engine through [M.encode]. After [with Ops], the declaration
     [merge R g] makes [R] a lattice table, whose last index is its value and whose merge is the
     primitive [g] of [Ops]. A constructor of [R] assigns a value, and a premise over [R] reads
-    the stored value.
+    the stored value. An argument of type [list T] of a constructor of a datatype is a class,
+    which the tables [nil_T] and [cons_T] build as a chain of nodes, and the law
+    [Forall2 R xs ys -> R (C xs) (C ys)] is the congruence of [C] in such an argument. The
+    declaration [ruleset S C1 .. Ck] defines [P.S] as the positions of the rules of [C1] to
+    [Ck] in increasing order. [P.default] holds the positions of the rules that no ruleset
+    lists, and [P.all] holds the positions of all rules.
 
     For example, [Egglog Andersen from may_points.] defines [Andersen.spec] with one clause per
     constructor of [may_points], and [Andersen.facts q] lists the input rows of [q].
@@ -398,21 +403,51 @@ Ltac egglog_clause Hc Hh Hb Hvals :=
   try egglog_inj;
   red; right; egglog_pick.
 
-(** The arguments of a congruence: each is related by a hypothesis or equal. *)
-Ltac egglog_args :=
-  repeat (apply Forall2_cons; [first [assumption | apply congruent_refl] | ]);
+(** A goal [congruent _ _ _ (e xs) (e ys)], where [e] encodes lists as chains of cons nodes and
+    a hypothesis [Forall2 R xs ys] relates the two lists element by element. The proof recurses
+    on the hypothesis with [IHL], and [IH] gives the congruence of each pair of elements. *)
+Ltac egglog_list_args IH :=
+  lazymatch goal with
+  | |- congruent _ _ _ (_ ?xs) (_ ?ys) =>
+      lazymatch goal with
+      | Hall : Forall2 _ xs ys |- _ =>
+          let IHL := fresh "IHL" in
+          let Hxy := fresh "Hxy" in
+          let Hrest := fresh "Hrest" in
+          revert xs ys Hall; fix IHL 3; intros ? ? Hall;
+          destruct Hall as [| ? ? ? ? Hxy Hrest];
+          [ apply congruent_refl
+          | simpl; apply congruent_cong;
+            apply Forall2_cons; [apply IH; exact Hxy |];
+            apply Forall2_cons; [apply IHL; exact Hrest |];
+            apply Forall2_nil ]
+      end
+  end.
+
+(** The arguments of a congruence. Each pair of arguments is related by a hypothesis through the
+    recursive call [IH], equal, or a pair of lists related element by element. *)
+Ltac egglog_args IH :=
+  repeat (apply Forall2_cons;
+    [first [apply IH; assumption | apply congruent_refl | egglog_list_args IH] | ]);
   apply Forall2_nil.
 
-(** Each instance of an equational relation is a congruence of the encodings: the fire
-    lemmas for its clauses and the congruence rules for its closure laws. *)
+(** Each instance of an equational relation is a congruence of the encodings, by recursion on
+    the instance with [IH]. The fire lemmas give its clauses, and the congruence rules give its
+    closure laws. *)
 Ltac egglog_congruent :=
-  intros; match goal with H : _ |- _ => induction H end;
+  intros;
+  lazymatch goal with
+  | H : _ ?t ?u |- _ => revert t u H
+  end;
+  let IH := fresh "IH" in
+  let H := fresh "H" in
+  fix IH 3; intros ? ? H; destruct H;
   first
-    [ solve [eauto with egglog_fire]
+    [ solve [clear IH; eauto with egglog_fire]
     | apply congruent_refl
-    | apply congruent_sym; assumption
-    | eapply congruent_trans; eassumption
-    | simpl; apply congruent_cong; egglog_args ].
+    | apply congruent_sym; apply IH; assumption
+    | eapply congruent_trans; apply IH; eassumption
+    | simpl; apply congruent_cong; egglog_args IH ].
 
 (** Every derived row is in the relation of the program. *)
 Ltac egglog_closed :=
@@ -701,12 +736,49 @@ sort-term T _ :- coq.error "Egglog: a table argument has type" {coq.term->string
   "which is neither a registered value type nor a datatype".
 
 % ---------------------------------------------------------------------------------------------
+% Lists in datatypes
+
+% The element type of a list type.
+pred list-of i:term, o:term.
+list-of {{ list lp:E }} E.
+
+% The components of a list element: the two sides of a pair, or the element itself.
+pred elem-parts i:term, o:list term.
+elem-parts {{ prod lp:A lp:B }} [A, B] :- !.
+elem-parts E [E].
+
+% A list in a constructor of the datatype D has elements of D, of a value type, or pairs of
+% these.
+pred check-elem i:inductive, i:term.
+check-elem D E :-
+  std.forall {elem-parts E} (t\ (t = global (indt D) ; value-type t)), !.
+check-elem D E :-
+  coq.error "Egglog: a list in the datatype" {coq.gref->id (indt D)} "has elements of type"
+    {coq.term->string E} "which is neither the datatype, a registered value type nor a pair"
+    "of these.".
+
+% The sort of an argument of a constructor of the datatype D. A list is a class, the chain of its
+% cons nodes.
+pred con-arg-sort i:inductive, i:term, o:term.
+con-arg-sort D T {{ SId }} :- list-of T E, !, check-elem D E.
+con-arg-sort _ T S :- sort-term T S.
+
+% The name of an element type in the names of its list tables.
+pred type-name i:term, o:string.
+type-name {{ prod lp:A lp:B }} N :- !, N is {type-name A} ^ "_" ^ {type-name B}.
+type-name (global GR) N :- coq.gref->id GR N.
+
+% ---------------------------------------------------------------------------------------------
 % Numerals and lists
 
 pred int->pos i:int, o:term.
 int->pos 1 {{ xH }} :- !.
 int->pos N {{ xO lp:P }} :- 0 is N mod 2, !, M is N div 2, int->pos M P.
 int->pos N {{ xI lp:P }} :- M is N div 2, int->pos M P.
+
+pred int->N i:int, o:term.
+int->N 0 {{ N0 }} :- !.
+int->N N {{ Npos lp:P }} :- int->pos N P.
 
 pred list->term i:term, i:list term, o:term.
 list->term Ty [] {{ @nil lp:Ty }}.
@@ -724,6 +796,8 @@ type tk-rel inductive -> tkey.     % a relation over values
 type tk-con constructor -> tkey.   % an input constructor or a datatype constructor
 type tk-src term -> tkey.          % an input list of tuples, by its projection
 type tk-param int -> tkey.         % an input list of tuples that is a parameter, by position
+type tk-nil term -> tkey.          % the empty list of an element type
+type tk-cons term -> tkey.         % an element in front of a list, by the element type
 
 kind table type.
 type table tkey -> int -> list term -> term -> table.   % key, code, sorts, output
@@ -813,13 +887,6 @@ pred split-last i:list A, o:list A, o:A.
 split-last [X] [] X :- !.
 split-last [X | Xs] [X | Ys] L :- split-last Xs Ys L.
 
-% The declarations 'merge R g' that follow 'with <primitives>'.
-pred merge-decls i:list argument, o:list (pair string string).
-merge-decls [] [].
-merge-decls [str "merge", str R, str G | Rest] [pr R G | Ms] :- !, merge-decls Rest Ms.
-merge-decls _ _ :- coq.error "Egglog: after 'with <primitives>', each lattice table is declared"
-  "as 'merge <relation> <function>'.".
-
 % A declared lattice relation, with the code of its merge and the merge function.
 kind latdecl type.
 type latdecl inductive -> term -> term -> latdecl.
@@ -889,10 +956,16 @@ var-index [_ | Vs] X I :- var-index Vs X I.
 
 pred pat-of i:list table, i:list (pair term int), i:term, o:term.
 pat-of _ Vars X {{ @PVar positive lp:P }} :- var-index Vars X I, !, int->pos I P.
+pat-of Ts _ {{ @nil lp:E }} {{ @PNode positive lp:Code (@nil (pat positive)) }} :- !,
+  list-code Ts (tk-nil E) Code.
+pat-of Ts Vars {{ @cons lp:E lp:X lp:T }} {{ @PNode positive lp:Code lp:PArgs }} :- !,
+  list-code Ts (tk-cons E) Code,
+  elem-pats Ts Vars E X Ps, pat-of Ts Vars T PT, std.append Ps [PT] All,
+  list->term {{ pat positive }} All PArgs.
 pat-of Ts Vars (app [global (indc K) | Args]) {{ @PNode positive lp:Code lp:PArgs }} :-
   find-table Ts (tk-con K) _ _ O, O = {{ OId }}, !, code-of Ts (tk-con K) Code,
   std.map Args (pat-of Ts Vars) Ps, list->term {{ pat positive }} Ps PArgs.
-pat-of Ts _ (global (indc K)) {{ @PNode positive lp:Code nil }} :-
+pat-of Ts _ (global (indc K)) {{ @PNode positive lp:Code (@nil (pat positive)) }} :-
   find-table Ts (tk-con K) _ _ O, O = {{ OId }}, !, code-of Ts (tk-con K) Code.
 pat-of Ts Vars (app [global GR | Args]) {{ @POp positive lp:Code lp:PArgs }} :-
   prim-of GR Code, !, pats-of Ts Vars Args PArgs.
@@ -903,6 +976,21 @@ pat-of _ _ T _ :- coq.error "Egglog: cannot read the term" {coq.term->string T}.
 
 pred pats-of i:list table, i:list (pair term int), i:list term, o:term.
 pats-of Ts Vars Args L :- std.map Args (pat-of Ts Vars) Ps, list->term {{ pat positive }} Ps L.
+
+% The patterns of a list element: the two sides of a pair, or the element itself.
+pred elem-pats i:list table, i:list (pair term int), i:term, i:term, o:list term.
+elem-pats Ts Vars {{ prod _ _ }} {{ @pair _ _ lp:A lp:B }} [PA, PB] :- !,
+  pat-of Ts Vars A PA, pat-of Ts Vars B PB.
+elem-pats _ _ {{ prod _ _ }} X _ :- !,
+  coq.error "Egglog: an element of a list of pairs is written as a pair (a, b) in a pattern,"
+    "and" {coq.term->string X} "is not.".
+elem-pats Ts Vars _ X [P] :- pat-of Ts Vars X P.
+
+% The code of a list table, which a constructor of a datatype of the program declares.
+pred list-code i:list table, i:tkey, o:term.
+list-code Ts K Code :- find-table Ts K _ _ _, !, code-of Ts K Code.
+list-code _ _ _ :- coq.error "Egglog: a pattern holds a list of a type that no constructor of a"
+  "datatype of the program holds.".
 
 % ---------------------------------------------------------------------------------------------
 % Premises and conclusions
@@ -928,24 +1016,40 @@ premise-of Ts _ _ Vars (app [global (indt Eq), _, app [global GR | Args], V])
   pats-of Ts Vars Args PArgs, pat-of Ts Vars V PV.
 premise-of _ _ _ _ H _ :- coq.error "Egglog: cannot read the premise" {coq.term->string H}.
 
+% A hypothesis of a closure law of an equational relation R: R relates two terms, or
+% [Forall2 R] relates two lists element by element.
+kind lawhyp type.
+type hyp-rel term -> term -> lawhyp.
+type hyp-all term -> term -> lawhyp.
+
+pred law-hyp i:inductive, i:int, i:term, o:lawhyp.
+law-hyp R NP (app [global (indt R) | HA]) (hyp-rel A B) :- !, drop NP HA [A, B].
+law-hyp R NP {{ @Forall2 _ _ lp:Rel lp:Xs lp:Ys }} (hyp-all Xs Ys) :- rel-applied R NP Rel.
+
+% The relation R applied to its parameters.
+pred rel-applied i:inductive, i:int, i:term.
+rel-applied R 0 (global (indt R)) :- !.
+rel-applied R NP (app [global (indt R) | Ps]) :- std.length Ps NP.
+
 % A closure law of an equational relation R: reflexivity, symmetry, transitivity or the
-% congruence of one constructor.
+% congruence of one constructor, whose list arguments are related by [Forall2 R].
 pred closure-law i:inductive, i:int, i:list term, i:term.
 closure-law R NP Hyps (app [global (indt R) | All]) :-
   drop NP All [L, Rt],
-  std.map Hyps (h\ p\ sigma HA\ h = app [global (indt R) | HA], drop NP HA p) Pairs,
+  std.map Hyps (law-hyp R NP) Pairs,
   closure-shape Pairs L Rt.
 
-pred closure-shape i:list (list term), i:term, i:term.
+pred closure-shape i:list lawhyp, i:term, i:term.
 closure-shape [] X X :- !.
-closure-shape [[A, B]] B A :- !.
-closure-shape [[A, B], [B, C]] A C :- !.
+closure-shape [hyp-rel A B] B A :- !.
+closure-shape [hyp-rel A B, hyp-rel B C] A C :- !.
 closure-shape Pairs (app [K | As]) (app [K | Bs]) :- cong-args Pairs As Bs.
 
-pred cong-args i:list (list term), i:list term, i:list term.
+pred cong-args i:list lawhyp, i:list term, i:list term.
 cong-args [] [] [] :- !.
 cong-args Ps [A | As] [A | Bs] :- !, cong-args Ps As Bs.
-cong-args [[A, B] | Ps] [A | As] [B | Bs] :- cong-args Ps As Bs.
+cong-args [hyp-rel A B | Ps] [A | As] [B | Bs] :- cong-args Ps As Bs.
+cong-args [hyp-all A B | Ps] [A | As] [B | Bs] :- cong-args Ps As Bs.
 
 pred mentions i:term, i:list (pair term int), o:list int.
 mentions T Vars Is :- std.filter Vars (v\ sigma X\ v = pr X _, occurs X T) Ws,
@@ -1019,17 +1123,38 @@ pred datatype-tables i:list inductive, i:list (pair tkey (list term)),
 datatype-tables [] Acc Acc.
 datatype-tables [I | Is] Acc Out :-
   coq.env.indt I _ _ _ _ Ks KTys,
-  std.map2 Ks KTys (k\ ty\ e\ sigma Tys Ss\ arg-types ty Tys, std.map Tys sort-term Ss,
+  std.map2 Ks KTys (k\ ty\ e\ sigma Tys Ss\ arg-types ty Tys, std.map Tys (con-arg-sort I) Ss,
     e = pr (tk-con k) Ss) Es,
-  std.append Acc Es Acc1, datatype-tables Is Acc1 Out.
+  std.append Acc Es Acc1,
+  std.fold KTys Acc1 list-tables Acc2,
+  datatype-tables Is Acc2 Out.
+
+% The tables nil and cons of the element type of each list argument of a constructor, unless an
+% earlier constructor added them. A cons node takes the components of an element and the rest
+% of the list.
+pred list-tables i:term, i:list (pair tkey (list term)), o:list (pair tkey (list term)).
+list-tables KTy Acc Out :- arg-types KTy Tys, std.fold Tys Acc add-list-tables Out.
+
+pred add-list-tables i:term, i:list (pair tkey (list term)), o:list (pair tkey (list term)).
+add-list-tables T Acc Out :- list-of T E, not (std.exists Acc (p\ sigma S\ p = pr (tk-nil E) S)),
+  !, std.map {elem-parts E} sort-term Ss, std.append Ss [{{ SId }}] ConsSorts,
+  std.append Acc [pr (tk-nil E) [], pr (tk-cons E) ConsSorts] Out.
+add-list-tables _ Acc Acc.
 
 pred number i:list (pair tkey (list term)), i:int, i:list inductive, o:list table.
 number [] _ _ [].
 number [pr K Ss | Rest] N Dts [table K N Ss Out | Ts] :-
-  if (K = tk-rel R, lattice-of R Code _) (Out = {{ OLat lp:Code }})
-     (if (K = tk-con C, std.exists Dts (d\ coq.env.indc C _ _ _ Ty, con-of d Ty))
-        (Out = {{ OId }}) (Out = {{ ORel }})),
-  M is N + 1, number Rest M Dts Ts.
+  table-output K Dts Out, M is N + 1, number Rest M Dts Ts.
+
+% The output of a table: a lattice relation has a value, a constructor of a datatype and a list
+% table have a class, and every other table is a relation.
+pred table-output i:tkey, i:list inductive, o:term.
+table-output (tk-rel R) _ {{ OLat lp:Code }} :- lattice-of R Code _, !.
+table-output (tk-con C) Dts {{ OId }} :-
+  std.exists Dts (d\ sigma Ty\ coq.env.indc C _ _ _ Ty, con-of d Ty), !.
+table-output (tk-nil _) _ {{ OId }} :- !.
+table-output (tk-cons _) _ {{ OId }} :- !.
+table-output _ _ {{ ORel }}.
 
 pred undup i:list inductive, i:list inductive, o:list inductive.
 undup [] Acc Out :- std.rev Acc Out.
@@ -1445,8 +1570,12 @@ pred define-spec i:list table, i:term, i:term, i:term, i:term, i:rel.
 define-spec Ts Spec Inputs Relation Closed (rel R NP Eq Ss) :-
   RName = {coq.gref->id (indt R)},
   complete-type Ts Spec Inputs (rel R NP Eq Ss) CTy,
-  prove "egglog_complete" CTy CP,
+  prove-or "egglog_complete" CTy CP
+    {calc ("Egglog: the tactic egglog_complete failed on " ^ RName ^ ". The command reads" ^
+      " the relations in the order that it names them, so name each relation that a premise" ^
+      " of " ^ RName ^ " reads before " ^ RName ^ ".")},
   coq.env.add-const {calc (RName ^ "_derived")} CP CTy @opaque! CC,
+  coq.hints.add-resolve (const CC) "egglog_fire" 0 _,
   back-type Ts Relation (rel R NP Eq Ss) BTy,
   prove "egglog_back" BTy BP,
   coq.env.add-const {calc (RName ^ "_back")} BP BTy @opaque! BC,
@@ -1461,6 +1590,8 @@ pred code-name i:list string, i:table, o:string.
 code-name _ (table (tk-rel R) _ _ _) N :- !, N is {coq.gref->id (indt R)} ^ "_code".
 code-name _ (table (tk-con K) _ _ _) N :- !, N is {coq.gref->id (indc K)} ^ "_code".
 code-name _ (table (tk-src (global GR)) _ _ _) N :- !, N is {coq.gref->id GR} ^ "_code".
+code-name _ (table (tk-nil E) _ _ _) N :- !, N is "nil_" ^ {type-name E} ^ "_code".
+code-name _ (table (tk-cons E) _ _ _) N :- !, N is "cons_" ^ {type-name E} ^ "_code".
 code-name PNames (table (tk-param I) _ _ _) N :- std.nth {calc (I - 1)} PNames P,
   N is P ^ "_code".
 
@@ -1479,16 +1610,48 @@ define-code PNames T (pr K (global (const C))) :- T = table K N _ _,
 % ---------------------------------------------------------------------------------------------
 % Encoders of datatypes
 
-% The expression of a constructor argument: the encoder on the datatype, a literal on a value.
-pred encode-arg i:inductive, i:term, i:term, i:term, o:term.
-encode-arg D F Ty X {{ lp:F lp:X }} :- Ty = global (indt D), !.
-encode-arg _ _ Ty X {{ @Model.ELit positive lp:E }} :- value-type Ty, !, enc-by-ty Ty X E.
-encode-arg _ _ Ty _ _ :- coq.error "Egglog: a datatype argument has type"
-  {coq.term->string Ty} "which is neither positive nor the datatype itself".
+% The expression of a constructor argument: the encoder [F] on the datatype [D], a literal on a
+% value, and a chain of cons nodes on a list.
+pred encode-arg i:list table, i:inductive, i:term, i:term, i:term, o:term.
+encode-arg _ D F Ty X {{ lp:F lp:X }} :- Ty = global (indt D), !.
+encode-arg _ _ _ Ty X {{ @Model.ELit positive lp:E }} :- value-type Ty, !, enc-by-ty Ty X E.
+encode-arg Ts D F Ty X (app [Enc, X]) :- list-of Ty E, !,
+  list-encoder Ts (encode-arg Ts D F) E Enc.
+encode-arg _ _ _ Ty _ _ :- coq.error "Egglog: a datatype argument has type"
+  {coq.term->string Ty} "which is neither a value type, the datatype itself nor a list".
+
+% The encoder of the lists of the element type E. It is a fixpoint that maps the empty list to
+% the node of the nil table, and an element in front of a list to the node of the cons table
+% over the expressions of the components of the element and of the rest. [Part Ty X Expr] gives
+% the expression [Expr] of a component [X] of type [Ty].
+pred list-encoder i:list table, i:(pred i:term, i:term, o:term), i:term, o:term.
+list-encoder Ts Part E Fix :-
+  code-of Ts (tk-nil E) NilCode, code-of Ts (tk-cons E) ConsCode,
+  LTy = {{ list lp:E }}, RetTy = {{ @Model.expr positive }},
+  (pi go x rest\ decl x `x` E => decl rest `rest` LTy =>
+     cons-expr Part E ConsCode go x rest (Cons go x rest)),
+  Fix = fix `encode_list` 0 {{ lp:LTy -> lp:RetTy }} (go\ fun `l` LTy (l\
+    match l (fun `l` LTy _\ RetTy)
+      [{{ @Model.EApp positive lp:NilCode (@nil (@Model.expr positive)) }},
+       fun `x` E (x\ fun `rest` LTy (rest\ Cons go x rest))])).
+
+% The cons node of the element [X] in front of the list [Rest], where [Go] encodes the rest. A
+% pair is matched into its two components.
+pred cons-expr i:(pred i:term, i:term, o:term), i:term, i:term, i:term, i:term, i:term,
+  o:term.
+cons-expr Part {{ prod lp:A lp:B }} Code Go X Rest
+    (match X (fun `p` {{ prod lp:A lp:B }} _\ {{ @Model.expr positive }})
+      [fun `a` A (a\ fun `b` B (b\ Node a b))]) :- !,
+  pi a b\ decl a `a` A => decl b `b` B =>
+    (sigma EA EB L\ Part A a EA, Part B b EB,
+     list->term {{ @Model.expr positive }} [EA, EB, app [Go, Rest]] L,
+     Node a b = {{ @Model.EApp positive lp:Code lp:L }}).
+cons-expr Part E Code Go X Rest {{ @Model.EApp positive lp:Code lp:L }} :-
+  Part E X EX, list->term {{ @Model.expr positive }} [EX, app [Go, Rest]] L.
 
 pred encode-branch i:list table, i:inductive, i:term, i:constructor, i:term, o:term.
 encode-branch Ts D F K KTy B :- arg-types KTy Tys, code-of Ts (tk-con K) Code,
-  mk-lams Tys [] (xs\ body\ sigma Es L\ std.map2 Tys xs (encode-arg D F) Es,
+  mk-lams Tys [] (xs\ body\ sigma Es L\ std.map2 Tys xs (encode-arg Ts D F) Es,
     list->term {{ @Model.expr positive }} Es L, body = {{ @Model.EApp positive lp:Code lp:L }}) B.
 
 pred encoder i:list table, i:inductive, o:term.
@@ -1521,10 +1684,13 @@ eq-fire-type R NP Encs Prim Spec I (app [global (indt R) | All])
   drop NP All [L, Rt], coq.env.indt R _ _ _ Ar _ _, index-types NP Ar [T, _],
   enc-of Encs T Enc, TL = app [Enc, L], TR = app [Enc, Rt].
 
-% The term of a binder in the environment of an equational clause.
-pred binder-expr i:list (pair inductive term), i:term, i:term, o:term.
-binder-expr _ Ty X {{ @Model.ELit positive lp:E }} :- value-type Ty, !, enc-by-ty Ty X E.
-binder-expr Encs Ty X (app [Enc, X]) :- enc-of Encs Ty Enc.
+% The term of a binder in the environment of an equational clause: a literal for a value, the
+% encoder for a datatype, and the encoder of its lists for a list.
+pred binder-expr i:list table, i:list (pair inductive term), i:term, i:term, o:term.
+binder-expr _ _ Ty X {{ @Model.ELit positive lp:E }} :- value-type Ty, !, enc-by-ty Ty X E.
+binder-expr _ Encs Ty X (app [Enc, X]) :- enc-of Encs Ty Enc, !.
+binder-expr Ts Encs Ty X (app [Enc, X]) :- list-of Ty E,
+  list-encoder Ts (binder-expr Ts Encs) E Enc.
 
 pred eq-fire-proof i:list table, i:inductive, i:int, i:list (pair inductive term), i:term,
   i:term, i:term, i:term, i:term, i:list term, i:list term, i:list term, i:term, o:term.
@@ -1533,7 +1699,7 @@ eq-fire-proof Ts R NP Encs Prim Spec I Ck Kn Ps Vals Hyps (prod N Ty F) (fun N T
     if (is-prop Ty)
        (std.append Hyps [x] Hyps1,
         eq-fire-proof Ts R NP Encs Prim Spec I Ck Kn Ps Vals Hyps1 (F x) (B x))
-       (binder-expr Encs Ty x E, std.append Vals [E] Vals1,
+       (binder-expr Ts Encs Ty x E, std.append Vals [E] Vals1,
         eq-fire-proof Ts R NP Encs Prim Spec I Ck Kn Ps Vals1 Hyps (F x) (B x)).
 eq-fire-proof _ R NP Encs Prim Spec I Ck Kn _ Vals Hyps (app [global (indt R) | All]) P :-
   drop NP All [L, Rt], coq.env.indt R _ _ _ Ar _ _, index-types NP Ar [T, _],
@@ -1861,6 +2027,102 @@ define-lat-glue Ts Rels Lattices ClauseList Spec Inputs Relation Lattice :-
     (define-lat-spec Ts Prim Merge Spec Inputs Relation Lattice (global (const ClosedC))).
 
 % -------------------------------------------------------------------------------------------
+% Rulesets
+
+% The declaration 'ruleset S C1 .. Ck': the name of the ruleset and the names of its constructors.
+kind rsdecl type.
+type rsdecl string -> list string -> rsdecl.
+
+% A ruleset: its name and its constructors.
+kind ruleset type.
+type ruleset string -> list constructor -> ruleset.
+
+% A member of the module of every program, whose name no ruleset takes.
+pred program-member i:string.
+program-member "spec".
+program-member "program".
+program-member "facts".
+program-member "inputs".
+program-member "relation".
+program-member "lattice".
+program-member "closed".
+program-member "default".
+program-member "all".
+
+% The constructors of a declared ruleset. Each name is a constructor of a relation that the
+% command reads.
+pred ruleset-of i:list inductive, i:rsdecl, o:ruleset.
+ruleset-of Is (rsdecl S Names) (ruleset S Ks) :-
+  if (program-member S)
+     (coq.error {calc ("Egglog: the ruleset " ^ S ^
+       " has the name of a member that the module of every program defines.")})
+     true,
+  std.map Names (ruleset-member Is S) Ks.
+
+pred ruleset-member i:list inductive, i:string, i:string, o:constructor.
+ruleset-member Is S Name K :-
+  coq.locate-all Name Locs,
+  if (std.mem Locs (loc-gref (indc K0)), coq.env.indc->indt K0 I0 _, std.mem! Is I0) (K = K0)
+     (coq.error {calc ("Egglog: the ruleset " ^ S ^ " lists " ^ Name ^
+       ", which is no constructor of the relations that the command reads.")}).
+
+% No two rulesets have one name, and no constructor is listed twice, in one ruleset or in two.
+pred distinct-rulesets i:list ruleset.
+distinct-rulesets [].
+distinct-rulesets [ruleset S Ks | Rest] :-
+  if (std.mem! Rest (ruleset S _))
+     (coq.error {calc ("Egglog: the ruleset " ^ S ^ " is declared twice.")}) true,
+  distinct-members S Ks Rest,
+  distinct-rulesets Rest.
+
+% No constructor of the ruleset S is listed again in S or in a later ruleset.
+pred distinct-members i:string, i:list constructor, i:list ruleset.
+distinct-members _ [] _.
+distinct-members S [K | Ks] Rest :-
+  coq.gref->id (indc K) KName,
+  if (std.mem! Ks K)
+     (coq.error {calc ("Egglog: the ruleset " ^ S ^ " lists " ^ KName ^ " twice.")}) true,
+  if (std.exists Rest (r\ sigma Ks2\ r = ruleset S2 Ks2, std.mem! Ks2 K))
+     (coq.error {calc ("Egglog: the constructor " ^ KName ^ " is in the rulesets " ^ S ^
+       " and " ^ S2 ^ ", and a rule belongs to one ruleset at most.")})
+     true,
+  distinct-members S Ks Rest.
+
+% The position of the rule of each constructor that has a clause. Each clause lowers to the rule
+% at its own position, and a closure law of an equation has no clause.
+pred rule-positions i:list (pair constructor (list term)), i:int, o:list (pair constructor int).
+rule-positions [] _ [].
+rule-positions [pr K [_] | Rest] N [pr K N | Ps] :- !, M is N + 1, rule-positions Rest M Ps.
+rule-positions [pr _ [] | Rest] N Ps :- rule-positions Rest N Ps.
+
+% A constructor that a ruleset lists has a rule.
+pred has-rule i:string, i:list (pair constructor int), i:constructor.
+has-rule _ Positions K :- std.mem! Positions (pr K _), !.
+has-rule S _ K :- coq.gref->id (indc K) KName,
+  coq.error {calc ("Egglog: the ruleset " ^ S ^ " lists " ^ KName ^
+    ", a closure law of an equation, which has no rule.")}.
+
+% Define a constant that lists rule positions, in increasing order.
+pred define-positions i:string, i:list int.
+define-positions Name Ns :-
+  std.map Ns int->N Ts, list->term {{ N }} Ts T,
+  coq.env.add-const Name T {{ list N }} @transparent! _.
+
+% Define the rule positions of each ruleset, of the constructors that no ruleset lists
+% ([default]) and of every constructor ([all]).
+pred define-rulesets i:list ruleset, i:list (pair constructor int).
+define-rulesets Rulesets Positions :-
+  std.forall Rulesets (r\ sigma S Ks Ns\ r = ruleset S Ks,
+    std.forall Ks (has-rule S Positions),
+    std.map-filter Positions (p\ n\ sigma K\ p = pr K n, std.mem! Ks K) Ns,
+    define-positions S Ns),
+  std.map-filter Positions (p\ n\ sigma K\ p = pr K n,
+    not (std.exists Rulesets (r\ sigma Ks\ r = ruleset _ Ks, std.mem! Ks K))) Default,
+  define-positions "default" Default,
+  std.map Positions (p\ n\ p = pr _ n) All,
+  define-positions "all" All.
+
+% -------------------------------------------------------------------------------------------
 % The command
 
 main [str "Primitives", str Name | Fs] :- !,
@@ -1876,14 +2138,16 @@ main [str "Primitives", str Name | Fs] :- !,
     coq.elpi.accumulate library "egglog.prims"
       (clause _ _ (prim-code GR Code (global (const PrimC))))).
 main [str Name, str "from" | Rest] :- !,
-  split-with Rest RelNames Opt Merges,
+  split-with Rest RelNames Opt Decls,
+  program-decls Decls Opt Merges RsDecls,
   if (Opt = some Set)
      (coq.locate {calc (Set ^ ".prim")} PrimGR,
-      (fixed-prim (global PrimGR) => derive-program Name RelNames Merges))
-     (derive-program Name RelNames Merges).
+      (fixed-prim (global PrimGR) => derive-program Name RelNames Merges RsDecls))
+     (derive-program Name RelNames Merges RsDecls).
 main [str "Value", str Ty, str Mod] :- !, register-value Ty Mod.
 main _ :- coq.error "Usage: Egglog <name> from <relation> .. <relation> [with <primitives>"
-  "[merge <relation> <function>] ..], or Egglog Primitives <name> <function> .. <function>.".
+  "[merge <relation> <function>] ..] [ruleset <name> <constructor> .. <constructor>] .., or"
+  "Egglog Primitives <name> <function> .. <function>.".
 
 % Register a value type with its encoder module: a later program encodes the values of the type.
 pred register-value i:string, i:string.
@@ -1906,15 +2170,42 @@ register-value Ty Mod :-
   coq.hints.add-resolve LemGR "egglog_decode" 0 _,
   coq.elpi.accumulate library "egglog.values" (clause _ _ (value-enc T Enc Dec)).
 
-% The relations, the primitive set after 'with', and the declarations of lattice tables after it.
-pred split-with i:list argument, o:list argument, o:option string,
-  o:list (pair string string).
+% The relations, the primitive set after 'with', and the declarations that follow them.
+pred split-with i:list argument, o:list argument, o:option string, o:list argument.
 split-with [] [] none [].
-split-with [str "with", str Set | Ms] [] (some Set) Merges :- !, merge-decls Ms Merges.
-split-with [str "merge" | _] _ _ _ :- !,
+split-with [str "with", str Set | Ds] [] (some Set) Ds :- !.
+split-with [str K | Ds] [] none [str K | Ds] :- decl-keyword K, !.
+split-with [A | As] [A | Bs] O Ds :- split-with As Bs O Ds.
+
+% A word that starts a declaration after the relations.
+pred decl-keyword i:string.
+decl-keyword "merge".
+decl-keyword "ruleset".
+
+% The declarations after the relations and the primitive set: 'merge R g' declares a lattice
+% table, which needs a primitive set, and 'ruleset S C1 .. Ck' declares a ruleset.
+pred program-decls i:list argument, i:option string, o:list (pair string string),
+  o:list rsdecl.
+program-decls [] _ [] [] :- !.
+program-decls [str "merge" | _] none _ _ :- !,
   coq.error "Egglog: the merge of a lattice table is a primitive, so a lattice table needs a"
     "primitive set. Write 'with <primitives> merge <relation> <function>'.".
-split-with [A | As] [A | Bs] O Ms :- split-with As Bs O Ms.
+program-decls [str "merge", str R, str G | Rest] (some Set) [pr R G | Ms] Rs :- !,
+  program-decls Rest (some Set) Ms Rs.
+program-decls [str "ruleset", str S | Rest] Opt Ms [rsdecl S Cs | Rs] :- !,
+  ruleset-names Rest Cs Rest1, program-decls Rest1 Opt Ms Rs.
+program-decls [str "with" | _] _ _ _ :- !,
+  coq.error "Egglog: 'with <primitives>' comes right after the relations.".
+program-decls _ _ _ _ :-
+  coq.error "Egglog: after the relations and 'with <primitives>', each lattice table is"
+    "declared as 'merge <relation> <function>' and each ruleset as"
+    "'ruleset <name> <constructor> .. <constructor>'.".
+
+% The constructors of a ruleset, up to the next declaration.
+pred ruleset-names i:list argument, o:list string, o:list argument.
+ruleset-names [str K | Rest] [] [str K | Rest] :- (decl-keyword K ; K = "with"), !.
+ruleset-names [str C | Rest] [C | Cs] Out :- !, ruleset-names Rest Cs Out.
+ruleset-names Rest [] Rest.
 
 % Each relation is declared a lattice table at most once.
 pred distinct-lattices i:list latdecl.
@@ -1924,16 +2215,18 @@ distinct-lattices [latdecl I _ _ | Rest] :-
      (coq.error "Egglog: the lattice table" {coq.gref->id (indt I)} "is declared twice.") true,
   distinct-lattices Rest.
 
-pred derive-program i:string, i:list argument, i:list (pair string string).
-derive-program Name RelNames Merges :-
+pred derive-program i:string, i:list argument, i:list (pair string string), i:list rsdecl.
+derive-program Name RelNames Merges RsDecls :-
   std.map RelNames (a\ i\ sigma N\ a = str N, coq.locate N (indt i)) Is,
   std.map Merges (lattice-decl Is) Decls,
   distinct-lattices Decls,
-  with-lattices Decls (derive-relations Name Is).
+  std.map RsDecls (ruleset-of Is) Rulesets,
+  distinct-rulesets Rulesets,
+  with-lattices Decls (derive-relations Name Is Rulesets).
 
 % Derive the program of the relations, with the lattice tables in scope.
-pred derive-relations i:string, i:list inductive.
-derive-relations Name Is :-
+pred derive-relations i:string, i:list inductive, i:list ruleset.
+derive-relations Name Is Rulesets :-
   std.map Is rel-info Rels,
   if (std.exists Rels (r\ r = rel _ _ tt _), lattice-of _ _ _)
      (coq.error "Egglog: a program with lattice tables reads no equation.") true,
@@ -1958,7 +2251,8 @@ derive-relations Name Is :-
   coq.env.begin-module Name none,
   std.map Tables (define-code PNames) Consts,
   with-codes Consts
-    (derive-module Name Rels Relational Lattices InputKeys Dts Tables Sources NP1 Arity1).
+    (derive-module Name Rels Relational Lattices InputKeys Dts Tables Sources NP1 Arity1
+      Rulesets).
 
 % Derive the time function of a generated constant beside it, with Argent.
 pred time-function i:string.
@@ -1979,15 +2273,18 @@ with-codes [pr K C | Rest] G :- code-const K C => with-codes Rest G.
 
 % The constants of the module of a program, after its code constants.
 pred derive-module i:string, i:list rel, i:list rel, i:list rel,
-  i:list (pair tkey (list term)), i:list inductive, i:list table, i:list source, i:int, i:term.
-derive-module Name Rels Relational Lattices InputKeys Dts Tables Sources NP1 Arity1 :-
+  i:list (pair tkey (list term)), i:list inductive, i:list table, i:list source, i:int, i:term,
+  i:list ruleset.
+derive-module Name Rels Relational Lattices InputKeys Dts Tables Sources NP1 Arity1 Rulesets :-
   std.map Tables (decl-of Tables) Decls, list->term {{ decl }} Decls DeclT,
   std.map-filter Tables (t\ c\ sigma K\ t = table K _ _ _,
     std.exists InputKeys (p\ sigma S\ p = pr K S), code-of Tables K c) InputCodes,
   list->term {{ positive }} InputCodes InputT,
-  std.fold Rels [] (r\ a\ b\ sigma I KTys Cs\ r = rel I _ _ _,
-    coq.env.indt I _ _ _ _ _ KTys,
-    std.map KTys (clause-of Tables Rels r) Cs, std.flatten [a | Cs] b) ClauseList,
+  std.map Rels (r\ kcs\ sigma I Ks KTys\ r = rel I _ _ _, coq.env.indt I _ _ _ _ Ks KTys,
+    std.map2 Ks KTys (k\ kty\ kc\ sigma Cs\ clause-of Tables Rels r kty Cs, kc = pr k Cs) kcs)
+    KClauseLists,
+  std.flatten KClauseLists KClauses,
+  std.flatten {std.map KClauses (kc\ cs\ kc = pr _ cs)} ClauseList,
   list->term {{ clause positive }} ClauseList ClausesT,
   Spec = {{ @Spec positive lp:DeclT lp:InputT lp:ClausesT }},
   std.assert-ok! (coq.typecheck Spec {{ spec positive }}) "Egglog: ill-typed specification",
@@ -1996,6 +2293,8 @@ derive-module Name Rels Relational Lattices InputKeys Dts Tables Sources NP1 Ari
   SpecT = global (const SpecC),
   coq.env.add-const "program" {{ @spec_program positive lp:SpecT }}
     {{ program positive }} @transparent! _,
+  rule-positions KClauses 0 Positions,
+  define-rulesets Rulesets Positions,
   abs-params NP1 Arity1 [] (ps\ fb\ facts-body Tables Sources ps fb) FactsT,
   std.assert-ok! (coq.elaborate-skeleton FactsT FactsTy FactsE) "Egglog: ill-typed facts",
   coq.env.add-const "facts" FactsE FactsTy @transparent! _,
