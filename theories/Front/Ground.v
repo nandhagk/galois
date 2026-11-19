@@ -17,7 +17,7 @@ From Galois.Front Require Import LowerSig RunnerSig CongruenceRefSig GroundSig G
 Module Ground (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     (R : RUN V I J D) (X : RUNNER V I J D R) (F : RUNNER_FACTS V I J D R X) (LW : LOWER_LAWS)
     (CR : CONGRUENCE_REF V) <: GROUND V I J D R X.
-  Module Denote := GroundDenote V.
+  Module Denote := GroundDenote V LW.
   Module Classes := GroundClasses V I J D R X F LW.
   Module Build := GroundBuild V I J D R X F LW.
   Module Satisfies := GroundSatisfies V I J D R X F Classes Build.

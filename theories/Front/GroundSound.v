@@ -17,10 +17,17 @@ From Galois.Front Require Import Spec SpecFacts LowerSig RunnerSig CongruenceRef
 
 Import List.ListNotations.
 
-Module GroundDenote (V : VALUE) <: GROUND_DENOTE_PLAN V.
-  Lemma congruent_denote : forall (s : spec V.t) I (M : @model V.t) t u,
-    ground s = true -> satisfies V.prim V.merge M s I -> congruent V.prim s I t u ->
-    denote M t = denote M u.
+Module GroundDenote (V : VALUE) (LW : LOWER_LAWS) <: GROUND_DENOTE_PLAN V.
+  (* STUB: induct on [congruent]. In the case of a clause, apply [satisfies] to the environment
+     of the meanings of the terms of [e], which needs [env_fits] of the sorts of the clause. By
+     [ground], each variable of the clause is an argument of a premise [Holds r args] that holds
+     in the input rows, so [e] gives it a literal [ELit v] and [r] has a row. [rows_ok] gives [r]
+     only value sorts, and [LW.clause_sorts_query] with the context of [rule_ok] from
+     [check_program_spec] gives every use of the variable the sort [SVal] of [inr v]. *)
+  Lemma congruent_denote : forall (s : spec V.t) rows (M : @model V.t) t u,
+    spec_ok s = true -> ground s = true -> rows_ok s rows = true ->
+    satisfies V.prim V.merge M s (rows_in rows) ->
+    congruent V.prim s (rows_in rows) t u -> denote M t = denote M u.
   Proof.
   Admitted. (* STUB *)
 End GroundDenote.

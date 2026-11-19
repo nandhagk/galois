@@ -12,10 +12,10 @@
     clause with body [Holds path [PVar x; PVar y]; Holds edge [PVar y; PVar z]] and head
     [Derive path [PVar x; PVar z]].
 
-    Builds on: Egglog Syntax and Model. *)
+    Builds on: Egglog Syntax, Model and Sorts. *)
 
 From Stdlib Require Import List PArith.
-From Galois.Egglog Require Import Syntax Model.
+From Galois.Egglog Require Import Syntax Model Sorts.
 
 Import List.ListNotations.
 
@@ -228,6 +228,73 @@ Inductive rewrite_step (s : spec V) (I : positive -> list V -> Prop) :
       Forall (input_premise I e) (body c) -> pat_term e l = Some tl -> pat_term e r = Some tr ->
       rewrite_step s I tl tr.
 
+(** ** Sorts *)
+
+(** The argument sorts of a table, which are empty when the table has no declaration. *)
+Definition table_sorts (ds : list decl) (f : positive) : list sort :=
+  match lookup_sorts ds f with
+  | Some ss => ss
+  | None => []
+  end.
+
+(** The sort of the output of a table, which is a class for a constructor and a value otherwise. *)
+Definition output_sort (ds : list decl) (f : positive) : sort :=
+  match lookup_kind ds f with
+  | Some OId => SId
+  | _ => SVal
+  end.
+
+(** The sorts at which a pattern at the sort [so] uses its variables. A constructor gives its
+    arguments the sorts of its table, a primitive takes values, and a position past the sorts of
+    a table takes a value. *)
+Fixpoint pat_sorts (ds : list decl) (so : sort) (p : pat V) : list (positive * sort) :=
+  match p with
+  | PVar x => [(x, so)]
+  | PVal _ => []
+  | PNode f args =>
+      (fix go (ss : list sort) (ps : list (pat V)) : list (positive * sort) :=
+         match ps with
+         | [] => []
+         | p :: rest => pat_sorts ds (hd SVal ss) p ++ go (tl ss) rest
+         end) (table_sorts ds f) args
+  | POp _ args =>
+      (fix go (ps : list (pat V)) : list (positive * sort) :=
+         match ps with
+         | [] => []
+         | p :: rest => pat_sorts ds SVal p ++ go rest
+         end) args
+  end.
+
+(** The sorts at which patterns at the sorts [ss] use their variables, with values past [ss]. *)
+Fixpoint pats_sorts (ds : list decl) (ss : list sort) (ps : list (pat V)) :
+    list (positive * sort) :=
+  match ps with
+  | [] => []
+  | p :: rest => pat_sorts ds (hd SVal ss) p ++ pats_sorts ds (tl ss) rest
+  end.
+
+(** The sorts at which a premise uses its variables. *)
+Definition premise_sorts (ds : list decl) (p : premise V) : list (positive * sort) :=
+  match p with
+  | Holds r args => pats_sorts ds (table_sorts ds r) args
+  | Equals f args v =>
+      pats_sorts ds (table_sorts ds f) args ++ pat_sorts ds (output_sort ds f) v
+  | Computes _ args v => pats_sorts ds [] args ++ pat_sorts ds SVal v
+  end.
+
+(** The sorts at which a head uses its variables. Both sides of an equation are classes. *)
+Definition head_sorts (ds : list decl) (h : consequence V) : list (positive * sort) :=
+  match h with
+  | Derive r args => pats_sorts ds (table_sorts ds r) args
+  | Assign f args v =>
+      pats_sorts ds (table_sorts ds f) args ++ pat_sorts ds (output_sort ds f) v
+  | Unify l r | Rewrites l r => pat_sorts ds SId l ++ pat_sorts ds SId r
+  end.
+
+(** The sorts at which a clause uses its variables, as the sort check of its rule reads them. *)
+Definition clause_sorts (ds : list decl) (c : clause V) : list (positive * sort) :=
+  flat_map (premise_sorts ds) (body c) ++ head_sorts ds (head c).
+
 (** ** Models *)
 
 Section Models.
@@ -305,11 +372,19 @@ Definition head_true (e : positive -> option (carrier M + V)) (h : consequence V
       pat_meaning e r = Some y -> x = y
   end.
 
+(** An environment fits [uses] when every variable that it binds has a meaning of each sort at
+    which [uses] uses the variable, as in the sorted environments of the engine. *)
+Definition env_fits (uses : list (positive * sort)) (e : positive -> option (carrier M + V)) :
+    Prop :=
+  Forall (fun u => forall x, e (fst u) = Some x -> value_sort x = snd u) uses.
+
 (** [M] is a model of [s] over the input rows [I]: the input rows hold, every clause holds
-    under every environment, and each lattice table is closed under its merge. *)
+    under every environment that gives its variables meanings of their sorts, and each lattice
+    table is closed under its merge. *)
 Definition satisfies (s : spec V) (I : positive -> list V -> Prop) : Prop :=
   (forall r vs, In r (inputs s) -> I r vs -> rel M r (map inr vs)) /\
-  (forall c e, In c (clauses s) -> Forall (premise_true e) (body c) -> head_true e (head c)) /\
+  (forall c e, In c (clauses s) -> env_fits (clause_sorts (tables s) c) e ->
+    Forall (premise_true e) (body c) -> head_true e (head c)) /\
   (forall f m k a b, lookup_kind (tables s) f = Some (OLat m) ->
     lat M f k a -> lat M f k b -> lat M f k (merge m a b)).
 

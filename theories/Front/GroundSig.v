@@ -124,10 +124,12 @@ End GROUND_SPEC.
 
 (** Congruence in models of a ground specification. *)
 Module Type GROUND_DENOTE_PLAN (V : VALUE).
-  (** Congruent terms have one meaning in every model of a ground specification. *)
-  Parameter congruent_denote : forall (s : spec V.t) I (M : @model V.t) t u,
-    ground s = true -> satisfies V.prim V.merge M s I -> congruent V.prim s I t u ->
-    denote M t = denote M u.
+  (** Congruent terms have one meaning in every model of a well-sorted ground specification and
+      its input rows. *)
+  Parameter congruent_denote : forall (s : spec V.t) rows (M : @model V.t) t u,
+    spec_ok s = true -> ground s = true -> rows_ok s rows = true ->
+    satisfies V.prim V.merge M s (rows_in rows) ->
+    congruent V.prim s (rows_in rows) t u -> denote M t = denote M u.
 End GROUND_DENOTE_PLAN.
 
 (** The model of the classes satisfies the outcome. *)

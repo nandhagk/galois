@@ -29,6 +29,8 @@
       present in every view that its rules close.
     - [lower_sound] A row that a well-sorted relational program derives is a derived row.
     - [lower_valid] A model of a well-sorted specification validates its lowered rules.
+    - [clause_sorts_query] The query of the rule of a clause binds each variable at the sort at
+      which the clause uses it.
 
     Builds on: the specifications and their facts, and the syntax, models, sorts and rule
     syntax of the engine. *)
@@ -593,8 +595,23 @@ Module Type LOWER_VALID.
     satisfies prim merge M s I -> valid_sorted prim merge M (spec_program s).
 End LOWER_VALID.
 
+(** The sorts at which the clauses of a well-sorted specification use their variables. *)
+Module Type LOWER_SORTS.
+  (** The query of the rule of a clause of a well-sorted specification that passes the kind check
+      binds each variable that it binds at each sort at which the clause uses it, and the clause
+      uses every other variable as a value that an equation premise computes. *)
+  Parameter clause_sorts_query : forall {V} (s : spec V) c g x so,
+    check_program (spec_program s) = true -> kinds_ok s = true -> In c (clauses s) ->
+    query_ok (program_sorts (spec_program s)) (program_kind (spec_program s)) ctx_empty
+      (query V (clause_rule c)) g ->
+    In (x, so) (clause_sorts (tables s) c) ->
+    g x = Some so \/
+    (g x = None /\ so = SVal /\ exists q args, In (Computes q args (PVar x)) (body c)).
+End LOWER_SORTS.
+
 Module Type LOWER_LAWS :=
-  LOWER_VALUES <+ LOWER_MODELS <+ LOWER_BODY <+ LOWER_COMPLETE <+ LOWER_SOUND <+ LOWER_VALID.
+  LOWER_VALUES <+ LOWER_MODELS <+ LOWER_BODY <+ LOWER_COMPLETE <+ LOWER_SOUND <+ LOWER_VALID <+
+  LOWER_SORTS.
 
 (** * Proof plan *)
 
@@ -630,4 +647,4 @@ Module Type LOWER_SCOPES_PLAN.
 End LOWER_SCOPES_PLAN.
 
 (** The plan of the lowering laws. *)
-Module Type LOWER_PLAN := LOWER_KINDS_PLAN <+ LOWER_SCOPES_PLAN.
+Module Type LOWER_PLAN := LOWER_KINDS_PLAN <+ LOWER_SCOPES_PLAN <+ LOWER_SORTS.

@@ -5,15 +5,17 @@
     them to their meanings and represented terms, and [LowerBodies] relates bodies to their
     premises. [LowerCompleteness], [LowerComplete], [LowerSound] and [LowerValid] prove the
     laws about whole programs from them, and the soundness and validity proofs share the plan
-    of [LowerKinds] and [LowerScopes] on purpose, because both read how a rule scopes its
-    variables. Each part is instantiated once.
+    of [LowerKinds], [LowerScopes] and [LowerSorts] on purpose, because both read how a rule
+    scopes its variables, and the validity proof also reads their sorts. The sorts of
+    [LowerSorts] are a law as well, which the proofs about ground runs read. Each part is
+    instantiated once.
     For example, [LowerLaws.lower_sound] and [LowerLaws.lower_complete] together say that the
     lowered program of a relational specification derives exactly its derived rows.
 
     Builds on: the lowering signature and the files of its parts. *)
 
 From Galois.Front Require Import LowerSig LowerQueries LowerBuilds LowerModels LowerBodies
-  LowerKinds LowerScopes LowerCompleteness LowerComplete LowerSound LowerValid.
+  LowerKinds LowerScopes LowerSorts LowerCompleteness LowerComplete LowerSound LowerValid.
 
 Module LowerValues <: LOWER_VALUES.
   Include LowerQueries.
@@ -26,9 +28,12 @@ Module Kinds := LowerKinds LowerValues.
 
 Module Scopes := LowerScopes LowerValues.
 
+Module ClauseSorts := LowerSorts LowerValues.
+
 Module LowerPlan <: LOWER_PLAN.
   Include Kinds.
   Include Scopes.
+  Include ClauseSorts.
 End LowerPlan.
 
 Module CompletenessLaws := LowerCompleteness LowerValues.
@@ -47,4 +52,5 @@ Module LowerLaws <: LOWER_LAWS.
   Include CompleteLaws.
   Include SoundLaws.
   Include ValidLaws.
+  Include ClauseSorts.
 End LowerLaws.
