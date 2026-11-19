@@ -137,7 +137,8 @@ Ltac egglog_lat_merge :=
 
 (** The premises of one clause of a program with lattice tables, applied to rows of its relation
     and to merges of values of its lattice. A read sees a merge, which the closure lemma of its
-    relation turns into a value of the lattice. *)
+    relation turns into a value of the lattice. A clause of an equation derives no row and
+    assigns no value, so its case closes by its head. *)
 Ltac egglog_lat_premises Hc Hh Hb :=
   simpl in Hc;
   repeat match goal with
@@ -151,6 +152,8 @@ Ltac egglog_lat_premises Hc Hh Hb :=
   | Hh : Assign _ _ _ = Assign _ _ _ |- _ => injection Hh; clear Hh; intros; subst
   | Hh : Derive _ _ = Assign _ _ _ |- _ => discriminate Hh
   | Hh : Assign _ _ _ = Derive _ _ |- _ => discriminate Hh
+  | Hh : Unify _ _ = _ |- _ => discriminate Hh
+  | Hh : Rewrites _ _ = _ |- _ => discriminate Hh
   end;
   repeat match goal with
          | Hb : Forall _ (_ :: _) |- _ => apply Forall_cons_iff in Hb; destruct Hb as [? Hb]

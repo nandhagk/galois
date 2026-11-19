@@ -640,16 +640,6 @@ Module RejectionTests.
 
   Egglog Primitives IntMin Z.min Pos.add.
 
-  (** Numbers and their sums, for an equation beside a lattice table. *)
-  Inductive num_term : Type :=
-    | Lit (n : positive)
-    | Plus (a b : num_term).
-
-  (** Two numbers joined by an edge are equal. *)
-  Inductive joined (edges : list edge) : num_term -> num_term -> Prop :=
-    | joined_refl a : joined edges a a
-    | joined_edge a b w : In (Edge a b w) edges -> joined edges (Lit a) (Lit b).
-
   (** A clause reads a lattice table whose relation is not closed under its merge. *)
   Fail Egglog Bare from reaching_bare with SetOps merge reaching_bare N.lor.
 
@@ -673,9 +663,6 @@ Module RejectionTests.
 
   (** The same table is declared twice. *)
   Fail Egglog Twice from dist with Ops merge dist Pos.min merge dist Pos.max.
-
-  (** An equation beside a lattice table. *)
-  Fail Egglog Mixed from dist joined with Ops merge dist Pos.min.
 
   (** A relation named before the lattice table that its premise reads. *)
   Fail Egglog Backwards from reach dist with Ops merge dist Pos.min.

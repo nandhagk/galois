@@ -29,10 +29,11 @@
     - [EgglogFacts.v] defines the facts and the encoders.
     - [EgglogGlue.v] proves the glue lemmas.
     - [EgglogLattice.v] reads lattice tables and proves their glue lemmas.
-    The tactics of [DerivePrimitives.v], [DeriveTactics.v], [DeriveCongruence.v] and
-    [DeriveLattice.v] prove the generated lemmas, and the command calls them by name. This file
-    exports them with the definitions of [DeriveHelpers.v], so a client that imports [Derive]
-    has everything that the command uses.
+    - [EgglogReads.v] proves the glue lemmas of equations beside relations over values.
+    The tactics of [DerivePrimitives.v], [DeriveTactics.v], [DeriveCongruence.v],
+    [DeriveLattice.v] and [DeriveReads.v] prove the generated lemmas, and the command calls them
+    by name. This file exports them with the definitions of [DeriveHelpers.v], so a client that
+    imports [Derive] has everything that the command uses.
 
     For example, [Egglog Andersen from may_points.] defines [Andersen.spec] with one clause per
     constructor of [may_points], and [Andersen.facts q] lists the input rows of [q].
@@ -46,9 +47,9 @@ From Argent Require Import Time.
 From Galois.Egglog Require Import Syntax.
 From Galois.Front Require Import Spec LowerSig.
 From Galois.Front Require Export DeriveHelpers DerivePrimitives DeriveTactics DeriveCongruence
-  DeriveLattice.
+  DeriveLattice DeriveReads.
 From Galois.Front Require EgglogPrimitives EgglogReading EgglogLists EgglogTables EgglogPatterns
-  EgglogFacts EgglogGlue EgglogLattice.
+  EgglogFacts EgglogGlue EgglogLattice EgglogReads.
 
 (** * The command
 
@@ -69,6 +70,7 @@ Elpi Accumulate File egglog.patterns.
 Elpi Accumulate File egglog.facts.
 Elpi Accumulate File egglog.glue.
 Elpi Accumulate File egglog.lattice.
+Elpi Accumulate File egglog.reads.
 Elpi Accumulate lp:{{
 
 % ---------------------------------------------------------------------------------------------
@@ -148,8 +150,6 @@ derive-program Name RelNames Merges RsDecls :-
 pred derive-relations i:string, i:list inductive, i:list ruleset.
 derive-relations Name Is Rulesets :-
   std.map Is rel-info Rels,
-  if (std.exists Rels (r\ r = rel _ _ tt _), lattice-of _ _ _)
-     (coq.error "Egglog: a program with lattice tables reads no equation.") true,
   std.filter Rels (r\ r = rel _ _ ff _) ValueRels,
   std.filter ValueRels (r\ sigma I\ r = rel I _ _ _, not (lattice-of I _ _)) Relational,
   std.filter ValueRels (r\ sigma I\ r = rel I _ _ _, lattice-of I _ _) Lattices,
@@ -230,7 +230,7 @@ derive-module Name Rels Relational Lattices InputKeys Dts Tables Sources NP1 Ari
     "Egglog: ill-typed relation",
   coq.env.add-const "relation" RelationE RelTy @transparent! RelationC,
   if (Lattices = [])
-     (define-glue Tables Rels ClauseList SpecT (global (const InputsC))
+     (define-value-glue Tables Rels ClauseList SpecT (global (const InputsC))
         (global (const RelationC)))
      (abs-params NP1 Arity1 [] (ps\ f\ mk-lat-fun Tables ps Lattices f) LatticeT,
       std.assert-ok! (coq.elaborate-skeleton LatticeT LatticeTy LatticeE)
@@ -240,7 +240,7 @@ derive-module Name Rels Relational Lattices InputKeys Dts Tables Sources NP1 Ari
         (global (const RelationC)) (global (const LatticeC))),
   std.map Dts (define-encoder Tables) Encs,
   std.forall Dts (d\ time-function {calc ("encode_" ^ {coq.gref->id (indt d)})}),
-  std.forall Rels (define-eq-glue Tables Rels ClauseList Encs SpecT (global (const InputsC))),
+  define-equation-glue Tables Rels Lattices ClauseList Encs SpecT (global (const InputsC)),
   coq.env.end-module _.
 
 }}.
