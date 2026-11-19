@@ -26,7 +26,8 @@ Import List.ListNotations.
     and for a lattice relation [R], [R ks v] holds exactly when [v] is a value that the clauses
     assign at [ks]. A read sees a merge of assigned values, so a relation that a clause reads
     must be closed under its merge. The command proves this closure as the lemma [<R>_merges]
-    with [egglog_merges]. *)
+    with [egglog_merges], or with a lemma [<R>_merges] that the client proves before the
+    command, through [egglog_merges_by]. *)
 
 Create HintDb egglog_merges discriminated.
 
@@ -41,8 +42,10 @@ Definition prim_merge (prim : positive -> list positive -> option positive) (m a
   end.
 
 (** A relation that a clause reads is closed under its merge [g]. Either [g] returns one of its
-    two arguments, which the cases of its unfolded definition show, or a constructor of the
-    relation merges two values. *)
+    two arguments, which the cases of its unfolded definition show, a constructor of the
+    relation merges two values, or a lemma of the hint database [egglog_merges] gives the
+    closure. A client registers such a lemma before the command, and the command registers
+    each lemma [<R>_merges] that it defines. *)
 Ltac egglog_merges :=
   intros;
   first
@@ -57,7 +60,13 @@ Ltac egglog_merges :=
                  | |- context [match ?x with _ => _ end] => destruct x
                  end;
           assumption ]
-    | solve [econstructor; eassumption] ].
+    | solve [econstructor; eassumption]
+    | solve [eauto with egglog_merges] ].
+
+(** A relation is closed under its merge by the lemma [lem], which the client proves before the
+    command and names [<R>_merges]. *)
+Ltac egglog_merges_by lem :=
+  intros; solve [eapply lem; eassumption].
 
 (** A hypothesis [Hrel] that a row is in the relation of a program with lattice tables: an
     input element, a row of a relation over values, or nothing when the program has no

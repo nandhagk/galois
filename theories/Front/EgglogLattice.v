@@ -213,10 +213,17 @@ pred body-reads i:term, i:term.
 body-reads {{ @cons _ (@Equals _ lp:C _ _) _ }} Code :- C = Code, !.
 body-reads {{ @cons _ _ lp:Rest }} Code :- body-reads Rest Code.
 
-% Some clause reads the lattice relation.
+% A clause that derives a row or assigns a value reads the lattice relation. The glue of an
+% equation reads assigned values, so a read in an equation needs no closure under the merge.
 pred read-lattice i:list table, i:list term, i:rel.
 read-lattice Ts ClauseList (rel R _ _ _) :- code-of Ts (tk-rel R) Code,
-  std.exists ClauseList (c\ sigma B\ c = {{ @Clause positive lp:B _ }}, body-reads B Code).
+  std.exists ClauseList (c\ sigma B H\ c = {{ @Clause positive lp:B lp:H }}, value-head H,
+    body-reads B Code).
+
+% The head of a clause of a relation over values.
+pred value-head i:term.
+value-head {{ @Derive _ _ _ }}.
+value-head {{ @Assign _ _ _ _ }}.
 
 % forall params keys a b, R params keys a -> R params keys b -> R params keys (g a b)
 pred merges-type i:rel, i:term, o:term.
@@ -234,16 +241,35 @@ merges-body R Ps Xs G VTy (prod `other` VTy B) :-
     B b = prod `Ha` (app [global (indt R) | ArgsA])
       (_\ prod `Hb` (app [global (indt R) | ArgsB]) (_\ app [global (indt R) | ArgsM])).
 
+% Prove a type with an Ltac tactic and its arguments, which runs on every hole of the proof
+% term, and fail when the tactic fails.
+pred prove-quietly i:string, i:list argument, i:term, o:term.
+prove-quietly Name Args Ty P :-
+  std.assert-ok! (coq.typecheck P Ty) "Egglog: an ill-typed proof",
+  coq.ltac.collect-goals P Goals _,
+  std.forall Goals (g\ coq.ltac.open (g1\ gl\ coq.ltac.call Name Args g1 gl ok) g []).
+
+% The closure of a lattice relation under its merge: by the tactic egglog_merges, or else by the
+% lemma Name that the client proved before the command.
+pred prove-merges i:string, i:term, o:term.
+prove-merges _ Ty P :- prove-quietly "egglog_merges" [] Ty P, !.
+prove-merges Name Ty P :-
+  coq.locate-all Name Locs, std.mem Locs (loc-gref GR),
+  prove-quietly "egglog_merges_by" [trm (global GR)] Ty P, !.
+
 % Define the lemma that a lattice relation that a clause reads is closed under its merge.
 pred define-merges i:rel.
 define-merges (rel R NP Eq Ss) :-
   lattice-of R _ G, merges-type (rel R NP Eq Ss) G Ty,
   RName = {coq.gref->id (indt R)},
-  prove-or "egglog_merges" Ty P
-    {calc ("Egglog: a clause reads the lattice table " ^ RName ^ ", so " ^ RName ^
-      " must be closed under its merge. The merge must return one of its two arguments, or" ^
-      " a constructor of " ^ RName ^ " must merge two of its values.")},
-  coq.env.add-const {calc (RName ^ "_merges")} P Ty @opaque! C,
+  Name = {calc (RName ^ "_merges")},
+  if (prove-merges Name Ty P) true
+     (coq.error {calc ("Egglog: a clause reads the lattice table " ^ RName ^ ", so " ^ RName ^
+       " must be closed under its merge. The merge must return one of its two arguments, a" ^
+       " constructor of " ^ RName ^ " must merge two of its values, or a lemma proved before" ^
+       " the command must give the closure. Name the lemma " ^ Name ^ " or add it to the" ^
+       " hint database egglog_merges.")}),
+  coq.env.add-const Name P Ty @opaque! C,
   coq.hints.add-resolve (const C) "egglog_merges" 0 _.
 
 % forall params, (forall r vs, lat_derived .. r vs -> relation params r vs) /\
