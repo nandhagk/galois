@@ -664,7 +664,4 @@ Module RejectionTests.
   (** The same table is declared twice. *)
   Fail Egglog Twice from dist with Ops merge dist Pos.min merge dist Pos.max.
 
-  (** A relation named before the lattice table that its premise reads. *)
-  Fail Egglog Backwards from reach dist with Ops merge dist Pos.min.
-
 End RejectionTests.

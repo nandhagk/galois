@@ -39,7 +39,8 @@ define-value-glue Ts Rels ClauseList Spec Inputs Relation :-
 define-value-glue Ts Rels ClauseList Spec Inputs Relation :-
   define-glue Ts Rels ClauseList Spec Inputs Relation.
 
-% The glue of the relations over values of a program with equations, as in define-glue.
+% The glue of the relations over values of a program with equations, as in define-glue, a
+% group of relations that read each other at a time.
 pred define-mixed-glue i:list table, i:list rel, i:list term, i:term, i:term, i:term.
 define-mixed-glue Ts Rels ClauseList Spec Inputs Relation :-
   std.filter Rels (r\ r = rel _ _ ff _) Relational,
@@ -49,7 +50,9 @@ define-mixed-glue Ts Rels ClauseList Spec Inputs Relation :-
   closed-type Spec Inputs Relation NP Arity1 ClosedTy,
   prove "egglog_mixed_closed" ClosedTy ClosedP,
   coq.env.add-const "closed" ClosedP ClosedTy @opaque! ClosedC,
-  std.forall Relational (define-spec Ts Spec Inputs Relation (global (const ClosedC))).
+  read-groups Relational Groups,
+  std.forall Groups (g\ std.forall g
+    (define-spec Ts Rels g Spec Inputs Relation (global (const ClosedC)))).
 define-mixed-glue _ _ _ _ _ _.
 
 % ---------------------------------------------------------------------------------------------

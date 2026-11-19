@@ -131,9 +131,11 @@ Proof. vm_compute. auto. Qed.
 
 ## How the command reads an inductive
 
-The command `Egglog P from R1 .. Rn.` reads the inductive relations `R1` to `Rn` together, in
-this order, so that a relation may read the relations named before it. The module `P` receives
-the definitions that the next sections describe. The reading follows these rules.
+The command `Egglog P from R1 .. Rn.` reads the inductive relations `R1` to `Rn` together. They
+may come in any order, and a premise of one relation may read any of them, so two relations may
+read each other (see Relations that read each other). The order of `R1` to `Rn` fixes the order
+of the tables and of the rules. The module `P` receives the definitions that the next sections
+describe. The reading follows these rules.
 
 **Sorts.** Each argument of a relation has a sort that comes from its Rocq type. An argument of
 type `positive` or of a registered value type (see "Value types") is a value. An argument
@@ -177,6 +179,57 @@ codes are constants named after their tables, and the generated lemmas refer to 
 A client never writes a code or a variable number (see the rule in `docs/design/rules.md`). The
 positions of rules are generated too, as the constants of rulesets (see Rulesets), so a client
 writes no rule position either.
+
+## Relations that read each other
+
+The relations of a program can read each other through their premises, as the relations of a
+mutual inductive do. For example, a walk of odd length is an edge, or a walk of even length
+followed by an edge, and a walk of even length is a walk of odd length followed by an edge. The
+command reads the two relations of the following mutual inductive into one program.
+
+```coq
+(** [odd_walk edges x y] says that a walk of odd length leads from [x] to [y], and
+    [even_walk edges x y] says that a walk of even positive length does. *)
+Inductive odd_walk (edges : list (positive * positive)) : positive -> positive -> Prop :=
+  | odd_edge x y : In (x, y) edges -> odd_walk edges x y
+  | odd_step x y z : even_walk edges x y -> In (y, z) edges -> odd_walk edges x z
+with even_walk (edges : list (positive * positive)) : positive -> positive -> Prop :=
+  | even_step x y z : odd_walk edges x y -> In (y, z) edges -> even_walk edges x z.
+
+Egglog Walks from odd_walk even_walk.
+
+Definition three_cycle : list (positive * positive) := [(1, 2); (2, 3); (3, 1)].
+Definition four_cycle : list (positive * positive) := [(1, 2); (2, 3); (3, 4); (4, 1)].
+
+(** Once around the cycle of three nodes is a walk of odd length from 1 back to 1. *)
+Example three_cycle_has_odd_walk_back :
+  ExampleRunner.holds Walks.odd_walk_code [1; 1]
+    (snd (ExampleRunner.solve Walks.program (Walks.facts three_cycle) example_limits)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(** Every walk from 1 back to 1 on the cycle of four nodes has a length that four divides. *)
+Example four_cycle_has_no_odd_walk_back :
+  ExampleRunner.holds Walks.odd_walk_code [1; 1]
+    (snd (ExampleRunner.solve Walks.program (Walks.facts four_cycle) example_limits)) = false.
+Proof. vm_compute. reflexivity. Qed.
+```
+
+The lemma `<R>_spec` has two halves. The half that goes from an instance of `R` to its derived
+row is the lemma `<R>_derived`, and its proof needs an induction over the instances of `R`.
+Rocq's principle `odd_walk_ind` gives no induction hypothesis for the premise
+`even_walk edges x y` of `odd_step`, so the command builds the induction itself. It groups the
+relations that read each other, here `odd_walk` and `even_walk`, and proves their lemmas
+`<R>_derived` with one fixpoint that has a function for each relation of the group. The function
+of a relation takes an instance apart, applies the fire lemma of its constructor, and calls the
+fixpoint on each premise over a relation of the group. Such a premise is a subterm of the
+instance, so the fixpoint passes Rocq's guard check, which runs when the command defines the
+lemma.
+
+A group comes after the groups that its premises read, and the lemmas `<R>_derived` of an
+earlier group prove the premises over its relations. Lattice tables that read each other get
+their lemmas `<R>_assigned` in the same way. The tests of `tests/Front/MutualTest.v` also run
+three relations that read each other in a cycle, the relations `left` and `right` of egglog's
+`schedule-demo.egg`, and two lattice tables that read each other.
 
 ## Equations
 
@@ -560,9 +613,7 @@ Egglog Reaching from reaching with SetOps merge reaching N.lor.
 A relation over values may read a lattice table too, as `reach` does with the constructor
 `reach_dist a b d : dist edges a b d -> reach edges a b` in
 `Egglog Reach from dist reach with PathOps merge dist Pos.min`. In a program with lattice
-tables, the lemma `<R>_spec` of such a relation relates it to `lat_derived`. The command reads
-the relations in the order that it names them, and a relation comes after the relations that
-its premises read.
+tables, the lemma `<R>_spec` of such a relation relates it to `lat_derived`.
 
 The theorems of `theories/Front/LatticeReadSig.v` describe the runs. In every outcome, a stored
 value is a merge of assigned values and a stored row is derived (`solve_sound`,
@@ -795,8 +846,9 @@ For a command `Egglog P from R1 .. Rn` the module `P` has the following members.
 | `<R>_congruent` | For an equational relation, the implication from `R t u` to the congruence of the encodings of `t` and `u`. It covers the congruence laws over `Forall2`. |
 
 Every lemma is checked, so a wrong reading stops the command. The proofs use the tactics that
-`theories/Front/Derive.v` exports, for example `egglog_complete` and `egglog_closed` of
-`theories/Front/DeriveTactics.v`.
+`theories/Front/Derive.v` exports, for example `egglog_closed` of
+`theories/Front/DeriveTactics.v`. The command builds the proofs of the lemmas `<R>_derived` as
+fixpoints (see Relations that read each other).
 
 ## The theorems
 
@@ -913,9 +965,10 @@ Steensgaard's `solve_exact` says that a saturated solve answers
 - A list keeps the order and the repetitions of its elements. Sets, multisets and maps keyed
   by classes need the database to keep their keys in a normal form under the equivalence of
   classes, so they wait for a later change of the engine.
-- Each relation of a program comes after the relations that its premises read. The command
-  proves the glue lemmas of one relation by induction on that relation alone, so it stops at
-  two relations that read each other, as a mutual inductive defines them.
+- Relations that read each other are relations over values or lattice tables, because a
+  premise over an equation stops the command. The datatypes of an equation hold no term of
+  another datatype, so two datatypes that hold each other, as a mutual inductive can define
+  them, stop the command too.
 - A lattice table that a clause reads needs a merge that returns one of its two arguments, or a
   constructor that merges two values, and the command stops otherwise. A program with lattice
   tables has no equation.

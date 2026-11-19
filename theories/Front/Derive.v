@@ -5,7 +5,8 @@
     program ([P.program]), the input rows of their parameters ([P.inputs], [P.facts]) and the
     meaning of each table ([P.relation]). A relation over values is a table. A relation [R t u]
     over a datatype is an equation, and the constructors of the datatype are tables. A premise
-    [In e (f q)] reads an input table, and a premise [Ri ..] reads a relation. Variables are
+    [In e (f q)] reads an input table, and a premise [Ri ..] reads any relation of the program,
+    so relations may read each other, as those of a mutual inductive do. Variables are
     numbered in binder order, and every table code and variable number is generated. The
     command [Egglog Value T M.] registers the encoder module [M] of a value type [T], and the
     values of [T] enter the engine through [M.encode]. After [with Ops], the declaration
@@ -22,7 +23,7 @@
     declares, and the command accumulates the parts in this order, so that each part reads the
     predicates of the parts before it.
     - [EgglogPrimitives.v] reads value types and primitives.
-    - [EgglogReading.v] reads inductives.
+    - [EgglogReading.v] reads inductives and groups the relations that read each other.
     - [EgglogLists.v] reads lists and rulesets.
     - [EgglogTables.v] collects and numbers the tables.
     - [EgglogPatterns.v] reads clauses.
@@ -31,9 +32,10 @@
     - [EgglogLattice.v] reads lattice tables and proves their glue lemmas.
     - [EgglogReads.v] proves the glue lemmas of equations beside relations over values.
     The tactics of [DerivePrimitives.v], [DeriveTactics.v], [DeriveCongruence.v],
-    [DeriveLattice.v] and [DeriveReads.v] prove the generated lemmas, and the command calls them
-    by name. This file exports them with the definitions of [DeriveHelpers.v], so a client that
-    imports [Derive] has everything that the command uses.
+    [DeriveLattice.v] and [DeriveReads.v] prove the generated lemmas that the command does not
+    build as terms, and the command calls them by name. This file exports them with the
+    definitions of [DeriveHelpers.v], so a client that imports [Derive] has everything that the
+    command uses.
 
     For example, [Egglog Andersen from may_points.] defines [Andersen.spec] with one clause per
     constructor of [may_points], and [Andersen.facts q] lists the input rows of [q].

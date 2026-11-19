@@ -5,11 +5,14 @@
     variables and premises, reads an input premise [In e (f q)] as the key of an input table,
     and reads a relation as a table over values or as an equation over a datatype. The tables
     of a program are keys with codes, and the code of a table is a constant once the command
-    has defined it.
+    has defined it. The relations over values that read each other through their premises
+    form a group, and the groups come in an order where each group comes after the groups
+    that it reads.
 
     For example, [rel-info] reads the relation [path edges : positive -> positive -> Prop] as
     a relation over values with the sorts [[SVal; SVal]], and [walk] numbers the binders
-    [x y z] of [path_step] 1, 2 and 3.
+    [x y z] of [path_step] 1, 2 and 3. The relations [even] and [odd] of a mutual inductive,
+    whose premises read each other, form one group.
 
     Builds on: the Egglog syntax of sorts, the values of [egglog.primitives], and Elpi. *)
 
@@ -147,5 +150,75 @@ pred index-types i:int, i:term, o:list term.
 index-types 0 (prod _ Ty F) [Ty | Tys] :- !, pi x\ index-types 0 (F x) Tys.
 index-types 0 _ [] :- !.
 index-types N (prod _ _ F) Tys :- M is N - 1, pi x\ index-types M (F x) Tys.
+
+% The number of indices of a relation, which is the number of products of its arity after its
+% N parameters.
+pred index-count i:int, i:term, o:int.
+index-count 0 (prod _ _ F) N :- !, (pi x\ index-count 0 (F x) M), N is M + 1.
+index-count 0 _ 0 :- !.
+index-count N (prod _ _ F) C :- M is N - 1, pi x\ index-count M (F x) C.
+
+% ---------------------------------------------------------------------------------------------
+% Groups of relations that read each other
+
+% The relations of Rels that the premises of the constructors of a relation read.
+pred reads-of i:list rel, i:rel, o:list inductive.
+reads-of Rels (rel R NP _ _) Qs :-
+  coq.env.indt R _ _ _ _ _ KTys,
+  std.map KTys (con-reads Rels NP) Qss, std.flatten Qss Qs.
+
+pred con-reads i:list rel, i:int, i:term, o:list inductive.
+con-reads Rels NP KTy Qs :-
+  with-params NP KTy [] (ps\ sigma Inst\ coq.subst-prod ps KTy Inst,
+    walk Inst [] [] (_\ hyps\ _\ std.map-filter hyps (premise-rel Rels) Qs)).
+
+pred premise-rel i:list rel, i:term, o:inductive.
+premise-rel Rels (app [global (indt Q) | _]) Q :- std.exists Rels (r\ r = rel Q _ _ _).
+
+% The relations that the relations of Frontier reach through premises, in the graph G from each
+% relation to the relations that its premises read, together with those of Seen.
+pred reached i:list (pair inductive (list inductive)), i:list inductive, i:list inductive,
+  o:list inductive.
+reached _ [] Seen Seen.
+reached G [I | Is] Seen Out :- std.mem! Seen I, !, reached G Is Seen Out.
+reached G [I | Is] Seen Out :-
+  std.lookup! G I Next, std.append Next Is Frontier, reached G Frontier [I | Seen] Out.
+
+% The group of R holds the relations of Rels that R reaches and that reach R, in the order of
+% Rels.
+pred group-of i:list rel, i:list (pair inductive (list inductive)), i:inductive, o:list rel.
+group-of Rels G R Group :-
+  reached G [R] [] FromR,
+  std.filter Rels (r\ sigma Q ToQ\ r = rel Q _ _ _, std.mem! FromR Q,
+    reached G [Q] [] ToQ, std.mem! ToQ R) Group.
+
+% The relations over values Rels in groups. The relations of a group read each other through
+% their premises, as the relations of a mutual inductive can, and keep the order of Rels. Each
+% group comes after the groups that its premises read. Of the groups that can come next, the
+% group of the first relation in Rels comes next, so relations that come after the relations
+% that they read keep their order.
+pred read-groups i:list rel, o:list (list rel).
+read-groups Rels Groups :-
+  std.map Rels (r\ e\ sigma I Qs\ r = rel I _ _ _, reads-of Rels r Qs, e = pr I Qs) G,
+  order-groups Rels G [] Groups.
+
+pred order-groups i:list rel, i:list (pair inductive (list inductive)), i:list inductive,
+  o:list (list rel).
+order-groups Rels G Done [Group | Groups] :- next-group Rels Rels G Done Group, !,
+  std.map Group (r\ i\ r = rel i _ _ _) Is, std.append Done Is Done1,
+  order-groups Rels G Done1 Groups.
+order-groups Rels _ Done [] :-
+  if (std.forall Rels (r\ sigma I\ r = rel I _ _ _, std.mem! Done I)) true
+     (coq.error "Egglog: no order of the relations puts each group after the groups it reads.").
+
+% The group of the first relation of Cands that has no group yet and whose group reads only its
+% own relations and the relations in Done.
+pred next-group i:list rel, i:list rel, i:list (pair inductive (list inductive)),
+  i:list inductive, o:list rel.
+next-group Rels [rel R _ _ _ | _] G Done Group :- not (std.mem! Done R),
+  group-of Rels G R Group,
+  std.forall Group (m\ sigma M Qs\ m = rel M _ _ _, std.lookup! G M Qs,
+    std.forall Qs (q\ std.mem! Done q ; std.exists Group (g\ g = rel q _ _ _))), !.
+next-group Rels [_ | Cands] G Done Group :- next-group Rels Cands G Done Group.
 
 }}.
