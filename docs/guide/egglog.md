@@ -131,14 +131,15 @@ Proof. vm_compute. auto. Qed.
 
 ## How the command reads an inductive
 
-The command `Egglog P from R1 .. Rn.` reads the inductive relations `R1` to `Rn` together, so
-that they may refer to each other. The module `P` receives the definitions that the next
-sections describe. The reading follows these rules.
+The command `Egglog P from R1 .. Rn.` reads the inductive relations `R1` to `Rn` together, in
+this order, so that a relation may read the relations named before it. The module `P` receives
+the definitions that the next sections describe. The reading follows these rules.
 
 **Sorts.** Each argument of a relation has a sort that comes from its Rocq type. An argument of
 type `positive` or of a registered value type (see "Value types") is a value. An argument
 whose type is an inductive datatype, such as `term` below, is a class, the identifier of an
-equivalence class of the engine's e-graph. Any other type is an error.
+equivalence class of the engine's e-graph. An argument of type `list T` of a constructor of a
+datatype is a class as well (see "Lists in datatypes"). Any other type is an error.
 
 **Inputs.** A premise `In e (field q)` or `In e q` reads an input list. Here `q` is a parameter
 of the relation, `field` is a record projection of `q`, and `e` is a pair or a constructor of a
@@ -157,7 +158,8 @@ reads the stored value (see Lattice tables).
 **Equations.** A relation `R t u` whose two indices have the same datatype is an equation. It
 gets no table of its own, because the constructors of the datatype are its tables. The
 constructors of the relation that state reflexivity, symmetry, transitivity or congruence of a
-datatype constructor are the e-graph's own laws, so they give no clause. Every other
+datatype constructor are the e-graph's own laws, so they give no clause. The congruence of a
+constructor in a list argument relates the two lists by `Forall2 R`. Every other
 constructor is a clause. It is a union when its premises bind every variable that its two sides
 use, and a rewrite otherwise. A relation premise or an input premise binds the variables of its
 arguments outside primitive calls, and an equation premise binds its result when its arguments
@@ -172,7 +174,9 @@ relation and input atoms of the query.
 
 **Generated names and numbers.** Every table code and every variable number is generated. The
 codes are constants named after their tables, and the generated lemmas refer to these constants.
-A client never writes a code or a variable number (see the rule in `docs/design/rules.md`).
+A client never writes a code or a variable number (see the rule in `docs/design/rules.md`). The
+positions of rules are generated too, as the constants of rulesets (see Rulesets), so a client
+writes no rule position either.
 
 ## Equations
 
@@ -579,6 +583,193 @@ so no run of longest paths on a cycle saturates, and the test
 run with lattice tables saturates, because the engine has no termination contract for such
 programs.
 
+## Lists in datatypes
+
+A constructor of a datatype may hold a list. The elements of the list have the type of the
+datatype itself, a registered value type, or a pair of these. For each element type `T`, the
+command adds two constructor tables, `P.nil_T_code` and `P.cons_T_code`, and the encoder of the
+datatype maps a list to a chain of nodes of these tables. A node of `cons_T` takes the
+components of an element and the class of the rest of the list, and the chain ends in the node
+of `nil_T`. A list is therefore a class of the e-graph, and the two tables are ordinary
+constructor tables, so the engine and the theorems of this guide treat a list as any other
+term.
+
+The e-graph keeps its classes closed under congruence. Once the elements of two lists share
+their classes, the nodes of the two lists share theirs, and so do the constructors that hold
+the lists. In the same way, egglog rebuilds its vectors after a union. The following program
+ports the first block of egglog's `container-rebuild.egg`. The constructor `math_vec` is the
+congruence of `MyVec`. Its premise `Forall2 (math_eq unions) xs ys` relates the two lists
+element by element, so the command reads `math_vec` as a closure law, which gives no clause.
+
+```coq
+Inductive math : Type :=
+  | Scalar (n : positive)
+  | MyVec (xs : list math).
+
+Inductive math_eq (unions : list (positive * positive)) : math -> math -> Prop :=
+  | math_refl t : math_eq unions t t
+  | math_sym t u : math_eq unions t u -> math_eq unions u t
+  | math_trans t u w : math_eq unions t u -> math_eq unions u w -> math_eq unions t w
+  | math_vec xs ys : Forall2 (math_eq unions) xs ys -> math_eq unions (MyVec xs) (MyVec ys)
+  | math_union x y : In (x, y) unions -> math_eq unions (Scalar x) (Scalar y).
+
+Egglog Vectors from math_eq.
+
+(** Whether saturation after the unions puts two terms in one class. *)
+Definition joined (unions : list (positive * positive)) (a b : math) : bool :=
+  ExampleRunner.equal Vectors.program (Vectors.facts unions) example_limits
+    (Vectors.encode_math a) (Vectors.encode_math b).
+
+Example vectors_of_joined_elements_share_a_class :
+  joined [(1, 2)] (MyVec [Scalar 1; Scalar 2]) (MyVec [Scalar 2; Scalar 2]) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Example vector_of_another_length_stays_apart :
+  joined [(1, 2)] (MyVec [Scalar 1]) (MyVec [Scalar 2; Scalar 2]) = false.
+Proof. vm_compute. reflexivity. Qed.
+```
+
+The module `Vectors` has the tables `Vectors.nil_math_code` and `Vectors.cons_math_code`
+besides the tables of `Scalar` and `MyVec`. The encoder `Vectors.encode_math` maps
+`MyVec [Scalar 1]` to the following expression.
+
+```text
+EApp Vectors.MyVec_code
+  [EApp Vectors.cons_math_code
+     [EApp Vectors.Scalar_code [ELit 1]; EApp Vectors.nil_math_code []]]
+```
+
+The lemma `Vectors.math_eq_congruent` covers the law `math_vec`. Its proof recurses on the
+hypothesis `Forall2` inside its recursion on `math_eq`, and the command checks it when it runs.
+
+A pattern of a clause may hold a list too. The command reads `[]` as the node of `nil_T`,
+`x :: t` as a node of `cons_T`, and a literal such as `[a; b]` as a chain of nodes. A variable of
+type `list T` is a class, which a left side binds and a right side builds on. In the following
+equation, the product of no factor is one, and the product of a list with a first factor is
+that factor times the product of the rest.
+
+```coq
+Inductive arith : Type :=
+  | Number (n : positive)
+  | Mul (a b : arith)
+  | Prod (xs : list arith).
+
+Inductive arith_eq : arith -> arith -> Prop :=
+  | arith_refl a : arith_eq a a
+  | arith_sym a b : arith_eq a b -> arith_eq b a
+  | arith_trans a b c : arith_eq a b -> arith_eq b c -> arith_eq a c
+  | arith_mul a a' b b' : arith_eq a a' -> arith_eq b b' -> arith_eq (Mul a b) (Mul a' b')
+  | arith_prod xs ys : Forall2 arith_eq xs ys -> arith_eq (Prod xs) (Prod ys)
+  | prod_nil : arith_eq (Prod []) (Number 1)
+  | prod_cons x t : arith_eq (Prod (x :: t)) (Mul x (Prod t))
+  | mul_one a : arith_eq (Mul a (Number 1)) a.
+
+Egglog Products from arith_eq.
+
+Example product_is_a_multiplication :
+  ExampleRunner.equal Products.program Products.facts example_limits
+    (Products.encode_arith (Prod [Number 2; Number 3]))
+    (Products.encode_arith (Mul (Number 2) (Number 3))) = true.
+Proof. vm_compute. reflexivity. Qed.
+```
+
+A list of pairs `list (K * T)` whose keys have a value type `K` is an association list from
+values to classes, in the order that the client keeps. A pattern writes each element of such a
+list as a pair `(k, v)`. A lookup is two rewrites. The first one gives the value of a first pair
+with the key, and the second one skips a first pair with another key, which the primitive
+`Pos.eqb` tells apart. Rocq has no scheme `All` registered for pairs, so its warning
+`register-all` stops a datatype that nests through pairs in a build with the flags of this
+project. The command `Scheme All for prod` registers the scheme before the datatype.
+
+```coq
+Egglog Primitives Keys Pos.eqb.
+
+Scheme All for prod.
+
+Inductive item : Type :=
+  | Tag (n : positive)
+  | Fields (fs : list (positive * item))
+  | Get (k : positive) (r : item).
+
+Inductive item_eq : item -> item -> Prop :=
+  | item_refl a : item_eq a a
+  | item_sym a b : item_eq a b -> item_eq b a
+  | item_trans a b c : item_eq a b -> item_eq b c -> item_eq a c
+  | get_here k v rest : item_eq (Get k (Fields ((k, v) :: rest))) v
+  | get_next k k' v rest : Pos.eqb k k' = false ->
+      item_eq (Get k (Fields ((k', v) :: rest))) (Get k (Fields rest)).
+
+Egglog Items from item_eq with Keys.
+
+Module KeysValue <: VALUE_OPS.
+  Include PosKeyCode.
+  Definition prim := Keys.prim.
+  Definition merge (_ : positive) := Pos.max.
+End KeysValue.
+
+Module KeysIndex := IndexCode KeysValue.
+Module KeysJoin := JoinCode KeysValue KeysIndex.
+Module KeysDatabase := DatabaseCode KeysValue KeysIndex.
+Module KeysRun := RunCode KeysValue KeysIndex KeysJoin KeysDatabase.
+Module KeysRunner := RunnerCode KeysValue KeysIndex KeysJoin KeysDatabase KeysRun.
+
+Example lookup_finds_a_later_key :
+  KeysRunner.equal Items.program Items.facts example_limits
+    (Items.encode_item (Get 2 (Fields [(1, Tag 10); (2, Tag 20)])))
+    (Items.encode_item (Tag 20)) = true.
+Proof. vm_compute. reflexivity. Qed.
+```
+
+The cons table of the association list is `Items.cons_positive_item_code`. It takes the key,
+the class of the value and the class of the rest. The tests of `tests/Front/ContainerTest.v`
+also run lists of integers, nested vectors and records with a repeated key.
+
+## Rulesets
+
+A ruleset is a set of constructors whose rules a schedule of egglog runs together. The
+command takes the declaration `ruleset S C1 .. Ck` after the relations and after `with P`, in
+any order with the declarations `merge R g`. It defines the constant `P.S` of type `list N`.
+The constant holds the positions of the rules of the constructors `C1` to `Ck` in increasing
+order, and each clause lowers to the rule at its own position in `P.program`, so a position
+names both. Every program also defines `P.default` and `P.all`. The first holds the positions
+of the rules that no ruleset lists, and the second holds the positions of all rules. A closure
+law of an equation has no rule, so it has no position.
+
+```coq
+Inductive reach (edges : list (positive * positive)) : positive -> positive -> Prop :=
+  | reach_edge x y : In (x, y) edges -> reach edges x y
+  | reach_step x y z : reach edges x y -> In (y, z) edges -> reach edges x z.
+
+Inductive loop (edges : list (positive * positive)) : positive -> Prop :=
+  | loop_back x : reach edges x x -> loop edges x.
+
+Egglog Loops from reach loop
+  ruleset grow reach_step
+  ruleset close loop_back.
+
+(** The tables that the premises of the clause at a rule position read. *)
+Definition reads_at (s : spec positive) (i : N) : list positive :=
+  match nth_error (clauses s) (N.to_nat i) with
+  | Some c => flat_map (fun p => match p with Holds r _ => [r] | _ => [] end) (body c)
+  | None => []
+  end.
+
+Example rulesets_list_their_rules :
+  map (reads_at Loops.spec) Loops.grow = [[Loops.reach_code; Loops.edges_code]] /\
+  map (reads_at Loops.spec) Loops.close = [[Loops.reach_code]] /\
+  map (reads_at Loops.spec) Loops.default = [[Loops.edges_code]].
+Proof. vm_compute. auto. Qed.
+```
+
+The rule of `reach_step` reads a path and an edge, the rule of `loop_back` reads a path, and
+the rule of `reach_edge`, which no ruleset lists, reads an edge. The command stops when two
+rulesets list one constructor, when a ruleset lists a constructor twice, when a name is no
+constructor of the relations, and when a ruleset lists a closure law. It also stops when two
+rulesets share a name and when a ruleset takes the name of a member of the module, such as
+`all`. The engine runs the rules of a whole program, and it has no operation that runs a ruleset
+alone. So a run reads no ruleset yet, and the schedules that run rulesets wait for engine
+support.
+
 ## The generated module
 
 For a command `Egglog P from R1 .. Rn` the module `P` has the following members.
@@ -591,13 +782,16 @@ For a command `Egglog P from R1 .. Rn` the module `P` has the following members.
 | `inputs` | The input rows as a relation `positive -> list positive -> Prop`, for the lemmas. |
 | `relation` | The meaning of each table, as a relation on rows. |
 | `lattice` | In a program with lattice tables, the meaning of the lattice tables, as a relation on codes, keys and values. |
-| `<Table>_code` | One constant for each table. A relation has `<R>_code`, a constructor table has `<Constructor>_code`, and an input list that is a parameter has `<parameter>_code`. |
-| `encode_<T>` | One encoder for each datatype `T`, which maps a value of `T` to the engine's expression. |
+| `<Table>_code` | One constant for each table. A relation has `<R>_code`, a constructor table has `<Constructor>_code`, and an input list that is a parameter has `<parameter>_code`. The list tables of an element type `T` have `nil_<T>_code` and `cons_<T>_code`, and a pair type `A * B` is named `<A>_<B>` there. |
+| `<S>` | For each declaration `ruleset S C1 .. Ck`, the positions of the rules of `C1` to `Ck`, as a `list N` in increasing order. |
+| `default` | The positions of the rules that no ruleset lists. |
+| `all` | The positions of all rules. |
+| `encode_<T>` | One encoder for each datatype `T`, which maps a value of `T` to the engine's expression. It maps a list to a chain of nodes of its list tables. |
 | `<Constructor>_fires` | One lemma for each constructor, which says that the clause derives the conclusion from the premises. The command adds each to the hint database `egglog_fire`. |
 | `closed` | The derived rows are closed under the clauses of `relation`. It is the converse half of the glue. In a program with lattice tables, it also says that every assigned value is in `lattice`. |
 | `<R>_merges` | For a lattice relation that a clause reads, the closure of `R` under its merge. |
 | `<R>_spec` | For a relation over values, the equivalence of `R` with its derived row, as in `Path.path_spec`. For a lattice relation, the equivalence of `R` with its assigned value, as in `Distances.dist_spec`. |
-| `<R>_congruent` | For an equational relation, the implication from `R t u` to the congruence of the encodings of `t` and `u`. |
+| `<R>_congruent` | For an equational relation, the implication from `R t u` to the congruence of the encodings of `t` and `u`. It covers the congruence laws over `Forall2`. |
 
 Every lemma is checked, so a wrong reading stops the command. The proofs use the tactics of
 `theories/Front/Derive.v`, for example `egglog_complete` and `egglog_closed`.
@@ -704,13 +898,25 @@ Steensgaard's `solve_exact` says that a saturated solve answers
   value has no result.
 - A primitive has one to three arguments. A call inside a premise argument applies to
   variables that a relation or input premise binds, so a nested call there is not supported.
-- The engine has no rulesets and no `run-schedule`. It has no `subsume` and no `delete`, and
-  its containers cannot hold class identifiers. These features wait for engine support after
-  stage 2, so the command cannot express them.
+- The command defines the constants of rulesets. The engine runs the rules of a whole program,
+  and it has no `run-schedule`, no `subsume` and no `delete`. These features wait for engine
+  support after stage 2, so a run reads no ruleset and the command cannot express `subsume` or
+  `delete`.
+- A list in a datatype holds elements of the datatype itself, of a registered value type, or
+  pairs of these. A list of another datatype, a list of lists and a list in an input
+  constructor stop the command, and so does a pattern that writes an element of a list of
+  pairs as a variable. The command reads the congruence law `Forall2 R xs ys` of a list of the
+  datatype itself. A list of values or of pairs has no congruence law that the command reads.
+  The congruence closure of the engine still applies to the nodes of such a list.
+- A list keeps the order and the repetitions of its elements. Sets, multisets and maps keyed
+  by classes need the database to keep their keys in a normal form under the equivalence of
+  classes, so they wait for a later change of the engine.
+- Each relation of a program comes after the relations that its premises read. The command
+  proves the glue lemmas of one relation by induction on that relation alone, so it stops at
+  two relations that read each other, as a mutual inductive defines them.
 - A lattice table that a clause reads needs a merge that returns one of its two arguments, or a
   constructor that merges two values, and the command stops otherwise. A program with lattice
-  tables has no equation, and each of its relations comes after the relations that its
-  premises read.
+  tables has no equation.
 - The theorems take a value module whose merge has the laws of the engine at every code. The
   merge `prim_merge P.prim` has them only when every binary primitive of `P` is commutative,
   associative and idempotent. So a client that applies the theorems writes a merge with these
