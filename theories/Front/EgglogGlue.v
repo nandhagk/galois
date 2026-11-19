@@ -5,14 +5,19 @@
     that each instance of an equation is a congruence of the encodings of its two sides. Each
     constructor with a clause gets a fire lemma, which says that its clause derives the
     conclusion from the premises. The tactics of [DeriveTactics.v] and [DeriveCongruence.v]
-    prove the generated lemmas, and the command calls them by name.
+    prove the fire lemmas, the lemma [closed] and the lemmas [<R>_back] and [<R>_congruent], and
+    the command calls them by name. The lemma [<R>_derived] says that each instance of [R] has
+    its derived row. The command builds its proof as a fixpoint that takes an instance apart
+    and applies the fire lemmas. The relations that read each other, as the relations of a
+    mutual inductive can, share one fixpoint, which calls itself on each premise over one of
+    them.
 
     For example, [Path.path_step_fires] says that the clause of [path_step] derives the row of
     [path edges x z] from the rows of [path edges x y] and [In (y, z) edges], and
     [Path.path_spec] says that [path edges x y] holds exactly when its row is derived.
 
     Builds on: the specifications and their derived rows, the runner's check of sorts, the
-    patterns of [egglog.patterns], and Elpi. *)
+    groups of [egglog.reading], the patterns of [egglog.patterns], and Elpi. *)
 
 From Stdlib Require Import List PArith.
 From elpi Require Import elpi.
@@ -209,7 +214,121 @@ spec-type Ts Spec Inputs (rel R NP _ _) Ty :-
         std.append ps xs Args, RApp = app [global (indt R) | Args], I = app [Inputs | ps],
         c = {{ lp:RApp <-> @derived positive lp:prim lp:Spec lp:I lp:Code lp:Vs }}) t) ty) Ty.
 
-% Define the glue of the relational relations of a program.
+% ---------------------------------------------------------------------------------------------
+% One fixpoint for each group proves that each instance of a relation has its meaning
+
+% The name of the lemma that each instance of the relation S has its meaning. It is
+% [<S>_assigned] for a lattice relation and [<S>_derived] for any other relation over values.
+pred complete-name i:inductive, o:string.
+complete-name S N :- lattice-of S _ _, !, N is {coq.gref->id (indt S)} ^ "_assigned".
+complete-name S N :- N is {coq.gref->id (indt S)} ^ "_derived".
+
+% A lemma that the command has defined in the module of the program.
+pred module-const i:string, o:term.
+module-const N (global GR) :- coq.locate N GR, !.
+module-const N _ :- coq.error "Egglog: the module of the program has no lemma" N.
+
+% The constructor of a branch of a case, from the constructor applied to the parameters.
+pred branch-constructor i:term, o:constructor.
+branch-constructor (global (indc K)) K :- !.
+branch-constructor (app [global (indc K) | _]) K.
+
+% The position of a relation in its group, counted from N.
+pred group-position i:list rel, i:inductive, i:int, o:int.
+group-position [rel R _ _ _ | _] R N N :- !.
+group-position [_ | Rs] R N M :- N1 is N + 1, group-position Rs R N1 M.
+
+% The proof P of type Ty that each instance of the relation R of the group Group has its
+% meaning, which is the lemma [complete-name R]. [Mean Prim S Ps Xs M] gives the meaning M of
+% the instance of S at the parameters Ps and the indices Xs. The proof is the function of R in
+% a fixpoint that has one function for each relation of the group. Each function takes an
+% instance of its relation apart and applies the fire lemma of its constructor. A premise over
+% a relation of the group is a subterm of the instance, so the fixpoint calls itself on it, as
+% a fixpoint over a mutual inductive does. The lemma of its relation proves a premise over a
+% relation of an earlier group.
+pred complete-proof i:list rel, i:list rel,
+  i:(pred i:term, i:inductive, i:list term, i:list term, o:term), i:rel, i:term, o:term.
+complete-proof Rels Group Mean (rel R NP _ _) Ty P :-
+  coq.env.indt R _ _ _ Arity _ _, index-count NP Arity Rno, group-position Group R 0 Idx,
+  bind-prim ff (prim\ p\ sigma PA\ prim-args prim PA,
+    params-binders NP Arity ff [] (ps\ t\ sigma MF\
+      fix-block Rels Group Group [] Mean prim PA ps MF, t = mfix Idx Rno MF) p) P,
+  complete-name R Name,
+  std.assert-ok! (coq.typecheck P Ty) {calc ("Egglog: the proof of " ^ Name ^ " is ill-typed")}.
+
+% The functions of the fixpoint of a group, one for each relation of Rest, and then their bodies.
+% Scope maps each relation of the group before Rest to its function.
+pred fix-block i:list rel, i:list rel, i:list rel, i:list (pair inductive term),
+  i:(pred i:term, i:inductive, i:list term, i:list term, o:term), i:term, i:list term,
+  i:list term, o:mfix-block.
+fix-block Rels Group [rel S NP _ _ | Rest] Scope Mean Prim PA Ps (mfix-ty Name Rno Ty F) :-
+  coq.env.indt S _ _ _ Arity _ _, index-count NP Arity Rno,
+  fix-type Mean Prim Ps S Arity Ty,
+  complete-name S N, coq.id->name N Name,
+  pi f\ decl f Name Ty => fix-block Rels Group Rest [pr S f | Scope] Mean Prim PA Ps (F f).
+fix-block Rels Group [] Scope Mean Prim PA Ps (mfix-bo Bodies) :-
+  std.map Group (fix-body Rels Scope Mean Prim PA Ps) Bodies.
+
+% forall idx, S params idx -> its meaning
+pred fix-type i:(pred i:term, i:inductive, i:list term, i:list term, o:term), i:term,
+  i:list term, i:inductive, i:term, o:term.
+fix-type Mean Prim Ps S Arity Ty :-
+  coq.subst-prod Ps Arity Inst,
+  idx-binders Inst tt [] (xs\ c\ sigma Args SApp M\ std.append Ps xs Args,
+    SApp = app [global (indt S) | Args], Mean Prim S Ps xs M,
+    c = prod `H` SApp (_\ M)) Ty.
+
+% The function of the relation S in the fixpoint of its group. It takes an instance of S apart
+% and applies the fire lemma of each constructor to the proofs of the premises.
+pred fix-body i:list rel, i:list (pair inductive term),
+  i:(pred i:term, i:inductive, i:list term, i:list term, o:term), i:term, i:list term,
+  i:list term, i:rel, o:term.
+fix-body Rels Scope Mean Prim PA Ps (rel S _ _ _) B :-
+  coq.env.indt S _ _ _ Arity _ _, coq.subst-prod Ps Arity Inst,
+  idx-binders Inst ff [] (xs\ c\ sigma Args SApp Case\ std.append Ps xs Args,
+    SApp = app [global (indt S) | Args], c = fun `H` SApp Case,
+    pi h\ decl h `H` SApp =>
+      coq.build-match h SApp
+        (_\ vs\ _\ m\ sigma Zs\ split-last vs Zs _, Mean Prim S Ps Zs m)
+        (k\ _\ vs\ tys\ b\ fire-branch Rels Scope PA Ps k vs tys b)
+        (Case h)) B.
+
+% The branch of a constructor applies its fire lemma to the primitive function, the parameters
+% and the arguments of the constructor, with the proof of its meaning in place of each premise.
+pred fire-branch i:list rel, i:list (pair inductive term), i:list term, i:list term, i:term,
+  i:list term, i:list term, o:term.
+fire-branch Rels Scope PA Ps K Vs Tys B :-
+  branch-constructor K C,
+  module-const {calc ({coq.gref->id (indc C)} ^ "_fires")} Fire,
+  std.map2 Vs Tys (premise-proof Rels Scope PA Ps) Args,
+  std.flatten [PA, Ps, Args] All, coq.mk-app Fire All B.
+
+% The proof of the meaning of a premise V of type Ty. The function of its relation proves a
+% premise over a relation of the group, the lemma of its relation proves a premise over another
+% relation over values, and every other premise is its own proof.
+pred premise-proof i:list rel, i:list (pair inductive term), i:list term, i:list term, i:term,
+  i:term, o:term.
+premise-proof Rels Scope PA Ps V (app [global (indt S) | All]) P :-
+  find-rel Rels S NP ff, !, drop NP All Ys,
+  if (std.lookup! Scope S F)
+     (std.append Ys [V] As, coq.mk-app F As P)
+     (complete-name S N, module-const N C, std.flatten [PA, Ps, Ys, [V]] As,
+      coq.mk-app C As P).
+premise-proof _ _ _ _ V _ V.
+
+% The meaning of an instance of a relation over values in a program without lattice tables is
+% its derived row.
+pred derived-meaning i:list table, i:term, i:term, i:term, i:inductive, i:list term,
+  i:list term, o:term.
+derived-meaning Ts Spec Inputs Prim S Ps Xs
+    {{ @derived positive lp:Prim lp:Spec lp:I lp:Code lp:Vs }} :-
+  code-of Ts (tk-rel S) Code, enc-list Xs Vs, I = app [Inputs | Ps].
+
+% ---------------------------------------------------------------------------------------------
+% Glue of the relations over values of a program
+
+% Define the glue of the relational relations of a program, a group of relations that read
+% each other at a time.
 pred define-glue i:list table, i:list rel, i:list term, i:term, i:term, i:term.
 define-glue Ts Rels ClauseList Spec Inputs Relation :-
   std.filter Rels (r\ r = rel _ _ ff _) Relational,
@@ -219,7 +338,9 @@ define-glue Ts Rels ClauseList Spec Inputs Relation :-
   closed-type Spec Inputs Relation NP Arity1 ClosedTy,
   prove "egglog_closed" ClosedTy ClosedP,
   coq.env.add-const "closed" ClosedP ClosedTy @opaque! ClosedC,
-  std.forall Relational (define-spec Ts Spec Inputs Relation (global (const ClosedC))).
+  read-groups Relational Groups,
+  std.forall Groups (g\ std.forall g
+    (define-spec Ts Rels g Spec Inputs Relation (global (const ClosedC)))).
 
 define-glue _ _ _ _ _ _.
 
@@ -234,14 +355,11 @@ define-fires Ts Rels ClauseList Spec Inputs (rel R NP Eq Ss) :-
     coq.env.add-const Name P Ty @opaque! C,
     coq.hints.add-resolve (const C) "egglog_fire" 0 _).
 
-pred define-spec i:list table, i:term, i:term, i:term, i:term, i:rel.
-define-spec Ts Spec Inputs Relation Closed (rel R NP Eq Ss) :-
+pred define-spec i:list table, i:list rel, i:list rel, i:term, i:term, i:term, i:term, i:rel.
+define-spec Ts Rels Group Spec Inputs Relation Closed (rel R NP Eq Ss) :-
   RName = {coq.gref->id (indt R)},
   complete-type Ts Spec Inputs (rel R NP Eq Ss) CTy,
-  prove-or "egglog_complete" CTy CP
-    {calc ("Egglog: the tactic egglog_complete failed on " ^ RName ^ ". The command reads" ^
-      " the relations in the order that it names them, so name each relation that a premise" ^
-      " of " ^ RName ^ " reads before " ^ RName ^ ".")},
+  complete-proof Rels Group (derived-meaning Ts Spec Inputs) (rel R NP Eq Ss) CTy CP,
   coq.env.add-const {calc (RName ^ "_derived")} CP CTy @opaque! CC,
   coq.hints.add-resolve (const CC) "egglog_fire" 0 _,
   back-type Ts Relation (rel R NP Eq Ss) BTy,

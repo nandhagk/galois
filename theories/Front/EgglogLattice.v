@@ -316,17 +316,16 @@ lat-spec-proof Ts (rel R NP _ _) Complete Back Closed P :-
 
 % Define the glue of a relation over values: its meaning from the relation, the relation from
 % the meaning of the tables, and their equivalence.
-pred define-lat-spec i:list table, i:term, i:term, i:term, i:term, i:term, i:term, i:term,
-  i:rel.
-define-lat-spec Ts Prim Merge Spec Inputs Relation Lattice Closed (rel R NP Eq Ss) :-
+pred define-lat-spec i:list table, i:list rel, i:list rel, i:term, i:term, i:term, i:term,
+  i:term, i:term, i:term, i:rel.
+define-lat-spec Ts Rels Group Prim Merge Spec Inputs Relation Lattice Closed (rel R NP Eq Ss) :-
   RName = {coq.gref->id (indt R)},
   if (lattice-of R _ _) (Suffix = "_assigned", BackTac = "egglog_lat_back")
      (Suffix = "_derived", BackTac = "egglog_back_lat"),
   lat-complete-type Ts Prim Merge Spec Inputs (rel R NP Eq Ss) CTy,
-  prove-or "egglog_complete" CTy CP
-    {calc ("Egglog: the tactic egglog_complete failed on " ^ RName ^ ". The command reads" ^
-      " the relations in the order that it names them, so name each relation that a premise" ^
-      " of " ^ RName ^ " reads before " ^ RName ^ ".")},
+  complete-proof Rels Group (prim\ s\ ps\ xs\ m\ sigma Code\ code-of Ts (tk-rel s) Code,
+      lat-meaning prim Merge Spec (app [Inputs | ps]) s Code xs m)
+    (rel R NP Eq Ss) CTy CP,
   coq.env.add-const {calc (RName ^ Suffix)} CP CTy @opaque! CC,
   coq.hints.add-resolve (const CC) "egglog_fire" 0 _,
   lat-back-type Ts Relation Lattice (rel R NP Eq Ss) BTy,
@@ -339,7 +338,7 @@ define-lat-spec Ts Prim Merge Spec Inputs Relation Lattice Closed (rel R NP Eq S
 
 % Define the glue of a program with lattice tables: the fire lemmas, the closure of each lattice
 % relation that a clause reads under its merge, the lemma [closed], and the glue of each
-% relation over values.
+% relation over values, a group of relations that read each other at a time.
 pred define-lat-glue i:list table, i:list rel, i:list rel, i:list term, i:term, i:term, i:term,
   i:term.
 define-lat-glue Ts Rels Lattices ClauseList Spec Inputs Relation Lattice :-
@@ -352,7 +351,8 @@ define-lat-glue Ts Rels Lattices ClauseList Spec Inputs Relation Lattice :-
   lat-closed-type Prim Merge Spec Inputs Relation Lattice NP Arity1 ClosedTy,
   prove "egglog_lat_closed" ClosedTy ClosedP,
   coq.env.add-const "closed" ClosedP ClosedTy @opaque! ClosedC,
-  std.forall ValueRels
-    (define-lat-spec Ts Prim Merge Spec Inputs Relation Lattice (global (const ClosedC))).
+  read-groups ValueRels Groups,
+  std.forall Groups (g\ std.forall g (define-lat-spec Ts Rels g Prim Merge Spec Inputs Relation
+    Lattice (global (const ClosedC)))).
 
 }}.

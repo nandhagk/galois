@@ -1,9 +1,10 @@
 (** * Tactics of the glue of relations
 
-    The command [Egglog] of [Derive.v] proves the lemmas that relate a relation over values to
-    the rows of its program with these tactics, which it calls by name. They move between input
-    elements and rows, show that each constructor derives its row, and show that every derived
-    row is in the relation of the program.
+    The command [Egglog] of [Derive.v] relates a relation over values to the rows of its
+    program, and it proves the fire lemmas, the lemma [closed] and the lemmas [<R>_back] with
+    these tactics, which it calls by name. They move between input elements and rows, show that
+    each constructor derives its row, and show that every derived row is in the relation of the
+    program. The command builds the proofs of the lemmas [<R>_derived] as terms.
 
     For example, [egglog_member] shows that the row [(Copy_code, [x; y])] is in the input rows
     of a list that holds [Copy x y].
@@ -49,10 +50,6 @@ Ltac egglog_leaf :=
     | red; egglog_member
     | egglog_prim_leaf
     | egglog_values ].
-
-(** Each constructor of a relation derives its row, by induction and the fire lemmas. *)
-Ltac egglog_complete :=
-  intros; match goal with H : _ |- _ => induction H end; eauto with egglog_fire.
 
 (** A row in the rows of the inputs comes from an element of an input list. *)
 Ltac egglog_unmember H :=
