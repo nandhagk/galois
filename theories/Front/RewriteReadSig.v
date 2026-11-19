@@ -47,18 +47,6 @@ Definition value_tables {V} (s : spec V) : bool :=
     | _ => forallb (fun so => match so with SVal => true | SId => false end) (arg_sorts d)
     end) (tables s).
 
-(** A clause derives a row or assigns a value. *)
-Definition value_clause {V} (c : clause V) : bool :=
-  match head c with
-  | Derive _ _ | Assign _ _ _ => true
-  | Unify _ _ | Rewrites _ _ => false
-  end.
-
-(** The specification with the tables and the input tables of [s], and the clauses of [s] that
-    derive rows or assign values. *)
-Definition value_part {V} (s : spec V) : spec V :=
-  Spec (tables s) (inputs s) (filter value_clause (clauses s)).
-
 (** The model of the meaning of the relations over values: one class, the rows of
     [lat_derived] as relations and the merges of [lat_merged] as lattice values. *)
 Definition unit_model {V} (prim : positive -> list V -> option V)
@@ -141,26 +129,28 @@ Module Type REWRITE_READ (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE 
 
 (** The model of the meaning of the relations over values, for soundness. *)
 Module Type REWRITE_READ_VALUE_PLAN (V : VALUE).
-  (** The clauses of a well-sorted specification that derive rows or assign values form a
-      well-sorted specification. *)
-  Parameter value_part_ok : forall (s : spec V.t),
-    spec_ok s = true -> spec_ok (value_part s) = true.
   (** When the relations and the lattice tables take only values, the model of the meaning
-      satisfies the clauses that derive rows or assign values. *)
+      satisfies a well-sorted specification. *)
   Parameter unit_model_satisfies : forall (s : spec V.t) (I : positive -> list V.t -> Prop),
     spec_ok s = true -> value_tables s = true ->
-    satisfies V.prim V.merge (unit_model V.prim V.merge s I) (value_part s) I.
+    satisfies V.prim V.merge (unit_model V.prim V.merge s I) s I.
 End REWRITE_READ_VALUE_PLAN.
 
-(** The rules of the equations, for soundness. *)
-Module Type REWRITE_READ_EQUATION_PLAN (V : VALUE).
-  (** The model of the meaning validates, on well-sorted environments, the rule of each clause
-      of a well-sorted specification that equates two terms. *)
-  Parameter equation_rule_valid : forall (s : spec V.t) (I : positive -> list V.t -> Prop) c,
-    spec_ok s = true -> In c (clauses s) -> value_clause c = false ->
-    rule_valid_sorted V.prim (unit_model V.prim V.merge s I) (program_sorts (spec_program s))
-      (program_kind (spec_program s)) (clause_rule c).
-End REWRITE_READ_EQUATION_PLAN.
+(** A pattern that can mean a class, which is a variable or a constructor pattern. *)
+Definition pat_class {V} (p : pat V) : bool :=
+  match p with
+  | PVar _ | PNode _ _ => true
+  | PVal _ | POp _ _ => false
+  end.
+
+(** The sides of the equations, for soundness. *)
+Module Type REWRITE_READ_HEADS_PLAN.
+  (** Both sides of an equation of a well-sorted specification are variables or constructor
+      patterns, because the rule of the equation joins them as classes. *)
+  Parameter equation_sides_class : forall {V} (s : spec V) c l r,
+    spec_ok s = true -> In c (clauses s) -> (head c = Unify l r \/ head c = Rewrites l r) ->
+    pat_class l = true /\ pat_class r = true.
+End REWRITE_READ_HEADS_PLAN.
 
 (** Premises over terms read as premises over values, for closure. *)
 Module Type REWRITE_READ_VALUES_PLAN.
