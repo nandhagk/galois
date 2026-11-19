@@ -15,10 +15,11 @@
     - [PrimitiveSetTests] A primitive set dispatches each generated code to its function.
     - [PrimitiveReadingTests] Applications of primitives become primitive patterns.
     - [PrimitiveGlueTests] A glue lemma is stated for the set, or for any primitive function.
+    - [RulesetTests] A ruleset lists the rule positions of its constructors.
 
     Builds on: the derive command, the specifications and the runner conditions. *)
 
-From Stdlib Require Import List PArith.
+From Stdlib Require Import List PArith NArith.
 From Galois.Egglog Require Import Syntax.
 From Galois.Front Require Import Spec LowerSig RunnerSig Derive.
 Import List.ListNotations.
@@ -527,3 +528,122 @@ Module PrimitiveGlueTests.
   Qed.
 
 End PrimitiveGlueTests.
+
+(** * Rulesets *)
+
+Module RulesetTests.
+
+  (** [reach edges x y] says that a path leads from [x] to [y]. *)
+  Inductive reach (edges : list (positive * positive)) : positive -> positive -> Prop :=
+    | reach_edge x y : In (x, y) edges -> reach edges x y
+    | reach_step x y z : reach edges x y -> In (y, z) edges -> reach edges x z.
+
+  (** [loop edges x] says that a path leads from [x] back to [x]. *)
+  Inductive loop (edges : list (positive * positive)) : positive -> Prop :=
+    | loop_back x : reach edges x x -> loop edges x.
+
+  Egglog Loops from reach loop
+    ruleset grow reach_step
+    ruleset close loop_back.
+
+  (** The same program with one ruleset that lists the loop before the step. *)
+  Egglog Backwards from reach loop
+    ruleset both loop_back reach_step.
+
+  (** The clauses at the rule positions of a ruleset, in its order. *)
+  Definition listed_clauses (s : spec positive) (rs : list N) : list (option (clause positive)) :=
+    map (fun i => nth_error (clauses s) (N.to_nat i)) rs.
+
+  (** A clause as the table that its head derives into and the tables that its premises
+      read. *)
+  Definition clause_shape (c : clause positive) : option positive * list positive :=
+    (head_table c, body_tables c).
+
+  (** The shapes of the clauses that a ruleset lists. *)
+  Definition listed_shapes (s : spec positive) (rs : list N) :
+      list (option (option positive * list positive)) :=
+    map (option_map clause_shape) (listed_clauses s rs).
+
+  (** The ruleset [grow] lists one rule, which extends a path by an edge. *)
+  Example grow_lists_the_step :
+    listed_shapes Loops.spec Loops.grow =
+      [Some (Some Loops.reach_code, [Loops.reach_code; Loops.edges_code])].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The ruleset [close] lists one rule, which reads a path and derives a loop. *)
+  Example close_lists_the_loop :
+    listed_shapes Loops.spec Loops.close = [Some (Some Loops.loop_code, [Loops.reach_code])].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The constructor that no ruleset lists is the edge, which reads the input table. *)
+  Example default_lists_the_unlisted_constructor :
+    listed_shapes Loops.spec Loops.default = [Some (Some Loops.reach_code, [Loops.edges_code])].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** [all] lists the rule of every clause, in clause order. *)
+  Example all_lists_every_rule_in_order :
+    listed_clauses Loops.spec Loops.all = map Some (clauses Loops.spec).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A ruleset that lists the loop before the step holds their positions in increasing order,
+      so the step comes first. *)
+  Example ruleset_positions_increase :
+    listed_shapes Backwards.spec Backwards.both =
+      [Some (Some Backwards.reach_code, [Backwards.reach_code; Backwards.edges_code]);
+       Some (Some Backwards.loop_code, [Backwards.reach_code])].
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A program without rulesets has every rule in [default]. *)
+  Example default_without_rulesets_is_all :
+    Path.default = Path.all.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** The closure laws of an equation have no rules, so [all] lists the rules of the other
+      constructors. *)
+  Example closure_laws_have_no_position :
+    listed_clauses Terms.spec Terms.all = map Some (clauses Terms.spec).
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A constructor in two rulesets. *)
+  Fail Egglog Twice from reach loop
+    ruleset first reach_step
+    ruleset second reach_step.
+
+  (** A ruleset that lists a constructor twice. *)
+  Fail Egglog Repeated from reach loop ruleset steps reach_step reach_step.
+
+  (** A name that is no constructor at all. *)
+  Fail Egglog Unknown from reach loop ruleset steps reach_jump.
+
+  (** A constructor of a relation that the command does not read. *)
+  Fail Egglog Foreign from reach loop ruleset steps path_step.
+
+  (** A closure law of an equation, which has no rule. *)
+  Fail Egglog Law from equiv ruleset laws equiv_refl.
+
+  (** Two rulesets with one name. *)
+  Fail Egglog Same from reach loop
+    ruleset steps reach_step
+    ruleset steps loop_back.
+
+  (** A ruleset with the name of a member of every program. *)
+  Fail Egglog Member from reach loop ruleset all reach_step.
+
+  (** The primitive set after a ruleset. *)
+  Fail Egglog Late from fib ruleset steps fib_step with Arith.
+
+End RulesetTests.
