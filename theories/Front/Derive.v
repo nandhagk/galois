@@ -29,10 +29,12 @@
     - [EgglogFacts.v] defines the facts and the encoders.
     - [EgglogGlue.v] proves the glue lemmas.
     - [EgglogLattice.v] reads lattice tables and proves their glue lemmas.
-    The tactics of [DerivePrimitives.v], [DeriveTactics.v], [DeriveCongruence.v] and
-    [DeriveLattice.v] prove the generated lemmas, and the command calls them by name. This file
-    exports them with the definitions of [DeriveHelpers.v], so a client that imports [Derive]
-    has everything that the command uses.
+    - [EgglogContainers.v] reads other datatypes, nested lists and the laws of lists of values
+      and of pairs, with rules that take precedence over those of the earlier parts.
+    The tactics of [DerivePrimitives.v], [DeriveTactics.v], [DeriveCongruence.v],
+    [DeriveLattice.v] and [DeriveContainers.v] prove the generated lemmas, and the command calls
+    them by name. This file exports them with the definitions of [DeriveHelpers.v], so a client
+    that imports [Derive] has everything that the command uses.
 
     For example, [Egglog Andersen from may_points.] defines [Andersen.spec] with one clause per
     constructor of [may_points], and [Andersen.facts q] lists the input rows of [q].
@@ -46,9 +48,9 @@ From Argent Require Import Time.
 From Galois.Egglog Require Import Syntax.
 From Galois.Front Require Import Spec LowerSig.
 From Galois.Front Require Export DeriveHelpers DerivePrimitives DeriveTactics DeriveCongruence
-  DeriveLattice.
+  DeriveLattice DeriveContainers.
 From Galois.Front Require EgglogPrimitives EgglogReading EgglogLists EgglogTables EgglogPatterns
-  EgglogFacts EgglogGlue EgglogLattice.
+  EgglogFacts EgglogGlue EgglogLattice EgglogContainers.
 
 (** * The command
 
@@ -69,6 +71,7 @@ Elpi Accumulate File egglog.patterns.
 Elpi Accumulate File egglog.facts.
 Elpi Accumulate File egglog.glue.
 Elpi Accumulate File egglog.lattice.
+Elpi Accumulate File egglog.containers.
 Elpi Accumulate lp:{{
 
 % ---------------------------------------------------------------------------------------------
@@ -142,7 +145,7 @@ derive-program Name RelNames Merges RsDecls :-
   distinct-lattices Decls,
   std.map RsDecls (ruleset-of Is) Rulesets,
   distinct-rulesets Rulesets,
-  with-lattices Decls (derive-relations Name Is Rulesets).
+  with-lattices Decls (with-containers (derive-relations Name Is Rulesets)).
 
 % Derive the program of the relations, with the lattice tables in scope.
 pred derive-relations i:string, i:list inductive, i:list ruleset.

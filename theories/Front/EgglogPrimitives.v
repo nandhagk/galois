@@ -2,14 +2,16 @@
 
     This file declares the Elpi file [egglog.primitives] of the command [Egglog] of
     [Derive.v], with the databases of registered value types and primitives. A value type is
-    [positive] or a type that [Egglog Value T M] registers with its encoder module [M], and a
-    derived term holds the encoding of such a value, which is a positive. The command
+    [positive], a type that [Egglog Value T M] registers with its encoder module [M], or a pair,
+    an option or a list of value types, whose encoder the command builds from the encoders of
+    their parts. A derived term holds the encoding of a value, which is a positive. The command
     [Egglog Primitives S f1 .. fn] defines a code for each function and the primitive function
-    of the set [S], which tests each code in turn.
+    of the set [S], which tests each code in turn. A function may take any number of arguments.
 
     For example, once [Egglog Value Z ZEncode] registers [Z], [enc-term] writes a term [z] of
-    type [Z] as [ZEncode.encode z], and [Egglog Primitives Keys Pos.eqb] defines the code
-    [Keys.eqb_code] and the primitive function [Keys.prim].
+    type [Z] as [ZEncode.encode z] and a term [p] of type [Z * bool] as
+    [encode_pair ZEncode.encode BoolEncode.encode p], and [Egglog Primitives Keys Pos.eqb]
+    defines the code [Keys.eqb_code] and the primitive function [Keys.prim].
 
     Builds on: the definitions that derived programs call, and Elpi. *)
 
@@ -39,13 +41,28 @@ Elpi File egglog.primitives lp:{{
 % ---------------------------------------------------------------------------------------------
 % Value types
 
+% A value type is positive, a registered type, or a pair, an option or a list of value types.
 pred value-type i:term.
-value-type T :- coq.locate "positive" GR, T = global GR, !.
-value-type T :- value-enc T _ _.
+value-type T :- type-coder T _ _.
 
-% The engine value of a value of type Ty: its encoder applied, or the value itself of positive.
+% The encoder and the decoder of a value type. Those of a pair, an option and a list come from
+% the encoders and decoders of their parts.
+pred type-coder i:term, o:term, o:term.
+type-coder T {{ id_encode }} {{ id_decode }} :- coq.locate "positive" GR, T = global GR, !.
+type-coder T Enc Dec :- value-enc T Enc Dec, !.
+type-coder {{ prod lp:A lp:B }} {{ @encode_pair lp:A lp:B lp:EA lp:EB }}
+    {{ @decode_pair lp:A lp:B lp:DA lp:DB }} :- !,
+  type-coder A EA DA, type-coder B EB DB.
+type-coder {{ option lp:A }} {{ @encode_option lp:A lp:EA }} {{ @decode_option lp:A lp:DA }} :-
+  !, type-coder A EA DA.
+type-coder {{ list lp:A }} {{ @encode_list lp:A lp:EA }} {{ @decode_list lp:A lp:DA }} :-
+  type-coder A EA DA.
+
+% The engine value of a value of type Ty: the value itself of positive, and its encoder applied
+% otherwise.
 pred enc-by-ty i:term, i:term, o:term.
-enc-by-ty Ty X (app [Enc, X]) :- value-enc Ty Enc _, !.
+enc-by-ty Ty X X :- coq.locate "positive" GR, Ty = global GR, !.
+enc-by-ty Ty X Y :- type-coder Ty Enc _, !, coq.mk-app Enc [X] Y.
 enc-by-ty _ X X.
 
 % The engine value of a value term, by the type of the term.
@@ -54,23 +71,22 @@ enc-term X Y :- coq.typecheck X Ty ok, enc-by-ty Ty X Y.
 
 % The decoder of a value type.
 pred dec-of-type i:term, o:term.
-dec-of-type Ty Dec :- value-enc Ty _ Dec, !.
-dec-of-type Ty {{ id_decode }} :- value-type Ty, !.
+dec-of-type Ty Dec :- type-coder Ty _ Dec, !.
 dec-of-type Ty _ :- coq.error "Egglog: a primitive has type" {coq.term->string Ty}
-  "which is neither positive nor a registered value type".
+  "which is not a value type".
 
 % The encoder of a value type.
 pred enc-of-type i:term, o:term.
-enc-of-type Ty Enc :- value-enc Ty Enc _, !.
-enc-of-type Ty {{ id_encode }} :- value-type Ty, !.
+enc-of-type Ty Enc :- type-coder Ty Enc _, !.
 enc-of-type Ty _ :- coq.error "Egglog: a primitive has type" {coq.term->string Ty}
-  "which is neither positive nor a registered value type".
+  "which is not a value type".
 
-% The type of a value of a table, which must be positive or a registered value type.
+% The type of a value of a table, which must be a value type.
 pred check-value i:term.
 check-value T :- value-type T, !.
 check-value T :- coq.error "Egglog: the type" {coq.term->string T}
-  "is neither positive nor a registered value type. Register an encoder with Egglog Value.".
+  "is not a value type. A value type is positive, a type that Egglog Value registers, or a"
+  "pair, an option or a list of value types.".
 
 % ---------------------------------------------------------------------------------------------
 % Numerals and lists
@@ -125,28 +141,12 @@ pred arg-types i:term, o:list term.
 arg-types (prod _ Ty F) [Ty | Tys] :- !, pi x\ arg-types (F x) Tys.
 arg-types _ [].
 
-% The arity of a primitive.
-pred prim-arity i:term, o:int.
-prim-arity (prod _ _ F) N :- !, (pi x\ prim-arity (F x) M), N is M + 1.
-prim-arity _ 0.
-
-% The type of the result of a function type.
-pred prim-result i:term, o:term.
-prim-result (prod _ _ F) R :- !, pi x\ prim-result (F x) R.
-prim-result R R.
-
-% The call of a function on engine values: its arguments are decoded and its result is encoded.
-pred prim-apply i:int, i:term, i:term, o:term.
-prim-apply N F Ty Call :- arg-types Ty Tys, prim-result Ty R,
-  std.map Tys dec-of-type Decs, enc-of-type R Enc, prim-apply-with N F Decs Enc Call.
-
-pred prim-apply-with i:int, i:term, i:list term, i:term, o:term.
-prim-apply-with 1 F [Da] E {{ @prim1d _ _ lp:Da lp:E lp:F }} :- !.
-prim-apply-with 2 F [Da, Db] E {{ @prim2d _ _ _ lp:Da lp:Db lp:E lp:F }} :- !.
-prim-apply-with 3 F [Da, Db, Dc] E
-    {{ @prim3d _ _ _ _ lp:Da lp:Db lp:Dc lp:E lp:F }} :- !.
-prim-apply-with N _ _ _ _ :-
-  coq.error "Egglog: a primitive has arity" N "and only 1 to 3 are supported".
+% The call of a function of type Ty on engine values, without the function. A step [prim_arg]
+% decodes each argument, and a step [prim_ret] encodes the result.
+pred prim-chain i:term, o:term.
+prim-chain (prod _ A (_\ B)) {{ @prim_arg lp:A lp:B lp:D lp:K }} :- !,
+  dec-of-type A D, prim-chain B K.
+prim-chain R {{ @prim_ret lp:R lp:E }} :- enc-of-type R E.
 
 % The body of the primitive function of a set: a test of each code in turn.
 pred prim-body i:list (pair term term), i:term, i:term, o:term.
@@ -159,7 +159,7 @@ define-prims [] _ [] [].
 define-prims [GR | GRs] N [pr GR (global (const C)) | Cs] [pr (global (const C)) Call | Bs] :-
   int->pos N P, Name is {coq.gref->id GR} ^ "_code",
   coq.env.add-const Name P {{ positive }} @transparent! C,
-  coq.env.typeof GR Ty, prim-arity Ty A, prim-apply A (global GR) Ty Call,
+  coq.env.typeof GR Ty, prim-chain Ty K, coq.mk-app K [global GR] Call,
   M is N + 1, define-prims GRs M Cs Bs.
 
 pred prim-type o:term.
@@ -169,6 +169,8 @@ prim-type {{ positive -> list positive -> option positive }}.
 % Registering value types
 
 % Register a value type with its encoder module: a later program encodes the values of the type.
+% The tactic simpl leaves the encoder alone, so that the encoding of a literal keeps the form
+% [encode c], which the glue tactics decode and compare with other encodings.
 pred register-value i:string, i:string.
 register-value Ty Mod :-
   coq.locate Ty TyGR, T = global TyGR,
@@ -187,6 +189,7 @@ register-value Ty Mod :-
   coq.env.add-const {calc (Mod ^ "_encode_inj")} InjE InjTy @opaque! InjC,
   coq.hints.add-resolve (const InjC) "egglog_inj" 0 _,
   coq.hints.add-resolve LemGR "egglog_decode" 0 _,
+  (@global! => coq.arguments.set-simplification EncGR never),
   coq.elpi.accumulate library "egglog.values" (clause _ _ (value-enc T Enc Dec)).
 
 }}.
