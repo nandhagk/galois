@@ -6787,7 +6787,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Qed.
 
   Definition width (p : S.prog) (_ : state) : nat :=
-    S.kw p + N.to_nat (S.row_work p 0).
+    S.kw p + N.to_nat (S.row_work p 0) + S.rcw p.
   Definition c_inc : N := (1024 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1))%N.
   (** The initial state is a constant. *)
   Lemma T_init_le : (T_init <= c_inc)%N.

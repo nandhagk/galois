@@ -8,6 +8,9 @@
       O((s + 1) (w + 1)) for s function size and width w.
     - [live_in_complexity] The producer has the published output-sensitive bit-cost bound,
       O((s + l + 1)(w + 1)) for function size s, live-set size l and variable width w.
+    - [live_in_head_complexity] When the prepared points are well formed, as for an SSA
+      function, the producer is linear in the syntax and the live pairs at chain heads,
+      O((s + h + 1)(w + 1)) for head-region size h.
 
     Builds on: Ssa.Lang, Program variable and point presentations, and graph measures. *)
 
@@ -172,7 +175,7 @@ Module Type LIVE_TIME (O : OPS)
     (SP : SSA_POINTS_T Q PosKeyT BE BC N E C PosKeyT U)
     (PB : LANG_PRESENT_BUDGET O Q R BE E N BC C U SP)
     (Import L : LIVE O P Q R BE E N BC C U SP).
-  (* spec: live_region *)
+  (* spec: live_region live_head_region *)
   Parameter live_region : P.t -> list (N.t * positive).
   (** The cost region enumerates each live point/value pair exactly once. *)
   Parameter live_region_spec : forall p,
@@ -191,6 +194,29 @@ Module Type LIVE_TIME (O : OPS)
   (** Emitted rows name listed blocks and variables of the universe. *)
   Parameter live_in_ids : forall p row, In row (live_in p) ->
     In (fst row) (BC.nodes (R.prepare p)) /\ incl (snd row) (U.universe (R.prepare p)).
+  (** A point is straight when one edge enters it and that edge is the only edge that leaves its
+      source. A list may repeat the edge. *)
+  Definition straight_in (q : Q.t) (m : N.t) : Prop :=
+    exists e, In e (C.inc q m) /\ (forall e', In e' (C.inc q m) -> e' = e) /\
+      (forall e', In e' (C.out q (C.src q e)) -> e' = e).
+  (** Heads start the chains. Every point of the entry table is a head, so every output row sits
+      at a head. *)
+  Definition is_head (q : Q.t) (m : N.t) : Prop :=
+    ~ straight_in q m \/
+    (In m (C.nodes q) /\ In (SP.block_of_point q m) (BC.nodes q) /\
+      m = C.src q (SP.parameter_edge q (SP.block_of_point q m))).
+  (** The head region lists the live pairs at chain heads. *)
+  Parameter live_head_region : P.t -> list (N.t * positive).
+  (** The head region lists each pair once. *)
+  Parameter live_head_region_nodup : forall p, NoDup (live_head_region p).
+  (** The head region holds exactly the live pairs whose point is a head. *)
+  Parameter live_head_region_spec : forall p n x,
+    In (n, x) (live_head_region p) <->
+    In (n, x) (live_region p) /\ is_head (R.prepare p) n.
+  Definition live_head_size p := fold_right (fun pair n =>
+    1 + length (C.inc (R.prepare p) (fst pair)) + n) 0 (live_head_region p).
+  (** Head pairs are among the charged live pairs, so the head measure is no larger. *)
+  Parameter live_head_size_le : forall p, live_head_size p <= live_size p.
   Parameter T_live_in : P.t -> N.
   Parameter c_live : N.
   (** Path exploration pays for syntax and live predecessor incidences. *)
@@ -201,6 +227,14 @@ Module Type LIVE_TIME (O : OPS)
   Parameter live_in_complexity :
     T_live_in p ∈ 𝑂(N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
       for p.
+  (** On an SSA program the producer pays for the head region only. *)
+  Parameter T_live_in_head_le : forall p, SP.wf (R.prepare p) ->
+    (T_live_in p <= c_live * N.of_nat (function_size p + live_head_size p + 1) *
+      N.of_nat (function_width p + 1))%N.
+  (** On an SSA program the producer is linear in the syntax and the head region. *)
+  Parameter live_in_head_complexity :
+    T_live_in p ∈ 𝑂(N.of_nat ((function_size p + live_head_size p + 1) *
+      (function_width p + 1))) for p | SP.wf (R.prepare p).
 End LIVE_TIME.
 
 Module Type LIVE_T (O : OPS)

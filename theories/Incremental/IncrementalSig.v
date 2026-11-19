@@ -166,8 +166,10 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter infl_deg : state -> S.key -> nat.
   Parameter infl_mass : state -> nat.
   Parameter kwidth : state -> nat.
+  (** The width is the sum of the key width, the row work at size zero and the row-code width of
+      the program. *)
   Definition width (p : S.prog) (_ : state) : nat :=
-    S.kw p + N.to_nat (S.row_work p 0).
+    S.kw p + N.to_nat (S.row_work p 0) + S.rcw p.
   Parameter T_init : N.
   Parameter T_value : state -> S.key -> N.
   Parameter T_demand : S.prog -> policy L.wparam -> list S.key -> N -> state -> N.

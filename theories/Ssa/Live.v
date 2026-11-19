@@ -8,6 +8,9 @@
       O((s + l + 1)(w + 1)) for function size s, live-set size l and variable width w.
     - [live_driver_complexity] The liveness driver takes time linear in the function size plus the
       live-set size, times the variable width, O((s + l + 1)(w + 1)).
+    - [live_in_head_complexity] When the prepared points are well formed, as for an SSA
+      function, the producer is linear in the syntax and the live pairs at chain heads,
+      O((s + h + 1)(w + 1)) for head-region size h.
 
     Builds on: LiveSig and positive tries. *)
 
@@ -2162,6 +2165,19 @@ Module Live (O : OPS)
       intros n Hn. exact (proj1 (proj1 (proj2 (search_spec q x Hwf) n) Hn)). }
     now rewrite Hfold.
   Qed.
+
+  (** A point is straight when one edge enters it and that edge is the only edge that leaves its
+      source. A list may repeat the edge. *)
+  Definition straight_in (q : Q.t) (m : N.t) : Prop :=
+    exists e, In e (C.inc q m) /\ (forall e', In e' (C.inc q m) -> e' = e) /\
+      (forall e', In e' (C.out q (C.src q e)) -> e' = e).
+
+  (** Heads start the chains. Every point of the entry table is a head, so every output row sits
+      at a head. *)
+  Definition is_head (q : Q.t) (m : N.t) : Prop :=
+    ~ straight_in q m \/
+    (In m (C.nodes q) /\ In (SP.block_of_point q m) (BC.nodes q) /\
+      m = C.src q (SP.parameter_edge q (SP.block_of_point q m))).
 
 End Live.
 
@@ -4449,4 +4465,37 @@ Module LiveT (O : OPS)
     destruct Hin as [b [<- Hb]]. split; [exact Hb|]. cbn.
     apply group_entry_variables_values.
   Qed.
+
+  (** The head region lists the live pairs at chain heads. *)
+  (* STUB-CODE *)
+  Definition live_head_region (_ : P.t) : list (N.t * positive) := [].
+
+  (** The head region lists each pair once. *)
+  Lemma live_head_region_nodup : forall p, NoDup (live_head_region p).
+  Proof. Admitted. (* STUB *)
+
+  (** The head region holds exactly the live pairs whose point is a head. *)
+  Lemma live_head_region_spec : forall p n x,
+    In (n, x) (live_head_region p) <->
+    In (n, x) (live_region p) /\ is_head (R.prepare p) n.
+  Proof. Admitted. (* STUB *)
+
+  Definition live_head_size p := fold_right (fun pair n =>
+    1 + length (C.inc (R.prepare p) (fst pair)) + n) 0 (live_head_region p).
+
+  (** Head pairs are among the charged live pairs, so the head measure is no larger. *)
+  Lemma live_head_size_le : forall p, live_head_size p <= live_size p.
+  Proof. Admitted. (* STUB *)
+
+  (** On an SSA program the producer pays for the head region only. *)
+  Lemma T_live_in_head_le : forall p, SP.wf (R.prepare p) ->
+    (T_live_in p <= c_live * N.of_nat (function_size p + live_head_size p + 1) *
+      N.of_nat (function_width p + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** On an SSA program the producer is linear in the syntax and the head region. *)
+  Lemma live_in_head_complexity :
+    T_live_in p ∈ 𝑂(N.of_nat ((function_size p + live_head_size p + 1) *
+      (function_width p + 1))) for p | SP.wf (R.prepare p).
+  Proof. Admitted. (* STUB *)
 End LiveT.
