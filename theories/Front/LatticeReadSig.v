@@ -10,8 +10,8 @@
     monotone in the values that they read. The check [reads_ok] says that a read value is a
     variable that occurs once in its body and in no key of the head, and [monotone] says that
     the value that a clause assigns grows with the values that it reads, in the orders of the
-    merges. A run then saturates only when, at each key, a merge of assigned values is above all
-    of them ([unbounded_unsaturated]).
+    merges. No run then saturates when a key has an assigned value and no merge of assigned
+    values there is above all of them ([unbounded_unsaturated]).
 
     For example, with [Pos.min] as the merge of the table of distances, a saturated outcome
     stores at each pair of nodes the length of a shortest path, and with [Pos.max] over the
@@ -27,8 +27,8 @@
       is stored.
     - [solve_exact] In a saturated outcome of a monotone specification the stored value is a
       merge of assigned values that is above every assigned value.
-    - [unbounded_unsaturated] No run of a monotone specification saturates when the assigned
-      values at a key have no merge above all of them.
+    - [unbounded_unsaturated] No run of a monotone specification saturates when a key has an
+      assigned value and no merge of assigned values there is above all of them.
 
     Builds on: the specifications that read lattice tables, their lowering, the runner and the
     run contracts. *)
@@ -170,8 +170,8 @@ Module Type LATTICE_READ_EXACT (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DAT
     exists v, row (D.view db) f (map Val ks) (Some (Val v)) /\
       lat_merged V.prim V.merge s (rows_in rows) f ks v /\
       forall w, lat_assigned V.prim V.merge s (rows_in rows) f ks w -> V.merge m w v = v.
-  (** No run of a monotone specification saturates when a key has an assigned value and every
-      merge of assigned values there lies below some other assigned value. *)
+  (** No run of a monotone specification saturates when a key has an assigned value and no
+      merge of assigned values there is above all of them. *)
   Parameter unbounded_unsaturated : forall (s : spec V.t) rows lim f m ks w0,
     spec_ok s = true -> lattice_reads s = true -> reads_ok s = true -> rows_ok s rows = true ->
     monotone V.prim V.merge s -> lookup_kind (tables s) f = Some (OLat m) ->
@@ -203,6 +203,9 @@ End LATTICE_READ_MODEL_PLAN.
 
 (** The query of a body whose reads see the stored values, for completeness. *)
 Module Type LATTICE_READ_QUERY_PLAN.
+  (** The query of a body takes its fresh variables from [next] on. *)
+  Parameter query_body_next : forall {V} bound next (ps : list (premise V)),
+    (next <= snd (query_body bound next ps))%positive.
   (** The query of a body whose premises hold in a view, where each read sees the stored value,
       matches with fresh variables from [next] on. *)
   Parameter query_body_stored_matches : forall {V} (prim : positive -> list V -> option V)
