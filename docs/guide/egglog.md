@@ -584,13 +584,12 @@ Qed.
 ```
 
 The converse half of `dist_spec` needs a merge of two values of `dist` at one key to be a
-value of `dist` again, because a read sees a merge. For each lattice relation that a clause
-reads, the command proves this closure as the lemma `<R>_merges`, here `Distances.dist_merges`.
-The proof succeeds when the merge returns one of its two arguments, as `Pos.min`, `Pos.max` and
-`Z.min` do, or when a constructor of the relation merges two values. The union of two sets
-returns neither of them, so a relation of sets that a clause reads needs a constructor that
-merges, such as `reaching_union` below. Without it, the command stops with a message that names
-the relation.
+value of `dist` again, because a read sees a merge. For each lattice relation that a clause of
+a relation over values reads, the command proves this closure as the lemma `<R>_merges`, here
+`Distances.dist_merges`. The proof succeeds when the merge returns one of its two arguments, as
+`Pos.min`, `Pos.max` and `Z.min` do, or when a constructor of the relation merges two values.
+The union of two sets returns neither of them, and the constructor `reaching_union` below merges
+two sets.
 
 ```coq
 Egglog Primitives SetOps N.lor.
@@ -609,6 +608,38 @@ Inductive reaching (facts : list flow_fact) : positive -> N -> Prop :=
 
 Egglog Reaching from reaching with SetOps merge reaching N.lor.
 ```
+
+Otherwise the client proves the closure before the command, as a lemma named `<R>_merges` or as
+a lemma of the hint database `egglog_merges`, and the command uses it. The command stops with a
+message that names the relation when no lemma applies. The greatest common divisor of two
+numbers is in general neither of them, and no constructor of `common` below merges two
+divisors. The divisors at a node are still closed under `N.gcd`, by an induction that the lemma
+`common_merges` writes out.
+
+```coq
+Egglog Primitives GcdOps N.gcd.
+
+(** [common nums n d] says that [d] is the greatest common divisor of some numbers at node
+    [n]. *)
+Inductive common (nums : list (positive * N)) : positive -> N -> Prop :=
+  | common_num n k : In (n, k) nums -> common nums n k
+  | common_step n d k : common nums n d -> In (n, k) nums -> common nums n (N.gcd d k).
+
+(** The greatest common divisor of two divisors at a node is a divisor there. *)
+Lemma common_merges : forall nums n a b,
+  common nums n a -> common nums n b -> common nums n (N.gcd a b).
+Proof.
+  intros nums n a b Ha Hb.
+  induction Hb as [n k Hk | n d k _ IH Hk].
+  - exact (common_step nums n a k Ha Hk).
+  - rewrite N.gcd_assoc. exact (common_step nums n (N.gcd a d) k (IH Ha) Hk).
+Qed.
+
+Egglog Common from common with GcdOps merge common N.gcd.
+```
+
+The tests of `tests/Front/MergesTest.v` run this program, and a program of least common
+multiples whose closure is a lemma of the hint database.
 
 A relation over values may read a lattice table too, as `reach` does with the constructor
 `reach_dist a b d : dist edges a b d -> reach edges a b` in
@@ -635,6 +666,182 @@ so no run of longest paths on a cycle saturates, and the test
 `longest_paths_never_saturate_on_a_cycle` stops at its iteration limit. No theorem says that a
 run with lattice tables saturates, because the engine has no termination contract for such
 programs.
+
+## Lawful merges
+
+The theorems of lattice tables take a value module whose merge is commutative, associative and
+idempotent at every code and every value. `prim_merge P.prim` returns its first argument where
+the primitive has no result, and the decoder of `N` rejects the odd positives other than 1. So
+`prim_merge SetOps.prim SetOps.lor_code 3 5` is 3, and the merge of 5 and 3 is 5. No
+commutative merge agrees with it at every value. The file `theories/Front/LatticeMerge.v` builds
+a merge with the laws at every code and every value, which agrees with `prim_merge P.prim` on
+encodings.
+
+The function `lift_merge encode decode join` joins the values that two positives encode. It
+puts a positive that encodes no value below every encoding, and merges two such positives to
+the larger one. A join at the code of a primitive is a module of the type `DECODED P E` of
+`theories/Front/LatticeMergeSig.v`, with the laws of a semilattice and the lemma `prim_join`,
+which says that the primitive computes the join on encodings. The functor `MaxMerge P` merges by
+the maximum at every code, `DecodedMerge P B E D` adds the join `D` at its code to the merge
+`B`, and `MergeValue P M` is the value module of positives with the primitives of `P` and the
+merge `M`. The encoder `PosEncode` makes `positive` its own type of values. The following merge
+takes the union of the sets of `reaching`.
+
+```coq
+From Galois.Front Require Import LatticeMergeSig LatticeMerge.
+
+(** The union of sets of bits, at the code of [N.lor]. *)
+Module LorJoin <: DECODED SetOps NEncode.
+  Definition code := SetOps.lor_code.
+  Definition join := N.lor.
+
+  Lemma join_comm : forall a b, join a b = join b a.
+  Proof. exact N.lor_comm. Qed.
+
+  Lemma join_assoc : forall a b c, join a (join b c) = join (join a b) c.
+  Proof. exact N.lor_assoc. Qed.
+
+  Lemma join_idem : forall a, join a a = a.
+  Proof. exact N.lor_diag. Qed.
+
+  Lemma prim_join : forall x y,
+    SetOps.prim code [NEncode.encode x; NEncode.encode y] = Some (NEncode.encode (join x y)).
+  Proof. intros [| p] [| q]; reflexivity. Qed.
+End LorJoin.
+
+Module SetMerge0 := MaxMerge SetOps.
+Module SetMerge := DecodedMerge SetOps SetMerge0 NEncode LorJoin.
+Module SetValue := MergeValue SetOps SetMerge.
+
+(** The positives 3 and 5 encode no value of [N], and they merge to 5 in either order. *)
+Example lawful_merge_commutes :
+  SetValue.merge SetOps.lor_code 3 5 = SetValue.merge SetOps.lor_code 5 3.
+Proof. vm_compute. reflexivity. Qed.
+
+(** The glue of [reaching], moved to the lawful merge. *)
+Lemma reaching_spec_lawful : forall facts n s,
+  reaching facts n s <->
+  lat_assigned SetOps.prim SetValue.merge Reaching.spec (Reaching.inputs facts)
+    Reaching.reaching_code [n] (NEncode.encode s).
+Proof.
+  intros facts n s.
+  rewrite (Reaching.reaching_spec facts n s).
+  apply SetValue.lat_merge_moves.
+  - intros f m Hkind.
+    exact (lat_codes_covered (tables Reaching.spec) SetMerge.codes f m eq_refl Hkind).
+  - intros f m ks w Hkind Hw.
+    destruct (lat_codes_covered (tables Reaching.spec) SetMerge.codes f m eq_refl Hkind)
+      as [Hm | []].
+    subst m. apply SetMerge.encoded_code.
+    destruct (proj2 (Reaching.closed facts) f ks w Hw) as [_ [k [x [_ [Hx _]]]]].
+    exists x. exact Hx.
+Qed.
+```
+
+The lemma `lat_merge_moves` of `MergeValue` moves the glue lemmas to the lawful merge from two
+facts. Every lattice table merges at a code of the merge, which `lat_codes_covered` checks by
+computation, and every assigned value is an encoding at that code, which the generated lemma
+`closed` gives. With one type of values, `lat_merge_agrees_on` of `SpecLattice.v` moves the glue
+in the same way, with the predicate of the encodings. Every positive encodes itself in
+`PosEncode`, so for `positive` the lawful merge agrees with `prim_merge P.prim` at every value,
+and `monotone_agrees` moves a proof of `monotone` to it as well. The tests of
+`tests/Front/LatticeMergeTest.v` move the glue of shortest paths and of `reaching`, move the
+proof that shortest paths are monotone, and apply `solve_complete` of `LatticeReadSig.v` to
+shortest paths with the lawful merge.
+
+## Equations that read relations
+
+A program may have relations over values beside equations, and a premise of an equation may read
+a relation over values or a lattice table. In the following program, `known` propagates
+constants through copies between registers, and the rewrite `scaled_known` reads it, so that a
+product by a register that holds a known constant is a scaling by the constant.
+
+```coq
+From Galois.Front Require Import SpecReads.
+
+(** A statement: register [x] holds the constant [c], or the value of register [y]. *)
+Inductive stmt : Type :=
+  | Init (x c : positive)
+  | Copy (x y : positive).
+
+(** [known prog x c] says that register [x] holds the constant [c]. *)
+Inductive known (prog : list stmt) : positive -> positive -> Prop :=
+  | known_init x c : In (Init x c) prog -> known prog x c
+  | known_copy x y c : In (Copy x y) prog -> known prog y c -> known prog x c.
+
+(** Products of registers, and their scalings by constants. *)
+Inductive product : Type :=
+  | Ref (x : positive)
+  | Times (a b : product)
+  | Scale (c : positive) (a : product).
+
+(** [scaled prog t u] says that [t] and [u] are equal when the registers hold their known
+    constants. *)
+Inductive scaled (prog : list stmt) : product -> product -> Prop :=
+  | scaled_refl a : scaled prog a a
+  | scaled_sym a b : scaled prog a b -> scaled prog b a
+  | scaled_trans a b c : scaled prog a b -> scaled prog b c -> scaled prog a c
+  | scaled_times a a' b b' : scaled prog a a' -> scaled prog b b' ->
+      scaled prog (Times a b) (Times a' b')
+  | scaled_scale c a a' : scaled prog a a' -> scaled prog (Scale c a) (Scale c a')
+  | scaled_known x c a : known prog x c -> scaled prog (Times (Ref x) a) (Scale c a).
+
+Egglog Folds from known scaled.
+
+(** Register 3 holds 5, and register 1 copies register 3. *)
+Definition copies : list stmt := [Init 3 5; Copy 1 3].
+
+Example product_equals_its_scaling :
+  ExampleRunner.equal Folds.program (Folds.facts copies) example_limits
+    (Folds.encode_product (Times (Ref 1) (Ref 2)))
+    (Folds.encode_product (Scale 5 (Ref 2))) = true.
+Proof. vm_compute. reflexivity. Qed.
+```
+
+The relation `known` gets its glue as in a program without equations, and `Folds.known_spec`
+relates it to `derived`. The file `theories/Front/SpecReads.v` gives an equation beside
+relations its meaning. `read_congruent prim s P Q` is the least congruence that contains each
+instance of an equational clause whose premises read rows of `P` and values of `Q`. The lemma
+`Folds.scaled_congruent` says that `scaled prog t u` gives the read congruence of the encodings
+of `t` and `u` over the derived rows `derived prim Folds.spec (Folds.inputs prog)` and the empty
+relation of values `no_values`. With the input rows and no values, `read_congruent` is
+`congruent` (`congruent_read`), so a program of equations alone keeps its lemma `<R>_congruent`
+over `congruent`. Each rewrite also gets the lemma `<C>_steps`, which says that its instance is
+a step `read_step`.
+
+```coq
+(** Register 1 holds 5 through the copy from register 3. *)
+Lemma one_holds_five : known copies 1 5.
+Proof.
+  apply (known_copy copies 1 3 5).
+  - simpl. auto.
+  - apply known_init. simpl. auto.
+Qed.
+
+Example scaling_is_a_step : forall prim,
+  read_step prim Folds.spec (derived prim Folds.spec (Folds.inputs copies)) no_values
+    (Folds.encode_product (Times (Ref 1) (Ref 2))) (Folds.encode_product (Scale 5 (Ref 2))).
+Proof.
+  intros prim. exact (Folds.scaled_known_steps prim copies 1 5 (Ref 2) one_holds_five).
+Qed.
+```
+
+A program with lattice tables may have equations too. A premise of an equation that reads a
+lattice table sees a merge of assigned values, so the glue of such a program reads the rows of
+`lat_derived` and the merges of `lat_merged`. The tests of `tests/Front/RewriteReadTest.v` keep
+the least bound of each register in a lattice table with the merge `Pos.min`, and a rewrite reads
+it to replace the minimum of a register and a larger amount by the register.
+
+The theorems of `theories/Front/RewriteReadSig.v` describe the runs of such programs, when every
+relation and every lattice table takes only values (`value_tables`). In every outcome, a stored
+row is a row of `lat_derived` and a stored value is a merge of `lat_merged`
+(`saturate_rows_sound`, `saturate_values_sound`). At saturation, every derived row is stored
+(`saturate_rows_complete`), and a rewrite step whose premises read the rows and the stored
+values of the outcome, from a represented term, reaches a term of its class
+(`saturate_reads_closed`). For a step whose premises read derived rows,
+`saturate_derived_closed` says the same, and the lemma `<C>_steps` gives such a step from an
+instance of the inductive. The test `class_of_product_holds_the_scaling` of
+`tests/Front/RewriteReadTest.v` applies it to the program of `known`.
 
 ## Lists in datatypes
 
@@ -841,9 +1048,10 @@ For a command `Egglog P from R1 .. Rn` the module `P` has the following members.
 | `encode_<T>` | One encoder for each datatype `T`, which maps a value of `T` to the engine's expression. It maps a list to a chain of nodes of its list tables. |
 | `<Constructor>_fires` | One lemma for each constructor, which says that the clause derives the conclusion from the premises. The command adds each to the hint database `egglog_fire`. |
 | `closed` | The derived rows are closed under the clauses of `relation`. It is the converse half of the glue. In a program with lattice tables, it also says that every assigned value is in `lattice`. |
-| `<R>_merges` | For a lattice relation that a clause reads, the closure of `R` under its merge. |
+| `<R>_merges` | For a lattice relation that a clause of a relation over values reads, the closure of `R` under its merge. A lemma that the client proves before the command, named `<R>_merges` or in the hint database `egglog_merges`, can give it. |
 | `<R>_spec` | For a relation over values, the equivalence of `R` with its derived row, as in `Path.path_spec`. For a lattice relation, the equivalence of `R` with its assigned value, as in `Distances.dist_spec`. |
-| `<R>_congruent` | For an equational relation, the implication from `R t u` to the congruence of the encodings of `t` and `u`. It covers the congruence laws over `Forall2`. |
+| `<R>_congruent` | For an equational relation, the implication from `R t u` to the congruence of the encodings of `t` and `u`. It covers the congruence laws over `Forall2`. Beside relations over values, the conclusion is the read congruence over the meaning of the relations (see Equations that read relations). |
+| `<C>_steps` | For a rewrite of an equation beside relations over values, the lemma that its instance is a step `read_step` over the meaning of the relations. |
 
 Every lemma is checked, so a wrong reading stops the command. The proofs use the tactics that
 `theories/Front/Derive.v` exports, for example `egglog_closed` of
@@ -852,11 +1060,11 @@ fixpoints (see Relations that read each other).
 
 ## The theorems
 
-Nine signatures state what the lowering, the runner and a run guarantee. Each theorem about
+Ten signatures state what the lowering, the runner and a run guarantee. Each theorem about
 a run takes the conditions of its kind as hypotheses. These are `spec_ok` and `rows_ok`,
-together with `relational`, `ground`, `lattice_spec` or `lattice_reads`, and each is stated
-over any value module that satisfies the engine's laws. The proofs are stubs, so none of these
-theorems is proved yet.
+together with `relational`, `ground`, `lattice_spec`, `lattice_reads` or `value_tables`, and
+each is stated over any value module that satisfies the engine's laws. The proofs are stubs, so
+none of these theorems is proved yet.
 
 **The lowering** (`LowerSig.v`). The lemma `lower_sound` says that a row that a well-sorted
 relational program derives from input rows is a derived row, and `lower_complete` says the
@@ -922,6 +1130,16 @@ saturated outcome stores a value above every assigned value and every derived ro
 `solve_exact` combines the two, and `unbounded_unsaturated` says that no run saturates when a
 key has an assigned value and no merge of assigned values there is above all of them.
 
+**Rewrites that read rows** (`RewriteReadSig.v`). A specification that passes `value_tables`
+has relations and lattice tables that take only values, beside equations whose premises may read
+them. In the meaning of `SpecLattice.v`, `saturate_rows_sound` and `saturate_values_sound` say
+that a stored row of every outcome is a row of `lat_derived` and that a stored value is a merge
+of `lat_merged`. At saturation, `saturate_rows_complete` says that every derived row is stored,
+and `saturate_reads_closed` says that a rewrite step whose premises read the rows and the stored
+values of the outcome, from a represented term, reaches a term of its class. The lemma
+`saturate_derived_closed` says the same of a step whose premises read derived rows, in the
+meaning of `SpecReads.v`.
+
 **The exact model** (`CongruenceRefSig.v`). The lemma `exact_model` says that a ground
 specification has a model of its input rows in which two terms are equal exactly when they are
 congruent. The ground theorem uses it to read equalities of classes as congruences. The model
@@ -969,20 +1187,17 @@ Steensgaard's `solve_exact` says that a saturated solve answers
   premise over an equation stops the command. The datatypes of an equation hold no term of
   another datatype, so two datatypes that hold each other, as a mutual inductive can define
   them, stop the command too.
-- A lattice table that a clause reads needs a merge that returns one of its two arguments, or a
-  constructor that merges two values, and the command stops otherwise. A program with lattice
-  tables has no equation.
-- The theorems take a value module whose merge has the laws of the engine at every code. The
-  merge `prim_merge P.prim` has them only when every binary primitive of `P` is commutative,
-  associative and idempotent. So a client that applies the theorems writes a merge with these
-  laws that agrees with `prim_merge P.prim` at the codes of the lattice tables, on the
-  encodings of values. For `positive` and `Z`, whose decoders accept every positive, the merge
-  can agree at every value, and `lat_merge_agrees` moves the glue lemmas to it. For `N`, `bool`
-  and every other type whose decoder rejects some positive, `prim_merge P.prim` returns its
-  first argument where the primitive has no result, so no commutative merge agrees with it at
-  every value. Then `lat_merge_agrees_on` moves the glue lemmas with the predicate
-  `fun v => exists x, v = encode x`. The generated lemma `closed` gives this predicate for
-  every assigned value, and the merge of the primitive keeps it.
+- Relations and lattice tables take only values, so the command stops at a lattice table keyed
+  by a class, such as an analysis of the classes of an e-graph in egglog. The completeness of
+  lattice reads of `LatticeReadSig.v` covers only specifications without constructor tables, so
+  no theorem says which merge a saturated run of a program with equations stores.
+- The theorems take a value module whose merge has the laws of the engine at every code and
+  every value. `LatticeMerge.v` builds one from a join of decoded values at each merge code,
+  which the client writes with its laws and the computation of its primitive (see Lawful
+  merges). The lawful merge agrees with `prim_merge P.prim` on encodings. For `N`, `bool` and
+  every other type whose decoder rejects some positive, the two differ at the other positives,
+  so `monotone_agrees` cannot move a proof of `monotone` to the lawful merge, and the client
+  proves `monotone` for the lawful merge itself.
 - Completeness with reads assumes `reads_ok` and `monotone`. A read value that a key of the head
   or another premise uses fails `reads_ok`, and `monotone` is a hypothesis that the client
   proves, as the test of shortest paths does. A run of a program that fails either condition
@@ -992,7 +1207,10 @@ Steensgaard's `solve_exact` says that a saturated solve answers
 - The engine has no termination contract for programs that build terms or have lattice tables,
   so no theorem says when a run of a ground specification, a run with rewrites or a run with
   lattice tables saturates.
-- A rewrite step reads its premises in the input rows, so `saturate_closed` says nothing about
-  a rewrite whose premises read derived rows.
+- `saturate_reads_closed` and `saturate_derived_closed` cover a rewrite whose premises read the
+  rows and the stored values of the outcome, or derived rows. A premise of a rewrite that reads
+  a lattice table sees the value that the run stores. The inductive reads every assigned value,
+  so a run may apply such a rewrite to fewer values than the inductive does, and no theorem
+  relates the two.
 - A run that stops at `IterLimit` or `IdLimit` has no completeness guarantee, so a client that
   needs the exact answer checks for `Saturated`.
