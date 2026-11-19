@@ -681,12 +681,11 @@ list as a pair `(k, v)`. A lookup is two rewrites. The first one gives the value
 with the key, and the second one skips a first pair with another key, which the primitive
 `Pos.eqb` tells apart. Rocq has no scheme `All` registered for pairs, so its warning
 `register-all` stops a datatype that nests through pairs in a build with the flags of this
-project. The command `Scheme All for prod` registers the scheme before the datatype.
+project. `theories/Front/DeriveHelpers.v` registers the scheme with `Scheme All for prod`.
+Every client of `Derive` loads that file, so a datatype that nests through pairs needs no setup.
 
 ```coq
 Egglog Primitives Keys Pos.eqb.
-
-Scheme All for prod.
 
 Inductive item : Type :=
   | Tag (n : positive)
@@ -795,8 +794,9 @@ For a command `Egglog P from R1 .. Rn` the module `P` has the following members.
 | `<R>_spec` | For a relation over values, the equivalence of `R` with its derived row, as in `Path.path_spec`. For a lattice relation, the equivalence of `R` with its assigned value, as in `Distances.dist_spec`. |
 | `<R>_congruent` | For an equational relation, the implication from `R t u` to the congruence of the encodings of `t` and `u`. It covers the congruence laws over `Forall2`. |
 
-Every lemma is checked, so a wrong reading stops the command. The proofs use the tactics of
-`theories/Front/Derive.v`, for example `egglog_complete` and `egglog_closed`.
+Every lemma is checked, so a wrong reading stops the command. The proofs use the tactics that
+`theories/Front/Derive.v` exports, for example `egglog_complete` and `egglog_closed` of
+`theories/Front/DeriveTactics.v`.
 
 ## The theorems
 

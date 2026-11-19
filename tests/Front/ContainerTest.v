@@ -89,9 +89,6 @@ Egglog Products from arith_eq.
 (** The comparison of two keys, as a primitive. *)
 Egglog Primitives Keys Pos.eqb.
 
-(** Rocq has no scheme [All] registered for pairs, and [item] nests through them. *)
-Scheme All for prod.
-
 (** Tags, tuples of integers, records of fields named by keys, and the field of a record. *)
 Inductive item : Type :=
   | Tag (n : positive)
